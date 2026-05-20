@@ -15,6 +15,7 @@ import {
   BackupConfig,
   BackupFile,
   SystemJob,
+  clearAuthToken,
   downloadBackup,
   fetchBackupJob,
   fetchBackupOverview,
@@ -64,6 +65,9 @@ function ProgressPanel({ job, uploadProgress }: { job?: SystemJob | null; upload
       <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/70">
         <div className="h-full rounded-full bg-current transition-all" style={{ width: `${Math.min(100, Math.max(0, progress))}%` }} />
       </div>
+      {job?.type === 'restore' && job.status === 'completed' && (
+        <p className="mt-2 text-[11px] font-semibold opacity-80">Server is restarting. Sign in again with the restored admin account.</p>
+      )}
     </div>
   );
 }
@@ -78,6 +82,7 @@ export default function AdminBackup() {
   const [saving, setSaving] = React.useState(false);
   const [error, setError] = React.useState('');
   const [saved, setSaved] = React.useState(false);
+  const redirectAfterRestore = React.useRef<number | null>(null);
 
   const loadOverview = React.useCallback(async () => {
     setLoading(true);
@@ -102,18 +107,40 @@ export default function AdminBackup() {
     if (!job || !['queued', 'running'].includes(job.status)) return undefined;
     const timer = window.setInterval(async () => {
       try {
-        const next = await fetchBackupJob(job.id);
+        const next = await fetchBackupJob(job.id, job.pollToken);
         setJob(next);
         if (['completed', 'failed'].includes(next.status)) {
           setUploadProgress(undefined);
+          if (next.type === 'restore' && next.status === 'completed') {
+            setSaved(true);
+            if (!redirectAfterRestore.current) {
+              redirectAfterRestore.current = window.setTimeout(() => {
+                clearAuthToken();
+                window.location.assign('/login');
+              }, 5500);
+            }
+            return;
+          }
           loadOverview();
         }
       } catch (err) {
+        if (job.type === 'restore') {
+          setJob((current) => current ? {
+            ...current,
+            progress: Math.max(current.progress || 0, 92),
+            message: 'Server is applying the import or restarting'
+          } : current);
+          return;
+        }
         setError(err instanceof Error ? err.message : 'Unable to read job progress');
       }
     }, 1500);
     return () => window.clearInterval(timer);
   }, [job, loadOverview]);
+
+  React.useEffect(() => () => {
+    if (redirectAfterRestore.current) window.clearTimeout(redirectAfterRestore.current);
+  }, []);
 
   const createBackup = async () => {
     setError('');

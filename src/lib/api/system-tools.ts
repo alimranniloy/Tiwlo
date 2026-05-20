@@ -9,6 +9,7 @@ export type SystemJob = {
   progress: number;
   message?: string;
   error?: string;
+  pollToken?: string;
   fileName?: string;
   fileSize?: number;
   downloadUrl?: string;
@@ -39,16 +40,26 @@ export type BackupFile = {
 
 async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
   const token = getAuthToken();
-  const response = await fetch(`${apiBase()}${path}`, {
-    ...init,
-    headers: {
-      ...(init.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(init.headers || {})
-    }
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${apiBase()}${path}`, {
+      ...init,
+      headers: {
+        ...(init.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(init.headers || {})
+      }
+    });
+  } catch {
+    throw new Error('Backup API connection failed. Open Tiwlo through the public proxy and make sure the backend is running.');
+  }
   const text = await response.text();
-  const json = text ? JSON.parse(text) : {};
+  let json: any = {};
+  try {
+    json = text ? JSON.parse(text) : {};
+  } catch {
+    json = {};
+  }
   if (!response.ok) {
     throw new Error(json?.error || text || `Request failed: ${response.status}`);
   }
@@ -79,8 +90,10 @@ export async function startBackup(uploadToDrive = false): Promise<SystemJob> {
   return result.job;
 }
 
-export async function fetchBackupJob(id: string): Promise<SystemJob> {
-  const result = await apiFetch<{ job: SystemJob }>(`/admin/backups/jobs/${id}`);
+export async function fetchBackupJob(id: string, pollToken?: string): Promise<SystemJob> {
+  const result = await apiFetch<{ job: SystemJob }>(`/admin/backups/jobs/${id}`, {
+    headers: pollToken ? { 'X-Tiwlo-Job-Token': pollToken } : {}
+  });
   return result.job;
 }
 
@@ -114,6 +127,7 @@ export async function importBackup(file: File, onProgress?: (progress: number) =
       if (event.lengthComputable) onProgress?.(Math.round((event.loaded / event.total) * 100));
     };
     xhr.onerror = () => reject(new Error('Upload failed'));
+    xhr.ontimeout = () => reject(new Error('Upload timed out'));
     xhr.onload = () => {
       try {
         const json = JSON.parse(xhr.responseText || '{}');

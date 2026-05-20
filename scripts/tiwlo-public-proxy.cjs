@@ -9,6 +9,7 @@ const PORTS = (process.env.TIWLO_PROXY_PORTS || '3000,8787')
 
 const backendPrefixes = [
   '/graphql',
+  '/admin',
   '/health',
   '/webhooks/',
   '/automation/',
@@ -21,7 +22,7 @@ function targetFor(path) {
 }
 
 function createServer() {
-  return http.createServer((req, res) => {
+  const server = http.createServer((req, res) => {
     const path = req.url || '/';
     const targetUrl = new URL(path, targetFor(path));
     const headers = { ...req.headers, host: targetUrl.host };
@@ -38,6 +39,10 @@ function createServer() {
 
     req.pipe(proxyReq);
   });
+  server.requestTimeout = 0;
+  server.headersTimeout = 0;
+  server.timeout = 0;
+  return server;
 }
 
 for (const port of PORTS) {

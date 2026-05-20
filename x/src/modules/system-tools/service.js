@@ -18,6 +18,7 @@ const backupJobs = new Map();
 const sslJobs = new Map();
 let autoTimer = null;
 let autoRunning = false;
+let restartScheduled = false;
 
 const BACKUP_KEY = 'backupAutomation';
 const LAST_AUTO_BACKUP_KEY = 'backupAutomationState';
@@ -45,6 +46,7 @@ const createJob = (map, type, extra = {}) => {
     progress: 0,
     message: 'Queued',
     log: [],
+    pollToken: randomUUID(),
     createdAt: nowIso(),
     updatedAt: nowIso(),
     ...extra
@@ -67,6 +69,12 @@ const publicJob = (job) => ({
   ...job,
   log: job.log.slice(-20)
 });
+
+const envFlag = (name, defaultValue = true) => {
+  const value = process.env[name];
+  if (value === undefined) return defaultValue;
+  return !['0', 'false', 'no', 'off'].includes(String(value).trim().toLowerCase());
+};
 
 const ensureDir = (path) => mkdir(path, { recursive: true });
 
@@ -172,6 +180,57 @@ const runCommand = (command, args, options = {}, onOutput = () => {}) => new Pro
     rejectRun(error);
   });
 });
+
+const shellCommand = (command) => process.platform === 'win32'
+  ? { command: 'cmd.exe', args: ['/d', '/s', '/c', command] }
+  : { command: '/bin/sh', args: ['-lc', command] };
+
+const scheduleServerRestart = ({ rootDir, reason = 'restore completed', delayMs = 2500 } = {}) => {
+  if (restartScheduled || !envFlag('TIWLO_RESTART_AFTER_RESTORE', true)) return;
+  restartScheduled = true;
+  const restartCommand = String(process.env.TIWLO_RESTART_COMMAND || '').trim();
+  const supervised = Boolean(process.env.pm_id || process.env.PM2_HOME || process.env.INVOCATION_ID);
+
+  setTimeout(() => {
+    try {
+      if (restartCommand) {
+        const shell = shellCommand(restartCommand);
+        const child = spawn(shell.command, shell.args, {
+          cwd: rootDir || process.cwd(),
+          detached: true,
+          stdio: 'ignore',
+          env: process.env
+        });
+        child.unref();
+      } else if (!supervised) {
+        const nodeArgs = process.argv.slice(1);
+        const bootstrap = `
+          const { spawn } = require('node:child_process');
+          setTimeout(() => {
+            const child = spawn(process.execPath, ${JSON.stringify(nodeArgs)}, {
+              cwd: ${JSON.stringify(process.cwd())},
+              env: process.env,
+              detached: true,
+              stdio: 'ignore'
+            });
+            child.unref();
+          }, ${Number(process.env.TIWLO_RESTART_DELAY_MS || 2500)});
+        `;
+        const child = spawn(process.execPath, ['-e', bootstrap], {
+          detached: true,
+          stdio: 'ignore',
+          env: process.env
+        });
+        child.unref();
+      }
+    } catch (error) {
+      console.error('Tiwlo restart scheduling failed:', error.message || error);
+    } finally {
+      console.log(`Tiwlo backend restarting after ${reason}.`);
+      process.exit(0);
+    }
+  }, delayMs).unref?.();
+};
 
 const localToolCandidates = (rootDir, name) => {
   const exe = process.platform === 'win32' ? `${name}.exe` : name;
@@ -395,10 +454,11 @@ const extractZip = async (zipPath, targetDir) => {
 const restoreUploads = async ({ rootDir, extractedDir, job }) => {
   const paths = rootPaths(rootDir);
   const extractedUploads = join(extractedDir, 'public', 'uploads');
-  if (!(await exists(extractedUploads))) return;
+  if (!(await exists(extractedUploads))) return null;
   await ensureDir(paths.restoreDir);
+  let safetyDir = null;
   if (await exists(paths.uploadsDir)) {
-    const safetyDir = join(paths.restoreDir, `uploads-before-${Date.now()}`);
+    safetyDir = join(paths.restoreDir, `uploads-before-${Date.now()}`);
     updateJob(job, { progress: 72, message: 'Saving current uploads before restore' });
     await cp(paths.uploadsDir, safetyDir, { recursive: true, force: true });
     await rm(paths.uploadsDir, { recursive: true, force: true });
@@ -406,11 +466,61 @@ const restoreUploads = async ({ rootDir, extractedDir, job }) => {
   updateJob(job, { progress: 78, message: 'Restoring uploaded files' });
   await ensureDir(dirname(paths.uploadsDir));
   await cp(extractedUploads, paths.uploadsDir, { recursive: true, force: true });
+  return safetyDir;
+};
+
+const restoreUploadsSafetyCopy = async ({ rootDir, safetyDir }) => {
+  if (!safetyDir || !(await exists(safetyDir))) return;
+  const paths = rootPaths(rootDir);
+  await rm(paths.uploadsDir, { recursive: true, force: true }).catch(() => {});
+  await ensureDir(dirname(paths.uploadsDir));
+  await cp(safetyDir, paths.uploadsDir, { recursive: true, force: true });
+};
+
+const dumpDatabaseSafetyCopy = async ({ rootDir, db, job }) => {
+  const paths = rootPaths(rootDir);
+  const pgDump = await findExecutable(rootDir, 'pg_dump');
+  await ensureDir(paths.restoreDir);
+  const dumpPath = join(paths.restoreDir, `database-before-${Date.now()}.sql`);
+  updateJob(job, { progress: 28, message: 'Saving current PostgreSQL data before restore' });
+  await runExecFile(pgDump, [
+    ...pgArgs(db),
+    '--no-owner',
+    '--no-privileges',
+    '--clean',
+    '--if-exists',
+    '--file',
+    dumpPath
+  ], { env: pgEnv(db) });
+  return dumpPath;
+};
+
+const restoreDatabaseFromSql = async ({ psql, db, sqlPath }) => {
+  await runExecFile(psql, [
+    ...pgArgs(db),
+    '-v',
+    'ON_ERROR_STOP=1',
+    '-c',
+    'DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;'
+  ], { env: pgEnv(db) });
+
+  await runExecFile(psql, [
+    ...pgArgs(db),
+    '-v',
+    'ON_ERROR_STOP=1',
+    '-f',
+    sqlPath
+  ], { env: pgEnv(db) });
 };
 
 const runRestore = async ({ prisma, rootDir, job, uploadPath, actor }) => {
   const paths = rootPaths(rootDir);
   const workDir = join(paths.tempDir, `restore-${job.id}`);
+  let db = null;
+  let psql = null;
+  let safetyDumpPath = null;
+  let uploadSafetyDir = null;
+  let restoreStarted = false;
   try {
     updateJob(job, { status: 'running', progress: 8, message: 'Reading backup zip' });
     await ensureDir(paths.tempDir);
@@ -418,29 +528,18 @@ const runRestore = async ({ prisma, rootDir, job, uploadPath, actor }) => {
     const sqlPath = join(workDir, 'database', 'database.sql');
     if (!(await exists(sqlPath))) throw new Error('database/database.sql was not found in the backup.');
 
-    const db = parseDatabaseUrl();
-    const psql = await findExecutable(rootDir, 'psql');
+    db = parseDatabaseUrl();
+    psql = await findExecutable(rootDir, 'psql');
+    safetyDumpPath = await dumpDatabaseSafetyCopy({ rootDir, db, job });
     updateJob(job, { progress: 35, message: 'Preparing PostgreSQL restore' });
     await prisma.$disconnect().catch(() => {});
-    await runExecFile(psql, [
-      ...pgArgs(db),
-      '-v',
-      'ON_ERROR_STOP=1',
-      '-c',
-      'DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;'
-    ], { env: pgEnv(db) });
 
     updateJob(job, { progress: 48, message: 'Importing PostgreSQL data' });
-    await runExecFile(psql, [
-      ...pgArgs(db),
-      '-v',
-      'ON_ERROR_STOP=1',
-      '-f',
-      sqlPath
-    ], { env: pgEnv(db) });
+    restoreStarted = true;
+    await restoreDatabaseFromSql({ psql, db, sqlPath });
     await prisma.$connect().catch(() => {});
 
-    await restoreUploads({ rootDir, extractedDir: workDir, job });
+    uploadSafetyDir = await restoreUploads({ rootDir, extractedDir: workDir, job });
 
     await prisma.auditLog.create({
       data: {
@@ -452,14 +551,41 @@ const runRestore = async ({ prisma, rootDir, job, uploadPath, actor }) => {
       }
     }).catch(() => {});
 
-    updateJob(job, { status: 'completed', progress: 100, message: 'Import completed' });
+    updateJob(job, { status: 'completed', progress: 100, message: 'Import completed. Restarting server' });
+    scheduleServerRestart({ rootDir, reason: 'backup import completed' });
   } catch (error) {
     await prisma.$connect().catch(() => {});
+    if (restoreStarted && safetyDumpPath && psql && db && await exists(safetyDumpPath)) {
+      try {
+        updateJob(job, { progress: Math.max(job.progress, 55), message: 'Restore failed. Rolling back PostgreSQL data' });
+        await prisma.$disconnect().catch(() => {});
+        await restoreDatabaseFromSql({ psql, db, sqlPath: safetyDumpPath });
+        await prisma.$connect().catch(() => {});
+        await restoreUploadsSafetyCopy({ rootDir, safetyDir: uploadSafetyDir });
+      } catch (rollbackError) {
+        await prisma.$connect().catch(() => {});
+        updateJob(job, { message: `Rollback failed: ${rollbackError.message || rollbackError}` });
+      }
+    }
     updateJob(job, { status: 'failed', progress: Math.max(job.progress, 1), message: error.message || 'Import failed', error: error.message || String(error) });
   } finally {
     await rm(workDir, { recursive: true, force: true }).catch(() => {});
     await rm(uploadPath, { force: true }).catch(() => {});
   }
+};
+
+const pollTokenFromRequest = (req) => String(req.headers['x-tiwlo-job-token'] || req.query?.token || '');
+
+const isJobPollAuthorized = (req, job) => Boolean(job?.pollToken && pollTokenFromRequest(req) === job.pollToken);
+
+const sendJobStatus = (map, req, res) => {
+  const job = map.get(req.params.id);
+  if (!job) {
+    res.status(404).json({ error: 'Job not found' });
+    return null;
+  }
+  res.json({ job: publicJob(job) });
+  return job;
 };
 
 const knownDomains = async (prisma) => {
@@ -589,14 +715,27 @@ export const registerSystemToolRoutes = (app, { prisma, userFromRequest, rootDir
   const paths = rootPaths(rootDir);
   const upload = multer({ dest: join(paths.tempDir, 'uploads'), limits: { fileSize: 1024 * 1024 * 1024 * 4 } });
 
-  router.use(async (req, res, next) => {
-    const user = await userFromRequest(req);
-    if (!user || !ADMIN_ROLES.has(user.role)) {
-      res.status(user ? 403 : 401).json({ error: user ? 'Admin access required' : 'Authentication required' });
+  router.get('/backups/jobs/:id', (req, res, next) => {
+    const job = backupJobs.get(req.params.id);
+    if (job && isJobPollAuthorized(req, job)) {
+      res.json({ job: publicJob(job) });
       return;
     }
-    req.tiwloUser = user;
     next();
+  });
+
+  router.use(async (req, res, next) => {
+    try {
+      const user = await userFromRequest(req);
+      if (!user || !ADMIN_ROLES.has(user.role)) {
+        res.status(user ? 403 : 401).json({ error: user ? 'Admin access required' : 'Authentication required' });
+        return;
+      }
+      req.tiwloUser = user;
+      next();
+    } catch (error) {
+      res.status(503).json({ error: error.message || 'Authentication is temporarily unavailable' });
+    }
   });
 
   router.get('/backups', async (_req, res) => {
@@ -631,12 +770,7 @@ export const registerSystemToolRoutes = (app, { prisma, userFromRequest, rootDir
   });
 
   router.get('/backups/jobs/:id', (req, res) => {
-    const job = backupJobs.get(req.params.id);
-    if (!job) {
-      res.status(404).json({ error: 'Backup job not found' });
-      return;
-    }
-    res.json({ job: publicJob(job) });
+    sendJobStatus(backupJobs, req, res);
   });
 
   router.get('/backups/download/:name', async (req, res) => {
