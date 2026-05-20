@@ -24,6 +24,9 @@ NODE_URL="https://nodejs.org/dist/v${NODE_VERSION}/${NODE_TARBALL}"
 
 BACKEND_PORT="${BACKEND_PORT:-4000}"
 FRONTEND_PORT="${FRONTEND_PORT:-3000}"
+FRONTEND_GRAPHQL_URL="${FRONTEND_GRAPHQL_URL:-http://localhost:${BACKEND_PORT}/graphql}"
+FRONTEND_ORIGIN="${FRONTEND_ORIGIN:-http://localhost:${FRONTEND_PORT}}"
+API_BASE_URL="${API_BASE_URL:-http://localhost:${BACKEND_PORT}}"
 DATABASE_NAME="${DATABASE_NAME:-tiwlo}"
 DATABASE_USER="${DATABASE_USER:-postgres}"
 DATABASE_PASSWORD="${DATABASE_PASSWORD:-postgres}"
@@ -224,11 +227,13 @@ set_env_value() {
 ensure_env_files() {
   local pg_port="$1"
   local database_url="postgresql://${DATABASE_USER}:${DATABASE_PASSWORD}@127.0.0.1:${pg_port}/${DATABASE_NAME}?schema=public"
-  set_env_value "$ROOT/.env" VITE_GRAPHQL_URL "http://localhost:${BACKEND_PORT}/graphql"
+  set_env_value "$ROOT/.env" VITE_GRAPHQL_URL "$FRONTEND_GRAPHQL_URL"
+  set_env_value "$ROOT/.env" APP_URL "$FRONTEND_ORIGIN"
   set_env_value "$ROOT/x/.env" DATABASE_URL "$database_url"
   set_env_value "$ROOT/x/.env" JWT_SECRET "dev-local-change-before-production"
   set_env_value "$ROOT/x/.env" PORT "$BACKEND_PORT"
-  set_env_value "$ROOT/x/.env" FRONTEND_ORIGIN "http://localhost:${FRONTEND_PORT}"
+  set_env_value "$ROOT/x/.env" FRONTEND_ORIGIN "$FRONTEND_ORIGIN"
+  set_env_value "$ROOT/x/.env" API_BASE_URL "$API_BASE_URL"
 }
 
 run_npm() {
