@@ -19,6 +19,7 @@ import {
 import { runCreditAutomationJob } from './modules/billing/creditAutomation.js';
 import { initializeAiModelRuntime, streamAiModelChat } from './modules/ai-model/service.js';
 import { streamSupportAiReply } from './modules/support/service.js';
+import { registerSystemToolRoutes, startBackupAutomation } from './modules/system-tools/service.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -285,6 +286,12 @@ app.post('/payments/bkash/callback', async (req, res) => {
   }
 });
 
+registerSystemToolRoutes(app, {
+  prisma,
+  userFromRequest,
+  rootDir: join(__dirname, '../..')
+});
+
 app.use('/graphql', expressMiddleware(server, {
   context: async ({ req }) => {
     const [user, storeCustomer] = await Promise.all([
@@ -303,6 +310,7 @@ app.use('/graphql', expressMiddleware(server, {
 
 app.listen(port, () => {
   console.log(`Tiwlo X GraphQL API ready at http://localhost:${port}/graphql`);
+  startBackupAutomation({ prisma, rootDir: join(__dirname, '../..') });
   initializeAiModelRuntime({ prisma }).catch((error) => {
     console.error('AI model auto-start failed:', error.message || error);
   });

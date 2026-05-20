@@ -264,13 +264,8 @@ function Run-Npm($Npm, $Arguments, $WorkingDirectory) {
 }
 
 function Ensure-Dependencies($Npm) {
-  if (-not (Test-Path (Join-Path $Root 'node_modules'))) {
-    Run-Npm $Npm @('install') $Root
-  }
-
-  if (-not (Test-Path (Join-Path $Root 'x\node_modules'))) {
-    Run-Npm $Npm @('install') (Join-Path $Root 'x')
-  }
+  Run-Npm $Npm @('install') $Root
+  Run-Npm $Npm @('install') (Join-Path $Root 'x')
 }
 
 function Run-BackendDbSetup($Npm) {

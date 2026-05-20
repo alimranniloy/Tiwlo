@@ -242,8 +242,8 @@ run_npm() {
 }
 
 ensure_dependencies() {
-  [ -d "$ROOT/node_modules" ] || run_npm install
-  [ -d "$ROOT/x/node_modules" ] || run_npm --prefix x install
+  run_npm install
+  run_npm --prefix x install
 }
 
 wait_http() {

@@ -57,6 +57,8 @@ import AdminResourcesPage from './pages/management/AdminResourcesPage';
 import AdminSectionRecords from './pages/management/AdminSectionRecords';
 import AdminServiceStatistics from './pages/management/AdminServiceStatistics';
 import AdminStoreProducts from './pages/management/AdminStoreProducts';
+import AdminBackup from './pages/management/AdminBackup';
+import AdminSsl from './pages/management/AdminSsl';
 import EcommerceLayout from './pages/management/EcommerceLayout';
 import EcommerceCreateStore from './pages/management/ecommerce/EcommerceCreateStore';
 import EcommerceControlPage from './pages/management/ecommerce/EcommerceControlPage';
@@ -178,6 +180,8 @@ function AppContent({
                 <Route path="/management/core" element={<AdminCore />} />
                 <Route path="/management/ai-model" element={<AdminAiModel />} />
                 <Route path="/management/settings" element={<AdminCore />} />
+                <Route path="/management/backup" element={<AdminBackup />} />
+                <Route path="/management/ssl" element={<AdminSsl />} />
                 <Route path="/management/support" element={<AdminSupport />} />
                 <Route path="/management/taxes" element={<AdminSectionRecords sectionKey="taxes" />} />
                 <Route path="/management/currencies" element={<AdminCurrencies />} />

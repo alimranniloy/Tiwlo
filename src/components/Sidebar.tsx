@@ -31,7 +31,8 @@ import {
   Puzzle,
   Lock,
   Settings,
-  Coins
+  Coins,
+  Archive
 } from 'lucide-react';
 import { useState } from 'react';
 import { User } from '../types';
@@ -101,6 +102,8 @@ export default function Sidebar({ user, isOpen, setIsOpen, onLogout }: SidebarPr
           { name: 'Automation Logs', icon: Terminal, path: '/management/logs' },
           { name: 'API Management', icon: Zap, path: '/management/api' },
           { name: 'Security Policy', icon: Lock, path: '/management/security' },
+          { name: 'Backup', icon: Archive, path: '/management/backup' },
+          { name: 'SSL', icon: ShieldCheck, path: '/management/ssl' },
           { name: 'System Settings', icon: Settings, path: '/management/settings' },
         ]
       }
@@ -150,6 +153,10 @@ export default function Sidebar({ user, isOpen, setIsOpen, onLogout }: SidebarPr
         { name: 'Documentation', icon: Book, path: '/documentation' },
         { name: 'Marketplace', icon: ShoppingBag, path: '/marketplace' },
         { name: 'API', icon: Terminal, path: isAdminUser ? '/management/api' : '/api' },
+        ...(isAdminUser ? [
+          { name: 'Backup', icon: Archive, path: '/management/backup' },
+          { name: 'SSL', icon: Lock, path: '/management/ssl' },
+        ] : []),
         { name: 'App Platform', icon: LayoutGrid, path: '/apps' },
         { name: 'Functions', icon: Zap, path: '/functions' },
       ]
