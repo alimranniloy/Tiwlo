@@ -1,0 +1,879 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String          @id @default(cuid())
+  email         String          @unique
+  passwordHash  String?
+  name          String
+  avatar        String?
+  credits       Float           @default(0)
+  role          String          @default("user")
+  status        String          @default("active")
+  phone         String?
+  primaryRegion String?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  resources     CloudResource[]
+  domains       Domain[]
+  invoices      Invoice[]
+  supportTickets SupportTicket[]
+  assignedSupportTickets SupportTicket[] @relation("SupportTicketAssignee")
+  supportTicketMessages SupportTicketMessage[]
+  liveChatSessions LiveChatSession[]
+  assignedLiveChatSessions LiveChatSession[] @relation("LiveChatAssignee")
+  liveChatMessages LiveChatMessage[]
+  stores        Store[]
+  ispSites      IspSite[]
+  auditLogs     AuditLog[]
+  apiCredentials ApiCredential[]
+  roleLinks     UserRole[]
+  notifications Notification[]
+  tiwloPayProfile TiwloPayProfile?
+  tiwloPayLinks TiwloPayLink[]
+  tiwloPayTransactions TiwloPayTransaction[]
+  tiwloPayWithdrawals TiwloPayWithdrawal[]
+}
+
+model Role {
+  id          String     @id @default(cuid())
+  key         String     @unique
+  name        String
+  description String?
+  permissions Json
+  isSystem    Boolean    @default(false)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  users       UserRole[]
+}
+
+model UserRole {
+  id        String   @id @default(cuid())
+  userId    String
+  roleId    String
+  scope     String   @default("global")
+  scopeId   String   @default("")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      Role     @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, roleId, scope, scopeId])
+  @@index([scope, scopeId])
+}
+
+model PermissionGroup {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  name        String
+  description String?
+  permissions Json
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model CloudResource {
+  id          String   @id @default(cuid())
+  ownerId     String
+  owner       User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  type        String
+  name        String
+  ip          String?
+  status      String   @default("active")
+  region      String
+  specs       String
+  image       String?
+  plan        String?
+  cpu         String?
+  ram         String?
+  disk        String?
+  monthlyCost Float    @default(0)
+  metadata    Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([ownerId, type])
+}
+
+model Domain {
+  id        String   @id @default(cuid())
+  ownerId   String
+  owner     User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  name      String   @unique
+  dns       Json
+  status    String   @default("active")
+  records   Json?
+  autoRenew Boolean  @default(true)
+  expiresAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  dnsRecords DnsRecord[]
+}
+
+model DnsRecord {
+  id        String   @id @default(cuid())
+  domainId  String
+  domain    Domain   @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  type      String
+  name      String
+  value     String
+  ttl       Int      @default(300)
+  priority  Int?
+  status    String   @default("active")
+  metadata  Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([domainId, type])
+}
+
+model Plan {
+  id          String   @id @default(cuid())
+  code        String
+  product     String
+  name        String
+  price       Float
+  interval    String   @default("month")
+  features    Json
+  limits      Json?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  subscriptions Subscription[]
+  stores        Store[]
+  ispSites      IspSite[]
+
+  @@unique([product, code])
+}
+
+model Subscription {
+  id             String   @id @default(cuid())
+  ownerId         String
+  planId          String
+  plan            Plan     @relation(fields: [planId], references: [id])
+  scope           String
+  scopeId         String?
+  status          String   @default("active")
+  currentPeriodEnd DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model Invoice {
+  id        String    @id @default(cuid())
+  ownerId   String
+  owner     User      @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  number    String    @unique
+  amount    Float
+  currency  String    @default("USD")
+  status    String    @default("open")
+  scope     String    @default("cloud")
+  scopeId   String?
+  items     Json
+  dueDate   DateTime?
+  paidAt    DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  payments Payment[]
+}
+
+model Payment {
+  id        String   @id @default(cuid())
+  invoiceId String
+  invoice   Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  amount    Float
+  provider  String
+  reference String?
+  status    String   @default("succeeded")
+  createdAt DateTime @default(now())
+}
+
+model SupportTicket {
+  id           String   @id @default(cuid())
+  ownerId      String
+  owner        User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  assignedToId String?
+  assignedTo   User?    @relation("SupportTicketAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+  subject      String
+  category     String
+  priority     String
+  status       String   @default("open")
+  message      String
+  metadata     Json?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  messages     SupportTicketMessage[]
+
+  @@index([ownerId, status])
+  @@index([assignedToId, status])
+}
+
+model SupportTicketMessage {
+  id          String   @id @default(cuid())
+  ticketId    String
+  ticket      SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  authorId    String?
+  author      User?    @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  authorName  String
+  authorRole  String
+  body        String
+  visibility  String   @default("public")
+  attachments Json?
+  createdAt   DateTime @default(now())
+
+  @@index([ticketId, createdAt])
+}
+
+model LiveChatSession {
+  id            String   @id @default(cuid())
+  ownerId       String
+  owner         User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  assignedToId  String?
+  assignedTo    User?    @relation("LiveChatAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+  status        String   @default("open")
+  channel       String   @default("widget")
+  subject       String?
+  priority      String   @default("normal")
+  lastMessageAt DateTime @default(now())
+  metadata      Json?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  messages      LiveChatMessage[]
+
+  @@index([ownerId, status])
+  @@index([assignedToId, status])
+  @@index([status, lastMessageAt])
+}
+
+model LiveChatMessage {
+  id          String   @id @default(cuid())
+  sessionId   String
+  session     LiveChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  authorId    String?
+  author      User?    @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  authorName  String
+  senderRole  String
+  body        String
+  attachments Json?
+  createdAt   DateTime @default(now())
+
+  @@index([sessionId, createdAt])
+}
+
+model SystemSetting {
+  id        String   @id @default(cuid())
+  scope     String
+  scopeId   String   @default("")
+  key       String
+  value     Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([scope, scopeId, key])
+}
+
+model AdminModule {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  group       String
+  label       String
+  path        String?
+  status      String   @default("active")
+  description String?
+  config      Json?
+  metrics     Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([group, status])
+}
+
+model PaymentGateway {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  name        String
+  provider    String
+  status      String   @default("disabled")
+  mode        String   @default("test")
+  credentials Json?
+  settings    Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model TiwloPayProfile {
+  id                  String                 @id @default(cuid())
+  ownerId             String                 @unique
+  owner               User                   @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  displayName         String
+  companyName         String?
+  supportEmail        String?
+  statementDescriptor String?
+  apiKey              String                 @unique
+  secretHash          String
+  secretPreview       String
+  status              String                 @default("inactive")
+  settings            Json?
+  createdAt           DateTime               @default(now())
+  updatedAt           DateTime               @updatedAt
+
+  links               TiwloPayLink[]
+  transactions        TiwloPayTransaction[]
+  withdrawals         TiwloPayWithdrawal[]
+
+  @@index([status])
+}
+
+model TiwloPayLink {
+  id               String                 @id @default(cuid())
+  profileId        String
+  profile          TiwloPayProfile        @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  ownerId          String
+  owner            User                   @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  slug             String                 @unique
+  invoiceId        String
+  title            String
+  description      String?
+  amount           Float
+  currency         String                 @default("USD")
+  customerName     String?
+  customerEmail    String?
+  status           String                 @default("unpaid")
+  expiresAt        DateTime?
+  allowedProviders Json?
+  metadata         Json?
+  paidAt           DateTime?
+  createdAt        DateTime               @default(now())
+  updatedAt        DateTime               @updatedAt
+
+  transactions     TiwloPayTransaction[]
+
+  @@index([ownerId, status])
+  @@index([profileId, status])
+}
+
+model TiwloPayTransaction {
+  id            String           @id @default(cuid())
+  profileId     String
+  profile       TiwloPayProfile  @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  linkId        String?
+  link          TiwloPayLink?    @relation(fields: [linkId], references: [id], onDelete: SetNull)
+  ownerId       String
+  owner         User             @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  amount        Float
+  fee           Float            @default(0)
+  netAmount     Float            @default(0)
+  currency      String           @default("USD")
+  provider      String
+  status        String           @default("succeeded")
+  reference     String?
+  customerName  String?
+  customerEmail String?
+  metadata      Json?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  @@index([ownerId, status])
+  @@index([profileId, createdAt])
+  @@index([provider, status])
+}
+
+model TiwloPayWithdrawal {
+  id          String           @id @default(cuid())
+  profileId   String
+  profile     TiwloPayProfile  @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  ownerId     String
+  owner       User             @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  amount      Float
+  currency    String           @default("USD")
+  method      String
+  destination Json
+  status      String           @default("pending")
+  requestedAt DateTime         @default(now())
+  processedAt DateTime?
+  metadata    Json?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  @@index([ownerId, status])
+  @@index([profileId, status])
+}
+
+model Integration {
+  id          String    @id @default(cuid())
+  key         String    @unique
+  group       String
+  name        String
+  status      String    @default("inactive")
+  config      Json?
+  health      Json?
+  lastSyncAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([group, status])
+}
+
+model ApiCredential {
+  id        String   @id @default(cuid())
+  ownerId   String?
+  owner     User?    @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  name      String
+  keyHash   String
+  scopes    Json
+  status    String   @default("active")
+  lastUsedAt DateTime?
+  expiresAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Notification {
+  id        String    @id @default(cuid())
+  ownerId   String?
+  owner     User?     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  scope     String    @default("platform")
+  scopeId   String    @default("")
+  type      String    @default("info")
+  title     String
+  message   String
+  status    String    @default("unread")
+  metadata  Json?
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([ownerId, status])
+  @@index([scope, scopeId])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  actorId   String?
+  actor     User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  action    String
+  resource  String
+  resourceId String?
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  @@index([resource, resourceId])
+}
+
+model Store {
+  id          String          @id @default(cuid())
+  ownerId     String
+  owner       User            @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  planId      String?
+  plan        Plan?           @relation(fields: [planId], references: [id])
+  name        String
+  slug        String          @unique
+  category    String
+  status      String          @default("active")
+  domain      String?
+  customDomain String?
+  contactEmail String?
+  phone       String?
+  address     String?
+  currency    String          @default("USD")
+  region      String          @default("NYC-1")
+  settings    Json?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  products    StoreProduct[]
+  orders      StoreOrder[]
+  customers   StoreCustomer[]
+  themes      StoreTheme[]
+  plugins     StorePlugin[]
+}
+
+model StoreProduct {
+  id          String   @id @default(cuid())
+  storeId     String
+  store       Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  name        String
+  sku         String
+  description String?
+  category    String
+  price       Float
+  stock       Int      @default(0)
+  status      String   @default("active")
+  image       String?
+  metadata    Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([storeId, sku])
+}
+
+model StoreCustomer {
+  id        String   @id @default(cuid())
+  storeId   String
+  store     Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  name      String
+  email     String
+  passwordHash String?
+  phone     String?
+  status    String   @default("active")
+  tier      String   @default("standard")
+  address   Json?
+  points    Int      @default(0)
+  lastLoginAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  orders    StoreOrder[]
+
+  @@unique([storeId, email])
+}
+
+model StoreOrder {
+  id         String         @id @default(cuid())
+  storeId    String
+  store      Store          @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  customerId String?
+  customer   StoreCustomer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  number     String
+  status     String         @default("pending")
+  total      Float
+  currency   String         @default("USD")
+  items      Json
+  shipping   Json?
+  payment    Json?
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
+
+  @@unique([storeId, number])
+}
+
+model StoreTheme {
+  id        String   @id @default(cuid())
+  storeId   String
+  store     Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  name      String
+  key       String
+  status    String   @default("available")
+  settings  Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([storeId, key])
+}
+
+model StorePlugin {
+  id        String   @id @default(cuid())
+  storeId   String
+  store     Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  name      String
+  key       String
+  status    String   @default("inactive")
+  settings  Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([storeId, key])
+}
+
+model IspSite {
+  id          String       @id @default(cuid())
+  ownerId     String
+  owner       User         @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  planId      String?
+  plan        Plan?        @relation(fields: [planId], references: [id])
+  name        String
+  code        String       @unique
+  region      String
+  status      String       @default("healthy")
+  node        String
+  bandwidth   String
+  subscribers Int          @default(0)
+  settings    Json?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  clients     IspClient[]
+  routers     IspRouter[]
+  radiusServers RadiusServer[]
+  devices     NetworkDevice[]
+  invoices    IspInvoice[]
+}
+
+model IspPackage {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  speed       String
+  price       Float
+  billingCycle String  @default("month")
+  features    Json?
+  status      String   @default("active")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  clients     IspClient[]
+}
+
+model IspClient {
+  id        String     @id @default(cuid())
+  siteId    String
+  site      IspSite    @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  packageId String?
+  package   IspPackage? @relation(fields: [packageId], references: [id])
+  name      String
+  username  String     @unique
+  email     String?
+  phone     String?
+  address   String?
+  status    String     @default("active")
+  balance   Float      @default(0)
+  metadata  Json?
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+}
+
+model IspRouter {
+  id        String   @id @default(cuid())
+  siteId    String
+  site      IspSite  @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  name      String
+  ip        String
+  vendor    String   @default("MikroTik")
+  status    String   @default("online")
+  config    Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model RadiusServer {
+  id        String   @id @default(cuid())
+  siteId    String
+  site      IspSite  @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  name      String
+  host      String
+  secret    String
+  status    String   @default("online")
+  metadata  Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model NetworkDevice {
+  id        String   @id @default(cuid())
+  siteId    String
+  site      IspSite  @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  type      String
+  name      String
+  serial    String?
+  status    String   @default("online")
+  metadata  Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model IspInvoice {
+  id        String   @id @default(cuid())
+  siteId    String
+  site      IspSite  @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  number    String   @unique
+  clientName String
+  amount    Float
+  status    String   @default("open")
+  dueDate   DateTime?
+  items     Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model HostingComputeNode {
+  id             String   @id @default(cuid())
+  name           String
+  hostname       String
+  ip             String
+  panel          String   @default("whm")
+  port           Int      @default(2087)
+  username       String
+  apiToken       String?
+  accessHash     String?
+  nameservers    Json?
+  maxAccounts    Int      @default(0)
+  activeAccounts Int      @default(0)
+  status         String   @default("active")
+  monthlyCost    Float    @default(0)
+  location       String?
+  metadata       Json?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([panel, status])
+}
+
+model HostingProductGroup {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  description String?
+  sortOrder   Int      @default(0)
+  status      String   @default("active")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model HostingProduct {
+  id           String   @id @default(cuid())
+  groupId      String?
+  nodeId       String?
+  code         String   @unique
+  name         String
+  module       String   @default("whm")
+  accountType  String   @default("shared")
+  status       String   @default("active")
+  price        Float    @default(0)
+  setupFee     Float    @default(0)
+  interval     String   @default("month")
+  limits       Json
+  serverConfig Json?
+  welcomeEmail Json?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([groupId, module, status])
+}
+
+model HostingPackage {
+  id             String   @id @default(cuid())
+  productId      String?
+  nodeId         String?
+  name           String
+  whmPackageName String
+  accountType    String   @default("shared")
+  status         String   @default("active")
+  limits         Json
+  pricing        Json?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([productId, status])
+}
+
+model HostingProvisioningOrder {
+  id             String   @id @default(cuid())
+  ownerId        String?
+  productId      String?
+  packageId      String?
+  nodeId         String?
+  domain         String
+  hostname       String?
+  username       String
+  passwordSecret String?
+  module         String   @default("whm")
+  accountType    String   @default("shared")
+  status         String   @default("queued")
+  amount         Float    @default(0)
+  currency       String   @default("USD")
+  provisioning   Json?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([ownerId, status])
+  @@index([nodeId, status])
+}
+
+model DdosProtectionPolicy {
+  id                         String   @id @default(cuid())
+  enabled                    Boolean  @default(true)
+  mode                       String   @default("mitigate")
+  sensitivity                String   @default("balanced")
+  requestsPerSecondThreshold Int      @default(1200)
+  packetsPerSecondThreshold  Int      @default(20000)
+  burstWindowSeconds         Int      @default(60)
+  blockDurationSeconds       Int      @default(900)
+  challengeThreshold         Int      @default(600)
+  syncToConnectedServers     Boolean  @default(true)
+  protectHostingNodes        Boolean  @default(true)
+  protectCloudResources      Boolean  @default(true)
+  protectDomains             Boolean  @default(true)
+  protectEcommerceDomains    Boolean  @default(true)
+  automationMode             String   @default("audit")
+  metadata                   Json?
+  createdAt                  DateTime @default(now())
+  updatedAt                  DateTime @updatedAt
+}
+
+model DdosProtectedAsset {
+  id         String    @id @default(cuid())
+  resourceKey String  @unique
+  kind       String
+  resourceId String?
+  name       String
+  ip         String?
+  domain     String?
+  provider   String?
+  panel      String?
+  status     String    @default("active")
+  riskScore  Int       @default(0)
+  lastSyncAt DateTime?
+  metadata   Json?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([kind, status])
+  @@index([ip])
+  @@index([domain])
+}
+
+model DdosAttackEvent {
+  id                String    @id @default(cuid())
+  assetId           String?
+  assetKey          String?
+  assetName         String?
+  sourceIp          String
+  vector            String
+  severity          String
+  requestsPerSecond Int       @default(0)
+  packetsPerSecond  Int       @default(0)
+  confidence        Float     @default(0)
+  status            String    @default("observed")
+  blockedUntil      DateTime?
+  metadata          Json?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([assetId, status])
+  @@index([sourceIp, status])
+  @@index([createdAt])
+}
+
+model DdosBlockRule {
+  id               String    @id @default(cuid())
+  sourceIp         String
+  cidr             String?
+  scope            String    @default("global")
+  assetId          String?
+  assetKey         String?
+  reason           String
+  status           String    @default("active")
+  expiresAt        DateTime?
+  enforcementState String    @default("planned")
+  actionPlan       Json?
+  metadata         Json?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([sourceIp, status])
+  @@index([assetId, status])
+  @@index([expiresAt])
+}

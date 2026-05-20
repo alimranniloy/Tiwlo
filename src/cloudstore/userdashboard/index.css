@@ -1,0 +1,18 @@
+@import "tailwindcss";
+
+@theme {
+  --color-alibaba-orange: #FF6600;
+  --color-alibaba-orange-hover: #E55B00;
+  --color-alibaba-bg: #F4F4F4;
+  --color-alibaba-border: #E6E6E6;
+  --color-alibaba-text-main: #333333;
+  --color-alibaba-text-secondary: #666666;
+  --color-alibaba-text-muted: #999999;
+}
+
+@layer base {
+  body {
+    @apply text-alibaba-text-main font-sans;
+    background-color: var(--color-alibaba-bg);
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "name": "Eplaza E-commerce",
+  "description": "A high-fidelity premium e-commerce application styled after the Woodmart theme, branded as Eplaza.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

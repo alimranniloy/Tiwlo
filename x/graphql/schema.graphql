@@ -1,0 +1,1950 @@
+scalar JSON
+
+type User {
+  id: ID!
+  email: String!
+  name: String!
+  avatar: String
+  credits: Float
+  role: String!
+  status: String
+  phone: String
+  primaryRegion: String
+  createdAt: String
+  updatedAt: String
+}
+
+type Role {
+  id: ID!
+  key: String!
+  name: String!
+  description: String
+  permissions: JSON!
+  isSystem: Boolean!
+  createdAt: String
+  updatedAt: String
+}
+
+type UserRole {
+  id: ID!
+  userId: String!
+  roleId: String!
+  scope: String!
+  scopeId: String!
+  createdAt: String
+  updatedAt: String
+}
+
+type PermissionGroup {
+  id: ID!
+  key: String!
+  name: String!
+  description: String
+  permissions: JSON!
+  createdAt: String
+  updatedAt: String
+}
+
+type AuthPayload {
+  token: String!
+  user: User!
+}
+
+type DashboardSummary {
+  users: Int!
+  droplets: Int!
+  domains: Int!
+  stores: Int!
+  ispSites: Int!
+  invoices: Int!
+  openTickets: Int!
+  revenue: Float!
+}
+
+type EcommerceAdminSummary {
+  stores: Int!
+  merchants: Int!
+  products: Int!
+  orders: Int!
+  customers: Int!
+  revenue: Float!
+}
+
+type IspDashboardSummary {
+  sites: Int!
+  clients: Int!
+  routers: Int!
+  packages: Int!
+  invoices: Int!
+  revenue: Float!
+}
+
+type CloudResource {
+  id: ID!
+  ownerId: String!
+  type: String!
+  name: String!
+  ip: String
+  status: String!
+  region: String!
+  specs: String!
+  image: String
+  plan: String
+  cpu: String
+  ram: String
+  disk: String
+  monthlyCost: Float
+  metadata: JSON
+  createdAt: String
+  updatedAt: String
+}
+
+type Domain {
+  id: ID!
+  ownerId: String!
+  name: String!
+  dns: JSON!
+  status: String!
+  records: JSON
+  autoRenew: Boolean!
+  expiresAt: String
+  createdAt: String
+  updatedAt: String
+}
+
+type DnsRecord {
+  id: ID!
+  domainId: String!
+  type: String!
+  name: String!
+  value: String!
+  ttl: Int!
+  priority: Int
+  status: String!
+  metadata: JSON
+  createdAt: String
+  updatedAt: String
+}
+
+type Plan {
+  id: ID!
+  code: String!
+  product: String!
+  name: String!
+  price: Float!
+  interval: String!
+  features: JSON!
+  limits: JSON
+  isActive: Boolean!
+  createdAt: String
+  updatedAt: String
+}
+
+type Subscription {
+  id: ID!
+  ownerId: String!
+  planId: String!
+  scope: String!
+  scopeId: String
+  status: String!
+  currentPeriodEnd: String
+  createdAt: String
+  updatedAt: String
+}
+
+type Invoice {
+  id: ID!
+  ownerId: String!
+  number: String!
+  amount: Float!
+  currency: String!
+  status: String!
+  scope: String!
+  scopeId: String
+  items: JSON!
+  dueDate: String
+  paidAt: String
+  createdAt: String
+  updatedAt: String
+}
+
+type BillingOverview {
+  credits: Float!
+  monthlySpend: Float!
+  hourlySpend: Float!
+  accruedUsage: Float!
+  outstanding: Float!
+  dueAmount: Float!
+  projectedMonthly: Float!
+  usageLines: [BillingUsageLine!]!
+  invoices: [Invoice!]!
+}
+
+type BillingUsageLine {
+  resourceId: String!
+  name: String!
+  monthlyCost: Float!
+  hourlyRate: Float!
+  hours: Float!
+  amount: Float!
+}
+
+type CheckoutSession {
+  status: String!
+  provider: String!
+  paymentUrl: String
+  reference: String
+  message: String
+  creditBalance: Float
+  hourlyRate: Float
+  monthlyCost: Float
+  invoice: Invoice
+  resource: CloudResource
+}
+
+type CreditAutomationOwnerResult {
+  ownerId: String!
+  credits: Float!
+  action: String!
+  resourcesSuspended: Int!
+  resourcesResumed: Int!
+  storesSuspended: Int!
+  storesResumed: Int!
+  ispSitesSuspended: Int!
+  ispSitesResumed: Int!
+  networkNodesSuspended: Int!
+  networkNodesResumed: Int!
+}
+
+type CreditAutomationResult {
+  checkedAt: String!
+  mode: String!
+  owners: Int!
+  suspended: Int!
+  resumed: Int!
+  results: [CreditAutomationOwnerResult!]!
+}
+
+type GatewayTestResult {
+  key: String!
+  provider: String!
+  mode: String!
+  ok: Boolean!
+  endpoint: String
+  message: String!
+  credentials: JSON
+  checkedAt: String
+}
+
+type SupportTicket {
+  id: ID!
+  ownerId: String!
+  owner: User
+  assignedToId: String
+  assignedTo: User
+  subject: String!
+  category: String!
+  priority: String!
+  status: String!
+  message: String!
+  metadata: JSON
+  messages: [SupportTicketMessage!]!
+  createdAt: String
+  updatedAt: String
+}
+
+type SupportTicketMessage {
+  id: ID!
+  ticketId: String!
+  authorId: String
+  author: User
+  authorName: String!
+  authorRole: String!
+  body: String!
+  visibility: String!
+  attachments: JSON
+  createdAt: String
+}
+
+type LiveChatSession {
+  id: ID!
+  ownerId: String!
+  owner: User
+  assignedToId: String
+  assignedTo: User
+  status: String!
+  channel: String!
+  subject: String
+  priority: String!
+  lastMessageAt: String
+  metadata: JSON
+  messages: [LiveChatMessage!]!
+  createdAt: String
+  updatedAt: String
+}
+
+type LiveChatMessage {
+  id: ID!
+  sessionId: String!
+  authorId: String
+  author: User
+  authorName: String!
+  senderRole: String!
+  body: String!
+  attachments: JSON
+  createdAt: String
+}
+
+type SystemSetting {
+  id: ID!
+  scope: String!
+  scopeId: String
+  key: String!
+  value: JSON!
+  createdAt: String
+  updatedAt: String
+}
+
+type AuditLog {
+  id: ID!
+  actorId: String
+  action: String!
+  resource: String!
+  resourceId: String
+  metadata: JSON
+  createdAt: String
+}
+
+type AdminModule {
+  id: ID!
+  key: String!
+  group: String!
+  label: String!
+  path: String
+  status: String!
+  description: String
+  config: JSON
+  metrics: JSON
+  createdAt: String
+  updatedAt: String
+}
+
+type PaymentGateway {
+  id: ID!
+  key: String!
+  name: String!
+  provider: String!
+  status: String!
+  mode: String!
+  credentials: JSON
+  settings: JSON
+  createdAt: String
+  updatedAt: String
+}
+
+type TiwloPayProfile {
+  id: ID!
+  ownerId: String!
+  owner: User
+  displayName: String!
+  companyName: String
+  supportEmail: String
+  statementDescriptor: String
+  apiKey: String!
+  secretPreview: String!
+  status: String!
+  settings: JSON
+  createdAt: String
+  updatedAt: String
+}
+
+type TiwloPayLink {
+  id: ID!
+  profileId: String!
+  ownerId: String!
+  slug: String!
+  invoiceId: String!
+  title: String!
+  description: String
+  amount: Float!
+  currency: String!
+  customerName: String
+  customerEmail: String
+  status: String!
+  expiresAt: String
+  allowedProviders: JSON
+  metadata: JSON
+  publicUrl: String
+  paidAt: String
+  createdAt: String
+  updatedAt: String
+}
+
+type TiwloPayTransaction {
+  id: ID!
+  profileId: String!
+  linkId: String
+  link: TiwloPayLink
+  ownerId: String!
+  amount: Float!
+  fee: Float!
+  netAmount: Float!
+  currency: String!
+  provider: String!
+  status: String!
+  reference: String
+  customerName: String
+  customerEmail: String
+  metadata: JSON
+  createdAt: String
+  updatedAt: String
+}
+
+type TiwloPayWithdrawal {
+  id: ID!
+  profileId: String!
+  ownerId: String!
+  amount: Float!
+  currency: String!
+  method: String!
+  destination: JSON!
+  status: String!
+  requestedAt: String
+  processedAt: String
+  metadata: JSON
+  createdAt: String
+  updatedAt: String
+}
+
+type TiwloPaySummary {
+  balance: Float!
+  grossVolume: Float!
+  paidVolume: Float!
+  fees: Float!
+  availableForWithdrawal: Float!
+  pendingWithdrawal: Float!
+  totalWithdrawn: Float!
+  totalLinks: Int!
+  paidInvoices: Int!
+  unpaidInvoices: Int!
+  expiredInvoices: Int!
+  transactions: Int!
+  merchants: Int!
+}
+
+type TiwloPayOverview {
+  profile: TiwloPayProfile!
+  summary: TiwloPaySummary!
+  paymentLinks: [TiwloPayLink!]!
+  transactions: [TiwloPayTransaction!]!
+  withdrawals: [TiwloPayWithdrawal!]!
+  gateways: [PaymentGateway!]!
+  chartData: JSON!
+  gatewayBreakdown: JSON!
+}
+
+type AdminTiwloPayOverview {
+  summary: TiwloPaySummary!
+  profiles: [TiwloPayProfile!]!
+  paymentLinks: [TiwloPayLink!]!
+  transactions: [TiwloPayTransaction!]!
+  withdrawals: [TiwloPayWithdrawal!]!
+  gateways: [PaymentGateway!]!
+  chartData: JSON!
+  gatewayBreakdown: JSON!
+}
+
+type PublicTiwloPayCheckout {
+  profile: TiwloPayProfile!
+  link: TiwloPayLink!
+  gateways: [PaymentGateway!]!
+}
+
+type TiwloPayKeyRotation {
+  profile: TiwloPayProfile!
+  secretKey: String!
+}
+
+type TiwloPayVerificationResult {
+  profile: TiwloPayProfile!
+  message: String!
+}
+
+type TiwloPayPaymentResult {
+  status: String!
+  message: String
+  provider: String
+  paymentUrl: String
+  reference: String
+  link: TiwloPayLink!
+  transaction: TiwloPayTransaction
+}
+
+type Integration {
+  id: ID!
+  key: String!
+  group: String!
+  name: String!
+  status: String!
+  config: JSON
+  health: JSON
+  lastSyncAt: String
+  createdAt: String
+  updatedAt: String
+}
+
+type ApiCredential {
+  id: ID!
+  ownerId: String
+  name: String!
+  scopes: JSON!
+  status: String!
+  lastUsedAt: String
+  expiresAt: String
+  createdAt: String
+  updatedAt: String
+}
+
+type Notification {
+  id: ID!
+  ownerId: String
+  scope: String!
+  scopeId: String
+  type: String!
+  title: String!
+  message: String!
+  status: String!
+  metadata: JSON
+  readAt: String
+  createdAt: String
+  updatedAt: String
+}
+
+type Store {
+  id: ID!
+  ownerId: String!
+  planId: String
+  name: String!
+  slug: String!
+  category: String!
+  status: String!
+  domain: String
+  customDomain: String
+  contactEmail: String
+  phone: String
+  address: String
+  currency: String!
+  region: String!
+  settings: JSON
+  createdAt: String
+  updatedAt: String
+}
+
+type StoreSubdomainAvailability {
+  available: Boolean!
+  subdomain: String!
+  domain: String!
+  reason: String
+}
+
+type StoreProduct {
+  id: ID!
+  storeId: String!
+  name: String!
+  sku: String!
+  description: String
+  category: String!
+  price: Float!
+  stock: Int!
+  status: String!
+  image: String
+  metadata: JSON
+  createdAt: String
+  updatedAt: String
+}
+
+type StoreCustomer {
+  id: ID!
+  storeId: String!
+  name: String!
+  email: String!
+  phone: String
+  status: String!
+  tier: String!
+  address: JSON
+  points: Int!
+  lastLoginAt: String
+  createdAt: String
+  updatedAt: String
+}
+
+type StoreCustomerDashboard {
+  store: Store!
+  activeTheme: StoreTheme!
+  settings: JSON!
+  customer: StoreCustomer!
+  orders: [StoreOrder!]!
+  products: [StoreProduct!]!
+  categories: JSON!
+  records: JSON!
+  stats: JSON!
+}
+
+type StoreCustomerAuthPayload {
+  token: String!
+  customer: StoreCustomer!
+  dashboard: StoreCustomerDashboard!
+}
+
+type StoreCustomerStoreGroup {
+  store: Store!
+  customerCount: Int!
+  activeCount: Int!
+  latestCustomer: StoreCustomer
+}
+
+type StoreOrder {
+  id: ID!
+  storeId: String!
+  customerId: String
+  number: String!
+  status: String!
+  total: Float!
+  currency: String!
+  items: JSON!
+  shipping: JSON
+  payment: JSON
+  createdAt: String
+  updatedAt: String
+}
+
+type StoreTheme {
+  id: ID!
+  storeId: String!
+  name: String!
+  key: String!
+  status: String!
+  settings: JSON
+  createdAt: String
+  updatedAt: String
+}
+
+type StoreThemeRuntime {
+  theme: JSON!
+  store: Store!
+  activeTheme: StoreTheme!
+  activeTemplate: JSON!
+  settings: JSON!
+  preview: Boolean!
+  products: [StoreProduct!]!
+  categories: JSON!
+  records: JSON!
+  modules: JSON!
+  adminControls: JSON!
+}
+
+type StorePlugin {
+  id: ID!
+  storeId: String!
+  name: String!
+  key: String!
+  status: String!
+  settings: JSON
+  createdAt: String
+  updatedAt: String
+}
+
+type StoreAdminRecord {
+  id: ID!
+  storeId: String!
+  section: String!
+  title: String!
+  status: String!
+  data: JSON
+  createdAt: String
+  updatedAt: String
+}
+
+type EcommerceControlMetric {
+  label: String!
+  value: String!
+  detail: String
+  tone: String
+  delta: String
+}
+
+type EcommerceControlAction {
+  key: String!
+  label: String!
+  intent: String!
+  description: String
+  payload: JSON
+}
+
+type EcommerceControlFunction {
+  key: String!
+  sectionKey: String!
+  sectionLabel: String!
+  group: String!
+  label: String!
+  intent: String!
+  description: String
+  source: String!
+  settings: JSON
+  payload: JSON
+}
+
+type EcommerceControlRecord {
+  id: ID!
+  sectionKey: String!
+  title: String!
+  status: String!
+  owner: String
+  summary: String
+  data: JSON
+  createdAt: String
+  updatedAt: String
+}
+
+type EcommerceControlActivity {
+  id: ID!
+  title: String!
+  status: String!
+  message: String
+  createdAt: String
+}
+
+type EcommerceControlSection {
+  key: String!
+  group: String!
+  label: String!
+  path: String!
+  status: String!
+  description: String
+  config: JSON
+  metrics: [EcommerceControlMetric!]!
+  actions: [EcommerceControlAction!]!
+  records: [EcommerceControlRecord!]!
+  activity: [EcommerceControlActivity!]!
+}
+
+type EcommerceControlActionResult {
+  ok: Boolean!
+  message: String!
+  section: EcommerceControlSection!
+}
+
+type EcommerceControlFunctionResult {
+  ok: Boolean!
+  message: String!
+  function: EcommerceControlFunction!
+  section: EcommerceControlSection!
+}
+
+type IspSite {
+  id: ID!
+  ownerId: String!
+  planId: String
+  name: String!
+  code: String!
+  region: String!
+  status: String!
+  node: String!
+  bandwidth: String!
+  subscribers: Int!
+  settings: JSON
+  createdAt: String
+  updatedAt: String
+}
+
+type IspPackage {
+  id: ID!
+  name: String!
+  speed: String!
+  price: Float!
+  billingCycle: String!
+  features: JSON
+  status: String!
+  createdAt: String
+  updatedAt: String
+}
+
+type IspClient {
+  id: ID!
+  siteId: String!
+  packageId: String
+  name: String!
+  username: String!
+  email: String
+  phone: String
+  address: String
+  status: String!
+  balance: Float!
+  metadata: JSON
+  createdAt: String
+  updatedAt: String
+}
+
+type IspRouter {
+  id: ID!
+  siteId: String!
+  name: String!
+  ip: String!
+  vendor: String!
+  status: String!
+  config: JSON
+  createdAt: String
+  updatedAt: String
+}
+
+type RadiusServer {
+  id: ID!
+  siteId: String!
+  name: String!
+  host: String!
+  secret: String!
+  status: String!
+  metadata: JSON
+  createdAt: String
+  updatedAt: String
+}
+
+type NetworkDevice {
+  id: ID!
+  siteId: String!
+  type: String!
+  name: String!
+  serial: String
+  status: String!
+  metadata: JSON
+  createdAt: String
+  updatedAt: String
+}
+
+type IspInvoice {
+  id: ID!
+  siteId: String!
+  number: String!
+  clientName: String!
+  amount: Float!
+  status: String!
+  dueDate: String
+  items: JSON!
+  createdAt: String
+  updatedAt: String
+}
+
+type IspAdminRecord {
+  id: ID!
+  siteId: String!
+  section: String!
+  title: String!
+  status: String!
+  data: JSON
+  createdAt: String
+  updatedAt: String
+}
+
+type HostingComputeNode {
+  id: ID!
+  name: String!
+  hostname: String!
+  ip: String!
+  panel: String!
+  port: Int!
+  username: String!
+  apiToken: String
+  accessHash: String
+  nameservers: JSON
+  maxAccounts: Int!
+  activeAccounts: Int!
+  status: String!
+  monthlyCost: Float!
+  location: String
+  metadata: JSON
+  createdAt: String
+  updatedAt: String
+}
+
+type HostingProductGroup {
+  id: ID!
+  name: String!
+  slug: String!
+  description: String
+  sortOrder: Int!
+  status: String!
+  createdAt: String
+  updatedAt: String
+}
+
+type HostingProduct {
+  id: ID!
+  groupId: String
+  groupName: String
+  nodeId: String
+  nodeName: String
+  nodeIp: String
+  code: String!
+  name: String!
+  module: String!
+  accountType: String!
+  status: String!
+  price: Float!
+  setupFee: Float!
+  interval: String!
+  limits: JSON!
+  serverConfig: JSON
+  welcomeEmail: JSON
+  createdAt: String
+  updatedAt: String
+}
+
+type HostingPackage {
+  id: ID!
+  productId: String
+  productName: String
+  nodeId: String
+  nodeName: String
+  name: String!
+  whmPackageName: String!
+  accountType: String!
+  status: String!
+  limits: JSON!
+  pricing: JSON
+  createdAt: String
+  updatedAt: String
+}
+
+type HostingProvisioningOrder {
+  id: ID!
+  ownerId: String
+  productId: String
+  productName: String
+  packageId: String
+  packageName: String
+  nodeId: String
+  nodeName: String
+  nodeIp: String
+  domain: String!
+  hostname: String
+  username: String!
+  passwordSecret: String
+  module: String!
+  accountType: String!
+  status: String!
+  amount: Float!
+  currency: String!
+  provisioning: JSON
+  createdAt: String
+  updatedAt: String
+}
+
+type DdosProtectionPolicy {
+  id: ID!
+  enabled: Boolean!
+  mode: String!
+  sensitivity: String!
+  requestsPerSecondThreshold: Int!
+  packetsPerSecondThreshold: Int!
+  burstWindowSeconds: Int!
+  blockDurationSeconds: Int!
+  challengeThreshold: Int!
+  syncToConnectedServers: Boolean!
+  protectHostingNodes: Boolean!
+  protectCloudResources: Boolean!
+  protectDomains: Boolean!
+  protectEcommerceDomains: Boolean!
+  automationMode: String!
+  metadata: JSON
+  createdAt: String
+  updatedAt: String
+}
+
+type DdosProtectedAsset {
+  id: ID!
+  resourceKey: String!
+  kind: String!
+  resourceId: String
+  name: String!
+  ip: String
+  domain: String
+  provider: String
+  panel: String
+  status: String!
+  riskScore: Int!
+  lastSyncAt: String
+  metadata: JSON
+  createdAt: String
+  updatedAt: String
+}
+
+type DdosAttackEvent {
+  id: ID!
+  assetId: String
+  assetKey: String
+  assetName: String
+  sourceIp: String!
+  vector: String!
+  severity: String!
+  requestsPerSecond: Int!
+  packetsPerSecond: Int!
+  confidence: Float!
+  status: String!
+  blockedUntil: String
+  metadata: JSON
+  createdAt: String
+  updatedAt: String
+}
+
+type DdosBlockRule {
+  id: ID!
+  sourceIp: String!
+  cidr: String
+  scope: String!
+  assetId: String
+  assetKey: String
+  reason: String!
+  status: String!
+  expiresAt: String
+  enforcementState: String!
+  actionPlan: JSON
+  metadata: JSON
+  createdAt: String
+  updatedAt: String
+}
+
+type DdosProtectionMetrics {
+  protectedAssets: Int!
+  activeBlocks: Int!
+  activeAttacks: Int!
+  mitigatedToday: Int!
+  peakRps: Int!
+  averageRiskScore: Float!
+}
+
+type DdosTelemetryPoint {
+  bucket: String!
+  requests: Int!
+  packets: Int!
+  attacks: Int!
+  blocked: Int!
+}
+
+type DdosProtectionOverview {
+  policy: DdosProtectionPolicy!
+  metrics: DdosProtectionMetrics!
+  assets: [DdosProtectedAsset!]!
+  events: [DdosAttackEvent!]!
+  blockRules: [DdosBlockRule!]!
+  telemetry: [DdosTelemetryPoint!]!
+}
+
+type AiModelConfig {
+  enabled: Boolean!
+  autoStart: Boolean!
+  modelName: String!
+  modelFile: String!
+  modelPath: String!
+  modelUri: String!
+  modelUrl: String!
+  contextSize: Int!
+  maxTokens: Int!
+  temperature: Float!
+  systemPrompt: String!
+}
+
+type AiModelRuntime {
+  status: String!
+  running: Boolean!
+  modelExists: Boolean!
+  modelSizeBytes: Float!
+  modelPath: String!
+  downloadStatus: String!
+  downloadedBytes: Float!
+  totalBytes: Float
+  lastError: String
+  startedAt: String
+  updatedAt: String
+  chatCount: Int!
+}
+
+type AiModelChatMessage {
+  id: ID!
+  role: String!
+  content: String!
+  createdAt: String!
+}
+
+type AiModelOverview {
+  config: AiModelConfig!
+  runtime: AiModelRuntime!
+  history: [AiModelChatMessage!]!
+}
+
+type AiModelChatResponse {
+  ok: Boolean!
+  message: String!
+  error: String
+  runtime: AiModelRuntime!
+}
+
+input LoginInput {
+  email: String!
+  password: String!
+}
+
+input SignupInput {
+  name: String!
+  email: String!
+  password: String!
+}
+
+input UpdateProfileInput {
+  id: ID
+  name: String
+  phone: String
+  primaryRegion: String
+  avatar: String
+}
+
+input UpdateUserInput {
+  id: ID!
+  email: String
+  name: String
+  role: String
+  status: String
+  credits: Float
+  phone: String
+  primaryRegion: String
+  avatar: String
+}
+
+input CreateCloudResourceInput {
+  type: String!
+  name: String!
+  region: String!
+  specs: String!
+  image: String
+  plan: String
+  cpu: String
+  ram: String
+  disk: String
+  monthlyCost: Float
+  metadata: JSON
+}
+
+input CreateCloudResourceOrderInput {
+  resource: CreateCloudResourceInput!
+  provider: String
+  currency: String
+  initialCharge: Float
+  hourlyRate: Float
+}
+
+input UpsertPlanInput {
+  id: ID
+  code: String!
+  product: String!
+  name: String!
+  price: Float!
+  interval: String
+  features: JSON!
+  limits: JSON
+  isActive: Boolean
+}
+
+input RegisterDomainInput {
+  name: String!
+  years: Int
+  dns: JSON
+  records: JSON
+}
+
+input DnsRecordInput {
+  domainId: ID!
+  type: String!
+  name: String!
+  value: String!
+  ttl: Int
+  priority: Int
+  metadata: JSON
+}
+
+input CreateSupportTicketInput {
+  subject: String!
+  category: String!
+  priority: String!
+  message: String!
+  metadata: JSON
+}
+
+input SupportTicketReplyInput {
+  body: String!
+  visibility: String
+  attachments: JSON
+}
+
+input StartLiveChatInput {
+  subject: String
+  priority: String
+  message: String
+  metadata: JSON
+}
+
+input LiveChatMessageInput {
+  body: String!
+  attachments: JSON
+}
+
+input UpsertSettingInput {
+  scope: String!
+  scopeId: String
+  key: String!
+  value: JSON!
+}
+
+input UpsertAdminModuleInput {
+  key: String!
+  group: String!
+  label: String!
+  path: String
+  status: String
+  description: String
+  config: JSON
+  metrics: JSON
+}
+
+input UpsertPaymentGatewayInput {
+  key: String!
+  name: String!
+  provider: String!
+  status: String
+  mode: String
+  credentials: JSON
+  settings: JSON
+}
+
+input UpsertTiwloPayProfileInput {
+  displayName: String
+  companyName: String
+  supportEmail: String
+  statementDescriptor: String
+  status: String
+  settings: JSON
+}
+
+input CreateTiwloPayLinkInput {
+  invoiceId: String
+  title: String!
+  description: String
+  amount: Float!
+  currency: String
+  customerName: String
+  customerEmail: String
+  expiresAt: String
+  expiresInDays: Int
+  allowedProviders: [String!]
+  metadata: JSON
+}
+
+input TiwloPayVerificationInput {
+  legalName: String!
+  businessName: String
+  businessType: String
+  documentType: String!
+  documentNumber: String!
+  country: String
+  address: String
+  website: String
+  contactEmail: String
+  contactPhone: String
+  taxId: String
+  note: String
+  metadata: JSON
+}
+
+input PayTiwloPayLinkInput {
+  slug: String!
+  provider: String!
+  customerName: String
+  customerEmail: String
+  metadata: JSON
+}
+
+input RequestTiwloPayWithdrawalInput {
+  amount: Float!
+  currency: String
+  method: String!
+  accountName: String
+  accountNumber: String
+  bankName: String
+  branchName: String
+  routingNumber: String
+  walletNumber: String
+  note: String
+  metadata: JSON
+}
+
+input UpsertIntegrationInput {
+  key: String!
+  group: String!
+  name: String!
+  status: String
+  config: JSON
+  health: JSON
+}
+
+input CreateApiCredentialInput {
+  ownerId: ID
+  name: String!
+  scopes: JSON!
+  expiresAt: String
+}
+
+input CreateStoreInput {
+  name: String!
+  slug: String!
+  category: String!
+  planCode: String
+  contactEmail: String
+  phone: String
+  address: String
+  customDomain: String
+  settings: JSON
+}
+
+input UpdateStoreInput {
+  id: ID!
+  name: String
+  category: String
+  status: String
+  domain: String
+  customDomain: String
+  contactEmail: String
+  phone: String
+  address: String
+  settings: JSON
+}
+
+input CreateStoreProductInput {
+  storeId: ID!
+  name: String!
+  sku: String!
+  description: String
+  category: String!
+  price: Float!
+  stock: Int
+  status: String
+  image: String
+  metadata: JSON
+}
+
+input UpdateStoreProductInput {
+  id: ID!
+  name: String
+  description: String
+  category: String
+  price: Float
+  stock: Int
+  status: String
+  image: String
+  metadata: JSON
+}
+
+input CreateStoreCustomerInput {
+  storeId: ID!
+  name: String!
+  email: String!
+  phone: String
+  tier: String
+  address: JSON
+}
+
+input StoreCustomerRegisterInput {
+  storeId: ID
+  slug: String
+  domain: String
+  themeKey: String
+  name: String!
+  email: String!
+  password: String!
+  phone: String
+  address: JSON
+}
+
+input StoreCustomerLoginInput {
+  storeId: ID
+  slug: String
+  domain: String
+  themeKey: String
+  email: String!
+  password: String!
+}
+
+input UpdateStoreCustomerProfileInput {
+  name: String
+  phone: String
+  address: JSON
+}
+
+input UpdateStoreCustomerInput {
+  id: ID!
+  name: String
+  email: String
+  phone: String
+  status: String
+  tier: String
+  address: JSON
+  points: Int
+}
+
+input CreateStoreOrderInput {
+  storeId: ID!
+  customerId: ID
+  number: String
+  status: String
+  total: Float!
+  currency: String
+  items: JSON!
+  shipping: JSON
+  payment: JSON
+}
+
+input StoreAdminRecordInput {
+  storeId: ID!
+  section: String!
+  id: ID
+  title: String!
+  status: String
+  data: JSON
+}
+
+input StoreThemeSettingsInput {
+  storeId: ID!
+  key: String!
+  settings: JSON!
+}
+
+input StoreHomepageTemplateInput {
+  storeId: ID!
+  themeKey: String
+  templateKey: String!
+}
+
+input EcommerceControlRecordInput {
+  sectionKey: String!
+  id: ID
+  title: String!
+  status: String
+  owner: String
+  summary: String
+  data: JSON
+}
+
+input EcommerceControlActionInput {
+  sectionKey: String!
+  actionKey: String!
+  targetId: ID
+  payload: JSON
+}
+
+input EcommerceControlFunctionInput {
+  sectionKey: String!
+  functionKey: String!
+  targetId: ID
+  payload: JSON
+}
+
+input CreateIspSiteInput {
+  name: String!
+  code: String!
+  region: String!
+  node: String!
+  bandwidth: String!
+  subscribers: Int
+  planCode: String
+  settings: JSON
+}
+
+input UpdateIspSiteInput {
+  id: ID!
+  name: String
+  region: String
+  status: String
+  node: String
+  bandwidth: String
+  subscribers: Int
+  settings: JSON
+}
+
+input CreateIspClientInput {
+  siteId: ID!
+  packageId: ID
+  name: String!
+  username: String!
+  email: String
+  phone: String
+  address: String
+  status: String
+  balance: Float
+  metadata: JSON
+}
+
+input UpdateIspClientInput {
+  id: ID!
+  packageId: ID
+  name: String
+  username: String
+  email: String
+  phone: String
+  address: String
+  status: String
+  balance: Float
+  metadata: JSON
+}
+
+input CreateIspPackageInput {
+  name: String!
+  speed: String!
+  price: Float!
+  billingCycle: String
+  features: JSON
+}
+
+input CreateIspRouterInput {
+  siteId: ID!
+  name: String!
+  ip: String!
+  vendor: String
+  config: JSON
+}
+
+input UpdateIspRouterInput {
+  id: ID!
+  name: String
+  ip: String
+  vendor: String
+  status: String
+  config: JSON
+}
+
+input CreateRadiusServerInput {
+  siteId: ID!
+  name: String!
+  host: String!
+  secret: String!
+  metadata: JSON
+}
+
+input UpdateRadiusServerInput {
+  id: ID!
+  name: String
+  host: String
+  secret: String
+  status: String
+  metadata: JSON
+}
+
+input NetworkDeviceInput {
+  siteId: ID!
+  type: String!
+  id: ID
+  name: String!
+  serial: String
+  status: String
+  metadata: JSON
+}
+
+input IspAdminRecordInput {
+  siteId: ID!
+  section: String!
+  id: ID
+  title: String!
+  status: String
+  data: JSON
+}
+
+input CreateInvoiceInput {
+  ownerId: ID
+  siteId: ID
+  scope: String!
+  scopeId: String
+  number: String!
+  clientName: String
+  amount: Float!
+  currency: String
+  items: JSON!
+  dueDate: String
+}
+
+input StartInvoicePaymentInput {
+  invoiceId: ID!
+  provider: String!
+}
+
+input StartCreditTopUpInput {
+  amount: Float!
+  currency: String
+  provider: String!
+}
+
+input CreditAutomationInput {
+  ownerId: ID
+}
+
+input UpsertRoleInput {
+  key: String!
+  name: String!
+  description: String
+  permissions: JSON!
+  isSystem: Boolean
+}
+
+input AssignUserRoleInput {
+  userId: ID!
+  roleId: ID!
+  scope: String
+  scopeId: String
+}
+
+input CreateNotificationInput {
+  ownerId: ID
+  scope: String
+  scopeId: String
+  type: String
+  title: String!
+  message: String!
+  status: String
+  metadata: JSON
+}
+
+input HostingComputeNodeInput {
+  id: ID
+  name: String!
+  hostname: String!
+  ip: String!
+  panel: String!
+  port: Int
+  username: String!
+  apiToken: String
+  accessHash: String
+  nameservers: JSON
+  maxAccounts: Int
+  activeAccounts: Int
+  status: String
+  monthlyCost: Float
+  location: String
+  metadata: JSON
+}
+
+input HostingProductGroupInput {
+  id: ID
+  name: String!
+  slug: String
+  description: String
+  sortOrder: Int
+  status: String
+}
+
+input HostingProductInput {
+  id: ID
+  groupId: ID
+  nodeId: ID
+  code: String!
+  name: String!
+  module: String
+  accountType: String
+  status: String
+  price: Float
+  setupFee: Float
+  interval: String
+  limits: JSON!
+  serverConfig: JSON
+  welcomeEmail: JSON
+}
+
+input HostingPackageInput {
+  id: ID
+  productId: ID
+  nodeId: ID
+  name: String!
+  whmPackageName: String!
+  accountType: String
+  status: String
+  limits: JSON!
+  pricing: JSON
+}
+
+input CreateHostingProvisioningOrderInput {
+  ownerId: ID
+  productId: ID
+  packageId: ID
+  nodeId: ID
+  domain: String!
+  hostname: String
+  username: String!
+  password: String
+  module: String
+  accountType: String
+  amount: Float
+  currency: String
+  whmPackageName: String
+  limits: JSON
+}
+
+input DdosProtectionPolicyInput {
+  enabled: Boolean
+  mode: String
+  sensitivity: String
+  requestsPerSecondThreshold: Int
+  packetsPerSecondThreshold: Int
+  burstWindowSeconds: Int
+  blockDurationSeconds: Int
+  challengeThreshold: Int
+  syncToConnectedServers: Boolean
+  protectHostingNodes: Boolean
+  protectCloudResources: Boolean
+  protectDomains: Boolean
+  protectEcommerceDomains: Boolean
+  automationMode: String
+  metadata: JSON
+}
+
+input DdosTelemetryInput {
+  assetId: ID
+  assetKey: String
+  sourceIp: String!
+  vector: String
+  requestsPerSecond: Int
+  packetsPerSecond: Int
+  path: String
+  userAgent: String
+  country: String
+  metadata: JSON
+}
+
+input DdosBlockRuleInput {
+  sourceIp: String!
+  cidr: String
+  assetId: ID
+  assetKey: String
+  reason: String!
+  durationSeconds: Int
+  scope: String
+  metadata: JSON
+}
+
+input AiModelSettingsInput {
+  enabled: Boolean
+  autoStart: Boolean
+  modelName: String
+  modelFile: String
+  modelUri: String
+  modelUrl: String
+  contextSize: Int
+  maxTokens: Int
+  temperature: Float
+  systemPrompt: String
+}
+
+input AiModelChatInput {
+  message: String!
+  reset: Boolean
+}
+
+type Query {
+  health: String!
+  me: User
+  users(search: String, role: String, status: String): [User!]!
+  dashboardSummary: DashboardSummary!
+  ecommerceAdminSummary: EcommerceAdminSummary!
+  ispDashboardSummary: IspDashboardSummary!
+
+  plans(product: String): [Plan!]!
+  cloudResources(type: String, status: String, search: String, page: Int, limit: Int): [CloudResource!]!
+  droplets(status: String, search: String, page: Int, limit: Int): [CloudResource!]!
+  domains(status: String, search: String, page: Int, limit: Int): [Domain!]!
+  invoices(scope: String, status: String, page: Int, limit: Int): [Invoice!]!
+  billingOverview: BillingOverview!
+  supportTickets(status: String, category: String, priority: String, assignedToId: ID, search: String, page: Int, limit: Int): [SupportTicket!]!
+  supportTicket(id: ID!): SupportTicket
+  liveChatSessions(status: String, assignedToId: ID, search: String, page: Int, limit: Int): [LiveChatSession!]!
+  liveChatSession(id: ID!): LiveChatSession
+  settings(scope: String!, scopeId: String): [SystemSetting!]!
+  auditLogs(resource: String, resourceId: String, action: String, page: Int, limit: Int): [AuditLog!]!
+  adminModules(group: String, status: String, search: String, page: Int, limit: Int): [AdminModule!]!
+  paymentGateways(status: String): [PaymentGateway!]!
+  availablePaymentGateways: [PaymentGateway!]!
+  tiwloPayOverview: TiwloPayOverview!
+  adminTiwloPayOverview: AdminTiwloPayOverview!
+  publicTiwloPayLink(slug: String!): PublicTiwloPayCheckout!
+  integrations(group: String, status: String): [Integration!]!
+  apiCredentials(ownerId: ID): [ApiCredential!]!
+  roles: [Role!]!
+  permissionGroups: [PermissionGroup!]!
+  notifications(scope: String, status: String, type: String): [Notification!]!
+  systemServers: [CloudResource!]!
+  dnsRecords(domainId: ID!): [DnsRecord!]!
+
+  stores(status: String, search: String, page: Int, limit: Int): [Store!]!
+  store(id: ID, slug: String): Store
+  storeProducts(storeId: ID!, status: String, search: String, page: Int, limit: Int): [StoreProduct!]!
+  storeOrders(storeId: ID!, status: String, page: Int, limit: Int): [StoreOrder!]!
+  storeCustomers(storeId: ID!, search: String, page: Int, limit: Int): [StoreCustomer!]!
+  storeCustomerDashboard(storeId: ID, slug: String, domain: String, themeKey: String): StoreCustomerDashboard!
+  storeCustomerGroups(search: String): [StoreCustomerStoreGroup!]!
+  storeSubdomainAvailability(subdomain: String!): StoreSubdomainAvailability!
+  storeThemes(storeId: ID!): [StoreTheme!]!
+  storePlugins(storeId: ID!): [StorePlugin!]!
+  storefrontThemeCatalog: JSON!
+  storeThemeRuntime(storeId: ID, slug: String, domain: String, themeKey: String, templateKey: String, preview: Boolean): StoreThemeRuntime!
+  storeAdminRecords(storeId: ID!, section: String!): [StoreAdminRecord!]!
+  ecommerceControlSections: [EcommerceControlSection!]!
+  ecommerceControlSection(key: String, path: String): EcommerceControlSection!
+  ecommerceControlSchema(key: String, path: String): JSON!
+  ecommerceControlFunctions(key: String, path: String, limit: Int): [EcommerceControlFunction!]!
+
+  ispSites: [IspSite!]!
+  ispSite(id: ID, code: String): IspSite
+  ispPackages: [IspPackage!]!
+  ispClients(siteId: ID, status: String, search: String, page: Int, limit: Int): [IspClient!]!
+  ispRouters(siteId: ID!): [IspRouter!]!
+  radiusServers(siteId: ID!): [RadiusServer!]!
+  networkDevices(siteId: ID!, type: String): [NetworkDevice!]!
+  ispInvoices(siteId: ID, status: String, page: Int, limit: Int): [IspInvoice!]!
+  ispAdminRecords(siteId: ID!, section: String!): [IspAdminRecord!]!
+
+  hostingComputeNodes(status: String, panel: String, search: String): [HostingComputeNode!]!
+  hostingProductGroups(status: String, search: String): [HostingProductGroup!]!
+  hostingProducts(groupId: ID, status: String, module: String, search: String): [HostingProduct!]!
+  hostingPackages(productId: ID, status: String, search: String): [HostingPackage!]!
+  hostingProvisioningOrders(ownerId: ID, status: String, search: String): [HostingProvisioningOrder!]!
+
+  ddosProtectionOverview: DdosProtectionOverview!
+  ddosProtectedAssets(status: String, kind: String, search: String): [DdosProtectedAsset!]!
+  ddosAttackEvents(status: String, assetId: ID, sourceIp: String, limit: Int): [DdosAttackEvent!]!
+  ddosBlockRules(status: String, assetId: ID, sourceIp: String): [DdosBlockRule!]!
+  aiModelOverview: AiModelOverview!
+}
+
+type Mutation {
+  login(input: LoginInput!): AuthPayload!
+  signup(input: SignupInput!): AuthPayload!
+  updateProfile(input: UpdateProfileInput!): User!
+  verifyPassword(password: String!): Boolean!
+  updateUserRole(id: ID!, role: String!): User!
+  updateUser(input: UpdateUserInput!): User!
+  deleteUser(id: ID!): Boolean!
+
+  createCloudResource(input: CreateCloudResourceInput!): CloudResource!
+  createCloudResourceOrder(input: CreateCloudResourceOrderInput!): CheckoutSession!
+  updateResourceStatus(id: ID!, status: String!): CloudResource!
+  deleteCloudResource(id: ID!): Boolean!
+  upsertPlan(input: UpsertPlanInput!): Plan!
+  deletePlan(id: ID!): Boolean!
+  registerDomain(input: RegisterDomainInput!): Domain!
+  addDnsRecord(input: DnsRecordInput!): Domain!
+  deleteDnsRecord(id: ID!): Boolean!
+  deleteDomain(id: ID!): Boolean!
+  createSupportTicket(input: CreateSupportTicketInput!): SupportTicket!
+  replySupportTicket(id: ID!, input: SupportTicketReplyInput!): SupportTicketMessage!
+  assignSupportTicket(id: ID!, assigneeId: ID): SupportTicket!
+  updateSupportTicketStatus(id: ID!, status: String!): SupportTicket!
+  startLiveChat(input: StartLiveChatInput): LiveChatSession!
+  sendLiveChatMessage(sessionId: ID!, input: LiveChatMessageInput!): LiveChatMessage!
+  assignLiveChatSession(id: ID!, assigneeId: ID): LiveChatSession!
+  updateLiveChatSessionStatus(id: ID!, status: String!): LiveChatSession!
+  createTicketFromLiveChat(sessionId: ID!, subject: String): SupportTicket!
+  upsertSetting(input: UpsertSettingInput!): SystemSetting!
+  upsertAdminModule(input: UpsertAdminModuleInput!): AdminModule!
+  updateAdminModuleStatus(key: String!, status: String!): AdminModule!
+  upsertPaymentGateway(input: UpsertPaymentGatewayInput!): PaymentGateway!
+  testPaymentGateway(key: String!): GatewayTestResult!
+  upsertTiwloPayProfile(input: UpsertTiwloPayProfileInput!): TiwloPayProfile!
+  rotateTiwloPayKeys: TiwloPayKeyRotation!
+  requestTiwloPayVerification(input: TiwloPayVerificationInput!): TiwloPayVerificationResult!
+  createTiwloPayLink(input: CreateTiwloPayLinkInput!): TiwloPayLink!
+  payTiwloPayLink(input: PayTiwloPayLinkInput!): TiwloPayPaymentResult!
+  requestTiwloPayWithdrawal(input: RequestTiwloPayWithdrawalInput!): TiwloPayWithdrawal!
+  adminUpdateTiwloPayProfileStatus(id: ID!, status: String!): TiwloPayProfile!
+  adminUpdateTiwloPayWithdrawalStatus(id: ID!, status: String!): TiwloPayWithdrawal!
+  upsertIntegration(input: UpsertIntegrationInput!): Integration!
+  createApiCredential(input: CreateApiCredentialInput!): ApiCredential!
+  revokeApiCredential(id: ID!): ApiCredential!
+
+  createStore(input: CreateStoreInput!): Store!
+  updateStore(input: UpdateStoreInput!): Store!
+  deleteStore(id: ID!): Boolean!
+  createStoreProduct(input: CreateStoreProductInput!): StoreProduct!
+  updateStoreProduct(input: UpdateStoreProductInput!): StoreProduct!
+  deleteStoreProduct(id: ID!): Boolean!
+  createStoreCustomer(input: CreateStoreCustomerInput!): StoreCustomer!
+  registerStoreCustomer(input: StoreCustomerRegisterInput!): StoreCustomerAuthPayload!
+  loginStoreCustomer(input: StoreCustomerLoginInput!): StoreCustomerAuthPayload!
+  updateStoreCustomerProfile(input: UpdateStoreCustomerProfileInput!): StoreCustomer!
+  updateStoreCustomer(input: UpdateStoreCustomerInput!): StoreCustomer!
+  deleteStoreCustomer(id: ID!): Boolean!
+  createStoreOrder(input: CreateStoreOrderInput!): StoreOrder!
+  updateStoreOrderStatus(id: ID!, status: String!): StoreOrder!
+  selectStoreTheme(storeId: ID!, key: String!): StoreTheme!
+  selectStoreHomepageTemplate(input: StoreHomepageTemplateInput!): StoreTheme!
+  updateStoreThemeSettings(input: StoreThemeSettingsInput!): StoreTheme!
+  importStoreThemeDemoData(storeId: ID!, themeKey: String): StoreThemeRuntime!
+  eraseStoreThemeDemoData(storeId: ID!, themeKey: String): StoreThemeRuntime!
+  installStorePlugin(storeId: ID!, key: String!, name: String!): StorePlugin!
+  toggleStorePlugin(id: ID!, status: String!): StorePlugin!
+  upsertStoreAdminRecord(input: StoreAdminRecordInput!): StoreAdminRecord!
+  deleteStoreAdminRecord(storeId: ID!, section: String!, id: ID!): Boolean!
+  upsertEcommerceControlRecord(input: EcommerceControlRecordInput!): EcommerceControlRecord!
+  deleteEcommerceControlRecord(sectionKey: String!, id: ID!): Boolean!
+  runEcommerceControlAction(input: EcommerceControlActionInput!): EcommerceControlActionResult!
+  runEcommerceControlFunction(input: EcommerceControlFunctionInput!): EcommerceControlFunctionResult!
+
+  createIspSite(input: CreateIspSiteInput!): IspSite!
+  updateIspSite(input: UpdateIspSiteInput!): IspSite!
+  createIspClient(input: CreateIspClientInput!): IspClient!
+  updateIspClient(input: UpdateIspClientInput!): IspClient!
+  deleteIspClient(id: ID!): Boolean!
+  createIspPackage(input: CreateIspPackageInput!): IspPackage!
+  createIspRouter(input: CreateIspRouterInput!): IspRouter!
+  updateIspRouter(input: UpdateIspRouterInput!): IspRouter!
+  deleteIspRouter(id: ID!): Boolean!
+  syncIspRouter(id: ID!): IspRouter!
+  createRadiusServer(input: CreateRadiusServerInput!): RadiusServer!
+  updateRadiusServer(input: UpdateRadiusServerInput!): RadiusServer!
+  deleteRadiusServer(id: ID!): Boolean!
+  upsertNetworkDevice(input: NetworkDeviceInput!): NetworkDevice!
+  deleteNetworkDevice(id: ID!): Boolean!
+  upsertIspAdminRecord(input: IspAdminRecordInput!): IspAdminRecord!
+  deleteIspAdminRecord(siteId: ID!, section: String!, id: ID!): Boolean!
+  createInvoice(input: CreateInvoiceInput!): Invoice!
+  markInvoicePaid(id: ID!): Invoice!
+  startInvoicePayment(input: StartInvoicePaymentInput!): CheckoutSession!
+  startCreditTopUp(input: StartCreditTopUpInput!): CheckoutSession!
+  settleUsageBilling: BillingOverview!
+  runCreditAutomation(input: CreditAutomationInput): CreditAutomationResult!
+  upsertRole(input: UpsertRoleInput!): Role!
+  assignUserRole(input: AssignUserRoleInput!): UserRole!
+  revokeUserRole(id: ID!): Boolean!
+  createNotification(input: CreateNotificationInput!): Notification!
+  markNotificationRead(id: ID!): Notification!
+
+  upsertHostingComputeNode(input: HostingComputeNodeInput!): HostingComputeNode!
+  deleteHostingComputeNode(id: ID!): Boolean!
+  testHostingComputeNode(id: ID!): HostingComputeNode!
+  upsertHostingProductGroup(input: HostingProductGroupInput!): HostingProductGroup!
+  upsertHostingProduct(input: HostingProductInput!): HostingProduct!
+  upsertHostingPackage(input: HostingPackageInput!): HostingPackage!
+  createHostingProvisioningOrder(input: CreateHostingProvisioningOrderInput!): HostingProvisioningOrder!
+
+  updateDdosProtectionPolicy(input: DdosProtectionPolicyInput!): DdosProtectionPolicy!
+  syncDdosProtectionAssets: DdosProtectionOverview!
+  ingestDdosTelemetry(input: DdosTelemetryInput!): DdosAttackEvent!
+  createDdosBlockRule(input: DdosBlockRuleInput!): DdosBlockRule!
+  releaseDdosBlockRule(id: ID!): DdosBlockRule!
+  updateAiModelSettings(input: AiModelSettingsInput!): AiModelOverview!
+  startAiModel: AiModelOverview!
+  stopAiModel: AiModelOverview!
+  downloadAiModel: AiModelOverview!
+  chatWithAiModel(input: AiModelChatInput!): AiModelChatResponse!
+}

@@ -1,0 +1,38 @@
+{
+  "name": "tiwlo-x-backend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "GraphQL API and PostgreSQL data layer for Tiwlo dashboards.",
+  "engines": {
+    "node": "24.15.0",
+    "npm": ">=10"
+  },
+  "scripts": {
+    "dev": "node src/server.js",
+    "dev:watch": "nodemon --watch src --watch graphql --watch prisma --exec node src/server.js",
+    "start": "node src/server.js",
+    "db:generate": "prisma generate",
+    "db:push": "prisma db push",
+    "db:seed": "prisma db seed",
+    "db:studio": "prisma studio"
+  },
+  "dependencies": {
+    "@apollo/server": "^4.12.2",
+    "@prisma/client": "^6.8.2",
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.5.0",
+    "express": "^4.21.2",
+    "graphql": "^16.11.0",
+    "jsonwebtoken": "^9.0.2",
+    "node-llama-cpp": "^3.18.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.10",
+    "prisma": "^6.8.2"
+  },
+  "prisma": {
+    "seed": "node prisma/seed.js"
+  }
+}

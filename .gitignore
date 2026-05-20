@@ -1,0 +1,13 @@
+node_modules/
+.tools/
+.data/
+.logs/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+x/api/ai-model/models/**/*.gguf
+x/api/ai-model/models/**/*.gguf.part
