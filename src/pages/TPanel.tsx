@@ -1,4 +1,5 @@
 import React from 'react';
+import { Link } from 'react-router-dom';
 import {
   AlertCircle,
   CheckCircle2,
@@ -14,13 +15,17 @@ import {
 } from 'lucide-react';
 import {
   createTPanelLicenseOrderWithApi,
+  deleteTPanelLicenseWithApi,
   fetchMyTPanelLicensesWithApi,
   fetchTPanelPackagesWithApi,
   payTPanelLicenseOrderWithApi,
-  renewTPanelLicenseOrderWithApi
+  renewTPanelLicenseOrderWithApi,
+  updateTPanelLicenseWithApi
 } from '../lib/tiwloApi';
+import { useActionConfirmation } from '../components/ActionConfirmation';
 
 const money = (value: number, currency = 'USD') => `${currency} ${Number(value || 0).toFixed(2)}`;
+const limitLabel = (value: number) => Number(value || 0) <= 0 ? 'Unlimited' : Number(value || 0).toLocaleString();
 
 const dateLabel = (value?: string) => {
   if (!value) return 'Not active';
@@ -41,7 +46,17 @@ function StatusPill({ status }: { status: string }) {
   return <span className={`rounded border px-2 py-0.5 text-[10px] font-bold uppercase ${statusClass(status)}`}>{status}</span>;
 }
 
+const canRenewLicense = (license: any) => {
+  const status = String(license?.status || '').toLowerCase();
+  if (['expired', 'cancelled'].includes(status)) return true;
+  if (status !== 'active') return false;
+  if (!license.currentPeriodEnd) return false;
+  const renewAt = new Date(license.currentPeriodEnd);
+  return !Number.isNaN(renewAt.getTime()) && renewAt.getTime() <= Date.now();
+};
+
 export default function TPanel() {
+  const { confirmAction, confirmDelete, confirmEdit } = useActionConfirmation();
   const [packages, setPackages] = React.useState<any[]>([]);
   const [licenses, setLicenses] = React.useState<any[]>([]);
   const [selectedPackage, setSelectedPackage] = React.useState('');
@@ -52,6 +67,8 @@ export default function TPanel() {
   const [saving, setSaving] = React.useState(false);
   const [error, setError] = React.useState('');
   const [notice, setNotice] = React.useState('');
+  const [editingLicense, setEditingLicense] = React.useState<any | null>(null);
+  const [editForm, setEditForm] = React.useState({ label: '', serverIp: '' });
 
   const load = React.useCallback(async () => {
     setLoading(true);
@@ -79,17 +96,32 @@ export default function TPanel() {
 
   const createOrder = async (event: React.FormEvent) => {
     event.preventDefault();
+    const selectedPlan = packages.find((pkg) => pkg.id === selectedPackage);
+    const total = Number(selectedPlan?.price || 0) * Number(months || 1);
+    const confirmed = await confirmAction({
+      intent: 'default',
+      title: 'Create license?',
+      message: `Are you sure? ${money(total, selectedPlan?.currency || 'USD')} will be charged from your Tiwlo credit balance. Add credit first if the balance is low.`,
+      resourceName: selectedPlan?.name || 'tPanel license',
+      confirmLabel: 'Create and pay'
+    });
+    if (!confirmed) return;
     setSaving(true);
     setError('');
     setNotice('');
     try {
-      await createTPanelLicenseOrderWithApi({
+      const license = await createTPanelLicenseOrderWithApi({
         packageId: selectedPackage,
         serverIp,
         label,
         months: Number(months || 1)
       });
-      setNotice('tPanel license order created. Pay it from credits or an enabled gateway to activate.');
+      const result = await payTPanelLicenseOrderWithApi(license.id, 'credit');
+      if (result.checkout?.status !== 'paid') {
+        setNotice(result.checkout?.message || 'License order created. Add credit, then pay with credit.');
+      } else {
+        setNotice('tPanel license created and paid from credit.');
+      }
       setServerIp('');
       setLabel('');
       await load();
@@ -100,16 +132,12 @@ export default function TPanel() {
     }
   };
 
-  const payLicense = async (licenseId: string, provider: string) => {
+  const payLicense = async (licenseId: string) => {
     setSaving(true);
     setError('');
     setNotice('');
     try {
-      const result = await payTPanelLicenseOrderWithApi(licenseId, provider);
-      if (result.checkout?.paymentUrl) {
-        window.location.href = result.checkout.paymentUrl;
-        return;
-      }
+      const result = await payTPanelLicenseOrderWithApi(licenseId, 'credit');
       setNotice(result.checkout?.message || 'Payment handled');
       await load();
     } catch (err) {
@@ -120,12 +148,19 @@ export default function TPanel() {
   };
 
   const renewLicense = async (licenseId: string) => {
+    const confirmed = await confirmAction({
+      intent: 'default',
+      title: 'Renew license?',
+      message: 'This renewal will be paid immediately from your Tiwlo credit balance.',
+      confirmLabel: 'Renew from credit'
+    });
+    if (!confirmed) return;
     setSaving(true);
     setError('');
     setNotice('');
     try {
       await renewTPanelLicenseOrderWithApi({ licenseId, months: 1 });
-      setNotice('Renewal invoice created.');
+      setNotice('License renewed from credit.');
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to create renewal invoice');
@@ -138,6 +173,61 @@ export default function TPanel() {
     if (!value) return;
     await navigator.clipboard?.writeText(value);
     setNotice(`${labelText} copied`);
+  };
+
+  const openEditLicense = async (license: any) => {
+    const confirmed = await confirmEdit({
+      title: 'Edit license?',
+      message: 'Are you sure you want to edit this license? Changing the server IP resets the fingerprint binding so the new server can verify.',
+      resourceName: license.label || license.serverIp
+    });
+    if (!confirmed) return;
+    setEditingLicense(license);
+    setEditForm({ label: license.label || '', serverIp: license.serverIp || '' });
+  };
+
+  const saveLicenseEdit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!editingLicense) return;
+    setSaving(true);
+    setError('');
+    setNotice('');
+    try {
+      await updateTPanelLicenseWithApi({
+        id: editingLicense.id,
+        label: editForm.label,
+        serverIp: editForm.serverIp
+      });
+      setEditingLicense(null);
+      setNotice('License updated.');
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to update license');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const deleteLicense = async (license: any) => {
+    const confirmed = await confirmDelete({
+      title: 'Delete license?',
+      message: 'This removes the license and its tPanel control records. The old server will stop verifying.',
+      resourceName: license.label || license.serverIp,
+      confirmLabel: 'Delete license'
+    });
+    if (!confirmed) return;
+    setSaving(true);
+    setError('');
+    setNotice('');
+    try {
+      await deleteTPanelLicenseWithApi(license.id);
+      setNotice('License deleted.');
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to delete license');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const selected = packages.find((pkg) => pkg.id === selectedPackage);
@@ -193,10 +283,10 @@ export default function TPanel() {
                 </div>
                 <p className="mt-4 text-xl font-bold text-[#111827]">{money(pkg.price, pkg.currency)}<span className="text-[11px] font-medium text-[#6B7280]">/{pkg.interval}</span></p>
                 <div className="mt-4 grid grid-cols-2 gap-2 text-[11px] font-bold text-[#4B5563]">
-                  <span>{pkg.maxAccounts} accounts</span>
-                  <span>{pkg.maxDomains} domains</span>
-                  <span>{pkg.maxDatabases} DBs</span>
-                  <span>{pkg.maxNodeApps} Node apps</span>
+                  <span>{limitLabel(pkg.maxAccounts)} accounts</span>
+                  <span>{limitLabel(pkg.maxDomains)} domains</span>
+                  <span>{limitLabel(pkg.maxDatabases)} DBs</span>
+                  <span>{limitLabel(pkg.maxNodeApps)} Node apps</span>
                 </div>
               </button>
             ))}
@@ -207,8 +297,11 @@ export default function TPanel() {
             <input value={label} onChange={(event) => setLabel(event.target.value)} className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="Server label" />
             <input type="number" min="1" max="24" value={months} onChange={(event) => setMonths(event.target.value)} className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="Months" />
             <button disabled={saving || !selectedPackage} className="flex items-center justify-center gap-2 rounded bg-[#0069ff] px-4 py-3 text-sm font-bold text-white hover:bg-[#0056cc] disabled:opacity-60 md:col-span-3">
-              <CreditCard className="h-4 w-4" /> Create license order {selected ? `- ${money(Number(selected.price || 0) * Number(months || 1), selected.currency)}` : ''}
+              <CreditCard className="h-4 w-4" /> Create license with credit {selected ? `- ${money(Number(selected.price || 0) * Number(months || 1), selected.currency)}` : ''}
             </button>
+            <Link to="/billing" className="flex items-center justify-center gap-2 rounded border border-[#DDE3EA] px-4 py-3 text-sm font-bold text-[#374151] hover:border-blue-400 md:col-span-3">
+              <Wallet className="h-4 w-4" /> Add credit
+            </Link>
           </form>
         </section>
 
@@ -271,21 +364,49 @@ export default function TPanel() {
                 </div>
               </div>
               <div className="flex flex-wrap gap-2 xl:justify-end">
-                {license.status === 'pending_payment' && ['credit', 'bkash', 'stripe', 'paypal'].map((provider) => (
-                  <button key={provider} disabled={saving} onClick={() => payLicense(license.id, provider)} className="flex items-center gap-2 rounded border border-[#DDE3EA] px-3 py-2 text-[12px] font-bold uppercase text-[#374151] hover:border-blue-400 disabled:opacity-50">
-                    <Zap className="h-4 w-4" /> Pay {provider}
+                {license.status === 'pending_payment' && (
+                  <button disabled={saving} onClick={() => payLicense(license.id)} className="flex items-center gap-2 rounded border border-[#DDE3EA] px-3 py-2 text-[12px] font-bold uppercase text-[#374151] hover:border-blue-400 disabled:opacity-50">
+                    <Zap className="h-4 w-4" /> Pay credit
                   </button>
-                ))}
-                {['active', 'expired'].includes(license.status) && (
+                )}
+                {canRenewLicense(license) && (
                   <button disabled={saving} onClick={() => renewLicense(license.id)} className="flex items-center gap-2 rounded bg-[#111827] px-3 py-2 text-[12px] font-bold text-white hover:bg-black disabled:opacity-50">
                     <ShieldCheck className="h-4 w-4" /> Renew
                   </button>
                 )}
+                {!canRenewLicense(license) && license.status === 'active' && (
+                  <span className="rounded border border-[#E5E7EB] px-3 py-2 text-[12px] font-bold text-[#6B7280]">Renew opens {dateLabel(license.currentPeriodEnd)}</span>
+                )}
+                <button disabled={saving} onClick={() => openEditLicense(license)} className="rounded border border-[#DDE3EA] px-3 py-2 text-[12px] font-bold text-[#374151] hover:border-blue-400 disabled:opacity-50">
+                  Edit
+                </button>
+                <button disabled={saving} onClick={() => deleteLicense(license)} className="rounded border border-red-100 px-3 py-2 text-[12px] font-bold text-red-600 hover:bg-red-50 disabled:opacity-50">
+                  Delete
+                </button>
               </div>
             </div>
           ))}
         </div>
       </section>
+
+      {editingLicense && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4">
+          <form onSubmit={saveLicenseEdit} className="w-full max-w-md rounded border border-[#E5E7EB] bg-white p-5">
+            <div className="mb-4">
+              <h2 className="text-lg font-bold text-[#111827]">Edit tPanel License</h2>
+              <p className="mt-1 text-[12px] text-[#6B7280]">Server IP changes reset the fingerprint binding for the next install.</p>
+            </div>
+            <div className="space-y-3">
+              <input value={editForm.label} onChange={(event) => setEditForm((current) => ({ ...current, label: event.target.value }))} className="w-full rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="Server label" />
+              <input required value={editForm.serverIp} onChange={(event) => setEditForm((current) => ({ ...current, serverIp: event.target.value }))} className="w-full rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="Server IP" />
+            </div>
+            <div className="mt-5 flex justify-end gap-2">
+              <button type="button" onClick={() => setEditingLicense(null)} className="rounded border border-[#DDE3EA] px-4 py-2 text-sm font-bold text-[#374151] hover:bg-gray-50">Cancel</button>
+              <button disabled={saving} className="rounded bg-[#0069ff] px-4 py-2 text-sm font-bold text-white hover:bg-[#0056cc] disabled:opacity-60">Save</button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   );
 }

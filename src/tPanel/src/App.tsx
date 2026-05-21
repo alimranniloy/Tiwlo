@@ -191,7 +191,7 @@ export default function App() {
   const getTabHeadingInfo = (tabId: string) => {
     switch (tabId) {
       case "dashboard":
-        return { title: "System Overview", subtitle: "Server IP: 164.92.210.82" };
+        return { title: "System Overview", subtitle: `Server IP: ${licenseStatus?.license?.serverIp || licenseStatus?.serverIp || "Auto detected"}` };
       case "files":
         return { title: "File Manager Workspace", subtitle: "Root Path: /public_html" };
       case "node":
@@ -241,7 +241,7 @@ export default function App() {
       case "terminal":
         return { title: "Interactive Server Bash SSH", subtitle: "Execute Core Kernel Scripts in tPanel Console Shell" };
       default:
-        return { title: "System Overview", subtitle: "Server IP: 164.92.210.82" };
+        return { title: "System Overview", subtitle: `Server IP: ${licenseStatus?.license?.serverIp || licenseStatus?.serverIp || "Auto detected"}` };
     }
   };
 

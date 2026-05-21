@@ -24,6 +24,7 @@ export default function BillingPage() {
   const [gateways, setGateways] = React.useState<any[]>([]);
   const [overview, setOverview] = React.useState<any | null>(null);
   const [topUpAmount, setTopUpAmount] = React.useState('10');
+  const [topUpCurrency, setTopUpCurrency] = React.useState('USD');
   const [topUpProvider, setTopUpProvider] = React.useState('bkash');
   const [loading, setLoading] = React.useState(true);
   const [processing, setProcessing] = React.useState(false);
@@ -59,7 +60,7 @@ export default function BillingPage() {
     setProcessing(true);
     setError('');
     try {
-      const checkout = await startCreditTopUpWithApi(Number(topUpAmount || 0), 'USD', topUpProvider);
+      const checkout = await startCreditTopUpWithApi(Number(topUpAmount || 0), topUpCurrency, topUpProvider);
       if (checkout.paymentUrl) {
         window.location.href = checkout.paymentUrl;
         return;
@@ -124,11 +125,11 @@ export default function BillingPage() {
             <div className="mb-5 flex items-center justify-between">
               <div>
                 <h2 className="text-sm font-bold uppercase tracking-wide text-[#111827]">Add Credit</h2>
-                <p className="mt-1 text-xs text-[#6B7280]">Top up balance with bKash, Stripe, or PayPal, then orders and hourly billing use credit first.</p>
+                <p className="mt-1 text-xs text-[#6B7280]">Top up balance with bKash, Stripe, or PayPal. Non-USD amounts convert into USD credit.</p>
               </div>
               <Plus className="h-4 w-4 text-blue-600" />
             </div>
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-[1fr_1fr_auto]">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-[1fr_120px_1fr_auto]">
               <input
                 value={topUpAmount}
                 onChange={(event) => setTopUpAmount(event.target.value)}
@@ -138,6 +139,14 @@ export default function BillingPage() {
                 className="rounded border border-gray-200 px-3 py-2 text-sm outline-none focus:border-blue-500"
                 placeholder="Amount"
               />
+              <select
+                value={topUpCurrency}
+                onChange={(event) => setTopUpCurrency(event.target.value)}
+                className="rounded border border-gray-200 px-3 py-2 text-sm font-bold outline-none focus:border-blue-500"
+              >
+                <option value="USD">USD credit</option>
+                <option value="BDT">BDT amount</option>
+              </select>
               <select
                 value={topUpProvider}
                 onChange={(event) => setTopUpProvider(event.target.value)}

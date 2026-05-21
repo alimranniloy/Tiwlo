@@ -24,8 +24,28 @@ import {
 
 const paymentEnabledStatuses = new Set(['enabled', 'active']);
 const autoIpResourceTypes = new Set(['droplet', 'system_server']);
+const CREDIT_CURRENCY = 'USD';
 
 const invoiceNumber = (prefix) => `${prefix}-${Date.now().toString(36).toUpperCase()}`;
+
+const exchangeRate = (fromCurrency, toCurrency) => {
+  const from = String(fromCurrency || CREDIT_CURRENCY).toUpperCase();
+  const to = String(toCurrency || CREDIT_CURRENCY).toUpperCase();
+  if (from === to) return 1;
+  const directKey = `${from}_${to}`;
+  const inverseKey = `${to}_${from}`;
+  const direct = Number(process.env[`PAYMENT_RATE_${directKey}`] || (directKey === 'USD_BDT' ? 110 : 0));
+  if (direct > 0) return direct;
+  const inverse = Number(process.env[`PAYMENT_RATE_${inverseKey}`] || (inverseKey === 'USD_BDT' ? 110 : 0));
+  if (inverse > 0) return 1 / inverse;
+  throw new AppError(`Missing exchange rate for ${directKey}`, 'PAYMENT_CONFIGURATION_REQUIRED');
+};
+
+const convertMoney = (amount, fromCurrency, toCurrency = CREDIT_CURRENCY) => (
+  roundMoney(Number(amount || 0) * exchangeRate(fromCurrency, toCurrency))
+);
+
+export const invoiceCreditAmount = (invoice) => convertMoney(invoice.amount, invoice.currency || CREDIT_CURRENCY, CREDIT_CURRENCY);
 
 const sanitizeSecretValue = (value) => {
   if (typeof value !== 'string') return value;
@@ -188,11 +208,19 @@ const fulfillPaidInvoice = async (tx, invoice, paidAt = new Date()) => {
   let items = invoice.items || {};
 
   if (invoice.scope === 'credit_topup') {
+    const creditAmount = invoiceCreditAmount(invoice);
     await tx.user.update({
       where: { id: invoice.ownerId },
-      data: { credits: { increment: Number(invoice.amount || 0) } }
+      data: { credits: { increment: creditAmount } }
     });
-    items = { ...items, creditAppliedAt: paidAt.toISOString() };
+    items = {
+      ...items,
+      creditAppliedAt: paidAt.toISOString(),
+      creditAmount,
+      creditCurrency: CREDIT_CURRENCY,
+      sourceAmount: Number(invoice.amount || 0),
+      sourceCurrency: invoice.currency || CREDIT_CURRENCY
+    };
   }
 
   if (invoice.scope === 'cloud_order' && items.pendingResource && !items.fulfilledResourceId) {
@@ -775,17 +803,18 @@ export const startInvoicePayment = async (ctx, { invoiceId, provider }) => {
       throw new AppError('Credit top-up invoices must be paid with an external gateway', 'BAD_USER_INPUT');
     }
     const owner = await ctx.prisma.user.findUnique({ where: { id: invoice.ownerId } });
-    if (Number(owner?.credits || 0) < Number(invoice.amount || 0)) {
+    const creditCharge = invoiceCreditAmount(invoice);
+    if (Number(owner?.credits || 0) < creditCharge) {
       return checkoutResponse(ctx, {
         status: 'requires_payment',
         provider: 'credit',
         invoice,
-        message: 'Insufficient credit balance. Add credit or choose bKash, Stripe, or PayPal.'
+        message: `Insufficient credit balance. Add credit before paying this ${invoice.currency || CREDIT_CURRENCY} invoice.`
       });
     }
 
     const result = await ctx.prisma.$transaction(async (tx) => {
-      await tx.user.update({ where: { id: invoice.ownerId }, data: { credits: { decrement: Number(invoice.amount || 0) } } });
+      await tx.user.update({ where: { id: invoice.ownerId }, data: { credits: { decrement: creditCharge } } });
       await createOrUpdatePayment(tx, {
         invoice,
         provider: 'credits',
@@ -793,7 +822,14 @@ export const startInvoicePayment = async (ctx, { invoiceId, provider }) => {
         status: 'succeeded',
         amount: invoice.amount
       });
-      return fulfillPaidInvoice(tx, invoice);
+      return fulfillPaidInvoice(tx, {
+        ...invoice,
+        items: {
+          ...(invoice.items || {}),
+          creditCharge,
+          creditCurrency: CREDIT_CURRENCY
+        }
+      });
     });
     await runCreditAutomationForOwner(ctx, invoice.ownerId);
     await writeAudit(ctx, 'pay_invoice_with_credits', 'invoice', invoice.id, { actorId: actor?.id });
@@ -823,19 +859,23 @@ export const startCreditTopUp = async (ctx, input) => {
   if (!actor) throw new AppError('Authentication is required', 'UNAUTHENTICATED');
   const amount = roundMoney(input.amount);
   if (amount <= 0) throw new AppError('Top-up amount must be greater than zero', 'BAD_USER_INPUT');
+  const currency = String(input.currency || CREDIT_CURRENCY).toUpperCase();
+  const creditAmount = convertMoney(amount, currency, CREDIT_CURRENCY);
 
   const invoice = await ctx.prisma.invoice.create({
     data: {
       ownerId: actor.id,
       number: invoiceNumber('CR'),
       amount,
-      currency: input.currency || 'USD',
+      currency,
       status: 'open',
       scope: 'credit_topup',
       dueDate: new Date(),
       items: {
-        lineItems: [{ label: 'Tiwlo credit top-up', amount }],
-        creditTopUp: true
+        lineItems: [{ label: 'Tiwlo credit top-up', amount, currency }],
+        creditTopUp: true,
+        creditAmount,
+        creditCurrency: CREDIT_CURRENCY
       }
     }
   });

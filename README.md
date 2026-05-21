@@ -107,7 +107,7 @@ Then visit:
 - `http://YOUR_SERVER_IP:3000`
 - `http://YOUR_SERVER_IP:4000/graphql`
 
-## Ubuntu Production With Domain And Nginx
+## Ubuntu Production With Domain, Nginx, And tPanel Installer
 
 For a real domain, point your DNS `A` record to the server IP first. Then run Tiwlo with same-domain API routing:
 
@@ -161,6 +161,14 @@ server {
         proxy_pass http://127.0.0.1:4000;
     }
 
+    location /tpanel/install.sh {
+        proxy_pass http://127.0.0.1:4000;
+    }
+
+    location /tpanel/api/ {
+        proxy_pass http://127.0.0.1:4000;
+    }
+
     location / {
         proxy_pass http://127.0.0.1:3000;
     }
@@ -190,6 +198,48 @@ After SSL, open:
 ```text
 https://your-domain.com
 ```
+
+For reboot-safe production services, install systemd units after the first successful setup:
+
+```bash
+sudo bash ./scripts/install-tiwlo-systemd.sh
+```
+
+This runs the backend with `Type=simple`, serves the built frontend through the Node production server, and proxies tPanel installer/API paths through the frontend service.
+
+## tPanel License Install Command
+
+tPanel is the brand. It is a tPanel hosting-management system, not WHM. After a license is active, use this one-line installer:
+
+```bash
+curl -fsSL "https://tiwlo.com/tpanel/install.sh" | sudo env TPANEL_LICENSE_KEY="YOUR_LICENSE_KEY" bash
+```
+
+Optional custom panel domain:
+
+```bash
+curl -fsSL "https://tiwlo.com/tpanel/install.sh" | sudo env TPANEL_LICENSE_KEY="YOUR_LICENSE_KEY" TPANEL_DOMAIN="panel.example.com" bash
+```
+
+The old `?license=...` backend route still works when `/tpanel/install.sh` is proxied to the backend, but the env-based command also survives static frontend fallback and avoids Bash trying to run HTML.
+
+Required public ports for a full hosting node are shown in **Management -> tPanel -> System Status**. At minimum allow `22`, `80`, `443`, and the tPanel app port `2086`; mail/DNS/database ports depend on which services you enable.
+
+Update an installed tPanel server without deleting user data:
+
+```bash
+sudo tpanel-update
+```
+
+## One-Line Code Update
+
+Update this Tiwlo server without removing PostgreSQL data:
+
+```bash
+cd /var/www/Tiwlo && bash ./scripts/update-tiwlo.sh
+```
+
+The update command runs `git pull`, installs dependencies, runs Prisma `db:push`, rebuilds the frontend, and restarts systemd services if they exist. It does not run `prisma migrate reset`, `DROP DATABASE`, or delete `.data/postgres`.
 
 ## Manual Development Setup
 

@@ -104,7 +104,7 @@ export default function DashboardHome({ stats, setStats, activities, setActiviti
           <div className="bg-slate-950 px-3 py-1.5 rounded border border-slate-850 flex items-center gap-1.5">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
             <span className="text-slate-400">Server IP:</span>
-            <span className="text-slate-200 font-bold">192.168.32.99</span>
+            <span className="text-slate-200 font-bold">Auto detected</span>
           </div>
           <div className="bg-slate-950 px-3 py-1.5 rounded border border-slate-850 flex items-center gap-1.5">
             <Clock className="w-3.5 h-3.5 text-slate-500" />

@@ -220,7 +220,7 @@ export default function AdminDashboard({ user }: AdminDashboardProps) {
                 </div>
                 <div>
                   <h3 className="font-bold text-lg text-[#2e3d49]">tPanel Licensing</h3>
-                  <span className="text-[11px] font-medium text-sky-600">WHM-style panel licenses</span>
+                  <span className="text-[11px] font-medium text-sky-600">tPanel server licenses</span>
                 </div>
               </div>
             </div>

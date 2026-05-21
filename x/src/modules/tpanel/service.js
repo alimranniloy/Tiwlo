@@ -4,7 +4,7 @@ import { getActor, isAdmin } from '../../core/auth.js';
 import { AppError } from '../../core/errors.js';
 import { toApi } from '../../core/format.js';
 import { writeAudit } from '../../core/audit.js';
-import { startInvoicePayment } from '../billing/service.js';
+import { invoiceCreditAmount, startInvoicePayment } from '../billing/service.js';
 
 const json = (value, fallback) => JSON.stringify(value ?? fallback);
 const text = (value, fallback = '') => String(value ?? fallback).trim();
@@ -14,13 +14,14 @@ const normalizeRows = (rows) => toApi(rows || []);
 const first = (rows) => normalizeRows(rows)[0] || null;
 
 const ACTIVE_STATUSES = new Set(['active', 'trialing']);
-const BLOCKED_STATUSES = new Set(['suspended', 'expired', 'cancelled', 'revoked']);
+const BLOCKED_STATUSES = new Set(['suspended', 'expired', 'cancelled', 'revoked', 'deleted']);
 const TASK_ACTIONS = new Set([
   'create_account',
   'suspend_account',
   'unsuspend_account',
   'terminate_account',
   'change_package',
+  'delete_package',
   'sync_dns_zone',
   'restart_service',
   'reload_service',
@@ -29,9 +30,53 @@ const TASK_ACTIONS = new Set([
   'suspend_license',
   'unsuspend_license',
   'renew_required',
+  'apply_domain_settings',
   'backup_account',
   'restore_account'
 ]);
+
+const LICENSE_PAYMENT_PROVIDER = 'credit';
+const TPANEL_PACKAGE_SEED_VERSION = 2;
+const TPANEL_CAPABILITIES = [
+  'accounts',
+  'packages',
+  'dns',
+  'databases',
+  'email',
+  'nodeApps',
+  'ftp',
+  'files',
+  'services',
+  'security',
+  'updates',
+  'backups',
+  'terminal'
+];
+
+const DEFAULT_TPANEL_DOMAIN = 'tiwlo.com';
+const TPANEL_REQUIRED_PORTS = [
+  { port: 22, protocol: 'tcp', service: 'SSH', purpose: 'server login and emergency recovery', public: true },
+  { port: 25, protocol: 'tcp', service: 'SMTP', purpose: 'outbound/inbound mail delivery', public: true },
+  { port: 53, protocol: 'tcp/udp', service: 'DNS', purpose: 'authoritative DNS zones', public: true },
+  { port: 80, protocol: 'tcp', service: 'HTTP', purpose: 'websites, installer, ACME challenge', public: true },
+  { port: 110, protocol: 'tcp', service: 'POP3', purpose: 'mailbox access', public: true },
+  { port: 143, protocol: 'tcp', service: 'IMAP', purpose: 'mailbox access', public: true },
+  { port: 443, protocol: 'tcp', service: 'HTTPS', purpose: 'secure websites and panel domain', public: true },
+  { port: 465, protocol: 'tcp', service: 'SMTPS', purpose: 'secure SMTP', public: true },
+  { port: 587, protocol: 'tcp', service: 'Submission', purpose: 'authenticated SMTP', public: true },
+  { port: 993, protocol: 'tcp', service: 'IMAPS', purpose: 'secure IMAP', public: true },
+  { port: 995, protocol: 'tcp', service: 'POP3S', purpose: 'secure POP3', public: true },
+  { port: 2086, protocol: 'tcp', service: 'tPanel', purpose: 'local tPanel app', public: false },
+  { port: 2087, protocol: 'tcp', service: 'tPanel SSL', purpose: 'secure tPanel app', public: false },
+  { port: 3306, protocol: 'tcp', service: 'MySQL/MariaDB', purpose: 'database service, keep private unless required', public: false },
+  { port: 5432, protocol: 'tcp', service: 'PostgreSQL', purpose: 'PostgreSQL service, keep private unless required', public: false },
+  { port: 6379, protocol: 'tcp', service: 'Redis', purpose: 'cache/session service, keep private', public: false }
+];
+
+const defaultPermissions = (overrides = {}) => TPANEL_CAPABILITIES.reduce((acc, key) => ({
+  ...acc,
+  [key]: overrides[key] ?? true
+}), {});
 
 const CONTROL_SECTIONS = [
   {
@@ -43,7 +88,7 @@ const CONTROL_SECTIONS = [
   {
     key: 'packages',
     label: 'Package Manager',
-    description: 'Define WHM-style user packages and resource limits for accounts on licensed servers.',
+    description: 'Define tPanel account packages and resource limits for accounts on licensed servers.',
     actions: ['upsert_package', 'delete_package']
   },
   {
@@ -69,6 +114,18 @@ const CONTROL_SECTIONS = [
     label: 'Update Manager',
     description: 'Publish and force tPanel updates with no data loss by queuing update jobs to licensed servers.',
     actions: ['run_update']
+  },
+  {
+    key: 'domainSettings',
+    label: 'Domain Settings',
+    description: 'Bind a public domain to tPanel, prepare DNS records, and keep installer/API URLs aligned.',
+    actions: ['apply_domain_settings']
+  },
+  {
+    key: 'systemStatus',
+    label: 'System Status',
+    description: 'Track required ports, firewall expectations, node heartbeat data, and service health.',
+    actions: ['heartbeat', 'port_check']
   }
 ];
 
@@ -76,8 +133,8 @@ const defaultPackages = [
   {
     code: 'starter',
     name: 'tPanel Starter',
-    description: 'Small hosting operators starting with tPanel Pro.',
-    price: 19,
+    description: 'Low-cost tPanel license for small hosting operators.',
+    price: 2.99,
     maxAccounts: 10,
     maxDomains: 25,
     maxDatabases: 10,
@@ -87,15 +144,22 @@ const defaultPackages = [
     features: [
       'tPanel Pro installer',
       'One licensed server IP',
-      'Core WHM-style account tools',
+      'Core tPanel account tools',
       'Email, DNS, database, file and Node.js managers'
-    ]
+    ],
+    permissions: defaultPermissions({
+      services: false,
+      security: false,
+      updates: false,
+      backups: false,
+      terminal: false
+    })
   },
   {
     code: 'growth',
     name: 'tPanel Growth',
     description: 'For active hosting businesses with more clients.',
-    price: 49,
+    price: 5.99,
     maxAccounts: 75,
     maxDomains: 150,
     maxDatabases: 80,
@@ -107,25 +171,29 @@ const defaultPackages = [
       'Higher account and domain limits',
       'Priority update channel',
       'Extended service monitoring'
-    ]
+    ],
+    permissions: defaultPermissions({
+      backups: false
+    })
   },
   {
     code: 'business',
     name: 'tPanel Business',
-    description: 'High-capacity license for agencies and hosting providers.',
-    price: 129,
-    maxAccounts: 250,
-    maxDomains: 500,
-    maxDatabases: 300,
-    maxEmailAccounts: 1000,
-    maxNodeApps: 125,
+    description: 'Unlimited tPanel license for agencies and hosting providers.',
+    price: 9.99,
+    maxAccounts: 0,
+    maxDomains: 0,
+    maxDatabases: 0,
+    maxEmailAccounts: 0,
+    maxNodeApps: 0,
     sortOrder: 30,
     features: [
       'Everything in Growth',
-      'Large reseller-style limits',
+      'Unlimited accounts, domains, databases, email and Node.js apps',
       'Forced update controls',
       'Premium support workflow'
-    ]
+    ],
+    permissions: defaultPermissions()
   }
 ];
 
@@ -168,6 +236,8 @@ const tPanelRepoUrl = () => (
   'https://github.com/tiwlo/tpanel.git'
 );
 
+const shellEnvValue = (value) => `"${String(value || '').replace(/(["\\$`])/g, '\\$1')}"`;
+
 const addMonths = (date, months) => {
   const next = new Date(date);
   next.setMonth(next.getMonth() + months);
@@ -178,7 +248,7 @@ const invoiceNumber = () => `TPN-${Date.now().toString(36).toUpperCase()}-${rand
 
 const licenseKey = () => `tp_live_${randomBytes(24).toString('hex')}`;
 
-const installCommandFor = (key) => `curl -fsSL "${apiBaseUrl()}/tpanel/install.sh?license=${encodeURIComponent(key || 'YOUR_LICENSE_KEY')}" | sudo bash`;
+const installCommandFor = (key) => `curl -fsSL "${apiBaseUrl()}/tpanel/install.sh" | sudo env TPANEL_LICENSE_KEY=${shellEnvValue(key || 'YOUR_LICENSE_KEY')} bash`;
 
 const assertValidIp = (serverIp) => {
   const value = text(serverIp);
@@ -218,6 +288,165 @@ const packageLimits = (pkg = {}) => ({
   nodeApps: integer(pkg.nodeApps, 3),
   ftpAccounts: integer(pkg.ftpAccounts, 5)
 });
+
+const packagePermissions = (pkg = {}) => ({
+  ...defaultPermissions(),
+  ...(pkg.permissions || pkg.metadata?.permissions || {})
+});
+
+const cleanDomain = (value, fallback = DEFAULT_TPANEL_DOMAIN) => {
+  const domain = text(value || fallback).toLowerCase()
+    .replace(/^https?:\/\//, '')
+    .replace(/\/.*$/, '')
+    .replace(/:\d+$/, '')
+    .replace(/[^a-z0-9.-]/g, '')
+    .replace(/^\.+|\.+$/g, '');
+  return domain || fallback;
+};
+
+const publicUrlForDomain = (domain, secure = true) => `${secure ? 'https' : 'http'}://${cleanDomain(domain)}`;
+
+const detectedServerIp = (ctx, license) => (
+  normalizeIp(license?.serverIp || process.env.TPANEL_SERVER_IP || process.env.SERVER_IP || process.env.PUBLIC_IP || ctx.requestIp || '')
+);
+
+const defaultDomainSettings = (ctx, license) => {
+  const primaryDomain = DEFAULT_TPANEL_DOMAIN;
+  const serverIp = detectedServerIp(ctx, license);
+  return {
+    primaryDomain,
+    panelUrl: publicUrlForDomain(primaryDomain, true),
+    detectedServerIp: serverIp,
+    installScriptUrl: `${apiBaseUrl()}/tpanel/install.sh`,
+    apiBaseUrl: apiBaseUrl(),
+    autoDetectIp: true,
+    enableNginxProxy: true,
+    enableSsl: true,
+    dnsRecords: [
+      { type: 'A', name: '@', value: serverIp || 'SERVER_IP', ttl: 300 },
+      { type: 'A', name: 'www', value: serverIp || 'SERVER_IP', ttl: 300 }
+    ],
+    ports: TPANEL_REQUIRED_PORTS,
+    nginx: {
+      serverName: `${primaryDomain} www.${primaryDomain}`,
+      proxyTarget: 'http://127.0.0.1:2086',
+      requiredLocations: ['/tpanel', '/tpanel/install.sh', '/tpanel/api', '/graphql', '/health']
+    }
+  };
+};
+
+const mergeDomainSettings = (ctx, license, saved = {}) => {
+  const defaults = defaultDomainSettings(ctx, license);
+  const primaryDomain = cleanDomain(saved.primaryDomain || defaults.primaryDomain);
+  const serverIp = saved.autoDetectIp === false
+    ? text(saved.detectedServerIp || defaults.detectedServerIp)
+    : defaults.detectedServerIp;
+  return {
+    ...defaults,
+    ...saved,
+    primaryDomain,
+    panelUrl: saved.panelUrl || publicUrlForDomain(primaryDomain, saved.enableSsl !== false),
+    detectedServerIp: serverIp,
+    installScriptUrl: saved.installScriptUrl || defaults.installScriptUrl,
+    apiBaseUrl: saved.apiBaseUrl || defaults.apiBaseUrl,
+    dnsRecords: Array.isArray(saved.dnsRecords) && saved.dnsRecords.length > 0
+      ? saved.dnsRecords.map((record) => ({ ...record, value: record.value === 'SERVER_IP' ? (serverIp || 'SERVER_IP') : record.value }))
+      : [
+          { type: 'A', name: '@', value: serverIp || 'SERVER_IP', ttl: 300 },
+          { type: 'A', name: 'www', value: serverIp || 'SERVER_IP', ttl: 300 }
+        ],
+    ports: TPANEL_REQUIRED_PORTS,
+    updatedAt: saved.updatedAt || null
+  };
+};
+
+const readTPanelDomainSettings = async (ctx, license) => {
+  const row = await ctx.prisma.systemSetting.findUnique({
+    where: { scope_scopeId_key: { scope: 'tpanel', scopeId: license?.id || 'global', key: 'domain_settings' } }
+  }).catch(() => null);
+  return mergeDomainSettings(ctx, license, row?.value || {});
+};
+
+const portStatusFromMetrics = (metrics = {}, services = []) => {
+  const listeningPorts = new Set((metrics.listeningPorts || metrics.openPorts || []).map((item) => Number(item.port ?? item)));
+  const allowedPorts = new Set((metrics.allowedPorts || metrics.firewallAllowedPorts || []).map((item) => Number(item.port ?? item)));
+  const servicePorts = new Set(services.map((service) => Number(service.port)).filter(Boolean));
+  return TPANEL_REQUIRED_PORTS.map((port) => {
+    const open = listeningPorts.has(port.port) || servicePorts.has(port.port);
+    const allowed = allowedPorts.has(port.port) || metrics.firewallMode === 'inactive';
+    return {
+      ...port,
+      open,
+      allowed,
+      status: open ? 'listening' : 'not_reported',
+      firewallStatus: allowed ? 'allowed' : 'not_reported'
+    };
+  });
+};
+
+const systemChecksFor = ({ license, node, services, domainSettings }) => {
+  const metrics = node?.metrics || {};
+  const ports = portStatusFromMetrics(metrics, services);
+  return {
+    detectedServerIp: domainSettings.detectedServerIp || license?.serverIp || null,
+    publicDomain: domainSettings.primaryDomain,
+    panelUrl: domainSettings.panelUrl,
+    installScriptUrl: domainSettings.installScriptUrl,
+    ports,
+    services,
+    node: node || null,
+    firewall: {
+      mode: metrics.firewallMode || 'unknown',
+      raw: metrics.firewall || null
+    },
+    checks: {
+      heartbeat: node?.lastSeenAt ? 'reported' : 'waiting',
+      dns: domainSettings.detectedServerIp ? 'ready_to_point_a_record' : 'server_ip_unknown',
+      installerRoute: domainSettings.installScriptUrl ? 'configured' : 'missing',
+      postgresql: ports.find((item) => item.port === 5432)?.status || 'not_reported'
+    },
+    generatedAt: new Date().toISOString()
+  };
+};
+
+const decoratePackage = (pkg) => pkg ? ({
+  ...pkg,
+  permissions: packagePermissions(pkg)
+}) : null;
+
+const licensePlanLimits = (license = {}) => ({
+  accounts: integer(license.packageMaxAccounts ?? license.package?.maxAccounts, 0),
+  domains: integer(license.packageMaxDomains ?? license.package?.maxDomains, 0),
+  databases: integer(license.packageMaxDatabases ?? license.package?.maxDatabases, 0),
+  emailAccounts: integer(license.packageMaxEmailAccounts ?? license.package?.maxEmailAccounts, 0),
+  nodeApps: integer(license.packageMaxNodeApps ?? license.package?.maxNodeApps, 0)
+});
+
+const isUnlimited = (value) => integer(value, 0) <= 0;
+
+const limitLabel = (value) => isUnlimited(value) ? 'unlimited' : String(integer(value, 0));
+
+const assertCapability = (license, capability, label = capability) => {
+  const permissions = packagePermissions(license.package || license);
+  if (permissions[capability] === false) {
+    throw new AppError(`This tPanel package does not include ${label}`, 'FORBIDDEN');
+  }
+};
+
+const assertLimitWithinPlan = (license, key, requested, label) => {
+  const max = licensePlanLimits(license)[key];
+  if (!isUnlimited(max) && integer(requested, 0) > max) {
+    throw new AppError(`${label} exceeds this tPanel license limit of ${max}`, 'RESOURCE_EXHAUSTED');
+  }
+};
+
+const assertUsageWithinPlan = async (ctx, license, key, current, add, label) => {
+  const max = licensePlanLimits(license)[key];
+  const next = integer(current, 0) + integer(add, 0);
+  if (!isUnlimited(max) && next > max) {
+    throw new AppError(`${label} limit reached for this tPanel license (${next}/${max})`, 'RESOURCE_EXHAUSTED');
+  }
+};
 
 export const ensureTPanelTables = async (prisma) => {
   await prisma.$executeRawUnsafe(`
@@ -443,6 +672,8 @@ export const ensureTPanelTables = async (prisma) => {
         "name" = EXCLUDED."name",
         "description" = EXCLUDED."description",
         "price" = EXCLUDED."price",
+        "currency" = EXCLUDED."currency",
+        "interval" = EXCLUDED."interval",
         "maxAccounts" = EXCLUDED."maxAccounts",
         "maxDomains" = EXCLUDED."maxDomains",
         "maxDatabases" = EXCLUDED."maxDatabases",
@@ -450,10 +681,24 @@ export const ensureTPanelTables = async (prisma) => {
         "maxNodeApps" = EXCLUDED."maxNodeApps",
         "features" = EXCLUDED."features",
         "sortOrder" = EXCLUDED."sortOrder",
+        "metadata" = EXCLUDED."metadata",
         "updatedAt" = CURRENT_TIMESTAMP
+      WHERE COALESCE("TPanelPackage"."metadata"->>'managedBySeed', 'true') <> 'false'
+        AND (
+          CASE
+            WHEN COALESCE("TPanelPackage"."metadata"->>'seedVersion', '') ~ '^[0-9]+$'
+            THEN ("TPanelPackage"."metadata"->>'seedVersion')::int
+            ELSE 0
+          END
+        ) < $14
     `, `pkg_${pkg.code}`, pkg.code, pkg.name, pkg.description, pkg.price, pkg.maxAccounts,
       pkg.maxDomains, pkg.maxDatabases, pkg.maxEmailAccounts, pkg.maxNodeApps,
-      json(pkg.features, []), pkg.sortOrder, json({ seeded: true }, {}));
+      json(pkg.features, []), pkg.sortOrder, json({
+        seeded: true,
+        managedBySeed: true,
+        seedVersion: TPANEL_PACKAGE_SEED_VERSION,
+        permissions: pkg.permissions || defaultPermissions()
+      }, {}), TPANEL_PACKAGE_SEED_VERSION);
   }
 };
 
@@ -477,6 +722,12 @@ const licenseWithJoins = async (prisma, whereSql, ...params) => (
       p."maxEmailAccounts" AS "packageMaxEmailAccounts",
       p."maxNodeApps" AS "packageMaxNodeApps",
       p."features" AS "packageFeatures",
+      p."price" AS "packagePrice",
+      p."currency" AS "packageCurrency",
+      p."interval" AS "packageInterval",
+      p."status" AS "packageStatus",
+      p."sortOrder" AS "packageSortOrder",
+      p."metadata" AS "packageMetadata",
       u."name" AS "ownerName",
       u."email" AS "ownerEmail",
       i."number" AS "invoiceNumber",
@@ -512,7 +763,14 @@ const decorateLicense = (license) => {
       maxDatabases: license.packageMaxDatabases,
       maxEmailAccounts: license.packageMaxEmailAccounts,
       maxNodeApps: license.packageMaxNodeApps,
-      features: license.packageFeatures || []
+      features: license.packageFeatures || [],
+      price: license.packagePrice,
+      currency: license.packageCurrency,
+      interval: license.packageInterval,
+      status: license.packageStatus,
+      sortOrder: license.packageSortOrder,
+      metadata: license.packageMetadata || {},
+      permissions: packagePermissions({ metadata: license.packageMetadata || {} })
     },
     owner: license.ownerName || license.ownerEmail ? {
       id: license.ownerId,
@@ -561,7 +819,104 @@ const activatePaidLicense = async (ctx, licenseId, months = 1) => {
 export const listTPanelPackages = async (ctx, { status } = {}) => {
   await ensureTPanelTables(ctx.prisma);
   const rows = await ctx.prisma.$queryRawUnsafe('SELECT * FROM "TPanelPackage" ORDER BY "sortOrder" ASC, "price" ASC');
-  return normalizeRows(rows).filter((pkg) => !status || pkg.status === status);
+  return normalizeRows(rows).filter((pkg) => !status || pkg.status === status).map(decoratePackage);
+};
+
+export const upsertTPanelPackage = async (ctx, input) => {
+  await ensureTPanelTables(ctx.prisma);
+  const id = input.id || `pkg_${text(input.code || input.name).toLowerCase().replace(/[^a-z0-9_-]+/g, '-') || randomUUID()}`;
+  const code = text(input.code || input.name).toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '');
+  const name = text(input.name);
+  if (!code || !name) throw new AppError('Package code and name are required', 'BAD_USER_INPUT');
+  const metadata = {
+    ...(input.metadata || {}),
+    managedBySeed: false,
+    permissions: {
+      ...defaultPermissions(),
+      ...(input.metadata?.permissions || input.permissions || {})
+    },
+    updatedFromAdmin: true
+  };
+  const values = [
+    id,
+    code,
+    name,
+    input.description || null,
+    Math.max(0, number(input.price, 0)),
+    text(input.currency || 'USD').toUpperCase(),
+    text(input.interval || 'month'),
+    Math.max(0, integer(input.maxAccounts, 0)),
+    Math.max(0, integer(input.maxDomains, 0)),
+    Math.max(0, integer(input.maxDatabases, 0)),
+    Math.max(0, integer(input.maxEmailAccounts, 0)),
+    Math.max(0, integer(input.maxNodeApps, 0)),
+    json(input.features, []),
+    text(input.status || 'active'),
+    integer(input.sortOrder, 100),
+    json(metadata, {})
+  ];
+  const rows = input.id
+    ? await ctx.prisma.$queryRawUnsafe(`
+        UPDATE "TPanelPackage"
+        SET "code" = $2, "name" = $3, "description" = $4, "price" = $5,
+            "currency" = $6, "interval" = $7, "maxAccounts" = $8,
+            "maxDomains" = $9, "maxDatabases" = $10, "maxEmailAccounts" = $11,
+            "maxNodeApps" = $12, "features" = CAST($13 AS jsonb), "status" = $14,
+            "sortOrder" = $15, "metadata" = CAST($16 AS jsonb), "updatedAt" = CURRENT_TIMESTAMP
+        WHERE "id" = $1
+        RETURNING *
+      `, ...values)
+    : await ctx.prisma.$queryRawUnsafe(`
+        INSERT INTO "TPanelPackage"
+          ("id", "code", "name", "description", "price", "currency", "interval",
+           "maxAccounts", "maxDomains", "maxDatabases", "maxEmailAccounts",
+           "maxNodeApps", "features", "status", "sortOrder", "metadata")
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, CAST($13 AS jsonb), $14, $15, CAST($16 AS jsonb))
+        ON CONFLICT ("code") DO UPDATE SET
+          "name" = EXCLUDED."name",
+          "description" = EXCLUDED."description",
+          "price" = EXCLUDED."price",
+          "currency" = EXCLUDED."currency",
+          "interval" = EXCLUDED."interval",
+          "maxAccounts" = EXCLUDED."maxAccounts",
+          "maxDomains" = EXCLUDED."maxDomains",
+          "maxDatabases" = EXCLUDED."maxDatabases",
+          "maxEmailAccounts" = EXCLUDED."maxEmailAccounts",
+          "maxNodeApps" = EXCLUDED."maxNodeApps",
+          "features" = EXCLUDED."features",
+          "status" = EXCLUDED."status",
+          "sortOrder" = EXCLUDED."sortOrder",
+          "metadata" = EXCLUDED."metadata",
+          "updatedAt" = CURRENT_TIMESTAMP
+        RETURNING *
+      `, ...values);
+  const pkg = first(rows);
+  if (!pkg) throw new AppError('tPanel package was not saved', 'BAD_USER_INPUT');
+  await writeAudit(ctx, input.id ? 'update_tpanel_package' : 'upsert_tpanel_package', 'TPanelPackage', pkg.id, { code: pkg.code });
+  return decoratePackage(pkg);
+};
+
+export const deleteTPanelPackage = async (ctx, id) => {
+  await ensureTPanelTables(ctx.prisma);
+  const pkg = first(await ctx.prisma.$queryRawUnsafe('SELECT * FROM "TPanelPackage" WHERE "id" = $1', id));
+  if (!pkg) throw new AppError('tPanel package was not found', 'NOT_FOUND');
+  const activeLicenses = first(await ctx.prisma.$queryRawUnsafe(
+    'SELECT COUNT(*)::int AS count FROM "TPanelLicense" WHERE "packageId" = $1 AND "status" NOT IN (\'deleted\', \'cancelled\', \'revoked\')',
+    id
+  ))?.count || 0;
+  if (activeLicenses > 0) {
+    await ctx.prisma.$executeRawUnsafe(`
+      UPDATE "TPanelPackage"
+      SET "status" = 'archived',
+          "metadata" = CAST($2 AS jsonb),
+          "updatedAt" = CURRENT_TIMESTAMP
+      WHERE "id" = $1
+    `, id, json({ ...(pkg.metadata || {}), managedBySeed: false, archivedAt: new Date().toISOString() }, {}));
+  } else {
+    await ctx.prisma.$executeRawUnsafe('DELETE FROM "TPanelPackage" WHERE "id" = $1', id);
+  }
+  await writeAudit(ctx, 'delete_tpanel_package', 'TPanelPackage', id, { code: pkg.code, activeLicenses });
+  return true;
 };
 
 export const getMyTPanelLicenses = async (ctx) => {
@@ -573,6 +928,9 @@ export const getMyTPanelLicenses = async (ctx) => {
       p."maxAccounts" AS "packageMaxAccounts", p."maxDomains" AS "packageMaxDomains",
       p."maxDatabases" AS "packageMaxDatabases", p."maxEmailAccounts" AS "packageMaxEmailAccounts",
       p."maxNodeApps" AS "packageMaxNodeApps", p."features" AS "packageFeatures",
+      p."price" AS "packagePrice", p."currency" AS "packageCurrency",
+      p."interval" AS "packageInterval", p."status" AS "packageStatus",
+      p."sortOrder" AS "packageSortOrder", p."metadata" AS "packageMetadata",
       i."number" AS "invoiceNumber", i."status" AS "invoiceStatus", i."amount" AS "invoiceAmount", i."dueDate" AS "invoiceDueDate",
       n."hostname" AS "nodeHostname", n."os" AS "nodeOs", n."panelVersion" AS "nodePanelVersion",
       n."agentVersion" AS "nodeAgentVersion", n."lastSeenAt" AS "nodeLastSeenAt"
@@ -580,7 +938,7 @@ export const getMyTPanelLicenses = async (ctx) => {
     LEFT JOIN "TPanelPackage" p ON p."id" = l."packageId"
     LEFT JOIN "Invoice" i ON i."id" = l."invoiceId"
     LEFT JOIN "TPanelNode" n ON n."licenseId" = l."id"
-    WHERE l."ownerId" = $1
+    WHERE l."ownerId" = $1 AND l."status" <> 'deleted'
     ORDER BY l."createdAt" DESC
   `, actor.id);
   return normalizeRows(rows).map(decorateLicense);
@@ -594,6 +952,79 @@ export const getTPanelLicense = async (ctx, id) => {
   if (!license) throw new AppError('tPanel license was not found', 'NOT_FOUND');
   if (!isAdmin(actor) && license.ownerId !== actor.id) throw new AppError('You cannot access this tPanel license', 'FORBIDDEN');
   return decorateLicense(license);
+};
+
+export const updateTPanelLicense = async (ctx, input) => {
+  await ensureTPanelTables(ctx.prisma);
+  const current = await getTPanelLicense(ctx, input.id);
+  const actor = await getActor(ctx);
+  const nextServerIp = input.serverIp === undefined ? current.serverIp : assertValidIp(input.serverIp);
+  const nextLabel = input.label === undefined ? current.label : text(input.label || current.package?.name || current.serverIp);
+  const packageInput = text(input.packageId || input.packageCode || '');
+  let nextPackage = null;
+  if (packageInput) {
+    nextPackage = first(await ctx.prisma.$queryRawUnsafe(
+      'SELECT * FROM "TPanelPackage" WHERE "id" = $1 OR "code" = $1 LIMIT 1',
+      packageInput
+    ));
+    if (!nextPackage || nextPackage.status !== 'active') throw new AppError('Selected tPanel package is not available', 'BAD_USER_INPUT');
+    if (!isAdmin(actor) && current.status !== 'pending_payment') {
+      throw new AppError('Only an administrator can change the package after a license has been paid', 'FORBIDDEN');
+    }
+  }
+  const serverChanged = nextServerIp !== current.serverIp;
+  const metadata = {
+    ...(current.metadata || {}),
+    allowlist: { ...((current.metadata || {}).allowlist || {}), serverIp: nextServerIp },
+    editedAt: new Date().toISOString(),
+    editedBy: actor?.id || null
+  };
+  const rows = await ctx.prisma.$queryRawUnsafe(`
+    UPDATE "TPanelLicense"
+    SET "label" = $2,
+        "serverIp" = $3,
+        "packageId" = COALESCE($4, "packageId"),
+        "serverFingerprint" = CASE WHEN $5 THEN NULL ELSE "serverFingerprint" END,
+        "metadata" = CAST($6 AS jsonb),
+        "updatedAt" = CURRENT_TIMESTAMP
+    WHERE "id" = $1
+    RETURNING *
+  `, current.id, nextLabel, nextServerIp, nextPackage?.id || null, serverChanged, json(metadata, {}));
+  const updated = first(rows);
+  if (!updated) throw new AppError('tPanel license was not updated', 'BAD_USER_INPUT');
+  if (serverChanged && ACTIVE_STATUSES.has(current.status)) {
+    await queueRemoteTask(ctx, {
+      licenseId: current.id,
+      action: 'renew_required',
+      payload: { reason: 'server_ip_changed', oldServerIp: current.serverIp, newServerIp: nextServerIp },
+      priority: 1
+    }).catch(() => null);
+  }
+  await writeAudit(ctx, 'update_tpanel_license', 'tPanelLicense', current.id, {
+    serverChanged,
+    packageId: nextPackage?.id || current.packageId
+  });
+  return decorateLicense(await licenseWithJoins(ctx.prisma, 'WHERE l."id" = $1', current.id));
+};
+
+export const deleteTPanelLicense = async (ctx, id) => {
+  await ensureTPanelTables(ctx.prisma);
+  const license = await getTPanelLicense(ctx, id);
+  await ctx.prisma.$transaction(async (tx) => {
+    await tx.$executeRawUnsafe('DELETE FROM "TPanelRemoteTask" WHERE "licenseId" = $1', id);
+    await tx.$executeRawUnsafe('DELETE FROM "TPanelSecurityRule" WHERE "licenseId" = $1', id);
+    await tx.$executeRawUnsafe('DELETE FROM "TPanelServiceState" WHERE "licenseId" = $1', id);
+    await tx.$executeRawUnsafe('DELETE FROM "TPanelDnsZone" WHERE "licenseId" = $1', id);
+    await tx.$executeRawUnsafe('DELETE FROM "TPanelManagedAccount" WHERE "licenseId" = $1', id);
+    await tx.$executeRawUnsafe('DELETE FROM "TPanelAccountPackage" WHERE "licenseId" = $1', id);
+    await tx.$executeRawUnsafe('DELETE FROM "TPanelNode" WHERE "licenseId" = $1', id);
+    await tx.$executeRawUnsafe('DELETE FROM "TPanelLicense" WHERE "id" = $1', id);
+  });
+  await writeAudit(ctx, 'delete_tpanel_license', 'tPanelLicense', id, {
+    ownerId: license.ownerId,
+    serverIp: license.serverIp
+  });
+  return true;
 };
 
 export const createTPanelLicenseOrder = async (ctx, input) => {
@@ -671,13 +1102,13 @@ export const payTPanelLicenseOrder = async (ctx, { licenseId, provider }) => {
   await ensureTPanelTables(ctx.prisma);
   const license = await getTPanelLicense(ctx, licenseId);
   if (!license.invoiceId) throw new AppError('This tPanel license does not have an invoice', 'BAD_USER_INPUT');
-
-  const checkout = await startInvoicePayment(ctx, { invoiceId: license.invoiceId, provider: provider || 'credit' });
-  let updatedLicense = await getTPanelLicense(ctx, licenseId);
-  if (checkout.status === 'paid') {
-    const months = Number(updatedLicense.metadata?.order?.months || 1);
-    updatedLicense = await activatePaidLicense(ctx, licenseId, months);
+  const requestedProvider = text(provider || LICENSE_PAYMENT_PROVIDER).toLowerCase();
+  if (!['credit', 'credits'].includes(requestedProvider)) {
+    throw new AppError('tPanel licenses are paid from Tiwlo credit only. Add credit first, then pay with credit.', 'BAD_USER_INPUT');
   }
+
+  const checkout = await startInvoicePayment(ctx, { invoiceId: license.invoiceId, provider: LICENSE_PAYMENT_PROVIDER });
+  let updatedLicense = await getTPanelLicense(ctx, licenseId);
 
   return { license: updatedLicense, checkout };
 };
@@ -686,29 +1117,48 @@ export const renewTPanelLicenseOrder = async (ctx, input) => {
   await ensureTPanelTables(ctx.prisma);
   const license = await getTPanelLicense(ctx, input.licenseId);
   const months = Math.max(1, Math.min(24, integer(input.months, 1)));
+  const now = new Date();
+  const currentEnd = license.currentPeriodEnd ? new Date(license.currentPeriodEnd) : null;
+  if (license.status === 'pending_payment') {
+    throw new AppError('Pay the current tPanel invoice from credit before renewing this license', 'BAD_USER_INPUT');
+  }
+  if (ACTIVE_STATUSES.has(license.status) && currentEnd && currentEnd > now) {
+    throw new AppError(`Renewal opens after ${currentEnd.toISOString()}. This license is already active until then.`, 'BAD_USER_INPUT');
+  }
   const pkg = first(await ctx.prisma.$queryRawUnsafe('SELECT * FROM "TPanelPackage" WHERE "id" = $1', license.packageId));
   if (!pkg) throw new AppError('tPanel package was not found', 'NOT_FOUND');
   const amount = number(pkg.price, 0) * months;
+  const currency = input.currency || pkg.currency || 'USD';
+  const owner = await ctx.prisma.user.findUnique({ where: { id: license.ownerId } });
+  const creditCharge = invoiceCreditAmount({ amount, currency });
+  if (Number(owner?.credits || 0) < creditCharge) {
+    throw new AppError(`Insufficient credit balance. Add credit before renewing this ${pkg.name} license.`, 'CREDIT_REQUIRED');
+  }
   const invoice = await ctx.prisma.invoice.create({
     data: {
       ownerId: license.ownerId,
       number: invoiceNumber(),
       amount,
-      currency: input.currency || pkg.currency || 'USD',
+      currency,
       status: 'open',
       scope: 'tpanel_license',
       scopeId: license.id,
-      dueDate: new Date(),
+      dueDate: now,
       items: {
         lineItems: [{ label: `${pkg.name} renewal`, amount, quantity: months, serverIp: license.serverIp }],
         tPanel: { licenseId: license.id, renewal: true, months, packageCode: pkg.code, serverIp: license.serverIp }
       }
     }
   });
+  const checkout = await startInvoicePayment(ctx, { invoiceId: invoice.id, provider: LICENSE_PAYMENT_PROVIDER });
+  if (checkout.status !== 'paid') {
+    throw new AppError(checkout.message || 'Unable to renew from credit balance', 'PAYMENT_REQUIRED');
+  }
   await ctx.prisma.$executeRawUnsafe(`
     UPDATE "TPanelLicense"
-    SET "invoiceId" = $2, "billingStatus" = 'open', "updatedAt" = CURRENT_TIMESTAMP,
-        "metadata" = CAST($3 AS jsonb)
+    SET "invoiceId" = $2,
+        "metadata" = CAST($3 AS jsonb),
+        "updatedAt" = CURRENT_TIMESTAMP
     WHERE "id" = $1
   `, license.id, invoice.id, json({ ...(license.metadata || {}), renewal: { months, invoiceId: invoice.id } }, {}));
   await writeAudit(ctx, 'renew_tpanel_license_order', 'tPanelLicense', license.id, { months, amount });
@@ -744,6 +1194,9 @@ export const adminTPanelOverview = async (ctx) => {
       p."maxAccounts" AS "packageMaxAccounts", p."maxDomains" AS "packageMaxDomains",
       p."maxDatabases" AS "packageMaxDatabases", p."maxEmailAccounts" AS "packageMaxEmailAccounts",
       p."maxNodeApps" AS "packageMaxNodeApps", p."features" AS "packageFeatures",
+      p."price" AS "packagePrice", p."currency" AS "packageCurrency",
+      p."interval" AS "packageInterval", p."status" AS "packageStatus",
+      p."sortOrder" AS "packageSortOrder", p."metadata" AS "packageMetadata",
       u."name" AS "ownerName", u."email" AS "ownerEmail",
       i."number" AS "invoiceNumber", i."status" AS "invoiceStatus", i."amount" AS "invoiceAmount", i."dueDate" AS "invoiceDueDate",
       n."hostname" AS "nodeHostname", n."os" AS "nodeOs", n."panelVersion" AS "nodePanelVersion",
@@ -766,7 +1219,7 @@ export const adminTPanelOverview = async (ctx) => {
 const licenseForControl = async (ctx, licenseId) => {
   const license = await getTPanelLicense(ctx, licenseId);
   if (!ACTIVE_STATUSES.has(license.status)) {
-    throw new AppError('This tPanel license must be active before WHM controls can be changed', 'BAD_USER_INPUT');
+    throw new AppError('This tPanel license must be active before tPanel controls can be changed', 'BAD_USER_INPUT');
   }
   return license;
 };
@@ -776,6 +1229,23 @@ const queueRemoteTask = async (ctx, input) => {
   const action = text(input.action).toLowerCase();
   if (!TASK_ACTIONS.has(action)) throw new AppError('Unsupported tPanel remote action', 'BAD_USER_INPUT');
   const license = await licenseForControl(ctx, input.licenseId);
+  const actionCapabilities = {
+    create_account: 'accounts',
+    suspend_account: 'accounts',
+    unsuspend_account: 'accounts',
+    terminate_account: 'accounts',
+    change_package: 'packages',
+    delete_package: 'packages',
+    sync_dns_zone: 'dns',
+    restart_service: 'services',
+    reload_service: 'services',
+    apply_security_rule: 'security',
+    run_update: 'updates',
+    apply_domain_settings: 'dns',
+    backup_account: 'backups',
+    restore_account: 'backups'
+  };
+  if (actionCapabilities[action]) assertCapability(license, actionCapabilities[action], `${actionCapabilities[action]} controls`);
   const id = randomUUID();
   const rows = await ctx.prisma.$queryRawUnsafe(`
     INSERT INTO "TPanelRemoteTask"
@@ -792,9 +1262,9 @@ export const tPanelControlOverview = async (ctx, { licenseId } = {}) => {
   const actor = await getActor(ctx);
   if (!actor) throw new AppError('Authentication is required', 'UNAUTHENTICATED');
   const licenses = isAdmin(actor)
-    ? normalizeRows(await ctx.prisma.$queryRawUnsafe('SELECT * FROM "TPanelLicense" ORDER BY "createdAt" DESC LIMIT 250'))
-    : normalizeRows(await ctx.prisma.$queryRawUnsafe('SELECT * FROM "TPanelLicense" WHERE "ownerId" = $1 ORDER BY "createdAt" DESC', actor.id));
-  const selectedLicense = licenseId ? await getTPanelLicense(ctx, licenseId) : decorateLicense(licenses[0]);
+    ? normalizeRows(await ctx.prisma.$queryRawUnsafe('SELECT * FROM "TPanelLicense" WHERE "status" <> \'deleted\' ORDER BY "createdAt" DESC LIMIT 250'))
+    : normalizeRows(await ctx.prisma.$queryRawUnsafe('SELECT * FROM "TPanelLicense" WHERE "ownerId" = $1 AND "status" <> \'deleted\' ORDER BY "createdAt" DESC', actor.id));
+  const selectedLicense = licenseId ? await getTPanelLicense(ctx, licenseId) : (licenses[0] ? await getTPanelLicense(ctx, licenses[0].id) : null);
   if (!selectedLicense) {
     return {
       sections: CONTROL_SECTIONS,
@@ -805,18 +1275,24 @@ export const tPanelControlOverview = async (ctx, { licenseId } = {}) => {
       services: [],
       securityRules: [],
       tasks: [],
+      domainSettings: defaultDomainSettings(ctx, null),
+      systemStatus: systemChecksFor({ license: null, node: null, services: [], domainSettings: defaultDomainSettings(ctx, null) }),
       requiredPackages: requiredServerPackages
     };
   }
 
-  const [packages, accounts, dnsZones, services, securityRules, tasks] = await Promise.all([
+  const [packages, accounts, dnsZones, services, securityRules, tasks, nodeRows] = await Promise.all([
     ctx.prisma.$queryRawUnsafe('SELECT * FROM "TPanelAccountPackage" WHERE "licenseId" = $1 OR "licenseId" IS NULL ORDER BY "createdAt" DESC', selectedLicense.id),
     ctx.prisma.$queryRawUnsafe('SELECT * FROM "TPanelManagedAccount" WHERE "licenseId" = $1 ORDER BY "createdAt" DESC', selectedLicense.id),
     ctx.prisma.$queryRawUnsafe('SELECT * FROM "TPanelDnsZone" WHERE "licenseId" = $1 ORDER BY "domain" ASC', selectedLicense.id),
     ctx.prisma.$queryRawUnsafe('SELECT * FROM "TPanelServiceState" WHERE "licenseId" = $1 ORDER BY "name" ASC', selectedLicense.id),
     ctx.prisma.$queryRawUnsafe('SELECT * FROM "TPanelSecurityRule" WHERE "licenseId" = $1 ORDER BY "createdAt" DESC', selectedLicense.id),
-    ctx.prisma.$queryRawUnsafe('SELECT * FROM "TPanelRemoteTask" WHERE "licenseId" = $1 ORDER BY "queuedAt" DESC LIMIT 100', selectedLicense.id)
+    ctx.prisma.$queryRawUnsafe('SELECT * FROM "TPanelRemoteTask" WHERE "licenseId" = $1 ORDER BY "queuedAt" DESC LIMIT 100', selectedLicense.id),
+    ctx.prisma.$queryRawUnsafe('SELECT * FROM "TPanelNode" WHERE "licenseId" = $1 ORDER BY "lastSeenAt" DESC LIMIT 1', selectedLicense.id)
   ]);
+  const domainSettings = await readTPanelDomainSettings(ctx, selectedLicense);
+  const serviceRows = normalizeRows(services);
+  const node = first(nodeRows);
 
   return {
     sections: CONTROL_SECTIONS,
@@ -824,9 +1300,11 @@ export const tPanelControlOverview = async (ctx, { licenseId } = {}) => {
     packages: normalizeRows(packages),
     accounts: normalizeRows(accounts),
     dnsZones: normalizeRows(dnsZones),
-    services: normalizeRows(services),
+    services: serviceRows,
     securityRules: normalizeRows(securityRules),
     tasks: normalizeRows(tasks),
+    domainSettings,
+    systemStatus: systemChecksFor({ license: selectedLicense, node, services: serviceRows, domainSettings }),
     requiredPackages: requiredServerPackages
   };
 };
@@ -834,11 +1312,16 @@ export const tPanelControlOverview = async (ctx, { licenseId } = {}) => {
 export const upsertTPanelAccountPackage = async (ctx, input) => {
   await ensureTPanelTables(ctx.prisma);
   const license = await licenseForControl(ctx, input.licenseId);
+  assertCapability(license, 'packages', 'package management');
   const id = input.id || randomUUID();
   const name = text(input.name);
   const code = text(input.code || name).toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '');
   if (!name || !code) throw new AppError('Package name is required', 'BAD_USER_INPUT');
   const limits = packageLimits(input);
+  assertLimitWithinPlan(license, 'domains', limits.domains, 'Package domain allowance');
+  assertLimitWithinPlan(license, 'databases', limits.databases, 'Package database allowance');
+  assertLimitWithinPlan(license, 'emailAccounts', limits.emailAccounts, 'Package email allowance');
+  assertLimitWithinPlan(license, 'nodeApps', limits.nodeApps, 'Package Node.js allowance');
   const existing = input.id
     ? first(await ctx.prisma.$queryRawUnsafe('SELECT "id" FROM "TPanelAccountPackage" WHERE "id" = $1', id))
     : first(await ctx.prisma.$queryRawUnsafe('SELECT "id" FROM "TPanelAccountPackage" WHERE "licenseId" = $1 AND "code" = $2', license.id, code));
@@ -882,12 +1365,42 @@ export const upsertTPanelAccountPackage = async (ctx, input) => {
   return pkg;
 };
 
+export const deleteTPanelAccountPackage = async (ctx, id) => {
+  await ensureTPanelTables(ctx.prisma);
+  const pkg = first(await ctx.prisma.$queryRawUnsafe('SELECT * FROM "TPanelAccountPackage" WHERE "id" = $1', id));
+  if (!pkg) throw new AppError('tPanel account package was not found', 'NOT_FOUND');
+  const license = await licenseForControl(ctx, pkg.licenseId);
+  assertCapability(license, 'packages', 'package management');
+  const activeAccounts = first(await ctx.prisma.$queryRawUnsafe(
+    'SELECT COUNT(*)::int AS count FROM "TPanelManagedAccount" WHERE "packageId" = $1 AND "status" NOT IN (\'terminated\', \'deleted\')',
+    id
+  ))?.count || 0;
+  if (activeAccounts > 0) {
+    const rows = await ctx.prisma.$queryRawUnsafe(`
+      UPDATE "TPanelAccountPackage"
+      SET "status" = 'archived',
+          "metadata" = CAST($2 AS jsonb),
+          "updatedAt" = CURRENT_TIMESTAMP
+      WHERE "id" = $1
+      RETURNING *
+    `, id, json({ ...(pkg.metadata || {}), archivedAt: new Date().toISOString(), activeAccounts }, {}));
+    await queueRemoteTask(ctx, { licenseId: license.id, action: 'delete_package', payload: { package: first(rows), mode: 'archive' }, priority: 30 });
+  } else {
+    await ctx.prisma.$executeRawUnsafe('DELETE FROM "TPanelAccountPackage" WHERE "id" = $1 AND "licenseId" = $2', id, license.id);
+    await queueRemoteTask(ctx, { licenseId: license.id, action: 'delete_package', payload: { package: pkg, mode: 'delete' }, priority: 30 });
+  }
+  await writeAudit(ctx, 'delete_tpanel_account_package', 'TPanelAccountPackage', id, { licenseId: license.id, activeAccounts });
+  return true;
+};
+
 export const createTPanelManagedAccount = async (ctx, input) => {
   await ensureTPanelTables(ctx.prisma);
   const license = await licenseForControl(ctx, input.licenseId);
+  assertCapability(license, 'accounts', 'account creation');
   const pkg = input.packageId
-    ? first(await ctx.prisma.$queryRawUnsafe('SELECT * FROM "TPanelAccountPackage" WHERE "id" = $1 AND "licenseId" = $2', input.packageId, license.id))
+    ? first(await ctx.prisma.$queryRawUnsafe('SELECT * FROM "TPanelAccountPackage" WHERE "id" = $1 AND "licenseId" = $2 AND "status" = \'active\'', input.packageId, license.id))
     : null;
+  if (input.packageId && !pkg) throw new AppError('Selected tPanel account package is not active', 'BAD_USER_INPUT');
   const activeAccounts = first(await ctx.prisma.$queryRawUnsafe(
     'SELECT COUNT(*)::int AS count FROM "TPanelManagedAccount" WHERE "licenseId" = $1 AND "status" NOT IN (\'terminated\', \'deleted\')',
     license.id
@@ -896,11 +1409,20 @@ export const createTPanelManagedAccount = async (ctx, input) => {
   if (maxAccounts > 0 && activeAccounts >= maxAccounts) {
     throw new AppError('This tPanel license has reached its account limit', 'RESOURCE_EXHAUSTED');
   }
+  const packageLimit = pkg ? packageLimits(pkg) : packageLimits(input);
+  assertLimitWithinPlan(license, 'domains', packageLimit.domains, 'Account package domain allowance');
+  assertLimitWithinPlan(license, 'databases', packageLimit.databases, 'Account package database allowance');
+  assertLimitWithinPlan(license, 'emailAccounts', packageLimit.emailAccounts, 'Account package email allowance');
+  assertLimitWithinPlan(license, 'nodeApps', packageLimit.nodeApps, 'Account package Node.js allowance');
   const username = text(input.username).toLowerCase();
   const domain = text(input.domain).toLowerCase();
   if (!username || !domain) throw new AppError('Account username and domain are required', 'BAD_USER_INPUT');
   const id = randomUUID();
   const limits = { ...(pkg ? packageLimits(pkg) : {}), ...(input.limits || {}) };
+  assertLimitWithinPlan(license, 'domains', limits.domains, 'Account domain allowance');
+  assertLimitWithinPlan(license, 'databases', limits.databases, 'Account database allowance');
+  assertLimitWithinPlan(license, 'emailAccounts', limits.emailAccounts, 'Account email allowance');
+  assertLimitWithinPlan(license, 'nodeApps', limits.nodeApps, 'Account Node.js allowance');
   const rows = await ctx.prisma.$queryRawUnsafe(`
     INSERT INTO "TPanelManagedAccount"
       ("id", "licenseId", "packageId", "username", "domain", "contactEmail", "ownerName",
@@ -920,7 +1442,8 @@ export const updateTPanelManagedAccountStatus = async (ctx, input) => {
   await ensureTPanelTables(ctx.prisma);
   const account = first(await ctx.prisma.$queryRawUnsafe('SELECT * FROM "TPanelManagedAccount" WHERE "id" = $1', input.id));
   if (!account) throw new AppError('tPanel account was not found', 'NOT_FOUND');
-  await licenseForControl(ctx, account.licenseId);
+  const license = await licenseForControl(ctx, account.licenseId);
+  assertCapability(license, 'accounts', 'account controls');
   const status = text(input.status).toLowerCase();
   if (!['active', 'suspended', 'terminated', 'queued', 'error'].includes(status)) {
     throw new AppError('Unsupported account status', 'BAD_USER_INPUT');
@@ -947,9 +1470,17 @@ export const updateTPanelManagedAccountStatus = async (ctx, input) => {
 export const upsertTPanelDnsZone = async (ctx, input) => {
   await ensureTPanelTables(ctx.prisma);
   const license = await licenseForControl(ctx, input.licenseId);
+  assertCapability(license, 'dns', 'DNS zone management');
   const id = input.id || randomUUID();
   const domain = text(input.domain).toLowerCase();
   if (!domain) throw new AppError('DNS zone domain is required', 'BAD_USER_INPUT');
+  if (!input.id) {
+    const existingZones = first(await ctx.prisma.$queryRawUnsafe(
+      'SELECT COUNT(*)::int AS count FROM "TPanelDnsZone" WHERE "licenseId" = $1 AND "status" <> \'deleted\'',
+      license.id
+    ))?.count || 0;
+    await assertUsageWithinPlan(ctx, license, 'domains', existingZones, 1, 'DNS zone');
+  }
   const existing = input.id
     ? first(await ctx.prisma.$queryRawUnsafe('SELECT "id" FROM "TPanelDnsZone" WHERE "id" = $1', id))
     : first(await ctx.prisma.$queryRawUnsafe('SELECT "id" FROM "TPanelDnsZone" WHERE "licenseId" = $1 AND "domain" = $2', license.id, domain));
@@ -973,9 +1504,47 @@ export const upsertTPanelDnsZone = async (ctx, input) => {
   return zone;
 };
 
+export const updateTPanelDomainSettings = async (ctx, input) => {
+  await ensureTPanelTables(ctx.prisma);
+  const license = await getTPanelLicense(ctx, input.licenseId);
+  const current = await readTPanelDomainSettings(ctx, license);
+  const merged = mergeDomainSettings(ctx, license, {
+    ...current,
+    ...input,
+    primaryDomain: cleanDomain(input.primaryDomain || current.primaryDomain),
+    autoDetectIp: input.autoDetectIp !== false,
+    enableNginxProxy: input.enableNginxProxy !== false,
+    enableSsl: input.enableSsl !== false,
+    updatedAt: new Date().toISOString()
+  });
+  delete merged.licenseId;
+
+  await ctx.prisma.systemSetting.upsert({
+    where: { scope_scopeId_key: { scope: 'tpanel', scopeId: license.id, key: 'domain_settings' } },
+    create: { scope: 'tpanel', scopeId: license.id, key: 'domain_settings', value: merged },
+    update: { value: merged }
+  });
+
+  if (ACTIVE_STATUSES.has(license.status)) {
+    await queueRemoteTask(ctx, {
+      licenseId: license.id,
+      action: 'apply_domain_settings',
+      payload: { domainSettings: merged },
+      priority: 18
+    });
+  }
+
+  await writeAudit(ctx, 'update_tpanel_domain_settings', 'TPanelDomainSettings', license.id, {
+    primaryDomain: merged.primaryDomain,
+    panelUrl: merged.panelUrl
+  });
+  return merged;
+};
+
 export const upsertTPanelServiceState = async (ctx, input) => {
   await ensureTPanelTables(ctx.prisma);
   const license = await licenseForControl(ctx, input.licenseId);
+  assertCapability(license, 'services', 'service controls');
   const name = text(input.name).toLowerCase();
   if (!name) throw new AppError('Service name is required', 'BAD_USER_INPUT');
   const rows = await ctx.prisma.$queryRawUnsafe(`
@@ -1002,6 +1571,7 @@ export const upsertTPanelServiceState = async (ctx, input) => {
 export const upsertTPanelSecurityRule = async (ctx, input) => {
   await ensureTPanelTables(ctx.prisma);
   const license = await licenseForControl(ctx, input.licenseId);
+  assertCapability(license, 'security', 'security rules');
   const id = input.id || randomUUID();
   const kind = text(input.kind || 'firewall');
   const name = text(input.name || `${kind} rule`);
@@ -1031,6 +1601,10 @@ export const upsertTPanelSecurityRule = async (ctx, input) => {
 
 export const queueTPanelRemoteTask = async (ctx, input) => {
   await ensureTPanelTables(ctx.prisma);
+  if (text(input.action).toLowerCase() === 'run_update') {
+    const license = await getTPanelLicense(ctx, input.licenseId);
+    assertCapability(license, 'updates', 'update controls');
+  }
   return queueRemoteTask(ctx, input);
 };
 
@@ -1198,6 +1772,10 @@ export const verifyTPanelLicense = async (ctx, input) => {
     ok,
     status,
     licenseId: license?.id || null,
+    packageId: license?.packageId || null,
+    packageCode: license?.packageCode || null,
+    limits: license ? licensePlanLimits(license) : null,
+    permissions: license ? packagePermissions({ metadata: license.packageMetadata || {} }) : null,
     serverIp,
     observedIp,
     fingerprint,
@@ -1279,28 +1857,35 @@ set -euo pipefail
 
 API_BASE="${api}"
 LICENSE_KEY="${quotedLicense}"
+LICENSE_KEY="\${TPANEL_LICENSE_KEY:-$LICENSE_KEY}"
+if [ -z "$LICENSE_KEY" ] && [ "$#" -gt 0 ]; then
+  LICENSE_KEY="$1"
+fi
 TPANEL_DIR="/opt/tpanel"
 SOURCE_DIR="$TPANEL_DIR/source"
 APP_DIR="$SOURCE_DIR/src/tPanel"
 TPANEL_PORT="\${TPANEL_PORT:-2086}"
+TPANEL_DOMAIN="\${TPANEL_DOMAIN:-tiwlo.com}"
 REPO_URL="${repo}"
+NPM_BIN="\$(command -v npm || true)"
 
 if [ "$(id -u)" -ne 0 ]; then
-  echo "Run this installer as root: curl -fsSL $API_BASE/tpanel/install.sh?license=KEY | sudo bash"
+  echo "Run this installer as root: curl -fsSL $API_BASE/tpanel/install.sh | sudo env TPANEL_LICENSE_KEY=KEY bash"
   exit 1
 fi
 
 if [ -z "$LICENSE_KEY" ]; then
-  echo "Missing tPanel license key. Add ?license=YOUR_LICENSE_KEY to the install URL."
+  echo "Missing tPanel license key."
+  echo "Use: curl -fsSL $API_BASE/tpanel/install.sh | sudo env TPANEL_LICENSE_KEY=YOUR_LICENSE_KEY bash"
   exit 1
 fi
 
 SERVER_IP="$(curl -fsS https://api.ipify.org || hostname -I | awk '{print $1}')"
 FINGERPRINT="$(cat /etc/machine-id 2>/dev/null || hostname)"
 HOSTNAME_VALUE="$(hostname -f 2>/dev/null || hostname)"
-OS_VALUE="$(. /etc/os-release && echo "$ID $VERSION_ID")"
+OS_VALUE="$(. /etc/os-release && echo "$ID-$VERSION_ID")"
 
-echo "Welcome to Tpanel Pro By Tiwlo"
+echo "Welcome to tPanel Pro by Tiwlo"
 echo "Checking license for $SERVER_IP..."
 
 VERIFY_PAYLOAD="{\\"licenseKey\\":\\"$LICENSE_KEY\\",\\"serverIp\\":\\"$SERVER_IP\\",\\"fingerprint\\":\\"$FINGERPRINT\\",\\"hostname\\":\\"$HOSTNAME_VALUE\\",\\"os\\":\\"$OS_VALUE\\",\\"agentVersion\\":\\"1.0.0\\"}"
@@ -1329,6 +1914,11 @@ else
 fi
 
 echo "Package installation phase complete."
+NPM_BIN="$(command -v npm || true)"
+if [ -z "$NPM_BIN" ]; then
+  echo "npm was not found after package installation. Install Node.js/npm, then rerun."
+  exit 1
+fi
 
 if [ -d "$SOURCE_DIR/.git" ]; then
   git -C "$SOURCE_DIR" pull --ff-only
@@ -1362,8 +1952,29 @@ OS_VALUE=$OS_VALUE
 SOURCE_DIR=$SOURCE_DIR
 APP_DIR=$APP_DIR
 TPANEL_PORT=$TPANEL_PORT
+TPANEL_DOMAIN=$TPANEL_DOMAIN
+TIWLO_API_URL=$API_BASE
+TPANEL_LICENSE_KEY=$LICENSE_KEY
+TPANEL_SERVER_IP=$SERVER_IP
+TPANEL_SERVER_FINGERPRINT=$FINGERPRINT
+TPANEL_ADMIN_USER=admin
+TPANEL_ADMIN_PASSWORD=$ADMIN_PASSWORD
+NODE_ENV=production
+PORT=$TPANEL_PORT
 ENV
 chmod 600 /etc/tpanel/agent.env
+
+cat >/etc/tpanel/domain-settings.json <<DOMAINJSON
+{
+  "primaryDomain": "$TPANEL_DOMAIN",
+  "panelUrl": "https://$TPANEL_DOMAIN",
+  "detectedServerIp": "$SERVER_IP",
+  "autoDetectIp": true,
+  "enableNginxProxy": true,
+  "enableSsl": true
+}
+DOMAINJSON
+chmod 600 /etc/tpanel/domain-settings.json
 
 cat >/usr/local/sbin/tpanel-agent <<'PY'
 #!/usr/bin/env python3
@@ -1537,6 +2148,38 @@ def handle_security(task):
     write_json("/etc/tpanel/security/" + safe_name(rule.get("id") or rule.get("name"), "rule") + ".json", rule)
     return {"kind": kind, "action": action, "value": value}
 
+def handle_domain_settings(task):
+    raw = task.get("payload") or {}
+    settings = raw.get("domainSettings") or {}
+    write_json("/etc/tpanel/domain-settings.json", settings)
+    domain = safe_name(settings.get("primaryDomain"), "tiwlo.com")
+    port = CONFIG.get("TPANEL_PORT", "2086")
+    if domain != "tiwlo.com" and shutil.which("nginx"):
+        conf = f"""server {{
+    listen 80;
+    server_name {domain} www.{domain};
+
+    location / {{
+        proxy_pass http://127.0.0.1:{port};
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }}
+}}
+"""
+        pathlib.Path("/etc/nginx/sites-available").mkdir(parents=True, exist_ok=True)
+        pathlib.Path("/etc/nginx/sites-available/tpanel.conf").write_text(conf, encoding="utf-8")
+        enabled = pathlib.Path("/etc/nginx/sites-enabled/tpanel.conf")
+        enabled.parent.mkdir(parents=True, exist_ok=True)
+        if enabled.exists() or enabled.is_symlink():
+            enabled.unlink()
+        enabled.symlink_to("/etc/nginx/sites-available/tpanel.conf")
+        run(["nginx", "-t"], timeout=60)
+        run(["systemctl", "reload", "nginx"], timeout=120)
+    return {"domain": domain, "settingsPath": "/etc/tpanel/domain-settings.json"}
+
 def handle_update(task):
     run(["git", "-C", SOURCE_DIR, "pull", "--ff-only"], timeout=600)
     run(["npm", "install"], cwd=APP_DIR, timeout=900)
@@ -1548,12 +2191,31 @@ def handle_license(task, state):
     write_json("/var/lib/tpanel/license-state.json", {"state": state, "payload": task.get("payload") or {}})
     return {"state": state}
 
+def handle_package_upsert(task):
+    raw = task.get("payload") or {}
+    package = raw.get("package") or {}
+    code = safe_name(package.get("code") or package.get("name"), "package")
+    write_json("/etc/tpanel/packages/" + code + ".json", package)
+    return {"package": code, "status": package.get("status") or "active"}
+
+def handle_package_delete(task):
+    raw = task.get("payload") or {}
+    package = raw.get("package") or {}
+    code = safe_name(package.get("code") or package.get("name"), "package")
+    path = pathlib.Path("/etc/tpanel/packages/" + code + ".json")
+    if path.exists():
+        path.unlink()
+    return {"package": code, "mode": raw.get("mode") or "delete"}
+
 HANDLERS = {
     "create_account": handle_create_account,
+    "change_package": handle_package_upsert,
+    "delete_package": handle_package_delete,
     "suspend_account": lambda task: handle_account_status(task, "suspended"),
     "unsuspend_account": lambda task: handle_account_status(task, "active"),
     "terminate_account": lambda task: handle_account_status(task, "terminated"),
     "sync_dns_zone": handle_dns,
+    "apply_domain_settings": handle_domain_settings,
     "restart_service": lambda task: handle_service(task, "restart"),
     "reload_service": lambda task: handle_service(task, "reload"),
     "apply_security_rule": handle_security,
@@ -1588,6 +2250,85 @@ if __name__ == "__main__":
 PY
 chmod 700 /usr/local/sbin/tpanel-agent
 
+cat >/usr/local/sbin/tpanel-heartbeat <<'PY'
+#!/usr/bin/env python3
+import json
+import pathlib
+import socket
+import subprocess
+import sys
+import urllib.request
+
+CONFIG = {}
+for raw in pathlib.Path("/etc/tpanel/agent.env").read_text().splitlines():
+    if "=" in raw and not raw.strip().startswith("#"):
+        key, value = raw.split("=", 1)
+        CONFIG[key.strip()] = value.strip()
+
+def run(args, timeout=15):
+    try:
+        return subprocess.run(args, text=True, capture_output=True, timeout=timeout).stdout
+    except Exception:
+        return ""
+
+def listening_ports():
+    output = run(["sh", "-lc", "ss -lntH 2>/dev/null || netstat -lnt 2>/dev/null"])
+    ports = set()
+    for line in output.splitlines():
+        parts = line.split()
+        address = parts[3] if len(parts) > 3 else (parts[-1] if parts else "")
+        if ":" in address:
+            candidate = address.rsplit(":", 1)[-1]
+            if candidate.isdigit():
+                ports.add(int(candidate))
+    return [{"port": port} for port in sorted(ports)]
+
+def allowed_ports():
+    output = run(["sh", "-lc", "ufw status 2>/dev/null || firewall-cmd --list-ports 2>/dev/null || true"])
+    ports = set()
+    for token in output.replace(",", " ").split():
+        token = token.split("/", 1)[0]
+        if token.isdigit():
+            ports.add(int(token))
+    mode = "inactive" if "inactive" in output.lower() else ("active" if output.strip() else "unknown")
+    return mode, [{"port": port} for port in sorted(ports)], output[-4000:]
+
+def installed_packages():
+    output = run(["sh", "-lc", "dpkg-query -W -f='\${Package}\\n' 2>/dev/null || rpm -qa 2>/dev/null || true"], timeout=30)
+    return output.splitlines()[:500]
+
+def post():
+    firewall_mode, firewall_ports, firewall_raw = allowed_ports()
+    payload = {
+        "licenseKey": CONFIG.get("LICENSE_KEY") or CONFIG.get("TPANEL_LICENSE_KEY"),
+        "serverIp": CONFIG.get("SERVER_IP") or CONFIG.get("TPANEL_SERVER_IP"),
+        "fingerprint": CONFIG.get("FINGERPRINT") or CONFIG.get("TPANEL_SERVER_FINGERPRINT"),
+        "hostname": socket.getfqdn() or socket.gethostname(),
+        "os": CONFIG.get("OS_VALUE") or sys.platform,
+        "agentVersion": "1.1.0",
+        "metrics": {
+            "listeningPorts": listening_ports(),
+            "allowedPorts": firewall_ports,
+            "firewallMode": firewall_mode,
+            "firewall": firewall_raw,
+        },
+        "packages": installed_packages(),
+    }
+    body = json.dumps(payload).encode("utf-8")
+    request = urllib.request.Request(
+        CONFIG.get("API_BASE", "").rstrip("/") + "/tpanel/api/heartbeat",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=45) as response:
+        print(response.read().decode("utf-8"))
+
+if __name__ == "__main__":
+    post()
+PY
+chmod 700 /usr/local/sbin/tpanel-heartbeat
+
 cat >/etc/systemd/system/tpanel.service <<SERVICE
 [Unit]
 Description=tPanel Pro By Tiwlo
@@ -1597,15 +2338,8 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=$APP_DIR
-Environment=NODE_ENV=production
-Environment=PORT=$TPANEL_PORT
-Environment=TIWLO_API_URL=$API_BASE
-Environment=TPANEL_LICENSE_KEY=$LICENSE_KEY
-Environment=TPANEL_SERVER_IP=$SERVER_IP
-Environment=TPANEL_SERVER_FINGERPRINT=$FINGERPRINT
-Environment=TPANEL_ADMIN_USER=admin
-Environment=TPANEL_ADMIN_PASSWORD=$ADMIN_PASSWORD
-ExecStart=/usr/bin/npm run start
+EnvironmentFile=/etc/tpanel/agent.env
+ExecStart=$NPM_BIN run start
 Restart=always
 RestartSec=5
 
@@ -1613,12 +2347,62 @@ RestartSec=5
 WantedBy=multi-user.target
 SERVICE
 
+cat >/usr/local/sbin/tpanel-update <<'BASH'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ "$(id -u)" -ne 0 ]; then
+  echo "Run as root: sudo tpanel-update"
+  exit 1
+fi
+
+. /etc/tpanel/agent.env
+cd "$SOURCE_DIR"
+git pull --ff-only
+cd "$APP_DIR"
+npm install
+npm run build
+systemctl restart tpanel
+echo "tPanel updated. Database and user data were not removed."
+BASH
+chmod 700 /usr/local/sbin/tpanel-update
+
 systemctl daemon-reload
 systemctl enable --now tpanel
 
+if command -v ufw >/dev/null 2>&1; then
+  ufw allow OpenSSH >/dev/null 2>&1 || true
+  ufw allow 80/tcp >/dev/null 2>&1 || true
+  ufw allow 443/tcp >/dev/null 2>&1 || true
+  ufw allow "$TPANEL_PORT/tcp" >/dev/null 2>&1 || true
+fi
+
+if command -v nginx >/dev/null 2>&1 && [ -n "$TPANEL_DOMAIN" ] && [ "$TPANEL_DOMAIN" != "tiwlo.com" ]; then
+  cat >/etc/nginx/sites-available/tpanel.conf <<NGINX
+server {
+    listen 80;
+    server_name $TPANEL_DOMAIN www.$TPANEL_DOMAIN;
+
+    location / {
+        proxy_pass http://127.0.0.1:$TPANEL_PORT;
+        proxy_http_version 1.1;
+        proxy_set_header Host \\$host;
+        proxy_set_header X-Real-IP \\$remote_addr;
+        proxy_set_header X-Forwarded-For \\$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \\$scheme;
+    }
+}
+NGINX
+  ln -sf /etc/nginx/sites-available/tpanel.conf /etc/nginx/sites-enabled/tpanel.conf
+  nginx -t && systemctl reload nginx || true
+  if command -v certbot >/dev/null 2>&1 && getent hosts "$TPANEL_DOMAIN" | grep -q "$SERVER_IP"; then
+    certbot --nginx -d "$TPANEL_DOMAIN" -d "www.$TPANEL_DOMAIN" --non-interactive --agree-tos -m "admin@$TPANEL_DOMAIN" || true
+  fi
+fi
+
 mkdir -p /var/lib/tpanel
 cat >/etc/cron.d/tpanel-license-check <<CRON
-*/10 * * * * root curl -fsS -X POST "$API_BASE/tpanel/api/heartbeat" -H "Content-Type: application/json" -d "$VERIFY_PAYLOAD" >/dev/null || true
+*/10 * * * * root /usr/local/sbin/tpanel-heartbeat >/dev/null 2>&1 || true
 * * * * * root /usr/local/sbin/tpanel-agent >/dev/null 2>&1 || true
 CRON
 
@@ -1669,6 +2453,7 @@ export const registerTPanelRoutes = (app, { prisma, requestIp: readRequestIp }) 
   });
 
   app.get('/tpanel/install.sh', (req, res) => {
-    res.type('text/plain').send(buildInstallScript({ license: req.query.license || '' }));
+    res.set('Cache-Control', 'no-store');
+    res.type('text/x-shellscript').send(buildInstallScript({ license: req.query.license || '' }));
   });
 };

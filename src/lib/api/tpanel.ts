@@ -17,6 +17,7 @@ const tPanelPackageFields = `
   status
   sortOrder
   metadata
+  permissions
   createdAt
   updatedAt
 `;
@@ -54,6 +55,13 @@ const tPanelLicenseFields = `
     maxEmailAccounts
     maxNodeApps
     features
+    price
+    currency
+    interval
+    status
+    sortOrder
+    metadata
+    permissions
   }
   owner {
     id
@@ -191,6 +199,21 @@ const tPanelRemoteTaskFields = `
   updatedAt
 `;
 
+const tPanelDomainSettingsFields = `
+  primaryDomain
+  panelUrl
+  detectedServerIp
+  installScriptUrl
+  apiBaseUrl
+  autoDetectIp
+  enableNginxProxy
+  enableSsl
+  dnsRecords
+  ports
+  nginx
+  updatedAt
+`;
+
 const checkoutFields = `
   status
   provider
@@ -280,6 +303,54 @@ export async function renewTPanelLicenseOrderWithApi(input: Record<string, unkno
   return data.renewTPanelLicenseOrder;
 }
 
+export async function updateTPanelLicenseWithApi(input: Record<string, unknown>) {
+  const data = await graphQL<{ updateTPanelLicense: any }>(
+    `mutation UpdateTPanelLicense($input: UpdateTPanelLicenseInput!) {
+      updateTPanelLicense(input: $input) {
+        ${tPanelLicenseFields}
+      }
+    }`,
+    { input }
+  );
+
+  return data.updateTPanelLicense;
+}
+
+export async function deleteTPanelLicenseWithApi(id: string) {
+  const data = await graphQL<{ deleteTPanelLicense: boolean }>(
+    `mutation DeleteTPanelLicense($id: ID!) {
+      deleteTPanelLicense(id: $id)
+    }`,
+    { id }
+  );
+
+  return data.deleteTPanelLicense;
+}
+
+export async function upsertTPanelPackageWithApi(input: Record<string, unknown>) {
+  const data = await graphQL<{ upsertTPanelPackage: any }>(
+    `mutation UpsertTPanelPackage($input: TPanelPackageInput!) {
+      upsertTPanelPackage(input: $input) {
+        ${tPanelPackageFields}
+      }
+    }`,
+    { input }
+  );
+
+  return data.upsertTPanelPackage;
+}
+
+export async function deleteTPanelPackageWithApi(id: string) {
+  const data = await graphQL<{ deleteTPanelPackage: boolean }>(
+    `mutation DeleteTPanelPackage($id: ID!) {
+      deleteTPanelPackage(id: $id)
+    }`,
+    { id }
+  );
+
+  return data.deleteTPanelPackage;
+}
+
 export async function fetchAdminTPanelOverviewWithApi() {
   const data = await graphQL<{ adminTPanelOverview: any }>(
     `query AdminTPanelOverview {
@@ -367,6 +438,21 @@ export async function fetchTPanelControlOverviewWithApi(licenseId?: string) {
         tasks {
           ${tPanelRemoteTaskFields}
         }
+        domainSettings {
+          ${tPanelDomainSettingsFields}
+        }
+        systemStatus {
+          detectedServerIp
+          publicDomain
+          panelUrl
+          installScriptUrl
+          ports
+          services
+          node
+          firewall
+          checks
+          generatedAt
+        }
         requiredPackages
       }
     }`,
@@ -387,6 +473,17 @@ export async function upsertTPanelAccountPackageWithApi(input: Record<string, un
   );
 
   return data.upsertTPanelAccountPackage;
+}
+
+export async function deleteTPanelAccountPackageWithApi(id: string) {
+  const data = await graphQL<{ deleteTPanelAccountPackage: boolean }>(
+    `mutation DeleteTPanelAccountPackage($id: ID!) {
+      deleteTPanelAccountPackage(id: $id)
+    }`,
+    { id }
+  );
+
+  return data.deleteTPanelAccountPackage;
 }
 
 export async function createTPanelManagedAccountWithApi(input: Record<string, unknown>) {
@@ -426,6 +523,19 @@ export async function upsertTPanelDnsZoneWithApi(input: Record<string, unknown>)
   );
 
   return data.upsertTPanelDnsZone;
+}
+
+export async function updateTPanelDomainSettingsWithApi(input: Record<string, unknown>) {
+  const data = await graphQL<{ updateTPanelDomainSettings: any }>(
+    `mutation UpdateTPanelDomainSettings($input: TPanelDomainSettingsInput!) {
+      updateTPanelDomainSettings(input: $input) {
+        ${tPanelDomainSettingsFields}
+      }
+    }`,
+    { input }
+  );
+
+  return data.updateTPanelDomainSettings;
 }
 
 export async function upsertTPanelServiceStateWithApi(input: Record<string, unknown>) {

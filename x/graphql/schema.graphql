@@ -1056,6 +1056,7 @@ type TPanelPackage {
   status: String!
   sortOrder: Int!
   metadata: JSON
+  permissions: JSON
   createdAt: String
   updatedAt: String
 }
@@ -1064,12 +1065,19 @@ type TPanelLicensePackage {
   id: ID
   code: String
   name: String
+  price: Float
+  currency: String
+  interval: String
   maxAccounts: Int
   maxDomains: Int
   maxDatabases: Int
   maxEmailAccounts: Int
   maxNodeApps: Int
   features: JSON
+  status: String
+  sortOrder: Int
+  metadata: JSON
+  permissions: JSON
 }
 
 type TPanelLicenseOwner {
@@ -1280,6 +1288,34 @@ type TPanelRemoteTask {
   updatedAt: String
 }
 
+type TPanelDomainSettings {
+  primaryDomain: String!
+  panelUrl: String!
+  detectedServerIp: String
+  installScriptUrl: String!
+  apiBaseUrl: String!
+  autoDetectIp: Boolean!
+  enableNginxProxy: Boolean!
+  enableSsl: Boolean!
+  dnsRecords: JSON!
+  ports: JSON!
+  nginx: JSON
+  updatedAt: String
+}
+
+type TPanelSystemStatus {
+  detectedServerIp: String
+  publicDomain: String!
+  panelUrl: String!
+  installScriptUrl: String!
+  ports: JSON!
+  services: JSON!
+  node: JSON
+  firewall: JSON
+  checks: JSON!
+  generatedAt: String!
+}
+
 type TPanelControlOverview {
   sections: [TPanelControlSection!]!
   license: TPanelLicense
@@ -1289,6 +1325,8 @@ type TPanelControlOverview {
   services: [TPanelServiceState!]!
   securityRules: [TPanelSecurityRule!]!
   tasks: [TPanelRemoteTask!]!
+  domainSettings: TPanelDomainSettings!
+  systemStatus: TPanelSystemStatus!
   requiredPackages: JSON!
 }
 
@@ -1965,6 +2003,34 @@ input RenewTPanelLicenseOrderInput {
   currency: String
 }
 
+input UpdateTPanelLicenseInput {
+  id: ID!
+  label: String
+  serverIp: String
+  packageId: ID
+  packageCode: String
+}
+
+input TPanelPackageInput {
+  id: ID
+  code: String!
+  name: String!
+  description: String
+  price: Float
+  currency: String
+  interval: String
+  maxAccounts: Int
+  maxDomains: Int
+  maxDatabases: Int
+  maxEmailAccounts: Int
+  maxNodeApps: Int
+  features: JSON
+  status: String
+  sortOrder: Int
+  metadata: JSON
+  permissions: JSON
+}
+
 input AdminTPanelLicenseStatusInput {
   id: ID!
   status: String!
@@ -2045,6 +2111,20 @@ input TPanelDnsZoneInput {
   records: JSON
   serial: String
   metadata: JSON
+}
+
+input TPanelDomainSettingsInput {
+  licenseId: ID!
+  primaryDomain: String!
+  panelUrl: String
+  detectedServerIp: String
+  installScriptUrl: String
+  apiBaseUrl: String
+  autoDetectIp: Boolean
+  enableNginxProxy: Boolean
+  enableSsl: Boolean
+  dnsRecords: JSON
+  nginx: JSON
 }
 
 input TPanelServiceStateInput {
@@ -2331,12 +2411,18 @@ type Mutation {
   createTPanelLicenseOrder(input: CreateTPanelLicenseOrderInput!): TPanelLicense!
   payTPanelLicenseOrder(input: PayTPanelLicenseOrderInput!): TPanelPaymentResult!
   renewTPanelLicenseOrder(input: RenewTPanelLicenseOrderInput!): TPanelLicense!
+  updateTPanelLicense(input: UpdateTPanelLicenseInput!): TPanelLicense!
+  deleteTPanelLicense(id: ID!): Boolean!
+  upsertTPanelPackage(input: TPanelPackageInput!): TPanelPackage!
+  deleteTPanelPackage(id: ID!): Boolean!
   adminUpdateTPanelLicenseStatus(input: AdminTPanelLicenseStatusInput!): TPanelLicense!
   adminPublishTPanelUpdate(input: AdminPublishTPanelUpdateInput!): TPanelUpdate!
   upsertTPanelAccountPackage(input: TPanelAccountPackageInput!): TPanelAccountPackage!
+  deleteTPanelAccountPackage(id: ID!): Boolean!
   createTPanelManagedAccount(input: TPanelManagedAccountInput!): TPanelManagedAccount!
   updateTPanelManagedAccountStatus(input: TPanelManagedAccountStatusInput!): TPanelManagedAccount!
   upsertTPanelDnsZone(input: TPanelDnsZoneInput!): TPanelDnsZone!
+  updateTPanelDomainSettings(input: TPanelDomainSettingsInput!): TPanelDomainSettings!
   upsertTPanelServiceState(input: TPanelServiceStateInput!): TPanelServiceState!
   upsertTPanelSecurityRule(input: TPanelSecurityRuleInput!): TPanelSecurityRule!
   queueTPanelRemoteTask(input: TPanelRemoteTaskInput!): TPanelRemoteTask!

@@ -12,7 +12,8 @@
     "backend:db:seed": "npm --prefix x run db:seed",
     "build": "vite build",
     "preview": "vite preview",
-    "serve": "vite preview --host=0.0.0.0",
+    "serve": "node scripts/serve-tiwlo-frontend.mjs",
+    "start": "node scripts/serve-tiwlo-frontend.mjs",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit"
   },

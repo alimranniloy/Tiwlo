@@ -220,19 +220,18 @@ function Ensure-Database($PgBin) {
 function Set-EnvValue($FilePath, $Key, $Value) {
   $line = "$Key=`"$Value`""
   if (Test-Path $FilePath) {
-    $content = @(Get-Content -Path $FilePath)
+    $content = New-Object System.Collections.Generic.List[string]
+    Get-Content -Path $FilePath | ForEach-Object { [void]$content.Add($_) }
     $escaped = [regex]::Escape($Key)
     $matched = $false
-    $content = $content | ForEach-Object {
-      if ($_ -match "^\s*$escaped\s*=") {
+    for ($i = 0; $i -lt $content.Count; $i++) {
+      if ($content[$i] -match "^\s*$escaped\s*=") {
         $matched = $true
-        $line
-      } else {
-        $_
+        $content[$i] = $line
       }
     }
-    if (-not $matched) { $content += $line }
-    Set-Content -Path $FilePath -Value $content -Encoding UTF8
+    if (-not $matched) { [void]$content.Add($line) }
+    Set-Content -Path $FilePath -Value $content.ToArray() -Encoding UTF8
   } else {
     Set-Content -Path $FilePath -Value @($line) -Encoding UTF8
   }
@@ -244,10 +243,12 @@ function Ensure-EnvFiles($PgPort) {
   $backendEnv = Join-Path $Root 'x\.env'
 
   Set-EnvValue $rootEnv 'VITE_GRAPHQL_URL' "http://localhost:$BackendPort/graphql"
+  Set-EnvValue $rootEnv 'APP_URL' "http://localhost:$FrontendPort"
   Set-EnvValue $backendEnv 'DATABASE_URL' $databaseUrl
   Set-EnvValue $backendEnv 'JWT_SECRET' 'dev-local-change-before-production'
   Set-EnvValue $backendEnv 'PORT' $BackendPort
   Set-EnvValue $backendEnv 'FRONTEND_ORIGIN' "http://localhost:$FrontendPort"
+  Set-EnvValue $backendEnv 'API_BASE_URL' "http://localhost:$BackendPort"
 }
 
 function Run-Npm($Npm, $Arguments, $WorkingDirectory) {

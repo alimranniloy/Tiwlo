@@ -1,0 +1,2 @@
+*.sh text eol=lf
+public/tpanel/install.sh text eol=lf

@@ -37,6 +37,22 @@ export const tPanelResolvers = {
       await requireAuth(ctx);
       return service.renewTPanelLicenseOrder(ctx, input);
     },
+    updateTPanelLicense: async (_, { input }, ctx) => {
+      await requireAuth(ctx);
+      return service.updateTPanelLicense(ctx, input);
+    },
+    deleteTPanelLicense: async (_, { id }, ctx) => {
+      await requireAuth(ctx);
+      return service.deleteTPanelLicense(ctx, id);
+    },
+    upsertTPanelPackage: async (_, { input }, ctx) => {
+      await requireAdmin(ctx);
+      return service.upsertTPanelPackage(ctx, input);
+    },
+    deleteTPanelPackage: async (_, { id }, ctx) => {
+      await requireAdmin(ctx);
+      return service.deleteTPanelPackage(ctx, id);
+    },
     adminUpdateTPanelLicenseStatus: async (_, { input }, ctx) => {
       await requireAdmin(ctx);
       return service.adminUpdateTPanelLicenseStatus(ctx, input);
@@ -49,6 +65,10 @@ export const tPanelResolvers = {
       await requireAuth(ctx);
       return service.upsertTPanelAccountPackage(ctx, input);
     },
+    deleteTPanelAccountPackage: async (_, { id }, ctx) => {
+      await requireAuth(ctx);
+      return service.deleteTPanelAccountPackage(ctx, id);
+    },
     createTPanelManagedAccount: async (_, { input }, ctx) => {
       await requireAuth(ctx);
       return service.createTPanelManagedAccount(ctx, input);
@@ -60,6 +80,10 @@ export const tPanelResolvers = {
     upsertTPanelDnsZone: async (_, { input }, ctx) => {
       await requireAuth(ctx);
       return service.upsertTPanelDnsZone(ctx, input);
+    },
+    updateTPanelDomainSettings: async (_, { input }, ctx) => {
+      await requireAdmin(ctx);
+      return service.updateTPanelDomainSettings(ctx, input);
     },
     upsertTPanelServiceState: async (_, { input }, ctx) => {
       await requireAuth(ctx);

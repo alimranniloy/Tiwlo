@@ -792,6 +792,206 @@ model HostingProvisioningOrder {
   @@index([nodeId, status])
 }
 
+model TPanelPackage {
+  id               String   @id
+  code             String   @unique
+  name             String
+  description      String?
+  price            Float    @default(0)
+  currency         String   @default("USD")
+  interval         String   @default("month")
+  maxAccounts      Int      @default(0)
+  maxDomains       Int      @default(0)
+  maxDatabases     Int      @default(0)
+  maxEmailAccounts Int      @default(0)
+  maxNodeApps      Int      @default(0)
+  features         Json
+  status           String   @default("active")
+  sortOrder        Int      @default(0)
+  metadata         Json?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+model TPanelLicense {
+  id                 String    @id
+  ownerId            String
+  packageId          String
+  invoiceId          String?
+  licenseKey         String    @unique
+  label              String?
+  serverIp           String
+  serverFingerprint  String?
+  status             String    @default("pending_payment")
+  billingStatus      String    @default("open")
+  amount             Float     @default(0)
+  currency           String    @default("USD")
+  issuedAt           DateTime  @default(now())
+  activatedAt        DateTime?
+  currentPeriodStart DateTime?
+  currentPeriodEnd   DateTime?
+  suspendedAt        DateTime?
+  cancelledAt        DateTime?
+  lastCheckAt        DateTime?
+  lastHeartbeatAt    DateTime?
+  metadata           Json?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  @@index([ownerId, status])
+  @@index([serverIp])
+}
+
+model TPanelNode {
+  id           String   @id
+  licenseId    String
+  serverIp     String
+  fingerprint  String
+  hostname     String?
+  os           String?
+  panelVersion String?
+  agentVersion String?
+  status       String   @default("online")
+  message      String?
+  metrics      Json?
+  packages     Json?
+  lastSeenAt   DateTime @default(now())
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([licenseId, fingerprint], map: "TPanelNode_license_fingerprint_uidx")
+  @@index([status])
+}
+
+model TPanelUpdate {
+  id             String   @id
+  version        String
+  title          String
+  channel        String   @default("stable")
+  status         String   @default("published")
+  isForced       Boolean  @default(false)
+  releaseNotes   String?
+  packageUrl     String?
+  checksum       String?
+  rolloutMessage String?
+  publishedAt    DateTime @default(now())
+  metadata       Json?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([channel, status])
+}
+
+model TPanelAccountPackage {
+  id            String   @id
+  licenseId     String?
+  name          String
+  code          String
+  description   String?
+  status        String   @default("active")
+  diskMB        Int      @default(10240)
+  bandwidthGB   Int      @default(100)
+  domains       Int      @default(5)
+  databases     Int      @default(5)
+  emailAccounts Int      @default(25)
+  nodeApps      Int      @default(3)
+  ftpAccounts   Int      @default(5)
+  metadata      Json?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([licenseId, status])
+}
+
+model TPanelManagedAccount {
+  id            String   @id
+  licenseId     String
+  packageId     String?
+  username      String
+  domain        String
+  contactEmail  String?
+  ownerName     String?
+  status        String   @default("queued")
+  ipAddress     String?
+  homeDirectory String?
+  limits        Json
+  usage         Json?
+  metadata      Json?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([licenseId, username], map: "TPanelManagedAccount_license_username_uidx")
+  @@unique([licenseId, domain], map: "TPanelManagedAccount_license_domain_uidx")
+  @@index([licenseId, status])
+}
+
+model TPanelDnsZone {
+  id           String    @id
+  licenseId    String
+  accountId    String?
+  domain       String
+  status       String    @default("active")
+  records      Json
+  serial       String?
+  lastSyncedAt DateTime?
+  metadata     Json?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@unique([licenseId, domain], map: "TPanelDnsZone_license_domain_uidx")
+}
+
+model TPanelServiceState {
+  id            String    @id
+  licenseId     String
+  name          String
+  displayName   String
+  status        String    @default("unknown")
+  enabled       Boolean   @default(true)
+  port          Int?
+  lastRestartAt DateTime?
+  lastCheckAt   DateTime?
+  metadata      Json?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([licenseId, name], map: "TPanelServiceState_license_name_uidx")
+}
+
+model TPanelSecurityRule {
+  id        String   @id
+  licenseId String
+  kind      String
+  name      String
+  action    String   @default("deny")
+  value     String
+  status    String   @default("active")
+  metadata  Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([licenseId, status])
+}
+
+model TPanelRemoteTask {
+  id            String    @id
+  licenseId     String
+  accountId     String?
+  action        String
+  status        String    @default("queued")
+  priority      Int       @default(50)
+  payload       Json
+  result        Json?
+  requestedById String?
+  queuedAt      DateTime  @default(now())
+  dispatchedAt  DateTime?
+  completedAt   DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([licenseId, status, priority])
+}
+
 model DdosProtectionPolicy {
   id                         String   @id @default(cuid())
   enabled                    Boolean  @default(true)

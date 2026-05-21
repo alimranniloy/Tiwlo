@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useEffect, useState, useMemo } from "react";
 import { 
   Users, 
   Terminal, 
@@ -53,6 +53,7 @@ interface AdminPanelProps {
 const MODULES = [
   // Server Configuration
   { id: "config-basic", label: "Basic tPanel Setup", icon: Settings, category: "server" },
+  { id: "config-domain", label: "Domain Settings", icon: Globe, category: "server" },
   { id: "config-change", label: "Change Hostname", icon: Globe, category: "server" },
   { id: "config-tweak", label: "Tweak Settings", icon: Zap, category: "server" },
   { id: "config-update", label: "Update Preferences", icon: Activity, category: "server" },
@@ -330,6 +331,18 @@ export default function AdminPanel({ onLogout }: AdminPanelProps) {
   const [currentModule, setCurrentModule] = useState<string | null>(null);
   const [terminalLogs, setTerminalLogs] = useState<string[]>(["tPanel Host Shell (root@tpanel) initialized.", "Type 'help' for command list.", "root@tpanel:~# "]);
   const [terminalInput, setTerminalInput] = useState("");
+  const [domainSettings, setDomainSettings] = useState<any>({
+    primaryDomain: "tiwlo.com",
+    panelUrl: "https://tiwlo.com",
+    detectedServerIp: "",
+    autoDetectIp: true,
+    enableNginxProxy: true,
+    enableSsl: true,
+    dnsRecords: []
+  });
+  const [systemStatus, setSystemStatus] = useState<any | null>(null);
+  const [panelNotice, setPanelNotice] = useState("");
+  const [panelError, setPanelError] = useState("");
 
   const filteredModules = useMemo(() => {
     return MODULES.filter(m => 
@@ -347,6 +360,59 @@ export default function AdminPanel({ onLogout }: AdminPanelProps) {
     });
     return groups;
   }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    const loadDomainSettings = async () => {
+      try {
+        const response = await fetch("/api/panel/domain-settings");
+        const data = await response.json();
+        if (mounted && data.settings) setDomainSettings(data.settings);
+      } catch (error: any) {
+        if (mounted) setPanelError(error.message || "Unable to load domain settings.");
+      }
+    };
+    if (currentModule === "config-domain") loadDomainSettings();
+    return () => {
+      mounted = false;
+    };
+  }, [currentModule]);
+
+  useEffect(() => {
+    let mounted = true;
+    const loadSystemStatus = async () => {
+      try {
+        const response = await fetch("/api/panel/system-status");
+        const data = await response.json();
+        if (mounted) setSystemStatus(data);
+      } catch (error: any) {
+        if (mounted) setPanelError(error.message || "Unable to load system status.");
+      }
+    };
+    if (currentModule === "sys-status") loadSystemStatus();
+    return () => {
+      mounted = false;
+    };
+  }, [currentModule]);
+
+  const saveDomainSettings = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setPanelNotice("");
+    setPanelError("");
+    try {
+      const response = await fetch("/api/panel/domain-settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(domainSettings)
+      });
+      const data = await response.json();
+      if (!response.ok || !data.ok) throw new Error(data.message || "Unable to save domain settings.");
+      setDomainSettings(data.settings);
+      setPanelNotice("Domain settings saved. DNS records and proxy plan refreshed.");
+    } catch (error: any) {
+      setPanelError(error.message || "Unable to save domain settings.");
+    }
+  };
 
   return (
     <div className="flex h-screen bg-slate-950 text-slate-100 font-sans antialiased overflow-hidden">
@@ -541,7 +607,92 @@ export default function AdminPanel({ onLogout }: AdminPanelProps) {
                 </button>
 
                 <div className="bg-slate-900/40 border border-slate-900/30 rounded-2xl p-6 md:p-10 min-h-[500px] flex flex-col items-center justify-center text-center">
-                   {currentModule === "sec-terminal" ? (
+                   {currentModule === "config-domain" ? (
+                     <form onSubmit={saveDomainSettings} className="w-full max-w-5xl text-left space-y-6">
+                       <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
+                         <div>
+                           <h1 className="text-3xl font-black text-slate-100 tracking-tighter">Domain Settings</h1>
+                           <p className="text-sm text-slate-500 mt-2">Default domain is tiwlo.com. Change it after the A record points to this server IP.</p>
+                         </div>
+                         <button className="px-5 py-2.5 bg-[#0069ff] text-white font-bold rounded-xl hover:bg-[#0055d4] transition-all text-sm">Save Settings</button>
+                       </div>
+                       {(panelNotice || panelError) && (
+                         <div className={`rounded-xl border px-4 py-3 text-sm font-bold ${panelError ? "border-rose-500/20 bg-rose-500/10 text-rose-300" : "border-emerald-500/20 bg-emerald-500/10 text-emerald-300"}`}>
+                           {panelError || panelNotice}
+                         </div>
+                       )}
+                       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                         <div className="bg-slate-950/50 border border-slate-800 rounded-xl p-5 space-y-4">
+                           <label className="block">
+                             <span className="text-[10px] font-black uppercase tracking-wider text-slate-500">Primary Domain</span>
+                             <input value={domainSettings.primaryDomain || ""} onChange={(e) => setDomainSettings((current: any) => ({ ...current, primaryDomain: e.target.value, panelUrl: current.enableSsl === false ? `http://${e.target.value}` : `https://${e.target.value}` }))} className="mt-2 w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-sm text-slate-100 outline-none focus:border-[#0069ff]" />
+                           </label>
+                           <label className="block">
+                             <span className="text-[10px] font-black uppercase tracking-wider text-slate-500">Panel URL</span>
+                             <input value={domainSettings.panelUrl || ""} onChange={(e) => setDomainSettings((current: any) => ({ ...current, panelUrl: e.target.value }))} className="mt-2 w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-sm text-slate-100 outline-none focus:border-[#0069ff]" />
+                           </label>
+                           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                             {[
+                               ["autoDetectIp", "Auto IP"],
+                               ["enableNginxProxy", "Nginx Proxy"],
+                               ["enableSsl", "HTTPS"]
+                             ].map(([key, label]) => (
+                               <label key={key} className="flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs font-bold text-slate-300">
+                                 <input type="checkbox" checked={domainSettings[key] !== false} onChange={(e) => setDomainSettings((current: any) => ({ ...current, [key]: e.target.checked }))} />
+                                 {label}
+                               </label>
+                             ))}
+                           </div>
+                         </div>
+                         <div className="bg-slate-950/50 border border-slate-800 rounded-xl p-5">
+                           <p className="text-[10px] font-black uppercase tracking-wider text-slate-500">Detected Server IP</p>
+                           <p className="mt-2 font-mono text-lg font-black text-emerald-400">{domainSettings.detectedServerIp || "Waiting for heartbeat"}</p>
+                           <div className="mt-5 overflow-hidden rounded-lg border border-slate-800">
+                             <table className="w-full text-xs">
+                               <thead className="bg-slate-900 text-slate-500 uppercase"><tr><th className="p-3 text-left">Type</th><th className="p-3 text-left">Name</th><th className="p-3 text-left">Value</th></tr></thead>
+                               <tbody>
+                                 {(domainSettings.dnsRecords || []).map((record: any, index: number) => (
+                                   <tr key={`${record.name}-${index}`} className="border-t border-slate-800 text-slate-300"><td className="p-3 font-bold">{record.type}</td><td className="p-3 font-mono">{record.name}</td><td className="p-3 font-mono">{record.value}</td></tr>
+                                 ))}
+                               </tbody>
+                             </table>
+                           </div>
+                         </div>
+                       </div>
+                     </form>
+                   ) : currentModule === "sys-status" ? (
+                     <div className="w-full max-w-6xl text-left space-y-6">
+                       <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
+                         <div>
+                           <h1 className="text-3xl font-black text-slate-100 tracking-tighter">System Status</h1>
+                           <p className="text-sm text-slate-500 mt-2">Detected IP, firewall mode, and required service ports.</p>
+                         </div>
+                         <button onClick={() => setCurrentModule("sys-status")} className="px-5 py-2.5 bg-slate-900 border border-slate-800 text-slate-200 font-bold rounded-xl hover:bg-slate-800 transition-all text-sm">Refresh</button>
+                       </div>
+                       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                         <StatCard label="Detected IP" value={systemStatus?.detectedServerIp || "-"} icon={Globe} color="text-sky-400" />
+                         <StatCard label="Domain" value={systemStatus?.domain || "-"} icon={Globe} color="text-emerald-400" />
+                         <StatCard label="Firewall" value={systemStatus?.firewall?.mode || "unknown"} icon={ShieldCheck} color="text-amber-400" />
+                         <StatCard label="Ports Seen" value={String((systemStatus?.ports || []).filter((p: any) => p.open).length)} icon={Activity} color="text-rose-400" />
+                       </div>
+                       <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-950/40">
+                         <table className="w-full min-w-[820px] text-xs">
+                           <thead className="bg-slate-900 text-slate-500 uppercase"><tr><th className="p-3 text-left">Port</th><th className="p-3 text-left">Service</th><th className="p-3 text-left">Purpose</th><th className="p-3 text-left">Listening</th><th className="p-3 text-left">Firewall</th></tr></thead>
+                           <tbody>
+                             {(systemStatus?.ports || []).map((port: any) => (
+                               <tr key={`${port.port}-${port.protocol}`} className="border-t border-slate-800 text-slate-300">
+                                 <td className="p-3 font-mono font-black text-slate-100">{port.port}/{port.protocol}</td>
+                                 <td className="p-3 font-bold">{port.service}</td>
+                                 <td className="p-3 text-slate-500">{port.purpose}</td>
+                                 <td className={`p-3 font-black ${port.open ? "text-emerald-400" : "text-rose-400"}`}>{port.status}</td>
+                                 <td className={`p-3 font-black ${port.allowed ? "text-emerald-400" : "text-amber-400"}`}>{port.firewallStatus}</td>
+                               </tr>
+                             ))}
+                           </tbody>
+                         </table>
+                       </div>
+                     </div>
+                   ) : currentModule === "sec-terminal" ? (
                      <div className="w-full h-[600px] flex flex-col items-start text-left bg-black/80 rounded-xl border border-slate-800 p-6 font-mono text-xs overflow-hidden shadow-2xl">
                         <div className="flex-1 overflow-y-auto mb-4 w-full custom-scrollbar space-y-1">
                            {terminalLogs.map((log, i) => (
@@ -675,4 +826,3 @@ function StatCard({ label, value, icon: Icon, color }: any) {
     </div>
   )
 }
-
