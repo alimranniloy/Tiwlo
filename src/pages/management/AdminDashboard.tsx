@@ -27,7 +27,7 @@ import {
   YAxis
 } from 'recharts';
 import type { User } from '../../types';
-import { fetchAuditLogs, fetchDashboardSummary, fetchEcommerceAdminSummary, fetchIspDashboardSummary } from '../../lib/tiwloApi';
+import { fetchAdminTPanelOverviewWithApi, fetchAuditLogs, fetchDashboardSummary, fetchEcommerceAdminSummary, fetchIspDashboardSummary } from '../../lib/tiwloApi';
 
 interface AdminDashboardProps {
   user: User;
@@ -48,6 +48,7 @@ export default function AdminDashboard({ user }: AdminDashboardProps) {
   const [summary, setSummary] = React.useState<any>(null);
   const [commerce, setCommerce] = React.useState<any>(null);
   const [isp, setIsp] = React.useState<any>(null);
+  const [tpanel, setTpanel] = React.useState<any>(null);
   const [auditLogs, setAuditLogs] = React.useState<any[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState('');
@@ -56,20 +57,23 @@ export default function AdminDashboard({ user }: AdminDashboardProps) {
     setLoading(true);
     setError('');
     try {
-      const [mainSummary, commerceSummary, ispSummary, logs] = await Promise.all([
+      const [mainSummary, commerceSummary, ispSummary, tpanelOverview, logs] = await Promise.all([
         fetchDashboardSummary(),
         fetchEcommerceAdminSummary(),
         fetchIspDashboardSummary(),
+        fetchAdminTPanelOverviewWithApi(),
         fetchAuditLogs()
       ]);
       setSummary(mainSummary);
       setCommerce(commerceSummary);
       setIsp(ispSummary);
+      setTpanel(tpanelOverview?.summary || null);
       setAuditLogs(logs);
     } catch (err) {
       setSummary(null);
       setCommerce(null);
       setIsp(null);
+      setTpanel(null);
       setAuditLogs([]);
       setError(err instanceof Error ? err.message : 'Unable to load dashboard data');
     } finally {
@@ -129,7 +133,7 @@ export default function AdminDashboard({ user }: AdminDashboardProps) {
         </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
         <div
           onClick={() => navigate('/management/ecommerce')}
           className="group bg-white border border-[#e5e8ed] hover:border-indigo-500 hover:shadow-md transition-all cursor-pointer flex flex-col h-full rounded-lg"
@@ -201,6 +205,43 @@ export default function AdminDashboard({ user }: AdminDashboardProps) {
           <div className="px-6 py-4 flex items-center justify-between bg-white border-t border-gray-50 group-hover:bg-gray-50 transition-colors rounded-b-lg">
             <span className="text-[13px] font-semibold text-blue-600">Manage Connectivity Clients</span>
             <ChevronRight className="w-4 h-4 text-blue-400 group-hover:translate-x-1 transition-all" />
+          </div>
+        </div>
+
+        <div
+          onClick={() => navigate('/management/tpanel')}
+          className="group bg-white border border-[#e5e8ed] hover:border-sky-500 hover:shadow-md transition-all cursor-pointer flex flex-col h-full rounded-lg"
+        >
+          <div className="p-6 flex-1">
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 bg-sky-50 text-sky-600 flex items-center justify-center rounded-lg group-hover:bg-sky-600 group-hover:text-white transition-all duration-300">
+                  <Server className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-lg text-[#2e3d49]">tPanel Licensing</h3>
+                  <span className="text-[11px] font-medium text-sky-600">WHM-style panel licenses</span>
+                </div>
+              </div>
+            </div>
+            <div className="mt-8 grid grid-cols-3 gap-4 pt-6 border-t border-gray-50">
+              <div>
+                <span className="block text-[11px] font-medium text-gray-400 uppercase tracking-wider mb-1">Active</span>
+                <span className="text-xl font-bold text-[#2e3d49] tabular-nums">{numberValue(tpanel?.activeLicenses)}</span>
+              </div>
+              <div>
+                <span className="block text-[11px] font-medium text-gray-400 uppercase tracking-wider mb-1">Pending</span>
+                <span className="text-xl font-bold text-[#2e3d49] tabular-nums">{numberValue(tpanel?.pendingLicenses)}</span>
+              </div>
+              <div>
+                <span className="block text-[11px] font-medium text-gray-400 uppercase tracking-wider mb-1">Revenue</span>
+                <span className="text-xl font-bold text-sky-600 tabular-nums">{moneyValue(tpanel?.monthlyRevenue)}</span>
+              </div>
+            </div>
+          </div>
+          <div className="px-6 py-4 flex items-center justify-between bg-white border-t border-gray-50 group-hover:bg-gray-50 transition-colors rounded-b-lg">
+            <span className="text-[13px] font-semibold text-sky-600">Manage Panel Licenses</span>
+            <ChevronRight className="w-4 h-4 text-sky-400 group-hover:translate-x-1 transition-all" />
           </div>
         </div>
       </div>

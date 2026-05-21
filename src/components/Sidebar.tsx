@@ -82,6 +82,7 @@ export default function Sidebar({ user, isOpen, setIsOpen, onLogout }: SidebarPr
         items: [
           { name: 'Store Products', icon: ShoppingBag, path: '/management/store-products' },
           { name: 'Domain Reseller', icon: Globe, path: '/management/domains' },
+          { name: 'tPanel', icon: Server, path: '/management/tpanel' },
           { name: 'Cloud Templates', icon: LayoutGrid, path: '/management/cloud-templates' },
           { name: 'System Addons', icon: Puzzle, path: '/management/plugins' },
         ]
@@ -115,6 +116,7 @@ export default function Sidebar({ user, isOpen, setIsOpen, onLogout }: SidebarPr
           { name: 'Ecommerce Center', icon: ShoppingBag, path: '/store' },
           { name: 'Connectivity Hub', icon: Activity, path: '/isp-billing' },
           { name: 'Tiwlo Pay', icon: CreditCard, path: '/tiwlo-pay/overview' },
+          { name: 'tPanel', icon: Server, path: '/tpanel' },
           { name: 'Kubernetes', icon: Layers, path: '/kubernetes' },
           { name: 'Volumes', icon: HardDrive, path: '/volumes' },
           { name: 'Databases', icon: Database, path: '/databases' },

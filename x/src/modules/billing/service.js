@@ -204,6 +204,32 @@ const fulfillPaidInvoice = async (tx, invoice, paidAt = new Date()) => {
     };
   }
 
+  if (invoice.scope === 'tpanel_license' && invoice.scopeId) {
+    const months = Math.max(1, Number(items?.tPanel?.months || items?.tPanel?.renewalMonths || 1));
+    const currentRows = await tx.$queryRawUnsafe('SELECT "currentPeriodEnd" FROM "TPanelLicense" WHERE "id" = $1', invoice.scopeId);
+    const currentEnd = currentRows?.[0]?.currentPeriodEnd ? new Date(currentRows[0].currentPeriodEnd) : null;
+    const base = currentEnd && currentEnd > paidAt ? currentEnd : paidAt;
+    const periodEnd = new Date(base);
+    periodEnd.setMonth(periodEnd.getMonth() + months);
+    await tx.$executeRawUnsafe(`
+      UPDATE "TPanelLicense"
+      SET "status" = 'active',
+          "billingStatus" = 'paid',
+          "activatedAt" = COALESCE("activatedAt", $2),
+          "currentPeriodStart" = COALESCE("currentPeriodStart", $2),
+          "currentPeriodEnd" = $3,
+          "suspendedAt" = NULL,
+          "cancelledAt" = NULL,
+          "updatedAt" = CURRENT_TIMESTAMP
+      WHERE "id" = $1
+    `, invoice.scopeId, paidAt, periodEnd);
+    items = {
+      ...items,
+      tPanelActivatedAt: paidAt.toISOString(),
+      tPanelPeriodEnd: periodEnd.toISOString()
+    };
+  }
+
   const updatedInvoice = await tx.invoice.update({
     where: { id: invoice.id },
     data: {

@@ -1039,6 +1039,259 @@ type DdosProtectionOverview {
   telemetry: [DdosTelemetryPoint!]!
 }
 
+type TPanelPackage {
+  id: ID!
+  code: String!
+  name: String!
+  description: String
+  price: Float!
+  currency: String!
+  interval: String!
+  maxAccounts: Int!
+  maxDomains: Int!
+  maxDatabases: Int!
+  maxEmailAccounts: Int!
+  maxNodeApps: Int!
+  features: JSON!
+  status: String!
+  sortOrder: Int!
+  metadata: JSON
+  createdAt: String
+  updatedAt: String
+}
+
+type TPanelLicensePackage {
+  id: ID
+  code: String
+  name: String
+  maxAccounts: Int
+  maxDomains: Int
+  maxDatabases: Int
+  maxEmailAccounts: Int
+  maxNodeApps: Int
+  features: JSON
+}
+
+type TPanelLicenseOwner {
+  id: ID
+  name: String
+  email: String
+}
+
+type TPanelLicenseInvoice {
+  id: ID
+  number: String
+  status: String
+  amount: Float
+  dueDate: String
+}
+
+type TPanelNodeInfo {
+  hostname: String
+  os: String
+  panelVersion: String
+  agentVersion: String
+  lastSeenAt: String
+}
+
+type TPanelLicense {
+  id: ID!
+  ownerId: String!
+  packageId: String!
+  invoiceId: String
+  licenseKey: String!
+  label: String
+  serverIp: String!
+  serverFingerprint: String
+  status: String!
+  billingStatus: String!
+  amount: Float!
+  currency: String!
+  issuedAt: String
+  activatedAt: String
+  currentPeriodStart: String
+  currentPeriodEnd: String
+  suspendedAt: String
+  cancelledAt: String
+  lastCheckAt: String
+  lastHeartbeatAt: String
+  metadata: JSON
+  installCommand: String
+  package: TPanelLicensePackage
+  owner: TPanelLicenseOwner
+  invoice: TPanelLicenseInvoice
+  node: TPanelNodeInfo
+  createdAt: String
+  updatedAt: String
+}
+
+type TPanelUpdate {
+  id: ID!
+  version: String!
+  title: String!
+  channel: String!
+  status: String!
+  isForced: Boolean!
+  releaseNotes: String
+  packageUrl: String
+  checksum: String
+  rolloutMessage: String
+  publishedAt: String
+  metadata: JSON
+  createdAt: String
+  updatedAt: String
+}
+
+type TPanelSummary {
+  packages: Int!
+  licenses: Int!
+  activeLicenses: Int!
+  suspendedLicenses: Int!
+  expiredLicenses: Int!
+  pendingLicenses: Int!
+  monthlyRevenue: Float!
+  dueAmount: Float!
+}
+
+type AdminTPanelOverview {
+  summary: TPanelSummary!
+  licenses: [TPanelLicense!]!
+  packages: [TPanelPackage!]!
+  updates: [TPanelUpdate!]!
+}
+
+type TPanelLicenseCheck {
+  ok: Boolean!
+  status: String!
+  message: String!
+  serverTime: String!
+  signature: String!
+  license: TPanelLicense
+  package: TPanelLicensePackage
+  update: TPanelUpdate
+  requiredPackages: JSON!
+}
+
+type TPanelPaymentResult {
+  license: TPanelLicense!
+  checkout: CheckoutSession!
+}
+
+type TPanelControlSection {
+  key: String!
+  label: String!
+  description: String!
+  actions: JSON!
+}
+
+type TPanelAccountPackage {
+  id: ID!
+  licenseId: String
+  name: String!
+  code: String!
+  description: String
+  status: String!
+  diskMB: Int!
+  bandwidthGB: Int!
+  domains: Int!
+  databases: Int!
+  emailAccounts: Int!
+  nodeApps: Int!
+  ftpAccounts: Int!
+  metadata: JSON
+  createdAt: String
+  updatedAt: String
+}
+
+type TPanelManagedAccount {
+  id: ID!
+  licenseId: String!
+  packageId: String
+  username: String!
+  domain: String!
+  contactEmail: String
+  ownerName: String
+  status: String!
+  ipAddress: String
+  homeDirectory: String
+  limits: JSON!
+  usage: JSON
+  metadata: JSON
+  createdAt: String
+  updatedAt: String
+}
+
+type TPanelDnsZone {
+  id: ID!
+  licenseId: String!
+  accountId: String
+  domain: String!
+  status: String!
+  records: JSON!
+  serial: String
+  lastSyncedAt: String
+  metadata: JSON
+  createdAt: String
+  updatedAt: String
+}
+
+type TPanelServiceState {
+  id: ID!
+  licenseId: String!
+  name: String!
+  displayName: String!
+  status: String!
+  enabled: Boolean!
+  port: Int
+  lastRestartAt: String
+  lastCheckAt: String
+  metadata: JSON
+  createdAt: String
+  updatedAt: String
+}
+
+type TPanelSecurityRule {
+  id: ID!
+  licenseId: String!
+  kind: String!
+  name: String!
+  action: String!
+  value: String!
+  status: String!
+  metadata: JSON
+  createdAt: String
+  updatedAt: String
+}
+
+type TPanelRemoteTask {
+  id: ID!
+  licenseId: String!
+  accountId: String
+  action: String!
+  status: String!
+  priority: Int!
+  payload: JSON!
+  result: JSON
+  requestedById: String
+  queuedAt: String
+  dispatchedAt: String
+  completedAt: String
+  createdAt: String
+  updatedAt: String
+}
+
+type TPanelControlOverview {
+  sections: [TPanelControlSection!]!
+  license: TPanelLicense
+  packages: [TPanelAccountPackage!]!
+  accounts: [TPanelManagedAccount!]!
+  dnsZones: [TPanelDnsZone!]!
+  services: [TPanelServiceState!]!
+  securityRules: [TPanelSecurityRule!]!
+  tasks: [TPanelRemoteTask!]!
+  requiredPackages: JSON!
+}
+
 type AiModelConfig {
   enabled: Boolean!
   autoStart: Boolean!
@@ -1692,6 +1945,138 @@ input CreateHostingProvisioningOrderInput {
   limits: JSON
 }
 
+input CreateTPanelLicenseOrderInput {
+  packageId: ID
+  packageCode: String
+  label: String
+  serverIp: String!
+  months: Int
+  currency: String
+}
+
+input PayTPanelLicenseOrderInput {
+  licenseId: ID!
+  provider: String
+}
+
+input RenewTPanelLicenseOrderInput {
+  licenseId: ID!
+  months: Int
+  currency: String
+}
+
+input AdminTPanelLicenseStatusInput {
+  id: ID!
+  status: String!
+  note: String
+}
+
+input AdminPublishTPanelUpdateInput {
+  id: ID
+  version: String!
+  title: String!
+  channel: String
+  status: String
+  isForced: Boolean
+  releaseNotes: String
+  packageUrl: String
+  checksum: String
+  rolloutMessage: String
+  metadata: JSON
+}
+
+input TPanelLicenseCheckInput {
+  licenseKey: String!
+  serverIp: String
+  fingerprint: String
+  serverFingerprint: String
+  hostname: String
+  os: String
+  panelVersion: String
+  agentVersion: String
+  metrics: JSON
+  packages: JSON
+}
+
+input TPanelAccountPackageInput {
+  id: ID
+  licenseId: ID!
+  name: String!
+  code: String
+  description: String
+  status: String
+  diskMB: Int
+  bandwidthGB: Int
+  domains: Int
+  databases: Int
+  emailAccounts: Int
+  nodeApps: Int
+  ftpAccounts: Int
+  metadata: JSON
+}
+
+input TPanelManagedAccountInput {
+  licenseId: ID!
+  packageId: ID
+  username: String!
+  domain: String!
+  contactEmail: String
+  ownerName: String
+  password: String
+  ipAddress: String
+  homeDirectory: String
+  limits: JSON
+  usage: JSON
+  metadata: JSON
+}
+
+input TPanelManagedAccountStatusInput {
+  id: ID!
+  status: String!
+  note: String
+}
+
+input TPanelDnsZoneInput {
+  id: ID
+  licenseId: ID!
+  accountId: ID
+  domain: String!
+  status: String
+  records: JSON
+  serial: String
+  metadata: JSON
+}
+
+input TPanelServiceStateInput {
+  licenseId: ID!
+  name: String!
+  displayName: String
+  status: String
+  enabled: Boolean
+  port: Int
+  queueAction: String
+  metadata: JSON
+}
+
+input TPanelSecurityRuleInput {
+  id: ID
+  licenseId: ID!
+  kind: String
+  name: String
+  action: String
+  value: String!
+  status: String
+  metadata: JSON
+}
+
+input TPanelRemoteTaskInput {
+  licenseId: ID!
+  accountId: ID
+  action: String!
+  priority: Int
+  payload: JSON
+}
+
 input DdosProtectionPolicyInput {
   enabled: Boolean
   mode: String
@@ -1820,6 +2205,12 @@ type Query {
   hostingPackages(productId: ID, status: String, search: String): [HostingPackage!]!
   hostingProvisioningOrders(ownerId: ID, status: String, search: String): [HostingProvisioningOrder!]!
 
+  tPanelPackages(status: String): [TPanelPackage!]!
+  myTPanelLicenses: [TPanelLicense!]!
+  tPanelLicense(id: ID!): TPanelLicense!
+  adminTPanelOverview: AdminTPanelOverview!
+  tPanelControlOverview(licenseId: ID): TPanelControlOverview!
+
   ddosProtectionOverview: DdosProtectionOverview!
   ddosProtectedAssets(status: String, kind: String, search: String): [DdosProtectedAsset!]!
   ddosAttackEvents(status: String, assetId: ID, sourceIp: String, limit: Int): [DdosAttackEvent!]!
@@ -1936,6 +2327,21 @@ type Mutation {
   upsertHostingProduct(input: HostingProductInput!): HostingProduct!
   upsertHostingPackage(input: HostingPackageInput!): HostingPackage!
   createHostingProvisioningOrder(input: CreateHostingProvisioningOrderInput!): HostingProvisioningOrder!
+
+  createTPanelLicenseOrder(input: CreateTPanelLicenseOrderInput!): TPanelLicense!
+  payTPanelLicenseOrder(input: PayTPanelLicenseOrderInput!): TPanelPaymentResult!
+  renewTPanelLicenseOrder(input: RenewTPanelLicenseOrderInput!): TPanelLicense!
+  adminUpdateTPanelLicenseStatus(input: AdminTPanelLicenseStatusInput!): TPanelLicense!
+  adminPublishTPanelUpdate(input: AdminPublishTPanelUpdateInput!): TPanelUpdate!
+  upsertTPanelAccountPackage(input: TPanelAccountPackageInput!): TPanelAccountPackage!
+  createTPanelManagedAccount(input: TPanelManagedAccountInput!): TPanelManagedAccount!
+  updateTPanelManagedAccountStatus(input: TPanelManagedAccountStatusInput!): TPanelManagedAccount!
+  upsertTPanelDnsZone(input: TPanelDnsZoneInput!): TPanelDnsZone!
+  upsertTPanelServiceState(input: TPanelServiceStateInput!): TPanelServiceState!
+  upsertTPanelSecurityRule(input: TPanelSecurityRuleInput!): TPanelSecurityRule!
+  queueTPanelRemoteTask(input: TPanelRemoteTaskInput!): TPanelRemoteTask!
+  tPanelLicenseCheck(input: TPanelLicenseCheckInput!): TPanelLicenseCheck!
+  tPanelNodeHeartbeat(input: TPanelLicenseCheckInput!): TPanelLicenseCheck!
 
   updateDdosProtectionPolicy(input: DdosProtectionPolicyInput!): DdosProtectionPolicy!
   syncDdosProtectionAssets: DdosProtectionOverview!

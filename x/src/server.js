@@ -20,6 +20,7 @@ import { runCreditAutomationJob } from './modules/billing/creditAutomation.js';
 import { initializeAiModelRuntime, streamAiModelChat } from './modules/ai-model/service.js';
 import { streamSupportAiReply } from './modules/support/service.js';
 import { registerSystemToolRoutes, startBackupAutomation } from './modules/system-tools/service.js';
+import { registerTPanelRoutes } from './modules/tpanel/service.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -291,6 +292,8 @@ registerSystemToolRoutes(app, {
   userFromRequest,
   rootDir: join(__dirname, '../..')
 });
+
+registerTPanelRoutes(app, { prisma, requestIp });
 
 app.use('/graphql', expressMiddleware(server, {
   context: async ({ req }) => {

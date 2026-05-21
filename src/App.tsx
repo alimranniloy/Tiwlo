@@ -12,6 +12,7 @@ import TeamPage from './pages/Team';
 import BillingPage from './pages/Billing';
 import TiwloPay from './pages/TiwloPay';
 import TiwloPayCheckout from './pages/TiwloPayCheckout';
+import TPanel from './pages/TPanel';
 import APIPage from './pages/API';
 import VolumesPage from './pages/Volumes';
 import DatabasesPage from './pages/Databases';
@@ -43,6 +44,7 @@ import SystemLogs from './pages/management/SystemLogs';
 import AddSystemServer from './pages/management/AddSystemServer';
 import AdminPayments from './pages/management/AdminPayments';
 import AdminTiwloPay from './pages/management/AdminTiwloPay';
+import AdminTPanel from './pages/management/AdminTPanel';
 import AdminDomains from './pages/management/AdminDomains';
 import AdminIdentity from './pages/management/AdminIdentity';
 import AdminPlugins from './pages/management/AdminPlugins';
@@ -170,6 +172,7 @@ function AppContent({
                 <Route path="/management/notifications" element={<AdminNotifications />} />
                 <Route path="/management/payments" element={<AdminPayments />} />
                 <Route path="/management/tiwlo-pay" element={<AdminTiwloPay />} />
+                <Route path="/management/tpanel/*" element={<AdminTPanel />} />
                 <Route path="/management/invoices" element={<InvoicesPage adminMode />} />
                 <Route path="/management/plans" element={<AdminPlans />} />
                 <Route path="/management/domains" element={<AdminDomains />} />
@@ -234,6 +237,7 @@ function AppContent({
             <Route path="/team" element={<TeamPage user={user} />} />
             <Route path="/billing" element={<BillingPage />} />
             <Route path="/tiwlo-pay/*" element={<TiwloPay />} />
+            <Route path="/tpanel" element={<TPanel />} />
             <Route path="/pay/:slug" element={<TiwloPayCheckout />} />
             <Route path="/api" element={<APIPage />} />
             <Route path="/droplets/create" element={<CreateDroplet />} />
