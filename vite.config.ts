@@ -27,6 +27,10 @@ export default defineConfig(({mode}) => {
           target: env.TIWLO_BACKEND_URL || 'http://127.0.0.1:4000',
           changeOrigin: true,
         },
+        '/admin': {
+          target: env.TIWLO_BACKEND_URL || 'http://127.0.0.1:4000',
+          changeOrigin: true,
+        },
         '/health': {
           target: env.TIWLO_BACKEND_URL || 'http://127.0.0.1:4000',
           changeOrigin: true,

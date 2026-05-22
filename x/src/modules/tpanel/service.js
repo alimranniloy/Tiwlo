@@ -330,7 +330,7 @@ const defaultDomainSettings = (ctx, license) => {
     nginx: {
       serverName: `${primaryDomain} www.${primaryDomain}`,
       proxyTarget: 'http://127.0.0.1:2086',
-      requiredLocations: ['/tpanel', '/tpanel/install.sh', '/tpanel/api', '/graphql', '/health']
+      requiredLocations: ['/tpanel', '/tpanel/install.sh', '/tpanel/api', '/graphql', '/admin', '/health']
     }
   };
 };

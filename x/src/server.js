@@ -9,6 +9,7 @@ import { ApolloServer } from '@apollo/server';
 import { expressMiddleware } from '@apollo/server/express4';
 import { prisma } from './db.js';
 import { resolvers } from './resolvers.js';
+import { createCorsOptionsDelegate } from './core/cors.js';
 import {
   handleBkashCallback,
   handlePaypalReturn,
@@ -29,35 +30,13 @@ const typeDefs = readFileSync(join(__dirname, '../graphql/schema.graphql'), 'utf
 const app = express();
 const port = Number(process.env.PORT || 4000);
 const jwtSecret = process.env.JWT_SECRET || 'dev-secret';
-const frontendOrigin = process.env.FRONTEND_ORIGIN || 'http://localhost:3000';
 const automationToken = process.env.AUTOMATION_API_TOKEN || jwtSecret;
 
 const server = new ApolloServer({ typeDefs, resolvers });
 await server.start();
 
 app.set('trust proxy', true);
-const allowedOrigins = new Set([
-  frontendOrigin,
-  'http://localhost:3000',
-  'http://localhost:3001',
-  'http://localhost:3002',
-  'http://localhost:5173',
-  'http://127.0.0.1:3000',
-  'http://127.0.0.1:3001',
-  'http://127.0.0.1:3002',
-  'http://127.0.0.1:5173'
-]);
-
-app.use(cors({
-  origin(origin, callback) {
-    if (!origin || allowedOrigins.has(origin) || /^https?:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin)) {
-      callback(null, true);
-      return;
-    }
-    callback(new Error('Not allowed by CORS'));
-  },
-  credentials: true
-}));
+app.use(cors(createCorsOptionsDelegate()));
 
 app.post('/webhooks/stripe', express.raw({ type: 'application/json' }), async (req, res) => {
   try {

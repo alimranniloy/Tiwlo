@@ -22,6 +22,7 @@ const backendUrl = new URL((process.env.BACKEND_URL || process.env.API_BASE_URL 
 
 const proxyPrefixes = [
   '/graphql',
+  '/admin',
   '/health',
   '/payments',
   '/webhooks',

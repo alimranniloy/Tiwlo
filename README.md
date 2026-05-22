@@ -50,6 +50,22 @@ Demo admin login:
 - Email: `admin` or `admin@tiwlo.app`
 - Password: `admin`
 
+## One-Line Ubuntu Install With Domain, SSL, And Auto-Start
+
+Point your domain DNS `A` record to the Ubuntu server IP first, then run this single command:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/alimranniloy/Tiwlo/main/scripts/install-tiwlo-ubuntu.sh | sudo env TIWLO_DOMAIN="your-domain.com" TIWLO_EMAIL="admin@your-domain.com" bash
+```
+
+This installs server packages, clones or updates `/var/www/Tiwlo`, builds Tiwlo, enables `tiwlo-backend` and `tiwlo-frontend` systemd services, configures Nginx, opens firewall ports, and requests SSL with Certbot. After reboot or shutdown/start, systemd starts the app automatically.
+
+IP-only install without SSL:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/alimranniloy/Tiwlo/main/scripts/install-tiwlo-ubuntu.sh | sudo bash
+```
+
 ## Run On A Fresh Ubuntu Server
 
 These steps are for a blank Ubuntu VPS.
@@ -80,7 +96,7 @@ bash ./scripts/start-tiwlo.sh
 If you want to open the app from another computer using the server IP, run it with public IP values instead:
 
 ```bash
-FRONTEND_GRAPHQL_URL="http://YOUR_SERVER_IP:4000/graphql" \
+FRONTEND_GRAPHQL_URL="/graphql" \
 FRONTEND_ORIGIN="http://YOUR_SERVER_IP:3000" \
 API_BASE_URL="http://YOUR_SERVER_IP:4000" \
 bash ./scripts/start-tiwlo.sh
@@ -119,6 +135,8 @@ API_BASE_URL="https://your-domain.com" \
 bash ./scripts/start-tiwlo.sh
 ```
 
+For the automated domain + SSL + reboot-safe setup, use the one-line installer above instead of the manual Nginx steps.
+
 Create an Nginx site:
 
 ```bash
@@ -138,6 +156,10 @@ server {
     proxy_set_header X-Forwarded-Proto $scheme;
 
     location /graphql {
+        proxy_pass http://127.0.0.1:4000;
+    }
+
+    location /admin {
         proxy_pass http://127.0.0.1:4000;
     }
 
@@ -299,10 +321,12 @@ Root `.env` is used by the frontend build. Backend `.env` lives in `x/.env`.
 
 Important variables:
 
-- `VITE_GRAPHQL_URL`: GraphQL URL used by the browser. Use `http://localhost:4000/graphql` for local development, `/graphql` behind Nginx on a domain.
+- `VITE_GRAPHQL_URL`: GraphQL URL used by the browser. Keep `/graphql` for server/IP/domain installs so the frontend and Nginx proxy the API on the same origin.
 - `DATABASE_URL`: PostgreSQL database connection for Prisma.
 - `JWT_SECRET`: Change this before production.
-- `FRONTEND_ORIGIN`: Public frontend URL allowed by backend CORS.
+- `FRONTEND_ORIGIN`: Public frontend URL allowed by backend CORS. You may use comma-separated values for multiple domains/IPs.
+- `CORS_ORIGINS`: Optional comma-separated extra browser origins that may call the GraphQL API directly.
+- `CORS_ALLOW_ALL`: Emergency switch for direct API testing only. Set `true` only when you understand the security tradeoff.
 - `API_BASE_URL`: Public backend/callback base URL for payment redirects and webhooks.
 - Payment keys: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `BKASH_APP_KEY`, `BKASH_APP_SECRET`, `BKASH_USERNAME`, `BKASH_PASSWORD`.
 
@@ -331,6 +355,32 @@ FRONTEND_GRAPHQL_URL="/graphql" \
 FRONTEND_ORIGIN="https://your-domain.com" \
 API_BASE_URL="https://your-domain.com" \
 bash ./scripts/start-tiwlo.sh
+```
+
+If the frontend opens by server IP but login/API calls fail, rebuild with same-origin GraphQL:
+
+```bash
+FRONTEND_GRAPHQL_URL="/graphql" \
+FRONTEND_ORIGIN="http://YOUR_SERVER_IP:3000" \
+API_BASE_URL="http://YOUR_SERVER_IP:4000" \
+bash ./scripts/start-tiwlo.sh
+```
+
+Check CORS and service health:
+
+```bash
+curl http://127.0.0.1:4000/health
+curl -i -X OPTIONS "http://127.0.0.1:4000/graphql" \
+  -H "Origin: http://YOUR_SERVER_IP:3000" \
+  -H "Access-Control-Request-Method: POST"
+sudo systemctl status tiwlo-backend tiwlo-frontend nginx --no-pager
+sudo journalctl -u tiwlo-backend -n 100 --no-pager
+```
+
+Install or refresh reboot-safe services:
+
+```bash
+cd /var/www/Tiwlo && sudo FRONTEND_GRAPHQL_URL="/graphql" FRONTEND_ORIGIN="https://your-domain.com" API_BASE_URL="https://your-domain.com" bash ./scripts/install-tiwlo-systemd.sh
 ```
 
 If PostgreSQL already uses port `5432`, the startup script can use fallback port `55432` for the local project database.

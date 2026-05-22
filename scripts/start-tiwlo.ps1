@@ -242,7 +242,7 @@ function Ensure-EnvFiles($PgPort) {
   $rootEnv = Join-Path $Root '.env'
   $backendEnv = Join-Path $Root 'x\.env'
 
-  Set-EnvValue $rootEnv 'VITE_GRAPHQL_URL' "http://localhost:$BackendPort/graphql"
+  Set-EnvValue $rootEnv 'VITE_GRAPHQL_URL' '/graphql'
   Set-EnvValue $rootEnv 'APP_URL' "http://localhost:$FrontendPort"
   Set-EnvValue $backendEnv 'DATABASE_URL' $databaseUrl
   Set-EnvValue $backendEnv 'JWT_SECRET' 'dev-local-change-before-production'
