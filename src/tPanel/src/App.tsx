@@ -94,6 +94,7 @@ export default function App() {
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
   const [authReady, setAuthReady] = useState(false);
   const [currentAccount, setCurrentAccount] = useState<any | null>(null);
+  const [storageScope, setStorageScope] = useState("guest");
   const userPermissions = { ...DEFAULT_USER_PERMISSIONS, ...(currentAccount?.permissions || {}) };
   const canAccessTab = (tabId: string) => Boolean(userPermissions[TAB_PERMISSION_MAP[tabId] || tabId]);
   const allowedTabs = Object.keys(TAB_PERMISSION_MAP).filter((tabId) => canAccessTab(tabId));
@@ -157,9 +158,41 @@ export default function App() {
   }, [theme]);
 
   // Persisted state loading helper
-  const getPersistedState = <T,>(key: string, backup: T): T => {
+  const storageKey = (key: string, scope = storageScope) => `tpanel_${scope}_${key}`;
+  const getPersistedState = <T,>(key: string, backup: T, scope = "guest"): T => {
     try {
-      const value = localStorage.getItem(`tpanel_${key}`);
+      const value = localStorage.getItem(storageKey(key, scope));
+      if (value) return JSON.parse(value);
+      if (scope !== "guest" && scope !== "admin") return backup;
+      const legacy = localStorage.getItem(`tpanel_${key}`);
+      return legacy ? JSON.parse(legacy) : backup;
+    } catch {
+      return backup;
+    }
+  };
+
+  const setStoredAuthAccount = (account: any) => {
+    try {
+      const saved = JSON.parse(localStorage.getItem("tpanel_auth") || "null");
+      if (saved?.token) {
+        localStorage.setItem("tpanel_auth", JSON.stringify({ ...saved, account }));
+      }
+    } catch {
+      // Ignore local session cache write failures.
+    }
+  };
+
+  const persistScopedState = (key: string, value: unknown) => {
+    try {
+      localStorage.setItem(storageKey(key), JSON.stringify(value));
+    } catch {
+      // Browser storage can be unavailable in private mode or full disks.
+    }
+  };
+
+  const loadScopedState = <T,>(key: string, backup: T, scope: string): T => {
+    try {
+      const value = localStorage.getItem(storageKey(key, scope));
       return value ? JSON.parse(value) : backup;
     } catch {
       return backup;
@@ -229,41 +262,81 @@ export default function App() {
     }
   }, [activeTab, currentAccount, isAdmin, isLoggedIn]);
 
+  useEffect(() => {
+    const nextScope = isAdmin ? "admin" : currentAccount?.username ? `account_${currentAccount.username}` : "guest";
+    if (nextScope === storageScope) return;
+    setFiles(getPersistedState("files", [], nextScope));
+    setDomains(getPersistedState("domains", [], nextScope));
+    setDatabases(getPersistedState("databases", [], nextScope));
+    setDbUsers(getPersistedState("dbUsers", [], nextScope));
+    setNodeApps(getPersistedState("nodeApps", [], nextScope));
+    setEmails(getPersistedState("emails", [], nextScope));
+    setServerStats(loadScopedState("serverStats", emptyServerStats, nextScope));
+    setActivities(getPersistedState("activities", [], nextScope));
+    setStorageScope(nextScope);
+  }, [currentAccount?.username, isAdmin, storageScope]);
+
+  useEffect(() => {
+    if (!isLoggedIn || isAdmin) return;
+    let mounted = true;
+    const refreshAccount = async () => {
+      try {
+        const saved = JSON.parse(localStorage.getItem("tpanel_auth") || "null");
+        if (!saved?.token) return;
+        const response = await fetch("/api/user/summary", {
+          headers: { Authorization: `Bearer ${saved.token}` }
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!mounted || !response.ok || !data.ok || !data.account) return;
+        setCurrentAccount(data.account);
+        setStoredAuthAccount(data.account);
+      } catch {
+        // Keep the current session usable if the background refresh misses once.
+      }
+    };
+    refreshAccount();
+    const timer = window.setInterval(refreshAccount, 60 * 1000);
+    return () => {
+      mounted = false;
+      window.clearInterval(timer);
+    };
+  }, [isLoggedIn, isAdmin]);
+
   // External trigger for parent AI Copilot Chat
   const [openAiPromptTrigger, setOpenAiPromptTrigger] = useState("");
 
   // Sync to outer LocalStorage persistence
   useEffect(() => {
-    localStorage.setItem("tpanel_files", JSON.stringify(files));
-  }, [files]);
+    persistScopedState("files", files);
+  }, [files, storageScope]);
 
   useEffect(() => {
-    localStorage.setItem("tpanel_domains", JSON.stringify(domains));
-  }, [domains]);
+    persistScopedState("domains", domains);
+  }, [domains, storageScope]);
 
   useEffect(() => {
-    localStorage.setItem("tpanel_databases", JSON.stringify(databases));
-  }, [databases]);
+    persistScopedState("databases", databases);
+  }, [databases, storageScope]);
 
   useEffect(() => {
-    localStorage.setItem("tpanel_dbUsers", JSON.stringify(dbUsers));
-  }, [dbUsers]);
+    persistScopedState("dbUsers", dbUsers);
+  }, [dbUsers, storageScope]);
 
   useEffect(() => {
-    localStorage.setItem("tpanel_nodeApps", JSON.stringify(nodeApps));
-  }, [nodeApps]);
+    persistScopedState("nodeApps", nodeApps);
+  }, [nodeApps, storageScope]);
 
   useEffect(() => {
-    localStorage.setItem("tpanel_emails", JSON.stringify(emails));
-  }, [emails]);
+    persistScopedState("emails", emails);
+  }, [emails, storageScope]);
 
   useEffect(() => {
-    localStorage.setItem("tpanel_serverStats", JSON.stringify(serverStats));
-  }, [serverStats]);
+    persistScopedState("serverStats", serverStats);
+  }, [serverStats, storageScope]);
 
   useEffect(() => {
-    localStorage.setItem("tpanel_activities", JSON.stringify(activities));
-  }, [activities]);
+    persistScopedState("activities", activities);
+  }, [activities, storageScope]);
 
   // Method to push active event logging traces
   const addActivity = (category: "file" | "domain" | "node" | "db" | "email" | "ssl", message: string) => {
@@ -451,6 +524,26 @@ export default function App() {
         {/* Inner Content Area - Removed lock height/overflow to scroll natively together */}
         <div className={`flex-1 ${activeTab === "files" ? "p-4 sm:p-6" : "p-4 sm:p-6 lg:p-10"} max-w-full`}>
           <div className="max-w-7xl mx-auto space-y-8">
+            {activeTab !== "files" && currentAccount && (
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                <div className="rounded-lg border border-slate-800 bg-slate-900/60 px-4 py-3">
+                  <p className="text-[10px] font-black uppercase tracking-wider text-slate-500">Hosting Account</p>
+                  <p className="mt-1 truncate text-sm font-black text-slate-100">{currentAccount.username} / {currentAccount.domain}</p>
+                </div>
+                <div className="rounded-lg border border-slate-800 bg-slate-900/60 px-4 py-3">
+                  <p className="text-[10px] font-black uppercase tracking-wider text-slate-500">Package</p>
+                  <p className="mt-1 truncate text-sm font-black text-slate-100">{currentAccount.packageName || currentAccount.packageId || "Custom"}</p>
+                </div>
+                <div className="rounded-lg border border-slate-800 bg-slate-900/60 px-4 py-3">
+                  <p className="text-[10px] font-black uppercase tracking-wider text-slate-500">Storage / Bandwidth</p>
+                  <p className="mt-1 text-sm font-black text-slate-100">{currentAccount.quotaMb || 0} MB / {currentAccount.bandwidthGb || 0} GB</p>
+                </div>
+                <div className="rounded-lg border border-slate-800 bg-slate-900/60 px-4 py-3">
+                  <p className="text-[10px] font-black uppercase tracking-wider text-slate-500">Panel Access</p>
+                  <p className="mt-1 text-sm font-black text-emerald-400">{Object.values(userPermissions).filter(Boolean).length} tools enabled</p>
+                </div>
+              </div>
+            )}
             
             {activeTab === "dashboard" && (
             <DashboardHome 

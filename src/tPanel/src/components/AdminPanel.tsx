@@ -348,12 +348,14 @@ const defaultAccountForm = {
   maxDomains: "",
   maxEmailAccounts: "",
   maxDatabases: "",
+  maxNodeApps: "",
   ftpEnabled: true,
   shellAccess: false,
   mysqlEnabled: true,
   emailEnabled: true,
   sslEnabled: true,
   dedicatedIp: "",
+  permissionProfile: "standard",
   permissions: {
     dashboard: true,
     files: true,
@@ -400,6 +402,87 @@ const ACCOUNT_PERMISSION_ITEMS = [
   ["backups", "Backups"]
 ];
 
+const ACCOUNT_PERMISSION_PROFILES = [
+  {
+    id: "standard",
+    label: "Standard Hosting",
+    description: "Balanced website, email, database, SSL, apps, and metrics access.",
+    permissions: defaultAccountForm.permissions
+  },
+  {
+    id: "full",
+    label: "Full Control",
+    description: "All user panel tools enabled, with shell still controlled by shell access.",
+    permissions: { ...defaultAccountForm.permissions, ruby: true, terminal: true }
+  },
+  {
+    id: "developer",
+    label: "Developer",
+    description: "Node, PHP, Git/app tools, cron, backups, and shell-ready access.",
+    permissions: { ...defaultAccountForm.permissions, email: false, ruby: true, terminal: true }
+  },
+  {
+    id: "email",
+    label: "Email Only",
+    description: "Mail, DNS, SSL, security, and usage metrics without hosting tools.",
+    permissions: {
+      dashboard: true,
+      files: false,
+      ftp: false,
+      disk: true,
+      domains: true,
+      dns: true,
+      subdomains: false,
+      databases: false,
+      phpmyadmin: false,
+      email: true,
+      ssl: true,
+      node: false,
+      php: false,
+      ruby: false,
+      marketplace: false,
+      cron: false,
+      terminal: false,
+      copilot: false,
+      security: true,
+      metrics: true,
+      backups: false
+    }
+  },
+  {
+    id: "locked",
+    label: "Locked View",
+    description: "Read-only dashboard and metrics while the account is restricted.",
+    permissions: {
+      dashboard: true,
+      files: false,
+      ftp: false,
+      disk: false,
+      domains: false,
+      dns: false,
+      subdomains: false,
+      databases: false,
+      phpmyadmin: false,
+      email: false,
+      ssl: false,
+      node: false,
+      php: false,
+      ruby: false,
+      marketplace: false,
+      cron: false,
+      terminal: false,
+      copilot: false,
+      security: false,
+      metrics: true,
+      backups: false
+    }
+  }
+];
+
+const permissionsForProfile = (profileId: string) => {
+  return ACCOUNT_PERMISSION_PROFILES.find((profile) => profile.id === profileId)?.permissions || defaultAccountForm.permissions;
+};
+
 const authHeaders = (headers: Record<string, string> = {}) => {
   try {
     const saved = JSON.parse(localStorage.getItem("tpanel_auth") || "null");
@@ -433,6 +516,7 @@ export default function AdminPanel({ onLogout }: AdminPanelProps) {
   const [updateStatus, setUpdateStatus] = useState<any | null>(null);
   const [stackStatus, setStackStatus] = useState<any | null>(null);
   const [provisioningState, setProvisioningState] = useState<any>({ accounts: [] });
+  const [auditEvents, setAuditEvents] = useState<any[]>([]);
   const [stackInstallOutput, setStackInstallOutput] = useState("");
   const [isInstallingStack, setIsInstallingStack] = useState(false);
   const [panelNotice, setPanelNotice] = useState("");
@@ -492,9 +576,16 @@ export default function AdminPanel({ onLogout }: AdminPanelProps) {
     setProvisioningState(data);
   };
 
+  const loadAudit = async () => {
+    const response = await fetch("/api/panel/audit-events", { headers: authHeaders() });
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.message || "Unable to load audit events.");
+    setAuditEvents(data.auditEvents || []);
+  };
+
   useEffect(() => {
     let mounted = true;
-    Promise.allSettled([loadSummary(), loadHosting(), loadUpdateStatus(), loadStackStatus(), loadProvisioning()]).then((results) => {
+    Promise.allSettled([loadSummary(), loadHosting(), loadUpdateStatus(), loadStackStatus(), loadProvisioning(), loadAudit()]).then((results) => {
       if (!mounted) return;
       const failed = results.find((result) => result.status === "rejected") as PromiseRejectedResult | undefined;
       if (failed) setPanelError(failed.reason?.message || "Unable to load tPanel dashboard data.");
@@ -551,6 +642,12 @@ export default function AdminPanel({ onLogout }: AdminPanelProps) {
     }
   }, [currentModule]);
 
+  useEffect(() => {
+    if (currentModule === "sec-audit") {
+      loadAudit().catch((error) => setPanelError(error.message || "Unable to load audit events."));
+    }
+  }, [currentModule]);
+
   const saveDomainSettings = async (event: React.FormEvent) => {
     event.preventDefault();
     setPanelNotice("");
@@ -585,6 +682,7 @@ export default function AdminPanel({ onLogout }: AdminPanelProps) {
       setPanelNotice(`Account ${data.account.username} created for ${data.account.domain}. Login is ready, DNS plan is generated, and Auto SSL is queued.`);
       setAccountForm(defaultAccountForm);
       await loadHosting();
+      await loadAudit();
     } catch (error: any) {
       setPanelError(error.message || "Unable to create hosting account.");
     }
@@ -605,6 +703,7 @@ export default function AdminPanel({ onLogout }: AdminPanelProps) {
       setPanelNotice(`Package ${data.package.name} saved.`);
       setPackageForm({ name: "", quotaMb: 1024, bandwidthGb: 100, domains: 1, emailAccounts: 10, databases: 5, ftpAccounts: 5, nodeApps: 1 });
       await loadHosting();
+      await loadAudit();
     } catch (error: any) {
       setPanelError(error.message || "Unable to save package.");
     }
@@ -619,6 +718,7 @@ export default function AdminPanel({ onLogout }: AdminPanelProps) {
       if (!response.ok || !data.ok) throw new Error(data.message || "Account action failed.");
       setHostingState((current: any) => ({ ...current, accounts: data.accounts }));
       setPanelNotice(`${username} ${action} command completed.`);
+      loadAudit().catch(() => null);
     } catch (error: any) {
       setPanelError(error.message || "Account action failed.");
     }
@@ -641,28 +741,30 @@ export default function AdminPanel({ onLogout }: AdminPanelProps) {
       if (!response.ok || !data.ok) throw new Error(data.message || "Password update failed.");
       setHostingState((current: any) => ({ ...current, accounts: data.accounts }));
       setPanelNotice(`${username} password updated. The user can now log in from the tPanel login page.`);
+      loadAudit().catch(() => null);
     } catch (error: any) {
       setPanelError(error.message || "Password update failed.");
     }
   };
 
-  const updateAccountPermissions = async (username: string, permissions: Record<string, boolean>) => {
+  const updateAccountPermissions = async (username: string, permissions: Record<string, boolean> = {}, permissionProfile?: string) => {
     setPanelNotice("");
     setPanelError("");
     try {
       const response = await fetch(`/api/panel/accounts/${username}/permissions`, {
         method: "POST",
         headers: authHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify({ permissions })
+        body: JSON.stringify({ permissions, permissionProfile })
       });
       const data = await response.json();
       if (!response.ok || !data.ok) throw new Error(data.message || "Permission update failed.");
       setHostingState((current: any) => ({ ...current, accounts: data.accounts }));
       setProvisioningState((current: any) => ({
         ...current,
-        accounts: (current.accounts || []).map((account: any) => account.username === username ? { ...account, permissions: data.account.permissions } : account)
+        accounts: (current.accounts || []).map((account: any) => account.username === username ? { ...account, permissions: data.account.permissions, permissionProfile: data.account.permissionProfile } : account)
       }));
-      setPanelNotice(`${username} access permissions updated.`);
+      setPanelNotice(permissionProfile ? `${username} switched to ${permissionProfile} access profile.` : `${username} access permissions updated.`);
+      loadAudit().catch(() => null);
     } catch (error: any) {
       setPanelError(error.message || "Permission update failed.");
     }
@@ -701,7 +803,7 @@ export default function AdminPanel({ onLogout }: AdminPanelProps) {
       });
       const data = await response.json();
       if (!response.ok || !data.ok) throw new Error(data.message || "Provisioning retry failed.");
-      await Promise.all([loadHosting(), loadProvisioning(), loadStackStatus()]);
+      await Promise.all([loadHosting(), loadProvisioning(), loadStackStatus(), loadAudit()]);
       setPanelNotice(`${username} provisioning retry started. Auto SSL will become active after DNS points to this server.`);
     } catch (error: any) {
       setPanelError(error.message || "Provisioning retry failed.");
@@ -1053,6 +1155,23 @@ export default function AdminPanel({ onLogout }: AdminPanelProps) {
                                </select>
                              </label>
                              <label className="block">
+                               <span className="text-[10px] font-black uppercase tracking-wider text-slate-500">Access Profile</span>
+                               <select
+                                 value={accountForm.permissionProfile}
+                                 onChange={(e) => {
+                                   const permissionProfile = e.target.value;
+                                   setAccountForm((current: any) => ({
+                                     ...current,
+                                     permissionProfile,
+                                     permissions: { ...permissionsForProfile(permissionProfile) }
+                                   }));
+                                 }}
+                                 className="mt-2 w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-sm text-slate-100 outline-none focus:border-[#0069ff]"
+                               >
+                                 {ACCOUNT_PERMISSION_PROFILES.map((profile) => <option key={profile.id} value={profile.id}>{profile.label}</option>)}
+                               </select>
+                             </label>
+                             <label className="block">
                                <span className="text-[10px] font-black uppercase tracking-wider text-slate-500">Runtime</span>
                                <select value={accountForm.runtime} onChange={(e) => setAccountForm((current: any) => ({ ...current, runtime: e.target.value }))} className="mt-2 w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-sm text-slate-100 outline-none focus:border-[#0069ff]">
                                  <option value="php">PHP Website</option>
@@ -1061,6 +1180,23 @@ export default function AdminPanel({ onLogout }: AdminPanelProps) {
                                </select>
                              </label>
                              <Field label={accountForm.runtime === "node" ? "Node Port" : "PHP Version"} value={accountForm.runtime === "node" ? accountForm.nodePort : accountForm.phpVersion} onChange={(value: string) => setAccountForm((current: any) => accountForm.runtime === "node" ? ({ ...current, nodePort: value }) : ({ ...current, phpVersion: value }))} />
+                           </div>
+                           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                             {ACCOUNT_PERMISSION_PROFILES.map((profile) => (
+                               <button
+                                 key={profile.id}
+                                 type="button"
+                                 onClick={() => setAccountForm((current: any) => ({
+                                   ...current,
+                                   permissionProfile: profile.id,
+                                   permissions: { ...profile.permissions }
+                                 }))}
+                                 className={`rounded-lg border p-3 text-left transition-all ${accountForm.permissionProfile === profile.id ? "border-[#0069ff]/60 bg-[#0069ff]/10" : "border-slate-800 bg-slate-900/60 hover:border-slate-700"}`}
+                               >
+                                 <p className="text-xs font-black text-slate-100">{profile.label}</p>
+                                 <p className="mt-1 text-[10px] leading-4 text-slate-500">{profile.description}</p>
+                               </button>
+                             ))}
                            </div>
                            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                              {[
@@ -1102,6 +1238,7 @@ export default function AdminPanel({ onLogout }: AdminPanelProps) {
                            <Field label="Addon Domains" value={accountForm.maxDomains} onChange={(value: string) => setAccountForm((current: any) => ({ ...current, maxDomains: value }))} placeholder="Package default" />
                            <Field label="Email Accounts" value={accountForm.maxEmailAccounts} onChange={(value: string) => setAccountForm((current: any) => ({ ...current, maxEmailAccounts: value }))} placeholder="Package default" />
                            <Field label="Databases" value={accountForm.maxDatabases} onChange={(value: string) => setAccountForm((current: any) => ({ ...current, maxDatabases: value }))} placeholder="Package default" />
+                           <Field label="Node Apps" value={accountForm.maxNodeApps} onChange={(value: string) => setAccountForm((current: any) => ({ ...current, maxNodeApps: value }))} placeholder="Package default" />
                            <Field label="Dedicated IP" value={accountForm.dedicatedIp} onChange={(value: string) => setAccountForm((current: any) => ({ ...current, dedicatedIp: value }))} placeholder="optional" />
                          </div>
                        </div>
@@ -1154,6 +1291,8 @@ export default function AdminPanel({ onLogout }: AdminPanelProps) {
                          <code className="mt-2 block text-sm text-slate-200">sudo tpanel-update</code>
                        </div>
                      </div>
+                   ) : currentModule === "sec-audit" ? (
+                     <AuditLog events={auditEvents} onRefresh={() => loadAudit().catch((error) => setPanelError(error.message || "Unable to load audit events."))} />
                    ) : currentModule === "sec-terminal" ? (
                      <div className="w-full h-[600px] flex flex-col items-start text-left bg-black/80 rounded-xl border border-slate-800 p-6 font-mono text-xs overflow-hidden shadow-2xl">
                         <div className="flex-1 overflow-y-auto mb-4 w-full custom-scrollbar space-y-1">
@@ -1281,6 +1420,48 @@ function statusTone(status: string) {
   if (["queued", "configuring", "pending_dns", "reload_failed"].includes(value)) return "text-amber-400";
   if (["failed", "blocked", "inactive", "missing"].includes(value)) return "text-rose-400";
   return "text-slate-400";
+}
+
+function AuditLog({ events, onRefresh }: any) {
+  return (
+    <div className="w-full max-w-6xl text-left space-y-5">
+      <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-black text-slate-100 tracking-tight">Security Audit Logs</h1>
+          <p className="text-sm text-slate-500 mt-2">Account creation, password resets, permission profile changes, package edits, and provisioning retries.</p>
+        </div>
+        <button onClick={onRefresh} className="px-4 py-2 rounded-lg border border-slate-800 bg-slate-950 text-xs font-black text-slate-200 hover:border-[#0069ff]">
+          Refresh
+        </button>
+      </div>
+      <div className="overflow-hidden rounded-lg border border-slate-800 bg-slate-950/40">
+        <table className="w-full min-w-[920px] text-xs">
+          <thead className="bg-slate-900 text-slate-500 uppercase">
+            <tr>
+              <th className="p-3 text-left">Time</th>
+              <th className="p-3 text-left">Actor</th>
+              <th className="p-3 text-left">Action</th>
+              <th className="p-3 text-left">Target</th>
+              <th className="p-3 text-left">Message</th>
+            </tr>
+          </thead>
+          <tbody>
+            {(events || []).length === 0 ? (
+              <tr><td colSpan={5} className="p-6 text-center text-slate-500 font-bold">No audit events recorded yet.</td></tr>
+            ) : (events || []).map((event: any) => (
+              <tr key={event.id} className="border-t border-slate-800 text-slate-300">
+                <td className="p-3 font-mono text-slate-500">{event.at ? new Date(event.at).toLocaleString() : "-"}</td>
+                <td className="p-3 font-black text-slate-100">{event.actor || "system"}</td>
+                <td className={`p-3 font-black ${event.severity === "danger" ? "text-rose-400" : event.severity === "warning" ? "text-amber-400" : "text-emerald-400"}`}>{event.action}</td>
+                <td className="p-3 font-mono">{event.target || "-"}</td>
+                <td className="p-3 text-slate-400">{event.message || "-"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
 }
 
 function HostingStackOverview({ stack, provisioning, onOpenStack, onOpenAccounts }: any) {
@@ -1476,6 +1657,15 @@ function AccountList({ accounts, provisioningAccounts = [], onAction, onPassword
                 <td className="p-3">{account.quotaMb} MB / {account.bandwidthGb} GB</td>
                 <td className={`p-3 font-black ${account.status === "active" ? "text-emerald-400" : account.status === "suspended" ? "text-amber-400" : "text-rose-400"}`}>{account.status}</td>
                 <td className="p-3">
+                  <div className="mb-2">
+                    <select
+                      value={account.permissionProfile || "standard"}
+                      onChange={(event) => onPermission(account.username, {}, event.target.value)}
+                      className="w-full min-w-[230px] rounded border border-slate-800 bg-slate-900 px-2 py-1 text-[10px] font-bold text-slate-100 outline-none focus:border-[#0069ff]"
+                    >
+                      {ACCOUNT_PERMISSION_PROFILES.map((profile) => <option key={profile.id} value={profile.id}>{profile.label}</option>)}
+                    </select>
+                  </div>
                   <div className="grid grid-cols-3 gap-1 min-w-[230px]">
                     {ACCOUNT_PERMISSION_ITEMS.slice(0, 15).map(([key, label]) => {
                       const enabled = account.permissions?.[key] !== false;

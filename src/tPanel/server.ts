@@ -135,6 +135,68 @@ const DEFAULT_ACCOUNT_PERMISSIONS = {
   backups: true
 };
 
+const ACCOUNT_PERMISSION_PROFILES: Record<string, Record<string, boolean>> = {
+  standard: DEFAULT_ACCOUNT_PERMISSIONS,
+  full: {
+    ...DEFAULT_ACCOUNT_PERMISSIONS,
+    ruby: true,
+    terminal: true
+  },
+  developer: {
+    ...DEFAULT_ACCOUNT_PERMISSIONS,
+    email: false,
+    ruby: true,
+    terminal: true,
+    backups: true
+  },
+  email: {
+    dashboard: true,
+    files: false,
+    ftp: false,
+    disk: true,
+    domains: true,
+    dns: true,
+    subdomains: false,
+    databases: false,
+    phpmyadmin: false,
+    email: true,
+    ssl: true,
+    node: false,
+    php: false,
+    ruby: false,
+    marketplace: false,
+    cron: false,
+    terminal: false,
+    copilot: false,
+    security: true,
+    metrics: true,
+    backups: false
+  },
+  locked: {
+    dashboard: true,
+    files: false,
+    ftp: false,
+    disk: false,
+    domains: false,
+    dns: false,
+    subdomains: false,
+    databases: false,
+    phpmyadmin: false,
+    email: false,
+    ssl: false,
+    node: false,
+    php: false,
+    ruby: false,
+    marketplace: false,
+    cron: false,
+    terminal: false,
+    copilot: false,
+    security: false,
+    metrics: true,
+    backups: false
+  }
+};
+
 let licenseCache: { key: string; expiresAt: number; value: any } | null = null;
 
 function sessionSecret() {
@@ -192,8 +254,21 @@ function sanitizeSlug(value: unknown, fallback = "site") {
     .slice(0, 64) || fallback;
 }
 
+function permissionsForProfile(profile: unknown) {
+  const key = String(profile || "standard").toLowerCase();
+  return ACCOUNT_PERMISSION_PROFILES[key] || ACCOUNT_PERMISSION_PROFILES.standard;
+}
+
+function normalizePermissionProfile(profile: unknown) {
+  const key = String(profile || "standard").toLowerCase();
+  return ACCOUNT_PERMISSION_PROFILES[key] ? key : "standard";
+}
+
 function normalizeAccountPermissions(input: any = {}, account: any = {}) {
-  const permissions = { ...DEFAULT_ACCOUNT_PERMISSIONS, ...(input || {}) };
+  const profile = normalizePermissionProfile(account.permissionProfile || input?.permissionProfile || input?.profile);
+  const permissions = { ...permissionsForProfile(profile), ...(input || {}) };
+  delete (permissions as any).permissionProfile;
+  delete (permissions as any).profile;
   permissions.ftp = Boolean(permissions.ftp && account.ftpEnabled !== false);
   permissions.email = Boolean(permissions.email && account.emailEnabled !== false);
   permissions.databases = Boolean(permissions.databases && account.mysqlEnabled !== false);
@@ -208,6 +283,7 @@ function publicAccount(account: any) {
   const safe = { ...(account || {}) };
   delete safe.passwordHash;
   safe.passwordSet = Boolean(account?.passwordSet || account?.passwordHash);
+  safe.permissionProfile = normalizePermissionProfile(safe.permissionProfile);
   safe.permissions = normalizeAccountPermissions(account?.permissions, account);
   return safe;
 }
@@ -219,18 +295,41 @@ function readPanelState() {
       return {
         packages: Array.isArray(saved.packages) && saved.packages.length ? saved.packages : DEFAULT_PACKAGES,
         accounts: Array.isArray(saved.accounts) ? saved.accounts : [],
+        auditEvents: Array.isArray(saved.auditEvents) ? saved.auditEvents : [],
         updatedAt: saved.updatedAt || null
       };
     }
   } catch {
     // fall through to defaults
   }
-  return { packages: DEFAULT_PACKAGES, accounts: [], updatedAt: null };
+  return { packages: DEFAULT_PACKAGES, accounts: [], auditEvents: [], updatedAt: null };
 }
 
 function writePanelState(state: any) {
   fs.mkdirSync(TPANEL_CONFIG_DIR, { recursive: true });
   fs.writeFileSync(PANEL_STATE_FILE, JSON.stringify({ ...state, updatedAt: new Date().toISOString() }, null, 2));
+}
+
+function actorFromRequest(req: express.Request) {
+  const session = (req as any).tpanelSession || sessionFromRequest(req);
+  return session?.username || session?.role || "system";
+}
+
+function withAuditEvent(state: any, event: any) {
+  const entry = {
+    id: `audit-${Date.now().toString(36)}-${randomBytes(3).toString("hex")}`,
+    at: new Date().toISOString(),
+    actor: event.actor || "system",
+    action: event.action || "system.event",
+    target: event.target || "",
+    message: event.message || "",
+    severity: event.severity || "info",
+    metadata: event.metadata || {}
+  };
+  return {
+    ...state,
+    auditEvents: [entry, ...(state.auditEvents || [])].slice(0, 500)
+  };
 }
 
 function writeStarterSite(account: any) {
@@ -1053,6 +1152,11 @@ app.get("/api/panel/accounts", requireCapability("accounts"), (_req, res) => {
   res.json({ ok: true, accounts: state.accounts.map(publicAccount), packages: state.packages, updatedAt: state.updatedAt });
 });
 
+app.get("/api/panel/audit-events", (_req, res) => {
+  const state = readPanelState();
+  res.json({ ok: true, auditEvents: state.auditEvents || [] });
+});
+
 app.post("/api/panel/packages", requireCapability("packages"), (req, res) => {
   const state = readPanelState();
   const id = sanitizeSlug(req.body?.id || req.body?.name || `pkg-${Date.now()}`, "package");
@@ -1068,7 +1172,12 @@ app.post("/api/panel/packages", requireCapability("packages"), (req, res) => {
     nodeApps: Number(req.body?.nodeApps || 1)
   };
   const packages = [...state.packages.filter((item: any) => item.id !== id), pkg];
-  writePanelState({ ...state, packages });
+  writePanelState(withAuditEvent({ ...state, packages }, {
+    actor: actorFromRequest(req),
+    action: "package.saved",
+    target: id,
+    message: `Package ${pkg.name} saved with ${pkg.quotaMb} MB disk and ${pkg.bandwidthGb} GB bandwidth.`
+  }));
   res.json({ ok: true, package: pkg, packages });
 });
 
@@ -1110,6 +1219,7 @@ app.post("/api/panel/accounts", requireCapability("accounts"), (req, res) => {
     maxEmailAccounts: Number(req.body?.maxEmailAccounts || selectedPackage.emailAccounts),
     maxDatabases: Number(req.body?.maxDatabases || selectedPackage.databases),
     maxNodeApps: Number(req.body?.maxNodeApps || selectedPackage.nodeApps),
+    permissionProfile: normalizePermissionProfile(req.body?.permissionProfile),
     ftpEnabled: req.body?.ftpEnabled !== false,
     shellAccess: Boolean(req.body?.shellAccess),
     mysqlEnabled: req.body?.mysqlEnabled !== false,
@@ -1129,7 +1239,13 @@ app.post("/api/panel/accounts", requireCapability("accounts"), (req, res) => {
   try {
     writeStarterSite(account);
     writeAccountProvisioningPlan(account);
-    writePanelState({ ...state, accounts: [account, ...state.accounts] });
+    writePanelState(withAuditEvent({ ...state, accounts: [account, ...state.accounts] }, {
+      actor: actorFromRequest(req),
+      action: "account.created",
+      target: username,
+      message: `Account ${username} created for ${domain} using ${selectedPackage.name}.`,
+      metadata: { domain, runtime: account.runtime, permissionProfile: account.permissionProfile }
+    }));
     applyAccountProvisioning(account);
     res.json({ ok: true, account: publicAccount(account) });
   } catch (error: any) {
@@ -1159,18 +1275,28 @@ app.post("/api/panel/accounts/:username/password", requireCapability("accounts")
     res.status(404).json({ ok: false, message: "Account not found." });
     return;
   }
-  writePanelState({ ...state, accounts });
+  writePanelState(withAuditEvent({ ...state, accounts }, {
+    actor: actorFromRequest(req),
+    action: "account.password.updated",
+    target: req.params.username,
+    message: `Password reset for ${req.params.username}.`,
+    severity: "warning"
+  }));
   res.json({ ok: true, account: publicAccount(updatedAccount), accounts: accounts.map(publicAccount) });
 });
 
 app.post("/api/panel/accounts/:username/permissions", requireCapability("accounts"), (req, res) => {
   const state = readPanelState();
   let updatedAccount: any = null;
+  const requestedProfile = req.body?.permissionProfile || req.body?.profile;
   const accounts = state.accounts.map((account: any) => {
     if (account.username !== req.params.username) return account;
+    const permissionProfile = requestedProfile ? normalizePermissionProfile(requestedProfile) : normalizePermissionProfile(account.permissionProfile);
+    const basePermissions = requestedProfile ? permissionsForProfile(permissionProfile) : (account.permissions || {});
     updatedAccount = {
       ...account,
-      permissions: normalizeAccountPermissions({ ...(account.permissions || {}), ...(req.body?.permissions || {}) }, account),
+      permissionProfile,
+      permissions: normalizeAccountPermissions({ ...basePermissions, ...(req.body?.permissions || {}) }, { ...account, permissionProfile }),
       updatedAt: new Date().toISOString()
     };
     return updatedAccount;
@@ -1179,7 +1305,15 @@ app.post("/api/panel/accounts/:username/permissions", requireCapability("account
     res.status(404).json({ ok: false, message: "Account not found." });
     return;
   }
-  writePanelState({ ...state, accounts });
+  writePanelState(withAuditEvent({ ...state, accounts }, {
+    actor: actorFromRequest(req),
+    action: "account.permissions.updated",
+    target: req.params.username,
+    message: requestedProfile
+      ? `Permission profile changed to ${updatedAccount.permissionProfile} for ${req.params.username}.`
+      : `Access permissions updated for ${req.params.username}.`,
+    metadata: { permissionProfile: updatedAccount.permissionProfile }
+  }));
   res.json({ ok: true, account: publicAccount(updatedAccount), accounts: accounts.map(publicAccount) });
 });
 
@@ -1201,6 +1335,12 @@ app.post("/api/panel/accounts/:username/provision", requireCapability("accounts"
   })) || account;
   appendProvisioningLog(updated, "Manual provisioning retry requested from tPanel admin.");
   applyAccountProvisioning(updated);
+  writePanelState(withAuditEvent(readPanelState(), {
+    actor: actorFromRequest(req),
+    action: "account.provision.retry",
+    target: req.params.username,
+    message: `Provisioning retry queued for ${req.params.username}.`
+  }));
   res.json({ ok: true, account: publicAccount(updated), provisioningLog: readProvisioningLog(updated.username) });
 });
 
@@ -1229,7 +1369,13 @@ app.post("/api/panel/accounts/:username/:action", requireCapability("accounts"),
     }
     return updated;
   });
-  writePanelState({ ...state, accounts });
+  writePanelState(withAuditEvent({ ...state, accounts }, {
+    actor: actorFromRequest(req),
+    action: `account.${action}`,
+    target: req.params.username,
+    message: `${req.params.username} ${action} command completed.`,
+    severity: action === "terminate" ? "danger" : "warning"
+  }));
   res.json({ ok: true, accounts: accounts.map(publicAccount) });
 });
 
