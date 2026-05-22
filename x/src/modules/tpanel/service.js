@@ -1911,7 +1911,11 @@ echo "Welcome to tPanel Pro by Tiwlo"
 echo "Checking license for $SERVER_IP..."
 
 VERIFY_PAYLOAD="{\\"licenseKey\\":\\"$LICENSE_KEY\\",\\"serverIp\\":\\"$SERVER_IP\\",\\"fingerprint\\":\\"$FINGERPRINT\\",\\"hostname\\":\\"$HOSTNAME_VALUE\\",\\"os\\":\\"$OS_VALUE\\",\\"agentVersion\\":\\"1.0.0\\"}"
-VERIFY_RESPONSE="$(curl -fsS -X POST "$API_BASE/tpanel/api/verify" -H "Content-Type: application/json" -d "$VERIFY_PAYLOAD")"
+GRAPHQL_PAYLOAD="{\\"query\\":\\"mutation Check(\\$input: TPanelLicenseCheckInput!) { tPanelLicenseCheck(input: \\$input) { ok status message serverTime } }\\",\\"variables\\":{\\"input\\":$VERIFY_PAYLOAD}}"
+VERIFY_RESPONSE="$(curl -fsS -X POST "$API_BASE/tpanel/api/verify" -H "Content-Type: application/json" -d "$VERIFY_PAYLOAD" 2>/dev/null || true)"
+if ! echo "$VERIFY_RESPONSE" | grep -q '"ok":true'; then
+  VERIFY_RESPONSE="$(curl -fsS -X POST "$API_BASE/graphql" -H "Content-Type: application/json" -d "$GRAPHQL_PAYLOAD" 2>/dev/null || true)"
+fi
 if ! echo "$VERIFY_RESPONSE" | grep -q '"ok":true'; then
   echo "License validation failed:"
   echo "$VERIFY_RESPONSE"

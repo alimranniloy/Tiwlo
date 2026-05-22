@@ -34,6 +34,18 @@ const proxyPrefixes = [
 
 const shouldProxy = (url = '') => proxyPrefixes.some((prefix) => url === prefix || url.startsWith(`${prefix}/`) || url.startsWith(`${prefix}?`));
 
+const isInstallerRequest = (url = '') => url === '/tpanel/install.sh' || url.startsWith('/tpanel/install.sh?');
+
+const serveInstallerFallback = (res) => {
+  const fallback = join(distDir, 'tpanel', 'install.sh');
+  if (!existsSync(fallback)) return false;
+  res.status(200);
+  res.setHeader('Content-Type', 'text/x-shellscript; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-store');
+  createReadStream(fallback).pipe(res);
+  return true;
+};
+
 const proxyRequest = (req, res) => {
   const target = new URL(req.originalUrl || req.url, backendUrl);
   const transport = target.protocol === 'https:' ? https : http;
@@ -43,20 +55,16 @@ const proxyRequest = (req, res) => {
     method: req.method,
     headers
   }, (upstreamRes) => {
+    if (isInstallerRequest(req.originalUrl || req.url) && (upstreamRes.statusCode || 500) >= 400) {
+      upstreamRes.resume();
+      if (serveInstallerFallback(res)) return;
+    }
     res.writeHead(upstreamRes.statusCode || 502, upstreamRes.headers);
     upstreamRes.pipe(res);
   });
 
   upstream.on('error', () => {
-    if ((req.originalUrl || req.url || '').startsWith('/tpanel/install.sh')) {
-      const fallback = join(distDir, 'tpanel', 'install.sh');
-      if (existsSync(fallback)) {
-        res.status(200);
-        res.setHeader('Content-Type', 'text/x-shellscript; charset=utf-8');
-        createReadStream(fallback).pipe(res);
-        return;
-      }
-    }
+    if (isInstallerRequest(req.originalUrl || req.url) && serveInstallerFallback(res)) return;
     res.status(502).json({ ok: false, message: 'Backend service is not reachable.' });
   });
 
