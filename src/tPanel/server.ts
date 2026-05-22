@@ -111,6 +111,30 @@ const DEFAULT_PACKAGES = [
   { id: "pkg-agency", name: "Agency", quotaMb: 51200, bandwidthGb: 1000, domains: 50, emailAccounts: 250, databases: 50, ftpAccounts: 50, nodeApps: 25 }
 ];
 
+const DEFAULT_ACCOUNT_PERMISSIONS = {
+  dashboard: true,
+  files: true,
+  ftp: true,
+  disk: true,
+  domains: true,
+  dns: true,
+  subdomains: true,
+  databases: true,
+  phpmyadmin: true,
+  email: true,
+  ssl: true,
+  node: true,
+  php: true,
+  ruby: false,
+  marketplace: true,
+  cron: true,
+  terminal: false,
+  copilot: true,
+  security: true,
+  metrics: true,
+  backups: true
+};
+
 let licenseCache: { key: string; expiresAt: number; value: any } | null = null;
 
 function sessionSecret() {
@@ -168,10 +192,23 @@ function sanitizeSlug(value: unknown, fallback = "site") {
     .slice(0, 64) || fallback;
 }
 
+function normalizeAccountPermissions(input: any = {}, account: any = {}) {
+  const permissions = { ...DEFAULT_ACCOUNT_PERMISSIONS, ...(input || {}) };
+  permissions.ftp = Boolean(permissions.ftp && account.ftpEnabled !== false);
+  permissions.email = Boolean(permissions.email && account.emailEnabled !== false);
+  permissions.databases = Boolean(permissions.databases && account.mysqlEnabled !== false);
+  permissions.phpmyadmin = Boolean(permissions.phpmyadmin && permissions.databases);
+  permissions.ssl = Boolean(permissions.ssl && account.sslEnabled !== false);
+  permissions.terminal = Boolean(permissions.terminal && account.shellAccess === true);
+  permissions.node = Boolean(permissions.node && Number(account.maxNodeApps ?? account.nodeApps ?? 1) !== 0);
+  return Object.fromEntries(Object.entries(permissions).map(([key, value]) => [key, Boolean(value)]));
+}
+
 function publicAccount(account: any) {
   const safe = { ...(account || {}) };
   delete safe.passwordHash;
   safe.passwordSet = Boolean(account?.passwordSet || account?.passwordHash);
+  safe.permissions = normalizeAccountPermissions(account?.permissions, account);
   return safe;
 }
 
@@ -793,7 +830,7 @@ app.get("/api/auth/session", async (req, res) => {
       return;
     }
     const account = session.role === "user" ? accountForSession(session) : null;
-    if (session.role === "user" && (!account || account.status !== "active")) {
+    if (session.role === "user" && session.accountId && (!account || account.status !== "active")) {
       res.status(403).json({ ok: false, message: "Hosting account is not active." });
       return;
     }
@@ -865,6 +902,34 @@ app.get("/api/user/account", requireLicense, async (req, res) => {
     return;
   }
   res.json({ ok: true, account: publicAccount(account) });
+});
+
+app.get("/api/user/summary", requireLicense, async (req, res) => {
+  const session = sessionFromRequest(req);
+  if (!session || session.role !== "user") {
+    res.status(401).json({ ok: false, message: "User session expired. Log in again." });
+    return;
+  }
+  const account = accountForSession(session);
+  if (!account || account.status !== "active") {
+    res.status(404).json({ ok: false, message: "Hosting account is not active." });
+    return;
+  }
+  res.json({
+    ok: true,
+    account: publicAccount(account),
+    limits: {
+      quotaMb: account.quotaMb,
+      bandwidthGb: account.bandwidthGb,
+      domains: account.maxDomains,
+      emailAccounts: account.maxEmailAccounts,
+      databases: account.maxDatabases,
+      nodeApps: account.maxNodeApps || account.nodeApps || 1
+    },
+    provisioning: account.provisioning || null,
+    provisioningLog: readProvisioningLog(account.username),
+    permissions: normalizeAccountPermissions(account.permissions, account)
+  });
 });
 
 app.use("/api/panel", requireLicense, requireAdminSession);
@@ -1044,6 +1109,7 @@ app.post("/api/panel/accounts", requireCapability("accounts"), (req, res) => {
     maxDomains: Number(req.body?.maxDomains || selectedPackage.domains),
     maxEmailAccounts: Number(req.body?.maxEmailAccounts || selectedPackage.emailAccounts),
     maxDatabases: Number(req.body?.maxDatabases || selectedPackage.databases),
+    maxNodeApps: Number(req.body?.maxNodeApps || selectedPackage.nodeApps),
     ftpEnabled: req.body?.ftpEnabled !== false,
     shellAccess: Boolean(req.body?.shellAccess),
     mysqlEnabled: req.body?.mysqlEnabled !== false,
@@ -1058,6 +1124,7 @@ app.post("/api/panel/accounts", requireCapability("accounts"), (req, res) => {
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   };
+  account.permissions = normalizeAccountPermissions(req.body?.permissions, account);
   account.provisioning = buildAccountProvisioning(req, account);
   try {
     writeStarterSite(account);
@@ -1084,6 +1151,26 @@ app.post("/api/panel/accounts/:username/password", requireCapability("accounts")
       ...account,
       passwordHash: hashPassword(password),
       passwordSet: true,
+      updatedAt: new Date().toISOString()
+    };
+    return updatedAccount;
+  });
+  if (!updatedAccount) {
+    res.status(404).json({ ok: false, message: "Account not found." });
+    return;
+  }
+  writePanelState({ ...state, accounts });
+  res.json({ ok: true, account: publicAccount(updatedAccount), accounts: accounts.map(publicAccount) });
+});
+
+app.post("/api/panel/accounts/:username/permissions", requireCapability("accounts"), (req, res) => {
+  const state = readPanelState();
+  let updatedAccount: any = null;
+  const accounts = state.accounts.map((account: any) => {
+    if (account.username !== req.params.username) return account;
+    updatedAccount = {
+      ...account,
+      permissions: normalizeAccountPermissions({ ...(account.permissions || {}), ...(req.body?.permissions || {}) }, account),
       updatedAt: new Date().toISOString()
     };
     return updatedAccount;

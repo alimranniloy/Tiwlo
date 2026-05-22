@@ -35,6 +35,58 @@ const emptyServerStats: ServerStats = {
   bandwidthMax: 500
 };
 
+const DEFAULT_USER_PERMISSIONS: Record<string, boolean> = {
+  dashboard: true,
+  files: true,
+  ftp: true,
+  disk: true,
+  domains: true,
+  dns: true,
+  subdomains: true,
+  databases: true,
+  phpmyadmin: true,
+  email: true,
+  ssl: true,
+  node: true,
+  php: true,
+  ruby: false,
+  marketplace: true,
+  cron: true,
+  terminal: false,
+  copilot: true,
+  security: true,
+  metrics: true,
+  backups: true
+};
+
+const TAB_PERMISSION_MAP: Record<string, string> = {
+  dashboard: "dashboard",
+  files: "files",
+  ftp: "ftp",
+  disk: "disk",
+  databases: "databases",
+  postgre: "databases",
+  phpmyadmin: "phpmyadmin",
+  domains: "domains",
+  dns_zone: "dns",
+  subdomains: "subdomains",
+  emails: "email",
+  forwarders: "email",
+  autoresponders: "email",
+  ssl: "ssl",
+  ipblocker: "security",
+  ssh: "terminal",
+  visitors: "metrics",
+  bandwidth: "metrics",
+  node: "node",
+  phpversion: "php",
+  ruby: "ruby",
+  marketplace: "marketplace",
+  cron: "cron",
+  terminal: "terminal",
+  copilot: "copilot"
+};
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<string>("dashboard");
   const [licenseStatus, setLicenseStatus] = useState<any | null>(null);
@@ -42,6 +94,12 @@ export default function App() {
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
   const [authReady, setAuthReady] = useState(false);
   const [currentAccount, setCurrentAccount] = useState<any | null>(null);
+  const userPermissions = { ...DEFAULT_USER_PERMISSIONS, ...(currentAccount?.permissions || {}) };
+  const canAccessTab = (tabId: string) => Boolean(userPermissions[TAB_PERMISSION_MAP[tabId] || tabId]);
+  const allowedTabs = Object.keys(TAB_PERMISSION_MAP).filter((tabId) => canAccessTab(tabId));
+  const setPermittedActiveTab = (tabId: string) => {
+    setActiveTab(canAccessTab(tabId) ? tabId : "dashboard");
+  };
 
   const handleLogin = async (user: string, pass: string) => {
     const response = await fetch("/api/auth/login", {
@@ -165,6 +223,12 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    if (isLoggedIn && !isAdmin && !canAccessTab(activeTab)) {
+      setActiveTab("dashboard");
+    }
+  }, [activeTab, currentAccount, isAdmin, isLoggedIn]);
+
   // External trigger for parent AI Copilot Chat
   const [openAiPromptTrigger, setOpenAiPromptTrigger] = useState("");
 
@@ -215,6 +279,10 @@ export default function App() {
 
   // Method to direct file assistant prompt mapping to Copilot panel automatically
   const openAiWithPrompt = (prompt: string) => {
+    if (!canAccessTab("copilot")) {
+      addActivity("file", "AI Copilot is disabled for this hosting account.");
+      return;
+    }
     setOpenAiPromptTrigger(prompt);
     setActiveTab("copilot");
   };
@@ -322,11 +390,12 @@ export default function App() {
       {activeTab !== "files" && (
         <Sidebar 
           activeTab={activeTab} 
-          setActiveTab={setActiveTab} 
+          setActiveTab={setPermittedActiveTab}
           runningAppsCount={runningAppsCount}
           unreadMailsCount={unreadMailsCount}
           dbsCount={dbsCount}
           onLogout={handleLogout}
+          allowedTabs={allowedTabs}
         />
       )}
 
@@ -390,7 +459,7 @@ export default function App() {
               activities={activities}
               setActivities={setActivities}
               domains={domains}
-              setActiveTab={setActiveTab}
+              setActiveTab={setPermittedActiveTab}
               addActivity={addActivity}
               account={currentAccount}
             />
@@ -402,7 +471,7 @@ export default function App() {
               setFiles={setFiles} 
               addActivity={addActivity}
               openAiWithPrompt={openAiWithPrompt}
-              setActiveTab={setActiveTab}
+              setActiveTab={setPermittedActiveTab}
             />
           )}
 

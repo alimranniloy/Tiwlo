@@ -37,6 +37,7 @@ interface SidebarProps {
   unreadMailsCount: number;
   dbsCount: number;
   onLogout: () => void;
+  allowedTabs?: string[];
 }
 
 export default function Sidebar({ 
@@ -45,9 +46,11 @@ export default function Sidebar({
   runningAppsCount, 
   unreadMailsCount, 
   dbsCount,
-  onLogout 
+  onLogout,
+  allowedTabs
 }: SidebarProps) {
   const [isOpen, setIsOpen] = useState(false);
+  const isAllowed = (tabId: string) => !allowedTabs || allowedTabs.includes(tabId);
 
   const navigationGroups = [
     {
@@ -175,12 +178,15 @@ export default function Sidebar({
 
           {/* Navigation Links (Scrollable without visible scrollbars) */}
           <div className="flex-1 overflow-y-auto no-scrollbar pr-1 space-y-5 font-sans select-none">
-            {navigationGroups.map((group, groupIdx) => (
+            {navigationGroups.map((group, groupIdx) => {
+              const visibleItems = group.items.filter((item) => isAllowed(item.id));
+              if (!visibleItems.length) return null;
+              return (
               <div key={groupIdx} className="space-y-1">
                 <div className="px-2 py-1 text-[9px] font-black text-slate-500 uppercase tracking-[0.2em] mb-1">
                   {group.title}
                 </div>
-                {group.items.map(item => {
+                {visibleItems.map(item => {
                   const Icon = item.icon;
                   const isActive = activeTab === item.id;
                   
@@ -213,7 +219,7 @@ export default function Sidebar({
                   );
                 })}
               </div>
-            ))}
+            )})}
           </div>
 
           {/* Sidebar Footer info */}

@@ -353,8 +353,52 @@ const defaultAccountForm = {
   mysqlEnabled: true,
   emailEnabled: true,
   sslEnabled: true,
-  dedicatedIp: ""
+  dedicatedIp: "",
+  permissions: {
+    dashboard: true,
+    files: true,
+    ftp: true,
+    disk: true,
+    domains: true,
+    dns: true,
+    subdomains: true,
+    databases: true,
+    phpmyadmin: true,
+    email: true,
+    ssl: true,
+    node: true,
+    php: true,
+    ruby: false,
+    marketplace: true,
+    cron: true,
+    terminal: false,
+    copilot: true,
+    security: true,
+    metrics: true,
+    backups: true
+  }
 };
+
+const ACCOUNT_PERMISSION_ITEMS = [
+  ["files", "Files"],
+  ["ftp", "FTP"],
+  ["domains", "Domains"],
+  ["dns", "DNS"],
+  ["subdomains", "Subdomains"],
+  ["databases", "MySQL"],
+  ["phpmyadmin", "phpMyAdmin"],
+  ["email", "Email"],
+  ["ssl", "SSL"],
+  ["node", "Node.js"],
+  ["php", "PHP"],
+  ["marketplace", "Apps"],
+  ["cron", "Cron"],
+  ["terminal", "Shell"],
+  ["copilot", "AI"],
+  ["security", "Security"],
+  ["metrics", "Metrics"],
+  ["backups", "Backups"]
+];
 
 const authHeaders = (headers: Record<string, string> = {}) => {
   try {
@@ -599,6 +643,28 @@ export default function AdminPanel({ onLogout }: AdminPanelProps) {
       setPanelNotice(`${username} password updated. The user can now log in from the tPanel login page.`);
     } catch (error: any) {
       setPanelError(error.message || "Password update failed.");
+    }
+  };
+
+  const updateAccountPermissions = async (username: string, permissions: Record<string, boolean>) => {
+    setPanelNotice("");
+    setPanelError("");
+    try {
+      const response = await fetch(`/api/panel/accounts/${username}/permissions`, {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ permissions })
+      });
+      const data = await response.json();
+      if (!response.ok || !data.ok) throw new Error(data.message || "Permission update failed.");
+      setHostingState((current: any) => ({ ...current, accounts: data.accounts }));
+      setProvisioningState((current: any) => ({
+        ...current,
+        accounts: (current.accounts || []).map((account: any) => account.username === username ? { ...account, permissions: data.account.permissions } : account)
+      }));
+      setPanelNotice(`${username} access permissions updated.`);
+    } catch (error: any) {
+      setPanelError(error.message || "Permission update failed.");
     }
   };
 
@@ -1010,6 +1076,24 @@ export default function AdminPanel({ onLogout }: AdminPanelProps) {
                                </label>
                              ))}
                            </div>
+                           <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
+                             <div className="flex items-center justify-between gap-3 mb-3">
+                               <h2 className="text-xs font-black uppercase tracking-wider text-slate-400">User Panel Permissions</h2>
+                               <span className="text-[10px] font-bold text-slate-600">Visible after login</span>
+                             </div>
+                             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2">
+                               {ACCOUNT_PERMISSION_ITEMS.map(([key, label]) => (
+                                 <label key={key} className={`flex items-center gap-2 rounded border px-2 py-1.5 text-[11px] font-bold ${accountForm.permissions?.[key] ? "border-[#0069ff]/30 bg-[#0069ff]/10 text-slate-100" : "border-slate-800 bg-slate-950 text-slate-500"}`}>
+                                   <input
+                                     type="checkbox"
+                                     checked={Boolean(accountForm.permissions?.[key])}
+                                     onChange={(e) => setAccountForm((current: any) => ({ ...current, permissions: { ...(current.permissions || {}), [key]: e.target.checked } }))}
+                                   />
+                                   {label}
+                                 </label>
+                               ))}
+                             </div>
+                           </div>
                          </div>
                          <div className="bg-slate-950/50 border border-slate-800 rounded-lg p-5 space-y-4">
                            <h2 className="text-sm font-black text-slate-100">Resource Overrides</h2>
@@ -1028,6 +1112,7 @@ export default function AdminPanel({ onLogout }: AdminPanelProps) {
                        provisioningAccounts={provisioningState.accounts || []}
                        onAction={runAccountAction}
                        onPassword={updateAccountPassword}
+                       onPermission={updateAccountPermissions}
                        onProvision={retryProvisioning}
                      />
                    ) : currentModule === "pkg-add" ? (
@@ -1335,7 +1420,7 @@ function Field({ label, value, onChange, placeholder = "", type = "text" }: any)
   );
 }
 
-function AccountList({ accounts, provisioningAccounts = [], onAction, onPassword, onProvision }: any) {
+function AccountList({ accounts, provisioningAccounts = [], onAction, onPassword, onPermission, onProvision }: any) {
   const [passwords, setPasswords] = useState<Record<string, string>>({});
   const provisioningByUser = new Map((provisioningAccounts || []).map((account: any) => [account.username, account]));
 
@@ -1346,7 +1431,7 @@ function AccountList({ accounts, provisioningAccounts = [], onAction, onPassword
         <p className="text-sm text-slate-500 mt-2">Manage hosting accounts, user login passwords, document roots, runtimes, quotas, DNS, SSL, and suspension state.</p>
       </div>
       <div className="overflow-hidden rounded-lg border border-slate-800 bg-slate-950/40">
-        <table className="w-full min-w-[1100px] text-xs">
+        <table className="w-full min-w-[1320px] text-xs">
           <thead className="bg-slate-900 text-slate-500 uppercase">
             <tr>
               <th className="p-3 text-left">Domain</th>
@@ -1356,13 +1441,14 @@ function AccountList({ accounts, provisioningAccounts = [], onAction, onPassword
               <th className="p-3 text-left">Provision</th>
               <th className="p-3 text-left">Quota</th>
               <th className="p-3 text-left">Status</th>
+              <th className="p-3 text-left">Access</th>
               <th className="p-3 text-left">Password</th>
               <th className="p-3 text-left">Actions</th>
             </tr>
           </thead>
           <tbody>
             {accounts.length === 0 ? (
-              <tr><td colSpan={9} className="p-6 text-center text-slate-500 font-bold">No accounts created yet.</td></tr>
+              <tr><td colSpan={10} className="p-6 text-center text-slate-500 font-bold">No accounts created yet.</td></tr>
             ) : accounts.map((account: any) => {
               const provision = (provisioningByUser.get(account.username) as any) || account;
               const vhostStatus = provision.provisioning?.vhost?.status || "queued";
@@ -1389,6 +1475,23 @@ function AccountList({ accounts, provisioningAccounts = [], onAction, onPassword
                 </td>
                 <td className="p-3">{account.quotaMb} MB / {account.bandwidthGb} GB</td>
                 <td className={`p-3 font-black ${account.status === "active" ? "text-emerald-400" : account.status === "suspended" ? "text-amber-400" : "text-rose-400"}`}>{account.status}</td>
+                <td className="p-3">
+                  <div className="grid grid-cols-3 gap-1 min-w-[230px]">
+                    {ACCOUNT_PERMISSION_ITEMS.slice(0, 15).map(([key, label]) => {
+                      const enabled = account.permissions?.[key] !== false;
+                      return (
+                        <button
+                          key={key}
+                          onClick={() => onPermission(account.username, { [key]: !enabled })}
+                          className={`rounded border px-1.5 py-1 text-[9px] font-black uppercase ${enabled ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-300" : "border-slate-800 bg-slate-950 text-slate-600"}`}
+                          title={`${enabled ? "Disable" : "Enable"} ${label}`}
+                        >
+                          {label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </td>
                 <td className="p-3">
                   <div className="flex gap-2">
                     <input
