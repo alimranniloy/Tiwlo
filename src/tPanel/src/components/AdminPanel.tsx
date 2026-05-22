@@ -356,6 +356,15 @@ const defaultAccountForm = {
   dedicatedIp: ""
 };
 
+const authHeaders = (headers: Record<string, string> = {}) => {
+  try {
+    const saved = JSON.parse(localStorage.getItem("tpanel_auth") || "null");
+    return saved?.token ? { ...headers, Authorization: `Bearer ${saved.token}` } : headers;
+  } catch {
+    return headers;
+  }
+};
+
 export default function AdminPanel({ onLogout }: AdminPanelProps) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
@@ -399,14 +408,14 @@ export default function AdminPanel({ onLogout }: AdminPanelProps) {
   }, []);
 
   const loadSummary = async () => {
-    const response = await fetch("/api/panel/summary");
+    const response = await fetch("/api/panel/summary", { headers: authHeaders() });
     const data = await response.json();
     if (!response.ok || !data.ok) throw new Error(data.message || "Unable to load dashboard summary.");
     setSummary(data);
   };
 
   const loadHosting = async () => {
-    const response = await fetch("/api/panel/accounts");
+    const response = await fetch("/api/panel/accounts", { headers: authHeaders() });
     const data = await response.json();
     if (!response.ok || !data.ok) throw new Error(data.message || "Unable to load hosting accounts.");
     setHostingState(data);
@@ -416,7 +425,7 @@ export default function AdminPanel({ onLogout }: AdminPanelProps) {
   };
 
   const loadUpdateStatus = async () => {
-    const response = await fetch("/api/panel/update-status");
+    const response = await fetch("/api/panel/update-status", { headers: authHeaders() });
     const data = await response.json();
     if (response.ok && data.ok) setUpdateStatus(data);
   };
@@ -437,7 +446,7 @@ export default function AdminPanel({ onLogout }: AdminPanelProps) {
     let mounted = true;
     const loadDomainSettings = async () => {
       try {
-        const response = await fetch("/api/panel/domain-settings");
+        const response = await fetch("/api/panel/domain-settings", { headers: authHeaders() });
         const data = await response.json();
         if (mounted && data.settings) setDomainSettings(data.settings);
       } catch (error: any) {
@@ -454,7 +463,7 @@ export default function AdminPanel({ onLogout }: AdminPanelProps) {
     let mounted = true;
     const loadSystemStatus = async () => {
       try {
-        const response = await fetch("/api/panel/system-status");
+        const response = await fetch("/api/panel/system-status", { headers: authHeaders() });
         const data = await response.json();
         if (mounted) setSystemStatus(data);
       } catch (error: any) {
@@ -480,7 +489,7 @@ export default function AdminPanel({ onLogout }: AdminPanelProps) {
     try {
       const response = await fetch("/api/panel/domain-settings", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify(domainSettings)
       });
       const data = await response.json();
@@ -499,12 +508,12 @@ export default function AdminPanel({ onLogout }: AdminPanelProps) {
     try {
       const response = await fetch("/api/panel/accounts", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify(accountForm)
       });
       const data = await response.json();
       if (!response.ok || !data.ok) throw new Error(data.message || "Unable to create hosting account.");
-      setPanelNotice(`Account ${data.account.username} created for ${data.account.domain}.`);
+      setPanelNotice(`Account ${data.account.username} created for ${data.account.domain}. Login is ready, DNS plan is generated, and Auto SSL is queued.`);
       setAccountForm(defaultAccountForm);
       await loadHosting();
     } catch (error: any) {
@@ -519,7 +528,7 @@ export default function AdminPanel({ onLogout }: AdminPanelProps) {
     try {
       const response = await fetch("/api/panel/packages", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify(packageForm)
       });
       const data = await response.json();
@@ -536,13 +545,35 @@ export default function AdminPanel({ onLogout }: AdminPanelProps) {
     setPanelNotice("");
     setPanelError("");
     try {
-      const response = await fetch(`/api/panel/accounts/${username}/${action}`, { method: "POST" });
+      const response = await fetch(`/api/panel/accounts/${username}/${action}`, { method: "POST", headers: authHeaders() });
       const data = await response.json();
       if (!response.ok || !data.ok) throw new Error(data.message || "Account action failed.");
       setHostingState((current: any) => ({ ...current, accounts: data.accounts }));
       setPanelNotice(`${username} ${action} command completed.`);
     } catch (error: any) {
       setPanelError(error.message || "Account action failed.");
+    }
+  };
+
+  const updateAccountPassword = async (username: string, password: string) => {
+    setPanelNotice("");
+    setPanelError("");
+    if (!password || password.length < 8) {
+      setPanelError("New account password must be at least 8 characters.");
+      return;
+    }
+    try {
+      const response = await fetch(`/api/panel/accounts/${username}/password`, {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ password })
+      });
+      const data = await response.json();
+      if (!response.ok || !data.ok) throw new Error(data.message || "Password update failed.");
+      setHostingState((current: any) => ({ ...current, accounts: data.accounts }));
+      setPanelNotice(`${username} password updated. The user can now log in from the tPanel login page.`);
+    } catch (error: any) {
+      setPanelError(error.message || "Password update failed.");
     }
   };
 
@@ -745,14 +776,14 @@ export default function AdminPanel({ onLogout }: AdminPanelProps) {
                       <button
                         key={module.id}
                         onClick={() => setCurrentModule(module.id)}
-                        className="flex flex-col text-left bg-slate-900/30 border border-slate-900/30 rounded-2xl p-5 hover:border-[#0069ff]/50 transition-all group relative overflow-hidden"
+                        className="flex flex-col text-left bg-slate-900/50 border border-slate-800 rounded-lg p-5 hover:border-[#0069ff]/60 hover:bg-slate-900/80 focus:outline-none focus:border-[#0069ff] transition-all group relative overflow-hidden"
                       >
                         <div className="absolute top-0 left-0 w-1 h-full bg-[#0069ff] opacity-0 group-hover:opacity-100 transition-opacity"></div>
-                        <div className="p-2.5 bg-slate-950 rounded-xl text-[#0069ff] border border-slate-900/50 mb-4 group-hover:bg-[#0069ff] group-hover:text-white transition-all">
+                        <div className="p-2.5 bg-slate-950 rounded-lg text-[#0069ff] border border-slate-800 mb-4 group-hover:bg-[#0069ff]/10 transition-all">
                            <module.icon className="w-5 h-5" />
                         </div>
-                        <h3 className="font-black text-slate-100 text-xs uppercase tracking-wider leading-snug group-hover:text-white transition-colors">{module.label}</h3>
-                        <p className="text-[10px] text-slate-500 mt-2 font-medium leading-relaxed">{moduleDescription(module)}</p>
+                        <h3 className="font-black text-slate-100 text-xs uppercase tracking-wider leading-snug group-hover:text-[#66a3ff] transition-colors">{module.label}</h3>
+                        <p className="text-[10px] text-slate-400 mt-2 font-medium leading-relaxed">{moduleDescription(module)}</p>
                       </button>
                     ))}
                   </div>
@@ -859,7 +890,7 @@ export default function AdminPanel({ onLogout }: AdminPanelProps) {
                        <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
                          <div>
                            <h1 className="text-3xl font-black text-slate-100 tracking-tight">Create a New Account</h1>
-                           <p className="text-sm text-slate-500 mt-2">Provision a cPanel-style hosting account with package limits, website runtime, DNS, email, FTP, database, and SSL options.</p>
+                           <p className="text-sm text-slate-500 mt-2">Provision a cPanel-style hosting account with login access, package limits, website runtime, DNS, email, FTP, database, and automatic SSL.</p>
                          </div>
                          <button className="px-5 py-2.5 bg-[#0069ff] text-white font-bold rounded-lg hover:bg-[#0055d4] transition-all text-sm">Create Account</button>
                        </div>
@@ -871,9 +902,9 @@ export default function AdminPanel({ onLogout }: AdminPanelProps) {
                        <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
                          <div className="xl:col-span-2 bg-slate-950/50 border border-slate-800 rounded-lg p-5 space-y-5">
                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                             <Field label="Domain / Website Name" value={accountForm.domain} onChange={(value: string) => setAccountForm((current: any) => ({ ...current, domain: value, displayName: current.displayName || value }))} placeholder="example.com" />
+                             <Field label="Domain / Website Name" value={accountForm.domain} onChange={(value: string) => setAccountForm((current: any) => ({ ...current, domain: value, displayName: current.displayName || value }))} placeholder="example.com or leave blank for username.tiwlo.com" />
                              <Field label="Username" value={accountForm.username} onChange={(value: string) => setAccountForm((current: any) => ({ ...current, username: value }))} placeholder="example" />
-                             <Field label="Password" type="password" value={accountForm.password} onChange={(value: string) => setAccountForm((current: any) => ({ ...current, password: value }))} placeholder="Set account password" />
+                             <Field label="Password" type="password" value={accountForm.password} onChange={(value: string) => setAccountForm((current: any) => ({ ...current, password: value }))} placeholder="Minimum 8 characters" />
                              <Field label="Owner Email" value={accountForm.ownerEmail} onChange={(value: string) => setAccountForm((current: any) => ({ ...current, ownerEmail: value }))} placeholder="owner@example.com" />
                            </div>
                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -920,7 +951,7 @@ export default function AdminPanel({ onLogout }: AdminPanelProps) {
                        </div>
                      </form>
                    ) : currentModule === "acc-list" ? (
-                     <AccountList accounts={hostingState.accounts || []} onAction={runAccountAction} />
+                     <AccountList accounts={hostingState.accounts || []} onAction={runAccountAction} onPassword={updateAccountPassword} />
                    ) : currentModule === "pkg-add" ? (
                      <form onSubmit={createPackage} className="w-full max-w-4xl text-left space-y-5">
                        <div>
@@ -1117,37 +1148,71 @@ function Field({ label, value, onChange, placeholder = "", type = "text" }: any)
   );
 }
 
-function AccountList({ accounts, onAction }: any) {
+function AccountList({ accounts, onAction, onPassword }: any) {
+  const [passwords, setPasswords] = useState<Record<string, string>>({});
+
   return (
     <div className="w-full max-w-6xl text-left space-y-5">
       <div>
         <h1 className="text-3xl font-black text-slate-100 tracking-tight">List Accounts</h1>
-        <p className="text-sm text-slate-500 mt-2">Manage hosting accounts, document roots, runtimes, quotas, and suspension state.</p>
+        <p className="text-sm text-slate-500 mt-2">Manage hosting accounts, user login passwords, document roots, runtimes, quotas, DNS, SSL, and suspension state.</p>
       </div>
       <div className="overflow-hidden rounded-lg border border-slate-800 bg-slate-950/40">
-        <table className="w-full min-w-[920px] text-xs">
+        <table className="w-full min-w-[1100px] text-xs">
           <thead className="bg-slate-900 text-slate-500 uppercase">
             <tr>
               <th className="p-3 text-left">Domain</th>
               <th className="p-3 text-left">User</th>
               <th className="p-3 text-left">Package</th>
               <th className="p-3 text-left">Runtime</th>
+              <th className="p-3 text-left">Provision</th>
               <th className="p-3 text-left">Quota</th>
               <th className="p-3 text-left">Status</th>
+              <th className="p-3 text-left">Password</th>
               <th className="p-3 text-left">Actions</th>
             </tr>
           </thead>
           <tbody>
             {accounts.length === 0 ? (
-              <tr><td colSpan={7} className="p-6 text-center text-slate-500 font-bold">No accounts created yet.</td></tr>
+              <tr><td colSpan={9} className="p-6 text-center text-slate-500 font-bold">No accounts created yet.</td></tr>
             ) : accounts.map((account: any) => (
               <tr key={account.id} className="border-t border-slate-800 text-slate-300">
                 <td className="p-3 font-black text-slate-100">{account.domain}</td>
                 <td className="p-3 font-mono">{account.username}</td>
                 <td className="p-3">{account.packageName}</td>
                 <td className="p-3 uppercase font-bold">{account.runtime}</td>
+                <td className="p-3">
+                  <div className="flex flex-col gap-1 text-[10px] font-bold">
+                    <span className={account.provisioning?.autoSubdomain ? "text-emerald-400" : "text-slate-400"}>
+                      {account.provisioning?.autoSubdomain ? "Auto subdomain" : "Domain"}
+                    </span>
+                    <span className={account.provisioning?.ssl?.enabled ? "text-sky-400" : "text-slate-500"}>
+                      SSL {account.provisioning?.ssl?.status || (account.sslEnabled ? "queued" : "disabled")}
+                    </span>
+                  </div>
+                </td>
                 <td className="p-3">{account.quotaMb} MB / {account.bandwidthGb} GB</td>
                 <td className={`p-3 font-black ${account.status === "active" ? "text-emerald-400" : account.status === "suspended" ? "text-amber-400" : "text-rose-400"}`}>{account.status}</td>
+                <td className="p-3">
+                  <div className="flex gap-2">
+                    <input
+                      type="password"
+                      value={passwords[account.username] || ""}
+                      onChange={(event) => setPasswords((current) => ({ ...current, [account.username]: event.target.value }))}
+                      placeholder={account.passwordSet ? "Reset password" : "Set password"}
+                      className="w-36 rounded border border-slate-800 bg-slate-900 px-2 py-1 text-xs text-slate-100 outline-none focus:border-[#0069ff]"
+                    />
+                    <button
+                      onClick={() => {
+                        onPassword(account.username, passwords[account.username] || "");
+                        setPasswords((current) => ({ ...current, [account.username]: "" }));
+                      }}
+                      className="rounded border border-[#0069ff]/40 px-2 py-1 font-black text-[#66a3ff] hover:bg-[#0069ff]/10"
+                    >
+                      Save
+                    </button>
+                  </div>
+                </td>
                 <td className="p-3">
                   <div className="flex flex-wrap gap-2">
                     <button onClick={() => onAction(account.username, account.status === "suspended" ? "unsuspend" : "suspend")} className="px-2 py-1 rounded border border-slate-700 text-slate-200 hover:bg-slate-800">{account.status === "suspended" ? "Unsuspend" : "Suspend"}</button>

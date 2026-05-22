@@ -2,7 +2,7 @@ import express from "express";
 import path from "path";
 import os from "os";
 import fs from "fs";
-import { createHmac, timingSafeEqual } from "crypto";
+import { createHmac, randomBytes, scryptSync, timingSafeEqual } from "crypto";
 import { execFile } from "child_process";
 import { promisify } from "util";
 import { createServer as createViteServer } from "vite";
@@ -24,6 +24,7 @@ const TPANEL_USER_PASSWORD = process.env.TPANEL_USER_PASSWORD || "";
 const TPANEL_CONFIG_DIR = process.env.TPANEL_CONFIG_DIR || (process.platform === "win32" ? path.join(process.cwd(), ".tpanel") : "/etc/tpanel");
 const DOMAIN_SETTINGS_FILE = path.join(TPANEL_CONFIG_DIR, "domain-settings.json");
 const PANEL_STATE_FILE = path.join(TPANEL_CONFIG_DIR, "hosting-state.json");
+const SITES_CONFIG_DIR = path.join(TPANEL_CONFIG_DIR, "sites");
 const ACCOUNT_BASE_DIR = process.env.TPANEL_ACCOUNT_BASE_DIR || (process.platform === "win32" ? path.join(process.cwd(), ".tpanel", "accounts") : "/home/tpanel/accounts");
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 const LICENSE_CACHE_MS = Number(process.env.TPANEL_LICENSE_CACHE_MS || 120000);
@@ -93,8 +94,29 @@ function signSessionPayload(payload: string) {
   return createHmac("sha256", sessionSecret()).update(payload).digest("base64url");
 }
 
-function createSession(role: string) {
-  const payload = Buffer.from(JSON.stringify({ role, exp: Date.now() + SESSION_TTL_MS })).toString("base64url");
+function hashPassword(password: string) {
+  const salt = randomBytes(16).toString("hex");
+  const hash = scryptSync(password, salt, 32).toString("hex");
+  return `${salt}:${hash}`;
+}
+
+function verifyPassword(password: string, stored = "") {
+  const [salt, hash] = String(stored || "").split(":");
+  if (!salt || !hash) return false;
+  const candidate = scryptSync(password, salt, 32).toString("hex");
+  const left = Buffer.from(candidate, "hex");
+  const right = Buffer.from(hash, "hex");
+  return left.length === right.length && timingSafeEqual(left, right);
+}
+
+function createSession(role: string, account?: any) {
+  const payload = Buffer.from(JSON.stringify({
+    role,
+    accountId: account?.id || null,
+    username: account?.username || null,
+    domain: account?.domain || null,
+    exp: Date.now() + SESSION_TTL_MS
+  })).toString("base64url");
   return `${payload}.${signSessionPayload(payload)}`;
 }
 
@@ -117,6 +139,13 @@ function sanitizeSlug(value: unknown, fallback = "site") {
     .replace(/-+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 64) || fallback;
+}
+
+function publicAccount(account: any) {
+  const safe = { ...(account || {}) };
+  delete safe.passwordHash;
+  safe.passwordSet = Boolean(account?.passwordSet || account?.passwordHash);
+  return safe;
 }
 
 function readPanelState() {
@@ -236,6 +265,164 @@ function writeDomainSettings(settings: any) {
   fs.writeFileSync(DOMAIN_SETTINGS_FILE, JSON.stringify(settings, null, 2));
 }
 
+function resolveAccountDomain(req: express.Request, username: string, requestedDomain: unknown) {
+  const rawDomain = String(requestedDomain || "").trim();
+  const cleaned = rawDomain ? cleanDomain(rawDomain) : "";
+  if (cleaned && cleaned.includes(".")) return cleaned;
+  const settings = readDomainSettings(req);
+  const baseDomain = cleanDomain(settings.primaryDomain || "tiwlo.com");
+  const label = sanitizeSlug(cleaned || username, username).replace(/[^a-z0-9-]/g, "").slice(0, 63) || username;
+  return `${label}.${baseDomain}`;
+}
+
+function buildAccountProvisioning(req: express.Request, account: any) {
+  const settings = readDomainSettings(req);
+  const serverIp = account.dedicatedIp || settings.detectedServerIp || requestIp(req) || "SERVER_IP";
+  const primaryDomain = cleanDomain(settings.primaryDomain || "tiwlo.com");
+  const autoSubdomain = account.domain.endsWith(`.${primaryDomain}`);
+  const aliases = [`www.${account.domain}`];
+  return {
+    primaryDomain,
+    autoSubdomain,
+    dnsRecords: [
+      { type: "A", host: account.domain, value: serverIp, ttl: 300, status: "ready" },
+      { type: "CNAME", host: aliases[0], value: account.domain, ttl: 300, status: "ready" },
+      { type: "A", host: `ftp.${account.domain}`, value: serverIp, ttl: 300, status: account.ftpEnabled ? "ready" : "disabled" },
+      { type: "A", host: `mail.${account.domain}`, value: serverIp, ttl: 300, status: account.emailEnabled ? "ready" : "disabled" }
+    ],
+    ssl: {
+      enabled: Boolean(account.sslEnabled),
+      provider: "letsencrypt",
+      autoRenew: Boolean(account.sslEnabled),
+      status: account.sslEnabled ? "queued" : "disabled",
+      challenge: "http-01",
+      requestedAt: new Date().toISOString()
+    },
+    vhost: {
+      status: "queued",
+      serverName: account.domain,
+      aliases,
+      documentRoot: account.documentRoot,
+      runtime: account.runtime,
+      phpVersion: account.phpVersion,
+      nodeVersion: account.nodeVersion,
+      nodePort: account.nodePort
+    }
+  };
+}
+
+function writeAccountProvisioningPlan(account: any) {
+  fs.mkdirSync(SITES_CONFIG_DIR, { recursive: true });
+  const plan = {
+    username: account.username,
+    domain: account.domain,
+    status: account.status,
+    homeDirectory: account.homeDirectory,
+    documentRoot: account.documentRoot,
+    runtime: account.runtime,
+    provisioning: account.provisioning,
+    updatedAt: new Date().toISOString()
+  };
+  fs.writeFileSync(path.join(SITES_CONFIG_DIR, `${account.username}.json`), JSON.stringify(plan, null, 2));
+}
+
+function accountNginxConfig(account: any) {
+  const serverNames = [account.domain, ...(account.provisioning?.vhost?.aliases || [])].join(" ");
+  if (account.runtime === "node") {
+    return `server {
+    listen 80;
+    server_name ${serverNames};
+
+    location / {
+        proxy_pass http://127.0.0.1:${Number(account.nodePort || 3000)};
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+`;
+  }
+
+  const phpSock = `/run/php/php${String(account.phpVersion || "8.3").replace(/[^0-9.]/g, "")}-fpm.sock`;
+  return `server {
+    listen 80;
+    server_name ${serverNames};
+    root ${account.documentRoot};
+    index index.php index.html index.htm;
+
+    location / {
+        try_files $uri $uri/ /index.php?$query_string;
+    }
+
+    location ~ \\.php$ {
+        include snippets/fastcgi-php.conf;
+        fastcgi_pass unix:${phpSock};
+    }
+
+    location ~ /\\. {
+        deny all;
+    }
+}
+`;
+}
+
+function appendProvisioningLog(account: any, message: string) {
+  try {
+    fs.mkdirSync(SITES_CONFIG_DIR, { recursive: true });
+    fs.appendFileSync(path.join(SITES_CONFIG_DIR, `${account.username}.log`), `[${new Date().toISOString()}] ${message}\n`);
+  } catch {
+    // best-effort provisioning log
+  }
+}
+
+function applyAccountProvisioning(account: any) {
+  if (process.platform === "win32") return;
+  const siteName = `tpanel-${account.username}`;
+  const availablePath = `/etc/nginx/sites-available/${siteName}.conf`;
+  const enabledPath = `/etc/nginx/sites-enabled/${siteName}.conf`;
+  try {
+    fs.mkdirSync("/etc/nginx/sites-available", { recursive: true });
+    fs.mkdirSync("/etc/nginx/sites-enabled", { recursive: true });
+    fs.writeFileSync(availablePath, accountNginxConfig(account));
+    try {
+      if (fs.existsSync(enabledPath)) fs.unlinkSync(enabledPath);
+      fs.symlinkSync(availablePath, enabledPath);
+    } catch (error: any) {
+      appendProvisioningLog(account, `Nginx symlink skipped: ${error.message}`);
+    }
+  } catch (error: any) {
+    appendProvisioningLog(account, `Nginx vhost write failed: ${error.message}`);
+    return;
+  }
+
+  execFile("nginx", ["-t"], { timeout: 30000 }, (nginxError, stdout, stderr) => {
+    if (nginxError) {
+      appendProvisioningLog(account, `Nginx test failed: ${nginxError.message} ${stderr || stdout || ""}`.trim());
+      return;
+    }
+    execFile("systemctl", ["reload", "nginx"], { timeout: 30000 }, (reloadError) => {
+      if (reloadError) appendProvisioningLog(account, `Nginx reload failed: ${reloadError.message}`);
+      else appendProvisioningLog(account, "Nginx vhost enabled and reloaded.");
+    });
+
+    if (!account.sslEnabled) return;
+    const email = account.contactEmail || account.ownerEmail || `admin@${account.domain}`;
+    const domains = [account.domain, ...(account.provisioning?.vhost?.aliases || [])];
+    const args = ["--nginx", "--non-interactive", "--agree-tos", "--redirect", "-m", email, ...domains.flatMap((domain: string) => ["-d", domain])];
+    execFile("certbot", args, { timeout: 180000 }, (certbotError, certbotStdout, certbotStderr) => {
+      if (certbotError) {
+        appendProvisioningLog(account, `Auto SSL pending: ${certbotError.message} ${certbotStderr || certbotStdout || ""}`.trim());
+        return;
+      }
+      appendProvisioningLog(account, "Auto SSL installed by Certbot.");
+    });
+  });
+}
+
 async function verifyLicense(req: express.Request, options: { force?: boolean } = {}) {
   if (!TPANEL_LICENSE_KEY) {
     return { ok: false, status: "unlicensed", message: "TPANEL_LICENSE_KEY is missing. Run sudo tpanel-license-renew with a valid key, or reinstall from Tiwlo." };
@@ -304,6 +491,32 @@ async function requireLicense(req: express.Request, res: express.Response, next:
   } catch (error: any) {
     res.status(503).json({ ok: false, status: "offline", message: error.message || "License check failed" });
   }
+}
+
+function sessionFromRequest(req: express.Request) {
+  const header = String(req.headers.authorization || "");
+  const token = header.startsWith("Bearer ") ? header.slice(7) : "";
+  try {
+    return verifySession(token);
+  } catch {
+    return null;
+  }
+}
+
+function requireAdminSession(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const session = sessionFromRequest(req);
+  if (!session || session.role !== "admin") {
+    res.status(401).json({ ok: false, message: "Admin session expired. Log in again." });
+    return;
+  }
+  (req as any).tpanelSession = session;
+  next();
+}
+
+function accountForSession(session: any) {
+  if (!session?.accountId) return null;
+  const state = readPanelState();
+  return state.accounts.find((account: any) => account.id === session.accountId || account.username === session.username) || null;
 }
 
 function hasCapability(req: express.Request, capability: string) {
@@ -385,9 +598,7 @@ app.get("/api/license/status", async (req, res) => {
 
 app.get("/api/auth/session", async (req, res) => {
   try {
-    const header = String(req.headers.authorization || "");
-    const token = header.startsWith("Bearer ") ? header.slice(7) : "";
-    const session = verifySession(token);
+    const session = sessionFromRequest(req);
     if (!session) {
       res.status(401).json({ ok: false });
       return;
@@ -397,7 +608,12 @@ app.get("/api/auth/session", async (req, res) => {
       res.status(402).json(license);
       return;
     }
-    res.json({ ok: true, role: session.role, expiresAt: session.exp });
+    const account = session.role === "user" ? accountForSession(session) : null;
+    if (session.role === "user" && (!account || account.status !== "active")) {
+      res.status(403).json({ ok: false, message: "Hosting account is not active." });
+      return;
+    }
+    res.json({ ok: true, role: session.role, expiresAt: session.exp, account: account ? publicAccount(account) : null });
   } catch {
     res.status(401).json({ ok: false });
   }
@@ -425,13 +641,49 @@ app.post("/api/auth/login", async (req, res) => {
       res.json({ ok: true, role: "user", token, expiresAt: session?.exp });
       return;
     }
+    const state = readPanelState();
+    const account = state.accounts.find((item: any) => item.username === username || item.domain === username);
+    if (account) {
+      if (account.status !== "active") {
+        res.status(403).json({ ok: false, message: `Account ${account.username} is ${account.status}. Contact the server administrator.` });
+        return;
+      }
+      if (!account.passwordHash) {
+        res.status(401).json({ ok: false, message: "This account was created before tPanel login passwords were enabled. Reset the account password from Admin > List Accounts." });
+        return;
+      }
+      if (verifyPassword(password, account.passwordHash)) {
+        const token = createSession("user", account);
+        const session = verifySession(token);
+        res.json({ ok: true, role: "user", token, expiresAt: session?.exp, account: publicAccount(account) });
+        return;
+      }
+    }
     res.status(401).json({ ok: false, message: "Invalid tPanel username or password." });
   } catch (error: any) {
     res.status(503).json({ ok: false, message: error.message || "Unable to sign in." });
   }
 });
 
-app.use("/api/panel", requireLicense);
+app.get("/api/user/account", requireLicense, async (req, res) => {
+  const session = sessionFromRequest(req);
+  if (!session || session.role !== "user") {
+    res.status(401).json({ ok: false, message: "User session expired. Log in again." });
+    return;
+  }
+  const account = accountForSession(session);
+  if (!account) {
+    res.status(404).json({ ok: false, message: "Hosting account was not found." });
+    return;
+  }
+  if (account.status !== "active") {
+    res.status(403).json({ ok: false, message: "Hosting account is not active." });
+    return;
+  }
+  res.json({ ok: true, account: publicAccount(account) });
+});
+
+app.use("/api/panel", requireLicense, requireAdminSession);
 
 app.get("/api/panel/summary", async (_req, res) => {
   const disk = await diskUsage();
@@ -502,7 +754,7 @@ app.get("/api/panel/system-status", async (req, res) => {
 
 app.get("/api/panel/accounts", requireCapability("accounts"), (_req, res) => {
   const state = readPanelState();
-  res.json({ ok: true, accounts: state.accounts, packages: state.packages, updatedAt: state.updatedAt });
+  res.json({ ok: true, accounts: state.accounts.map(publicAccount), packages: state.packages, updatedAt: state.updatedAt });
 });
 
 app.post("/api/panel/packages", requireCapability("packages"), (req, res) => {
@@ -527,9 +779,14 @@ app.post("/api/panel/packages", requireCapability("packages"), (req, res) => {
 app.post("/api/panel/accounts", requireCapability("accounts"), (req, res) => {
   const state = readPanelState();
   const username = sanitizeSlug(req.body?.username, "account").replace(/[^a-z0-9_]/g, "").slice(0, 16);
-  const domain = cleanDomain(req.body?.domain || `${username}.local`);
+  const domain = resolveAccountDomain(req, username, req.body?.domain);
+  const password = String(req.body?.password || "");
   if (!username || username.length < 3) {
     res.status(400).json({ ok: false, message: "Username must be at least 3 characters." });
+    return;
+  }
+  if (password.length < 8) {
+    res.status(400).json({ ok: false, message: "Account password must be at least 8 characters." });
     return;
   }
   if (state.accounts.some((account: any) => account.username === username || account.domain === domain)) {
@@ -538,7 +795,7 @@ app.post("/api/panel/accounts", requireCapability("accounts"), (req, res) => {
   }
   const selectedPackage = state.packages.find((pkg: any) => pkg.id === req.body?.packageId) || state.packages[0] || DEFAULT_PACKAGES[0];
   const homeDirectory = path.join(ACCOUNT_BASE_DIR, username);
-  const account = {
+  const account: any = {
     id: `acct-${Date.now().toString(36)}`,
     username,
     domain,
@@ -562,20 +819,50 @@ app.post("/api/panel/accounts", requireCapability("accounts"), (req, res) => {
     emailEnabled: req.body?.emailEnabled !== false,
     sslEnabled: req.body?.sslEnabled !== false,
     dedicatedIp: String(req.body?.dedicatedIp || "").trim(),
-    passwordSet: Boolean(req.body?.password),
+    passwordHash: hashPassword(password),
+    passwordSet: true,
     homeDirectory,
     documentRoot: path.join(homeDirectory, "public_html"),
     status: "active",
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   };
+  account.provisioning = buildAccountProvisioning(req, account);
   try {
     writeStarterSite(account);
+    writeAccountProvisioningPlan(account);
     writePanelState({ ...state, accounts: [account, ...state.accounts] });
-    res.json({ ok: true, account });
+    applyAccountProvisioning(account);
+    res.json({ ok: true, account: publicAccount(account) });
   } catch (error: any) {
     res.status(500).json({ ok: false, message: error.message || "Unable to create account files." });
   }
+});
+
+app.post("/api/panel/accounts/:username/password", requireCapability("accounts"), (req, res) => {
+  const password = String(req.body?.password || "");
+  if (password.length < 8) {
+    res.status(400).json({ ok: false, message: "New password must be at least 8 characters." });
+    return;
+  }
+  const state = readPanelState();
+  let updatedAccount: any = null;
+  const accounts = state.accounts.map((account: any) => {
+    if (account.username !== req.params.username) return account;
+    updatedAccount = {
+      ...account,
+      passwordHash: hashPassword(password),
+      passwordSet: true,
+      updatedAt: new Date().toISOString()
+    };
+    return updatedAccount;
+  });
+  if (!updatedAccount) {
+    res.status(404).json({ ok: false, message: "Account not found." });
+    return;
+  }
+  writePanelState({ ...state, accounts });
+  res.json({ ok: true, account: publicAccount(updatedAccount), accounts: accounts.map(publicAccount) });
 });
 
 app.post("/api/panel/accounts/:username/:action", requireCapability("accounts"), (req, res) => {
@@ -588,14 +875,23 @@ app.post("/api/panel/accounts/:username/:action", requireCapability("accounts"),
   const state = readPanelState();
   const accounts = state.accounts.map((account: any) => {
     if (account.username !== req.params.username) return account;
-    return {
+    const updated = {
       ...account,
       status: action === "unsuspend" ? "active" : action === "terminate" ? "terminated" : "suspended",
       updatedAt: new Date().toISOString()
     };
+    if (updated.provisioning) {
+      updated.provisioning = {
+        ...updated.provisioning,
+        ssl: { ...updated.provisioning.ssl, status: action === "suspend" || action === "terminate" ? "paused" : updated.provisioning.ssl?.status || "queued" },
+        vhost: { ...updated.provisioning.vhost, status: action === "suspend" || action === "terminate" ? "disabled" : "queued" }
+      };
+      writeAccountProvisioningPlan(updated);
+    }
+    return updated;
   });
   writePanelState({ ...state, accounts });
-  res.json({ ok: true, accounts });
+  res.json({ ok: true, accounts: accounts.map(publicAccount) });
 });
 
 app.get("/api/panel/update-status", async (req, res) => {

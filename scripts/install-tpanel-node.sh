@@ -148,11 +148,11 @@ step "Installing runtime packages"
 if have apt-get; then
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -y
-  apt-get install -y git curl wget ca-certificates openssl xz-utils nginx ufw certbot python3 python3-certbot-nginx build-essential || true
+  apt-get install -y git curl wget ca-certificates openssl xz-utils nginx ufw certbot python3 python3-certbot-nginx build-essential php-fpm php-cli php-mysql php-curl php-zip php-mbstring php-xml php-gd mariadb-server || true
 elif have dnf; then
-  dnf install -y git curl wget ca-certificates openssl xz nginx firewalld certbot python3 gcc gcc-c++ make || true
+  dnf install -y git curl wget ca-certificates openssl xz nginx firewalld certbot python3 gcc gcc-c++ make php-fpm php-cli php-mysqlnd mariadb-server || true
 elif have yum; then
-  yum install -y git curl wget ca-certificates openssl xz nginx firewalld certbot python3 gcc gcc-c++ make || true
+  yum install -y git curl wget ca-certificates openssl xz nginx firewalld certbot python3 gcc gcc-c++ make php-fpm php-cli php-mysqlnd mariadb-server || true
 else
   echo "Unsupported Linux package manager. Install git, curl, xz, and nginx, then rerun."
   exit 1
@@ -430,6 +430,11 @@ chmod 700 /usr/local/sbin/tpanel-license-renew
 ln -sf /usr/local/sbin/tpanel-license-renew /usr/local/sbin/tpanel-license-status
 
 systemctl daemon-reload
+systemctl enable --now nginx >/dev/null 2>&1 || true
+systemctl enable --now mariadb >/dev/null 2>&1 || systemctl enable --now mysql >/dev/null 2>&1 || true
+for svc in $(systemctl list-unit-files --type=service 'php*-fpm.service' 2>/dev/null | awk '/php.*-fpm\.service/ {print $1}'); do
+  systemctl enable --now "$svc" >/dev/null 2>&1 || true
+done
 systemctl enable --now tpanel
 systemctl enable --now tpanel-auto-update.timer >/dev/null 2>&1 || true
 

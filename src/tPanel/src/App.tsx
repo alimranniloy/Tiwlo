@@ -41,6 +41,7 @@ export default function App() {
   const [isLoggedIn, setIsLoggedIn] = useState<boolean>(false);
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
   const [authReady, setAuthReady] = useState(false);
+  const [currentAccount, setCurrentAccount] = useState<any | null>(null);
 
   const handleLogin = async (user: string, pass: string) => {
     const response = await fetch("/api/auth/login", {
@@ -53,8 +54,9 @@ export default function App() {
       throw new Error(result.message || "Invalid tPanel username or password.");
     }
     if (result.token) {
-      localStorage.setItem("tpanel_auth", JSON.stringify({ token: result.token, role: result.role, expiresAt: result.expiresAt }));
+      localStorage.setItem("tpanel_auth", JSON.stringify({ token: result.token, role: result.role, expiresAt: result.expiresAt, account: result.account || null }));
     }
+    setCurrentAccount(result.account || null);
     if (result.role === "admin") {
       setIsLoggedIn(true);
       setIsAdmin(true);
@@ -70,6 +72,7 @@ export default function App() {
     localStorage.removeItem("tpanel_auth");
     setIsLoggedIn(false);
     setIsAdmin(false);
+    setCurrentAccount(null);
     window.history.replaceState(null, "", "/login");
   };
 
@@ -134,6 +137,7 @@ export default function App() {
         }
         setIsLoggedIn(true);
         setIsAdmin(data.role === "admin");
+        setCurrentAccount(data.account || saved.account || null);
         if (window.location.pathname === "/" || window.location.pathname === "/login") {
           window.history.replaceState(null, "", data.role === "admin" ? "/admin" : "/dashboard");
         }
@@ -388,6 +392,7 @@ export default function App() {
               domains={domains}
               setActiveTab={setActiveTab}
               addActivity={addActivity}
+              account={currentAccount}
             />
           )}
 

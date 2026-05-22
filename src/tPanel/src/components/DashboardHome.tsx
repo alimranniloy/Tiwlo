@@ -26,9 +26,10 @@ interface DashboardHomeProps {
   domains: DomainItem[];
   setActiveTab: (tab: string) => void;
   addActivity: (category: "file" | "domain" | "node" | "db" | "email" | "ssl", message: string) => void;
+  account?: any | null;
 }
 
-export default function DashboardHome({ stats, setStats, activities, setActivities, domains, setActiveTab, addActivity }: DashboardHomeProps) {
+export default function DashboardHome({ stats, setStats, activities, setActivities, domains, setActiveTab, addActivity, account }: DashboardHomeProps) {
   const [isBackingUp, setIsBackingUp] = useState(false);
   const [backupSuccess, setBackupSuccess] = useState(false);
 
@@ -84,32 +85,42 @@ export default function DashboardHome({ stats, setStats, activities, setActiviti
   const ramPercent = parseFloat((stats.ram / stats.ramMax * 100).toFixed(1));
   const diskPercent = parseFloat((stats.disk / stats.diskMax * 100).toFixed(1));
   const bandwidthPercent = parseFloat((stats.bandwidth / stats.bandwidthMax * 100).toFixed(1));
+  const primaryDomain = account?.domain || domains[0]?.domainName || "No domain added";
+  const accountName = account?.username || "tPanel User";
+  const runtimeLabel = account?.runtime ? String(account.runtime).toUpperCase() : "PHP";
 
   return (
     <div className="space-y-6">
       
       {/* Welcome server status alert bar */}
-      <div className="bg-slate-900 border border-slate-900/40 p-5 rounded-xl flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <div className="space-y-1">
-          <h2 className="text-xl font-bold text-slate-100 flex items-center gap-2">
+      <div className="bg-slate-900 border border-slate-800 p-5 rounded-lg shadow-[0_18px_60px_rgba(2,6,23,0.24)] flex flex-col xl:flex-row justify-between items-start xl:items-center gap-5">
+        <div className="space-y-2 min-w-0">
+          <h2 className="text-xl font-black text-slate-100 flex items-center gap-2 tracking-tight">
             <Server className="w-5 h-5 text-sky-400" />
-            Server Dashboard
+            {account ? `${accountName} Hosting Dashboard` : "Server Dashboard"}
           </h2>
-          <p className="text-slate-400 text-xs">
-            Host Node.js App Server, mapping DNS records, MySQL tables, and secure webmail.
+          <p className="text-slate-400 text-xs leading-5">
+            {account
+              ? "Your website, files, database, email, runtime, DNS, and SSL tools are ready from one panel."
+              : "Host Node.js apps, map DNS records, manage MySQL tables, and secure webmail."}
           </p>
         </div>
         
-        <div className="flex items-center gap-2 font-mono text-[10px]">
-          <div className="bg-slate-950 px-3 py-1.5 rounded border border-slate-850 flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
-            <span className="text-slate-400">Server IP:</span>
-            <span className="text-slate-200 font-bold">Auto detected</span>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 font-mono text-[10px] w-full xl:w-auto">
+          <div className="bg-slate-950 px-3 py-2 rounded border border-slate-800 flex items-center gap-1.5 min-w-0">
+            <Globe className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+            <span className="text-slate-500">Domain:</span>
+            <span className="text-slate-100 font-black truncate">{primaryDomain}</span>
           </div>
-          <div className="bg-slate-950 px-3 py-1.5 rounded border border-slate-850 flex items-center gap-1.5">
+          <div className="bg-slate-950 px-3 py-2 rounded border border-slate-800 flex items-center gap-1.5">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+            <span className="text-slate-500">Status:</span>
+            <span className="text-emerald-400 font-black">{account?.status || "online"}</span>
+          </div>
+          <div className="bg-slate-950 px-3 py-2 rounded border border-slate-800 flex items-center gap-1.5">
             <Clock className="w-3.5 h-3.5 text-slate-500" />
-            <span className="text-slate-400">Zone Time:</span>
-            <span className="text-slate-200 font-bold">UTC</span>
+            <span className="text-slate-500">Runtime:</span>
+            <span className="text-slate-100 font-black">{runtimeLabel}</span>
           </div>
         </div>
       </div>
@@ -229,57 +240,57 @@ export default function DashboardHome({ stats, setStats, activities, setActiviti
         <div className="lg:col-span-2 space-y-6">
           
           {/* Quick actions modular Grid tPanel styling */}
-          <div className="bg-slate-900 border border-slate-900/40 rounded-xl p-5 space-y-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-lg p-5 space-y-4 shadow-[0_14px_50px_rgba(2,6,23,0.22)]">
             <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider font-mono">Quick Access Controls</h3>
             
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 font-mono text-xs text-slate-300">
               
               <button 
                 onClick={() => setActiveTab("files")}
-                className="p-4 bg-slate-950 hover:bg-slate-900 border border-slate-900/40 hover:border-slate-800 rounded-xl flex flex-col items-center justify-center gap-2 text-center text-sky-400 transition"
+                className="p-4 bg-slate-950 hover:bg-slate-900 border border-slate-800 hover:border-sky-500/50 focus:border-sky-500/70 focus:outline-none rounded-lg flex flex-col items-center justify-center gap-2 text-center text-slate-200 hover:text-slate-100 active:text-slate-100 transition"
               >
                 <FolderIcon className="w-6 h-6 text-sky-400 shrink-0" />
-                <span className="font-semibold text-slate-300">File Explorer</span>
+                <span className="font-semibold text-slate-200">File Explorer</span>
               </button>
 
               <button 
                 onClick={() => setActiveTab("node")}
-                className="p-4 bg-slate-950 hover:bg-slate-900 border border-slate-900/40 hover:border-slate-800 rounded-xl flex flex-col items-center justify-center gap-2 text-center text-emerald-400 transition"
+                className="p-4 bg-slate-950 hover:bg-slate-900 border border-slate-800 hover:border-emerald-500/50 focus:border-emerald-500/70 focus:outline-none rounded-lg flex flex-col items-center justify-center gap-2 text-center text-slate-200 hover:text-slate-100 active:text-slate-100 transition"
               >
                 <Cpu className="w-6 h-6 text-emerald-400 shrink-0" />
-                <span className="font-semibold text-slate-300">Node JS App</span>
+                <span className="font-semibold text-slate-200">Node JS App</span>
               </button>
 
               <button 
                 onClick={() => setActiveTab("domains")}
-                className="p-4 bg-slate-950 hover:bg-slate-900 border border-slate-900/40 hover:border-slate-800 rounded-xl flex flex-col items-center justify-center gap-2 text-center text-teal-400 transition"
+                className="p-4 bg-slate-950 hover:bg-slate-900 border border-slate-800 hover:border-teal-500/50 focus:border-teal-500/70 focus:outline-none rounded-lg flex flex-col items-center justify-center gap-2 text-center text-slate-200 hover:text-slate-100 active:text-slate-100 transition"
               >
                 <Globe className="w-6 h-6 text-sky-400 shrink-0" />
-                <span className="font-semibold text-slate-300">DNS Zones</span>
+                <span className="font-semibold text-slate-200">DNS Zones</span>
               </button>
 
               <button 
                 onClick={() => setActiveTab("databases")}
-                className="p-4 bg-slate-950 hover:bg-slate-900 border border-slate-900/40 hover:border-slate-800 rounded-xl flex flex-col items-center justify-center gap-2 text-center text-purple-400 transition"
+                className="p-4 bg-slate-950 hover:bg-slate-900 border border-slate-800 hover:border-purple-500/50 focus:border-purple-500/70 focus:outline-none rounded-lg flex flex-col items-center justify-center gap-2 text-center text-slate-200 hover:text-slate-100 active:text-slate-100 transition"
               >
                 <Database className="w-6 h-6 text-purple-400 shrink-0" />
-                <span className="font-semibold text-slate-300">MySQL Table</span>
+                <span className="font-semibold text-slate-200">MySQL Table</span>
               </button>
 
               <button 
                 onClick={() => setActiveTab("emails")}
-                className="p-4 bg-slate-950 hover:bg-slate-900 border border-slate-900/40 hover:border-slate-800 rounded-xl flex flex-col items-center justify-center gap-2 text-center text-sky-400 transition"
+                className="p-4 bg-slate-950 hover:bg-slate-900 border border-slate-800 hover:border-cyan-500/50 focus:border-cyan-500/70 focus:outline-none rounded-lg flex flex-col items-center justify-center gap-2 text-center text-slate-200 hover:text-slate-100 active:text-slate-100 transition"
               >
                 <Mail className="w-6 h-6 text-sky-400 shrink-0" />
-                <span className="font-semibold text-slate-300">Webmail Inbox</span>
+                <span className="font-semibold text-slate-200">Webmail Inbox</span>
               </button>
 
               <button 
                 onClick={() => setActiveTab("copilot")}
-                className="p-4 bg-slate-950 hover:bg-slate-900 border border-slate-900/40 hover:border-slate-800 rounded-xl flex flex-col items-center justify-center gap-2 text-center text-amber-400 transition"
+                className="p-4 bg-slate-950 hover:bg-slate-900 border border-slate-800 hover:border-amber-500/50 focus:border-amber-500/70 focus:outline-none rounded-lg flex flex-col items-center justify-center gap-2 text-center text-slate-200 hover:text-slate-100 active:text-slate-100 transition"
               >
                 <Terminal className="w-6 h-6 text-amber-400 shrink-0" />
-                <span className="font-semibold text-slate-300 font-bold">Smart AI Ask</span>
+                <span className="font-semibold text-slate-200 font-bold">Smart AI Ask</span>
               </button>
 
             </div>
