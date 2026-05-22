@@ -39,6 +39,22 @@ have() {
   command -v "$1" >/dev/null 2>&1
 }
 
+line() {
+  printf '%s\n' '------------------------------------------------------------'
+}
+
+step() {
+  printf '[INFO] %s\n' "$1"
+}
+
+ok() {
+  printf '[OK]   %s\n' "$1"
+}
+
+fail() {
+  printf '[FAIL] %s\n' "$1"
+}
+
 download() {
   local url="$1"
   local output="$2"
@@ -65,7 +81,7 @@ ensure_node() {
   local node_bin="$node_root/$NODE_FOLDER/bin"
   mkdir -p "$node_root" "$DOWNLOADS_DIR"
   if [ ! -x "$node_bin/node" ]; then
-    echo "Installing bundled Node.js v${NODE_VERSION}..."
+    step "Installing bundled Node.js v${NODE_VERSION}"
     download "$NODE_URL" "$DOWNLOADS_DIR/$NODE_TARBALL"
     tar -xJf "$DOWNLOADS_DIR/$NODE_TARBALL" -C "$node_root"
   fi
@@ -106,8 +122,15 @@ GRAPHQL_QUERY='mutation Check($input: TPanelLicenseCheckInput!) { tPanelLicenseC
 GRAPHQL_QUERY_ESCAPED="$(json_escape "$GRAPHQL_QUERY")"
 GRAPHQL_PAYLOAD="{\"query\":\"$GRAPHQL_QUERY_ESCAPED\",\"variables\":{\"input\":$VERIFY_INPUT}}"
 
-echo "Welcome to tPanel Pro by Tiwlo"
-echo "Checking license for ${SERVER_IP:-this server}..."
+printf '\n'
+line
+printf ' tPanel Pro Installer\n'
+line
+printf ' API Endpoint : %s\n' "$API_BASE"
+printf ' Server IP    : %s\n' "${SERVER_IP:-auto-detect}"
+printf ' Panel Port   : %s\n' "$TPANEL_PORT"
+line
+step "Validating license"
 
 VERIFY_RESPONSE="$(curl -fsS -X POST "$API_BASE/tpanel/api/verify" -H "Content-Type: application/json" -d "$VERIFY_INPUT" 2>/dev/null || true)"
 if ! echo "$VERIFY_RESPONSE" | grep -q '"ok":true'; then
@@ -115,12 +138,13 @@ if ! echo "$VERIFY_RESPONSE" | grep -q '"ok":true'; then
 fi
 
 if ! echo "$VERIFY_RESPONSE" | grep -q '"ok":true'; then
-  echo "License validation failed."
+  fail "License validation failed"
   echo "$VERIFY_RESPONSE"
   exit 1
 fi
 
-echo "License active. Installing runtime packages..."
+ok "License validated"
+step "Installing runtime packages"
 if have apt-get; then
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -y
@@ -136,10 +160,11 @@ fi
 
 ensure_node
 SERVICE_PATH="${NODE_BIN_DIR}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-echo "Using Node.js $("${NODE_BIN_DIR}/node" -v) and npm $("$NPM_BIN" -v)"
+ok "Using Node.js $("${NODE_BIN_DIR}/node" -v) and npm $("$NPM_BIN" -v)"
 
 mkdir -p "$TPANEL_DIR"
 if [ -d "$SOURCE_DIR/.git" ]; then
+  step "Updating tPanel source"
   git -C "$SOURCE_DIR" fetch origin "$BRANCH"
   if [ -n "$(git -C "$SOURCE_DIR" status --porcelain)" ]; then
     git -C "$SOURCE_DIR" stash push -u -m "tpanel-installer-autostash-$(date +%Y%m%d%H%M%S)" || true
@@ -147,6 +172,7 @@ if [ -d "$SOURCE_DIR/.git" ]; then
   git -C "$SOURCE_DIR" checkout -B "$BRANCH" "origin/$BRANCH"
   git -C "$SOURCE_DIR" reset --hard "origin/$BRANCH"
 else
+  step "Cloning tPanel source"
   rm -rf "$SOURCE_DIR"
   git clone --branch "$BRANCH" "$REPO_URL" "$SOURCE_DIR"
 fi
@@ -157,9 +183,11 @@ install_app_dependencies() {
   "$NPM_BIN" install --include=optional
 }
 
+step "Installing application dependencies"
 install_app_dependencies
+step "Building tPanel application"
 if ! "$NPM_BIN" run build; then
-  echo "Build failed. Retrying after a clean dependency install..."
+  step "Build failed; retrying after a clean dependency install"
   install_app_dependencies
   "$NPM_BIN" run build
 fi
@@ -255,6 +283,128 @@ echo "tPanel updated. Data was preserved."
 BASH
 chmod 700 /usr/local/sbin/tpanel-update
 
+cat >/usr/local/sbin/tpanel-license-renew <<'BASH'
+#!/usr/bin/env bash
+set -euo pipefail
+
+ENV_FILE="/etc/tpanel/agent.env"
+OVERRIDE_LICENSE_KEY="${TPANEL_LICENSE_KEY:-}"
+
+line() {
+  printf '%s\n' '------------------------------------------------------------'
+}
+
+info() {
+  printf '[INFO] %s\n' "$1"
+}
+
+ok() {
+  printf '[OK]   %s\n' "$1"
+}
+
+fail() {
+  printf '[FAIL] %s\n' "$1"
+}
+
+have() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+json_escape() {
+  printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+server_ip() {
+  if have curl; then
+    curl -fsS --max-time 8 https://api.ipify.org 2>/dev/null && return 0
+  fi
+  hostname -I 2>/dev/null | awk '{print $1}'
+}
+
+persist_env_value() {
+  local key="$1"
+  local value="$2"
+  if grep -q "^${key}=" "$ENV_FILE"; then
+    sed -i "s|^${key}=.*|${key}=${value}|" "$ENV_FILE"
+  else
+    printf '%s=%s\n' "$key" "$value" >>"$ENV_FILE"
+  fi
+}
+
+if [ "$(id -u)" -ne 0 ]; then
+  fail "Run as root: sudo tpanel-license-renew"
+  exit 1
+fi
+
+if [ ! -f "$ENV_FILE" ]; then
+  fail "$ENV_FILE was not found. Install tPanel first."
+  exit 1
+fi
+
+. "$ENV_FILE"
+if [ -n "$OVERRIDE_LICENSE_KEY" ]; then
+  LICENSE_KEY="$OVERRIDE_LICENSE_KEY"
+  TPANEL_LICENSE_KEY="$OVERRIDE_LICENSE_KEY"
+fi
+
+API_BASE="${API_BASE:-${TIWLO_API_URL:-https://tiwlo.com}}"
+LICENSE_KEY="${LICENSE_KEY:-${TPANEL_LICENSE_KEY:-}}"
+SERVER_IP="${TPANEL_SERVER_IP:-${SERVER_IP:-$(server_ip || true)}}"
+FINGERPRINT="${TPANEL_SERVER_FINGERPRINT:-${FINGERPRINT:-$(cat /etc/machine-id 2>/dev/null || hostname)}}"
+HOSTNAME_VALUE="${HOSTNAME_VALUE:-$(hostname -f 2>/dev/null || hostname)}"
+OS_VALUE="${OS_VALUE:-$(. /etc/os-release 2>/dev/null && echo "$ID-$VERSION_ID" || uname -s)}"
+
+printf '\n'
+line
+printf ' tPanel License Refresh\n'
+line
+printf ' API Endpoint : %s\n' "$API_BASE"
+printf ' Server IP    : %s\n' "${SERVER_IP:-auto-detect}"
+line
+
+if [ -z "$LICENSE_KEY" ]; then
+  fail "No license key is configured"
+  printf 'Command      : sudo env TPANEL_LICENSE_KEY="YOUR_LICENSE_KEY" tpanel-license-renew\n'
+  exit 1
+fi
+
+LICENSE_ESCAPED="$(json_escape "$LICENSE_KEY")"
+SERVER_IP_ESCAPED="$(json_escape "$SERVER_IP")"
+FINGERPRINT_ESCAPED="$(json_escape "$FINGERPRINT")"
+HOSTNAME_ESCAPED="$(json_escape "$HOSTNAME_VALUE")"
+OS_ESCAPED="$(json_escape "$OS_VALUE")"
+VERIFY_INPUT="{\"licenseKey\":\"$LICENSE_ESCAPED\",\"serverIp\":\"$SERVER_IP_ESCAPED\",\"fingerprint\":\"$FINGERPRINT_ESCAPED\",\"hostname\":\"$HOSTNAME_ESCAPED\",\"os\":\"$OS_ESCAPED\",\"agentVersion\":\"1.1.0\"}"
+GRAPHQL_QUERY='mutation Check($input: TPanelLicenseCheckInput!) { tPanelLicenseCheck(input: $input) { ok status message serverTime } }'
+GRAPHQL_QUERY_ESCAPED="$(json_escape "$GRAPHQL_QUERY")"
+GRAPHQL_PAYLOAD="{\"query\":\"$GRAPHQL_QUERY_ESCAPED\",\"variables\":{\"input\":$VERIFY_INPUT}}"
+
+info "Contacting license server"
+VERIFY_RESPONSE="$(curl -fsS -X POST "$API_BASE/tpanel/api/verify" -H "Content-Type: application/json" -d "$VERIFY_INPUT" 2>/dev/null || true)"
+if ! echo "$VERIFY_RESPONSE" | grep -q '"ok":true'; then
+  VERIFY_RESPONSE="$(curl -fsS -X POST "$API_BASE/graphql" -H "Content-Type: application/json" -d "$GRAPHQL_PAYLOAD" 2>/dev/null || true)"
+fi
+
+if echo "$VERIFY_RESPONSE" | grep -q '"ok":true'; then
+  persist_env_value "LICENSE_KEY" "$LICENSE_KEY"
+  persist_env_value "TPANEL_LICENSE_KEY" "$LICENSE_KEY"
+  persist_env_value "SERVER_IP" "$SERVER_IP"
+  persist_env_value "TPANEL_SERVER_IP" "$SERVER_IP"
+  systemctl restart tpanel
+  ok "License refreshed and tPanel restarted"
+  printf 'Status       : active\n'
+  printf 'Panel URL    : http://%s:%s/\n' "${SERVER_IP:-SERVER_IP}" "${TPANEL_PORT:-2086}"
+  exit 0
+fi
+
+fail "License refresh failed"
+printf '%s\n' "$VERIFY_RESPONSE"
+printf '\n'
+printf 'Next command : sudo env TPANEL_LICENSE_KEY="YOUR_LICENSE_KEY" tpanel-license-renew\n'
+exit 1
+BASH
+chmod 700 /usr/local/sbin/tpanel-license-renew
+ln -sf /usr/local/sbin/tpanel-license-renew /usr/local/sbin/tpanel-license-status
+
 systemctl daemon-reload
 systemctl enable --now tpanel
 
@@ -265,6 +415,11 @@ if have ufw; then
   ufw allow "$TPANEL_PORT/tcp" >/dev/null 2>&1 || true
 fi
 
-echo "tPanel Pro is running on port $TPANEL_PORT."
-echo "Admin login: admin"
-echo "Admin password saved at /root/tpanel-admin-password.txt"
+printf '\n'
+line
+ok "Installation complete"
+printf 'Panel URL       : http://%s:%s/\n' "${SERVER_IP:-SERVER_IP}" "$TPANEL_PORT"
+printf 'Admin user      : admin\n'
+printf 'Password file   : /root/tpanel-admin-password.txt\n'
+printf 'License refresh : sudo tpanel-license-renew\n'
+line

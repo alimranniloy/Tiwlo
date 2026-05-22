@@ -22,6 +22,37 @@ const TPANEL_USER = process.env.TPANEL_USER || "";
 const TPANEL_USER_PASSWORD = process.env.TPANEL_USER_PASSWORD || "";
 const TPANEL_CONFIG_DIR = process.env.TPANEL_CONFIG_DIR || (process.platform === "win32" ? path.join(process.cwd(), ".tpanel") : "/etc/tpanel");
 const DOMAIN_SETTINGS_FILE = path.join(TPANEL_CONFIG_DIR, "domain-settings.json");
+const LICENSE_CHECK_QUERY = `mutation Check($input: TPanelLicenseCheckInput!) {
+  tPanelLicenseCheck(input: $input) {
+    ok
+    status
+    message
+    serverTime
+    signature
+    requiredPackages
+    license {
+      id
+      status
+      serverIp
+      currentPeriodEnd
+    }
+    package {
+      id
+      code
+      name
+      permissions
+      metadata
+    }
+    update {
+      version
+      title
+      isForced
+      packageUrl
+      checksum
+      rolloutMessage
+    }
+  }
+}`;
 const REQUIRED_PORTS = [
   { port: 22, protocol: "tcp", service: "SSH", purpose: "server login and recovery", public: true },
   { port: 25, protocol: "tcp", service: "SMTP", purpose: "mail delivery", public: true },
@@ -108,7 +139,7 @@ function writeDomainSettings(settings: any) {
 
 async function verifyLicense(req: express.Request) {
   if (!TPANEL_LICENSE_KEY) {
-    return { ok: false, status: "unlicensed", message: "TPANEL_LICENSE_KEY is missing. Renew or reinstall from Tiwlo." };
+    return { ok: false, status: "unlicensed", message: "TPANEL_LICENSE_KEY is missing. Run sudo tpanel-license-renew with a valid key, or reinstall from Tiwlo." };
   }
 
   const payload = {
@@ -121,16 +152,38 @@ async function verifyLicense(req: express.Request) {
     agentVersion: "1.0.0"
   };
 
-  const response = await fetch(`${TIWLO_API_URL}/tpanel/api/verify`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload)
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    return { ok: false, status: data.status || "error", message: data.message || "Unable to verify tPanel license" };
+  let primaryMessage = "";
+  try {
+    const response = await fetch(`${TIWLO_API_URL}/tpanel/api/verify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    const data = await response.json().catch(() => ({}));
+    if (response.ok && typeof data.ok === "boolean") {
+      return data;
+    }
+    primaryMessage = data.message || `REST verifier returned HTTP ${response.status}.`;
+  } catch (error: any) {
+    primaryMessage = error.message || "REST verifier failed.";
   }
-  return data;
+
+  try {
+    const response = await fetch(`${TIWLO_API_URL}/graphql`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query: LICENSE_CHECK_QUERY, variables: { input: payload } })
+    });
+    const data = await response.json().catch(() => ({}));
+    const result = data?.data?.tPanelLicenseCheck;
+    if (result && typeof result.ok === "boolean") {
+      return result;
+    }
+    const graphMessage = data?.errors?.[0]?.message || `GraphQL verifier returned HTTP ${response.status}.`;
+    return { ok: false, status: "offline", message: `${primaryMessage} ${graphMessage}`.trim() || "Unable to verify tPanel license." };
+  } catch (error: any) {
+    return { ok: false, status: "offline", message: `${primaryMessage} ${error.message || "GraphQL verifier failed."}`.trim() || "Unable to verify tPanel license." };
+  }
 }
 
 async function requireLicense(req: express.Request, res: express.Response, next: express.NextFunction) {

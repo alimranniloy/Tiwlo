@@ -246,17 +246,19 @@ export default function App() {
   };
 
   if (licenseStatus && !licenseStatus.ok) {
+    const renewCommand = `sudo env TPANEL_LICENSE_KEY="${licenseStatus.licenseKey || "YOUR_LICENSE_KEY"}" tpanel-license-renew`;
     return (
       <div className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center p-6">
-        <div className="max-w-lg w-full rounded-2xl border border-red-500/20 bg-slate-900 p-8 text-center shadow-2xl">
+        <div className="max-w-lg w-full rounded-lg border border-red-500/20 bg-slate-900 p-8 text-center shadow-2xl">
           <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-xl bg-red-500/10 text-red-400 font-black">T</div>
-          <h1 className="text-2xl font-black tracking-tight">tPanel license {licenseStatus.status || "inactive"}</h1>
+          <h1 className="text-2xl font-black tracking-tight">tPanel License Check Failed</h1>
           <p className="mt-3 text-sm leading-6 text-slate-400">
-            {licenseStatus.message || "Renew your license from Tiwlo to resume websites, users, email, databases, and server tools."}
+            {licenseStatus.message || "Refresh the active license on this server, then restart the panel service."}
           </p>
-          <p className="mt-5 rounded border border-slate-800 bg-slate-950 p-3 text-[12px] font-bold text-slate-500">
-            Renew your license in Tiwlo Console &gt; tPanel, then restart this service.
-          </p>
+          <div className="mt-5 rounded border border-slate-800 bg-slate-950 p-3 text-left">
+            <p className="mb-2 text-[10px] font-black uppercase tracking-widest text-slate-500">Server command</p>
+            <code className="block whitespace-pre-wrap break-all text-[12px] font-bold text-slate-200">{renewCommand}</code>
+          </div>
         </div>
       </div>
     );
