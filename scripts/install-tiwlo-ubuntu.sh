@@ -74,13 +74,17 @@ ensure_system_postgres_database
 step "Preparing Tiwlo source at ${INSTALL_DIR}"
 mkdir -p "$(dirname "$INSTALL_DIR")"
 if [ -d "$INSTALL_DIR/.git" ]; then
+  git -C "$INSTALL_DIR" fetch origin "$BRANCH"
   if [ -n "$(git -C "$INSTALL_DIR" status --porcelain)" ]; then
     step "Saving local server changes before update"
     git -C "$INSTALL_DIR" stash push -u -m "tiwlo-installer-autostash-$(date +%Y%m%d%H%M%S)"
   fi
-  git -C "$INSTALL_DIR" fetch origin "$BRANCH"
-  git -C "$INSTALL_DIR" checkout "$BRANCH"
-  git -C "$INSTALL_DIR" pull --ff-only origin "$BRANCH"
+  if ! git -C "$INSTALL_DIR" checkout -B "$BRANCH" "origin/$BRANCH"; then
+    step "Checkout blocked; saving local changes and retrying"
+    git -C "$INSTALL_DIR" stash push -u -m "tiwlo-installer-autostash-$(date +%Y%m%d%H%M%S)" || true
+    git -C "$INSTALL_DIR" checkout -B "$BRANCH" "origin/$BRANCH"
+  fi
+  git -C "$INSTALL_DIR" reset --hard "origin/$BRANCH"
 elif [ -e "$INSTALL_DIR" ]; then
   echo "$INSTALL_DIR already exists but is not a git checkout. Move it away or set TIWLO_INSTALL_DIR to a new path."
   exit 1
