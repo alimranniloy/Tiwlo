@@ -688,8 +688,8 @@ export const ensureTPanelTables = async (prisma) => {
       INSERT INTO "TPanelPackage"
         ("id", "code", "name", "description", "price", "currency", "interval",
          "maxAccounts", "maxDomains", "maxDatabases", "maxEmailAccounts",
-         "maxNodeApps", "features", "status", "sortOrder", "metadata")
-      VALUES ($1, $2, $3, $4, $5, 'USD', 'month', $6, $7, $8, $9, $10, CAST($11 AS jsonb), 'active', $12, CAST($13 AS jsonb))
+         "maxNodeApps", "features", "status", "sortOrder", "metadata", "createdAt", "updatedAt")
+      VALUES ($1, $2, $3, $4, $5, 'USD', 'month', $6, $7, $8, $9, $10, CAST($11 AS jsonb), 'active', $12, CAST($13 AS jsonb), CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
       ON CONFLICT ("code") DO UPDATE SET
         "name" = EXCLUDED."name",
         "description" = EXCLUDED."description",
@@ -892,8 +892,8 @@ export const upsertTPanelPackage = async (ctx, input) => {
         INSERT INTO "TPanelPackage"
           ("id", "code", "name", "description", "price", "currency", "interval",
            "maxAccounts", "maxDomains", "maxDatabases", "maxEmailAccounts",
-           "maxNodeApps", "features", "status", "sortOrder", "metadata")
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, CAST($13 AS jsonb), $14, $15, CAST($16 AS jsonb))
+           "maxNodeApps", "features", "status", "sortOrder", "metadata", "createdAt", "updatedAt")
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, CAST($13 AS jsonb), $14, $15, CAST($16 AS jsonb), CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         ON CONFLICT ("code") DO UPDATE SET
           "name" = EXCLUDED."name",
           "description" = EXCLUDED."description",
@@ -1109,8 +1109,8 @@ export const createTPanelLicenseOrder = async (ctx, input) => {
     INSERT INTO "TPanelLicense"
       ("id", "ownerId", "packageId", "invoiceId", "licenseKey", "label", "serverIp",
        "status", "billingStatus", "amount", "currency", "activatedAt",
-       "currentPeriodStart", "currentPeriodEnd", "metadata")
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, CAST($15 AS jsonb))
+       "currentPeriodStart", "currentPeriodEnd", "metadata", "createdAt", "updatedAt")
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, CAST($15 AS jsonb), CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
   `, id, actor.id, pkg.id, invoice.id, key, text(input.label || `${pkg.name} server`), serverIp,
     status, amount > 0 ? 'open' : 'paid', amount, invoice.currency,
     amount > 0 ? null : now, amount > 0 ? null : now, periodEnd,
@@ -1271,8 +1271,8 @@ const queueRemoteTask = async (ctx, input) => {
   const id = randomUUID();
   const rows = await ctx.prisma.$queryRawUnsafe(`
     INSERT INTO "TPanelRemoteTask"
-      ("id", "licenseId", "accountId", "action", "status", "priority", "payload", "requestedById")
-    VALUES ($1, $2, $3, $4, 'queued', $5, CAST($6 AS jsonb), $7)
+      ("id", "licenseId", "accountId", "action", "status", "priority", "payload", "requestedById", "createdAt", "updatedAt")
+    VALUES ($1, $2, $3, $4, 'queued', $5, CAST($6 AS jsonb), $7, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     RETURNING *
   `, id, license.id, input.accountId || null, action, integer(input.priority, 50), json(input.payload, {}), actor?.id || null);
   await writeAudit(ctx, 'queue_tpanel_remote_task', 'tPanelRemoteTask', id, { licenseId: license.id, action });
@@ -1377,8 +1377,8 @@ export const upsertTPanelAccountPackage = async (ctx, input) => {
         INSERT INTO "TPanelAccountPackage"
           ("id", "licenseId", "name", "code", "description", "status", "diskMB",
            "bandwidthGB", "domains", "databases", "emailAccounts", "nodeApps",
-           "ftpAccounts", "metadata")
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, CAST($14 AS jsonb))
+           "ftpAccounts", "metadata", "createdAt", "updatedAt")
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, CAST($14 AS jsonb), CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         RETURNING *
       `, ...values);
   const pkg = first(rows);
@@ -1448,8 +1448,8 @@ export const createTPanelManagedAccount = async (ctx, input) => {
   const rows = await ctx.prisma.$queryRawUnsafe(`
     INSERT INTO "TPanelManagedAccount"
       ("id", "licenseId", "packageId", "username", "domain", "contactEmail", "ownerName",
-       "status", "ipAddress", "homeDirectory", "limits", "usage", "metadata")
-    VALUES ($1, $2, $3, $4, $5, $6, $7, 'queued', $8, $9, CAST($10 AS jsonb), CAST($11 AS jsonb), CAST($12 AS jsonb))
+       "status", "ipAddress", "homeDirectory", "limits", "usage", "metadata", "createdAt", "updatedAt")
+    VALUES ($1, $2, $3, $4, $5, $6, $7, 'queued', $8, $9, CAST($10 AS jsonb), CAST($11 AS jsonb), CAST($12 AS jsonb), CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     RETURNING *
   `, id, license.id, pkg?.id || null, username, domain, input.contactEmail || null, input.ownerName || null,
     input.ipAddress || license.serverIp, input.homeDirectory || `/home/${username}`, json(limits, {}),
@@ -1516,8 +1516,8 @@ export const upsertTPanelDnsZone = async (ctx, input) => {
       `, existing.id, input.accountId || null, domain, text(input.status || 'active'), json(input.records, []), input.serial || String(Date.now()), json(input.metadata, {}))
     : await ctx.prisma.$queryRawUnsafe(`
         INSERT INTO "TPanelDnsZone"
-          ("id", "licenseId", "accountId", "domain", "status", "records", "serial", "metadata")
-        VALUES ($1, $2, $3, $4, $5, CAST($6 AS jsonb), $7, CAST($8 AS jsonb))
+          ("id", "licenseId", "accountId", "domain", "status", "records", "serial", "metadata", "createdAt", "updatedAt")
+        VALUES ($1, $2, $3, $4, $5, CAST($6 AS jsonb), $7, CAST($8 AS jsonb), CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         RETURNING *
       `, id, license.id, input.accountId || null, domain, text(input.status || 'active'), json(input.records, []), input.serial || String(Date.now()), json(input.metadata, {}));
   const zone = first(rows);
@@ -1571,8 +1571,8 @@ export const upsertTPanelServiceState = async (ctx, input) => {
   if (!name) throw new AppError('Service name is required', 'BAD_USER_INPUT');
   const rows = await ctx.prisma.$queryRawUnsafe(`
     INSERT INTO "TPanelServiceState"
-      ("id", "licenseId", "name", "displayName", "status", "enabled", "port", "lastCheckAt", "metadata")
-    VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP, CAST($8 AS jsonb))
+      ("id", "licenseId", "name", "displayName", "status", "enabled", "port", "lastCheckAt", "metadata", "createdAt", "updatedAt")
+    VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP, CAST($8 AS jsonb), CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     ON CONFLICT ("licenseId", "name") DO UPDATE SET
       "displayName" = EXCLUDED."displayName",
       "status" = EXCLUDED."status",
@@ -1611,8 +1611,8 @@ export const upsertTPanelSecurityRule = async (ctx, input) => {
       `, ...values)
     : await ctx.prisma.$queryRawUnsafe(`
         INSERT INTO "TPanelSecurityRule"
-          ("id", "licenseId", "kind", "name", "action", "value", "status", "metadata")
-        VALUES ($1, $2, $3, $4, $5, $6, $7, CAST($8 AS jsonb))
+          ("id", "licenseId", "kind", "name", "action", "value", "status", "metadata", "createdAt", "updatedAt")
+        VALUES ($1, $2, $3, $4, $5, $6, $7, CAST($8 AS jsonb), CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         RETURNING *
       `, ...values);
   const rule = first(rows);
@@ -1701,8 +1701,8 @@ export const adminPublishTPanelUpdate = async (ctx, input) => {
     : await ctx.prisma.$queryRawUnsafe(`
         INSERT INTO "TPanelUpdate"
           ("id", "version", "title", "channel", "status", "isForced",
-           "releaseNotes", "packageUrl", "checksum", "rolloutMessage", "metadata")
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, CAST($11 AS jsonb))
+           "releaseNotes", "packageUrl", "checksum", "rolloutMessage", "metadata", "createdAt", "updatedAt")
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, CAST($11 AS jsonb), CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         RETURNING *
       `, ...values);
   await writeAudit(ctx, exists ? 'admin_update_tpanel_release' : 'admin_publish_tpanel_release', 'tPanelUpdate', id, { version, forced: Boolean(input.isForced) });
@@ -1714,8 +1714,8 @@ const upsertNode = async (ctx, license, input, status, message) => {
   await ctx.prisma.$queryRawUnsafe(`
     INSERT INTO "TPanelNode"
       ("id", "licenseId", "serverIp", "fingerprint", "hostname", "os", "panelVersion",
-       "agentVersion", "status", "message", "metrics", "packages", "lastSeenAt")
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, CAST($11 AS jsonb), CAST($12 AS jsonb), CURRENT_TIMESTAMP)
+       "agentVersion", "status", "message", "metrics", "packages", "lastSeenAt", "createdAt", "updatedAt")
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, CAST($11 AS jsonb), CAST($12 AS jsonb), CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     ON CONFLICT ("licenseId", "fingerprint") DO UPDATE SET
       "serverIp" = EXCLUDED."serverIp",
       "hostname" = EXCLUDED."hostname",
