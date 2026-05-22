@@ -2,6 +2,7 @@ import express from "express";
 import path from "path";
 import os from "os";
 import fs from "fs";
+import { createHmac, timingSafeEqual } from "crypto";
 import { execFile } from "child_process";
 import { promisify } from "util";
 import { createServer as createViteServer } from "vite";
@@ -22,6 +23,10 @@ const TPANEL_USER = process.env.TPANEL_USER || "";
 const TPANEL_USER_PASSWORD = process.env.TPANEL_USER_PASSWORD || "";
 const TPANEL_CONFIG_DIR = process.env.TPANEL_CONFIG_DIR || (process.platform === "win32" ? path.join(process.cwd(), ".tpanel") : "/etc/tpanel");
 const DOMAIN_SETTINGS_FILE = path.join(TPANEL_CONFIG_DIR, "domain-settings.json");
+const PANEL_STATE_FILE = path.join(TPANEL_CONFIG_DIR, "hosting-state.json");
+const ACCOUNT_BASE_DIR = process.env.TPANEL_ACCOUNT_BASE_DIR || (process.platform === "win32" ? path.join(process.cwd(), ".tpanel", "accounts") : "/home/tpanel/accounts");
+const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
+const LICENSE_CACHE_MS = Number(process.env.TPANEL_LICENSE_CACHE_MS || 120000);
 const LICENSE_CHECK_QUERY = `mutation Check($input: TPanelLicenseCheckInput!) {
   tPanelLicenseCheck(input: $input) {
     ok
@@ -71,6 +76,100 @@ const REQUIRED_PORTS = [
 ];
 
 app.use(express.json());
+
+const DEFAULT_PACKAGES = [
+  { id: "pkg-starter", name: "Starter", quotaMb: 1024, bandwidthGb: 25, domains: 1, emailAccounts: 5, databases: 2, ftpAccounts: 2, nodeApps: 1 },
+  { id: "pkg-business", name: "Business", quotaMb: 10240, bandwidthGb: 250, domains: 10, emailAccounts: 50, databases: 10, ftpAccounts: 10, nodeApps: 5 },
+  { id: "pkg-agency", name: "Agency", quotaMb: 51200, bandwidthGb: 1000, domains: 50, emailAccounts: 250, databases: 50, ftpAccounts: 50, nodeApps: 25 }
+];
+
+let licenseCache: { key: string; expiresAt: number; value: any } | null = null;
+
+function sessionSecret() {
+  return `${TPANEL_LICENSE_KEY}:${TPANEL_ADMIN_PASSWORD}:${os.hostname()}:tpanel-session`;
+}
+
+function signSessionPayload(payload: string) {
+  return createHmac("sha256", sessionSecret()).update(payload).digest("base64url");
+}
+
+function createSession(role: string) {
+  const payload = Buffer.from(JSON.stringify({ role, exp: Date.now() + SESSION_TTL_MS })).toString("base64url");
+  return `${payload}.${signSessionPayload(payload)}`;
+}
+
+function verifySession(token: string) {
+  const [payload, signature] = String(token || "").split(".");
+  if (!payload || !signature) return null;
+  const expected = signSessionPayload(payload);
+  const left = Buffer.from(signature);
+  const right = Buffer.from(expected);
+  if (left.length !== right.length || !timingSafeEqual(left, right)) return null;
+  const data = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+  if (!data.exp || data.exp < Date.now()) return null;
+  return data;
+}
+
+function sanitizeSlug(value: unknown, fallback = "site") {
+  return String(value || fallback)
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64) || fallback;
+}
+
+function readPanelState() {
+  try {
+    if (fs.existsSync(PANEL_STATE_FILE)) {
+      const saved = JSON.parse(fs.readFileSync(PANEL_STATE_FILE, "utf8"));
+      return {
+        packages: Array.isArray(saved.packages) && saved.packages.length ? saved.packages : DEFAULT_PACKAGES,
+        accounts: Array.isArray(saved.accounts) ? saved.accounts : [],
+        updatedAt: saved.updatedAt || null
+      };
+    }
+  } catch {
+    // fall through to defaults
+  }
+  return { packages: DEFAULT_PACKAGES, accounts: [], updatedAt: null };
+}
+
+function writePanelState(state: any) {
+  fs.mkdirSync(TPANEL_CONFIG_DIR, { recursive: true });
+  fs.writeFileSync(PANEL_STATE_FILE, JSON.stringify({ ...state, updatedAt: new Date().toISOString() }, null, 2));
+}
+
+function writeStarterSite(account: any) {
+  const publicDir = path.join(account.homeDirectory, "public_html");
+  fs.mkdirSync(publicDir, { recursive: true });
+  if (account.runtime === "node") {
+    fs.writeFileSync(path.join(publicDir, "package.json"), JSON.stringify({
+      scripts: { start: "node server.js" },
+      dependencies: { express: "^4.21.2" }
+    }, null, 2));
+    fs.writeFileSync(path.join(publicDir, "server.js"), `const express = require("express");
+const app = express();
+const port = process.env.PORT || ${account.nodePort || 3000};
+app.get("/", (_req, res) => res.send("Welcome to ${account.domain} on tPanel Node.js"));
+app.listen(port, "0.0.0.0", () => console.log("Node app listening on", port));
+`);
+  } else if (account.runtime === "php") {
+    fs.writeFileSync(path.join(publicDir, "index.php"), `<?php
+$site = "${account.domain}";
+echo "<h1>Welcome to {$site}</h1><p>PHP hosting is ready on tPanel.</p>";
+`);
+    fs.writeFileSync(path.join(publicDir, ".user.ini"), `memory_limit=${account.phpMemoryMb || 256}M
+upload_max_filesize=${account.uploadLimitMb || 64}M
+post_max_size=${account.uploadLimitMb || 64}M
+`);
+  } else {
+    fs.writeFileSync(path.join(publicDir, "index.html"), `<!doctype html>
+<html><head><meta charset="utf-8"><title>${account.domain}</title></head>
+<body><h1>${account.domain}</h1><p>Static hosting is ready on tPanel.</p></body></html>
+`);
+  }
+}
 
 function requestIp(req: express.Request) {
   const forwarded = req.headers["x-forwarded-for"];
@@ -137,9 +236,14 @@ function writeDomainSettings(settings: any) {
   fs.writeFileSync(DOMAIN_SETTINGS_FILE, JSON.stringify(settings, null, 2));
 }
 
-async function verifyLicense(req: express.Request) {
+async function verifyLicense(req: express.Request, options: { force?: boolean } = {}) {
   if (!TPANEL_LICENSE_KEY) {
     return { ok: false, status: "unlicensed", message: "TPANEL_LICENSE_KEY is missing. Run sudo tpanel-license-renew with a valid key, or reinstall from Tiwlo." };
+  }
+
+  const cacheKey = `${TPANEL_LICENSE_KEY}:${TPANEL_SERVER_IP || requestIp(req)}`;
+  if (!options.force && licenseCache?.key === cacheKey && licenseCache.expiresAt > Date.now()) {
+    return licenseCache.value;
   }
 
   const payload = {
@@ -161,6 +265,7 @@ async function verifyLicense(req: express.Request) {
     });
     const data = await response.json().catch(() => ({}));
     if (response.ok && typeof data.ok === "boolean") {
+      if (data.ok) licenseCache = { key: cacheKey, expiresAt: Date.now() + LICENSE_CACHE_MS, value: data };
       return data;
     }
     primaryMessage = data.message || `REST verifier returned HTTP ${response.status}.`;
@@ -177,6 +282,7 @@ async function verifyLicense(req: express.Request) {
     const data = await response.json().catch(() => ({}));
     const result = data?.data?.tPanelLicenseCheck;
     if (result && typeof result.ok === "boolean") {
+      if (result.ok) licenseCache = { key: cacheKey, expiresAt: Date.now() + LICENSE_CACHE_MS, value: result };
       return result;
     }
     const graphMessage = data?.errors?.[0]?.message || `GraphQL verifier returned HTTP ${response.status}.`;
@@ -277,6 +383,26 @@ app.get("/api/license/status", async (req, res) => {
   }
 });
 
+app.get("/api/auth/session", async (req, res) => {
+  try {
+    const header = String(req.headers.authorization || "");
+    const token = header.startsWith("Bearer ") ? header.slice(7) : "";
+    const session = verifySession(token);
+    if (!session) {
+      res.status(401).json({ ok: false });
+      return;
+    }
+    const license = await verifyLicense(req);
+    if (!license.ok) {
+      res.status(402).json(license);
+      return;
+    }
+    res.json({ ok: true, role: session.role, expiresAt: session.exp });
+  } catch {
+    res.status(401).json({ ok: false });
+  }
+});
+
 app.post("/api/auth/login", async (req, res) => {
   try {
     const license = await verifyLicense(req);
@@ -288,11 +414,15 @@ app.post("/api/auth/login", async (req, res) => {
     const password = String(req.body?.password || "");
     const localAdminPassword = TPANEL_ADMIN_PASSWORD || (process.env.NODE_ENV === "production" ? "" : "admin");
     if (username === TPANEL_ADMIN_USER && localAdminPassword && password === localAdminPassword) {
-      res.json({ ok: true, role: "admin" });
+      const token = createSession("admin");
+      const session = verifySession(token);
+      res.json({ ok: true, role: "admin", token, expiresAt: session?.exp });
       return;
     }
     if (TPANEL_USER && TPANEL_USER_PASSWORD && username === TPANEL_USER && password === TPANEL_USER_PASSWORD) {
-      res.json({ ok: true, role: "user" });
+      const token = createSession("user");
+      const session = verifySession(token);
+      res.json({ ok: true, role: "user", token, expiresAt: session?.exp });
       return;
     }
     res.status(401).json({ ok: false, message: "Invalid tPanel username or password." });
@@ -367,6 +497,116 @@ app.get("/api/panel/system-status", async (req, res) => {
       firewallStatus: firewall.mode === "inactive" || allowedSet.has(item.port) ? "allowed" : "not_reported"
     })),
     generatedAt: new Date().toISOString()
+  });
+});
+
+app.get("/api/panel/accounts", requireCapability("accounts"), (_req, res) => {
+  const state = readPanelState();
+  res.json({ ok: true, accounts: state.accounts, packages: state.packages, updatedAt: state.updatedAt });
+});
+
+app.post("/api/panel/packages", requireCapability("packages"), (req, res) => {
+  const state = readPanelState();
+  const id = sanitizeSlug(req.body?.id || req.body?.name || `pkg-${Date.now()}`, "package");
+  const pkg = {
+    id,
+    name: String(req.body?.name || "Custom Package").trim(),
+    quotaMb: Number(req.body?.quotaMb || 1024),
+    bandwidthGb: Number(req.body?.bandwidthGb || 100),
+    domains: Number(req.body?.domains || 1),
+    emailAccounts: Number(req.body?.emailAccounts || 10),
+    databases: Number(req.body?.databases || 5),
+    ftpAccounts: Number(req.body?.ftpAccounts || 5),
+    nodeApps: Number(req.body?.nodeApps || 1)
+  };
+  const packages = [...state.packages.filter((item: any) => item.id !== id), pkg];
+  writePanelState({ ...state, packages });
+  res.json({ ok: true, package: pkg, packages });
+});
+
+app.post("/api/panel/accounts", requireCapability("accounts"), (req, res) => {
+  const state = readPanelState();
+  const username = sanitizeSlug(req.body?.username, "account").replace(/[^a-z0-9_]/g, "").slice(0, 16);
+  const domain = cleanDomain(req.body?.domain || `${username}.local`);
+  if (!username || username.length < 3) {
+    res.status(400).json({ ok: false, message: "Username must be at least 3 characters." });
+    return;
+  }
+  if (state.accounts.some((account: any) => account.username === username || account.domain === domain)) {
+    res.status(409).json({ ok: false, message: "An account with this username or domain already exists." });
+    return;
+  }
+  const selectedPackage = state.packages.find((pkg: any) => pkg.id === req.body?.packageId) || state.packages[0] || DEFAULT_PACKAGES[0];
+  const homeDirectory = path.join(ACCOUNT_BASE_DIR, username);
+  const account = {
+    id: `acct-${Date.now().toString(36)}`,
+    username,
+    domain,
+    displayName: String(req.body?.displayName || domain).trim(),
+    ownerEmail: String(req.body?.ownerEmail || "").trim(),
+    contactEmail: String(req.body?.contactEmail || req.body?.ownerEmail || "").trim(),
+    packageId: selectedPackage.id,
+    packageName: selectedPackage.name,
+    runtime: ["php", "node", "static"].includes(String(req.body?.runtime)) ? String(req.body?.runtime) : "php",
+    phpVersion: String(req.body?.phpVersion || "8.3"),
+    nodeVersion: String(req.body?.nodeVersion || "20"),
+    nodePort: Number(req.body?.nodePort || 3000),
+    quotaMb: Number(req.body?.quotaMb || selectedPackage.quotaMb),
+    bandwidthGb: Number(req.body?.bandwidthGb || selectedPackage.bandwidthGb),
+    maxDomains: Number(req.body?.maxDomains || selectedPackage.domains),
+    maxEmailAccounts: Number(req.body?.maxEmailAccounts || selectedPackage.emailAccounts),
+    maxDatabases: Number(req.body?.maxDatabases || selectedPackage.databases),
+    ftpEnabled: req.body?.ftpEnabled !== false,
+    shellAccess: Boolean(req.body?.shellAccess),
+    mysqlEnabled: req.body?.mysqlEnabled !== false,
+    emailEnabled: req.body?.emailEnabled !== false,
+    sslEnabled: req.body?.sslEnabled !== false,
+    dedicatedIp: String(req.body?.dedicatedIp || "").trim(),
+    passwordSet: Boolean(req.body?.password),
+    homeDirectory,
+    documentRoot: path.join(homeDirectory, "public_html"),
+    status: "active",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+  try {
+    writeStarterSite(account);
+    writePanelState({ ...state, accounts: [account, ...state.accounts] });
+    res.json({ ok: true, account });
+  } catch (error: any) {
+    res.status(500).json({ ok: false, message: error.message || "Unable to create account files." });
+  }
+});
+
+app.post("/api/panel/accounts/:username/:action", requireCapability("accounts"), (req, res) => {
+  const action = String(req.params.action || "");
+  const allowed = new Set(["suspend", "unsuspend", "terminate"]);
+  if (!allowed.has(action)) {
+    res.status(400).json({ ok: false, message: "Unsupported account action." });
+    return;
+  }
+  const state = readPanelState();
+  const accounts = state.accounts.map((account: any) => {
+    if (account.username !== req.params.username) return account;
+    return {
+      ...account,
+      status: action === "unsuspend" ? "active" : action === "terminate" ? "terminated" : "suspended",
+      updatedAt: new Date().toISOString()
+    };
+  });
+  writePanelState({ ...state, accounts });
+  res.json({ ok: true, accounts });
+});
+
+app.get("/api/panel/update-status", async (req, res) => {
+  const license = await verifyLicense(req, { force: true });
+  const currentVersion = process.env.TPANEL_VERSION || process.env.npm_package_version || "0.0.0";
+  const update = license.update || null;
+  res.json({
+    ok: true,
+    currentVersion,
+    update,
+    updateRequired: Boolean(update?.isForced && update?.version && update.version !== currentVersion)
   });
 });
 

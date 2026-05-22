@@ -292,15 +292,7 @@ const MODULES = [
   { id: "soft-docker", label: "Container Console", icon: Box, category: "software" },
   { id: "soft-git", label: "Git Version Control", icon: Terminal, category: "software" },
   { id: "soft-composer", label: "PHP Composer Manager", icon: FileCode, category: "software" },
-  { id: "soft-npm", label: "Global NPM Manager", icon: Zap, category: "software" },
-
-  // Loop-generated stubs to reach 410+ as requested
-  ...Array.from({ length: 200 }).map((_, i) => ({
-    id: `extra-mod-${i+1}`,
-    label: `Custom Service Tier ${i+1}`,
-    icon: Settings,
-    category: "server"
-  }))
+  { id: "soft-npm", label: "Global NPM Manager", icon: Zap, category: "software" }
 ];
 
 const CATEGORIES = [
@@ -324,6 +316,46 @@ const CATEGORIES = [
   { id: "network", label: "Network Management", icon: Wifi },
 ];
 
+const moduleDescription = (module: any) => {
+  const descriptions: Record<string, string> = {
+    "acc-create": "Provision a hosting account with domain, package, PHP/Node runtime, FTP, email, database, SSL, and shell controls.",
+    "acc-list": "Review active, suspended, and terminated hosting accounts with quick root actions.",
+    "pkg-add": "Create reusable hosting packages for disk, bandwidth, domains, email, database, FTP, and Node app limits.",
+    "pkg-list": "Audit package limits and assign them during account provisioning.",
+    "config-domain": "Manage the panel domain, detected server IP, DNS records, proxy mode, and SSL preference.",
+    "sys-status": "Inspect live service ports, firewall visibility, detected IP, and server health.",
+    "sec-terminal": "Use the root console for guided server checks and operational commands."
+  };
+  if (descriptions[module.id]) return descriptions[module.id];
+  const category = CATEGORIES.find((item) => item.id === module.category)?.label || module.category;
+  return `${category} control surface with saved configuration, audit-ready settings, and service actions.`;
+};
+
+const defaultAccountForm = {
+  displayName: "",
+  domain: "",
+  username: "",
+  password: "",
+  ownerEmail: "",
+  contactEmail: "",
+  packageId: "pkg-starter",
+  runtime: "php",
+  phpVersion: "8.3",
+  nodeVersion: "20",
+  nodePort: 3000,
+  quotaMb: "",
+  bandwidthGb: "",
+  maxDomains: "",
+  maxEmailAccounts: "",
+  maxDatabases: "",
+  ftpEnabled: true,
+  shellAccess: false,
+  mysqlEnabled: true,
+  emailEnabled: true,
+  sslEnabled: true,
+  dedicatedIp: ""
+};
+
 export default function AdminPanel({ onLogout }: AdminPanelProps) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
@@ -341,6 +373,11 @@ export default function AdminPanel({ onLogout }: AdminPanelProps) {
     dnsRecords: []
   });
   const [systemStatus, setSystemStatus] = useState<any | null>(null);
+  const [summary, setSummary] = useState<any | null>(null);
+  const [hostingState, setHostingState] = useState<any>({ accounts: [], packages: [] });
+  const [accountForm, setAccountForm] = useState<any>(defaultAccountForm);
+  const [packageForm, setPackageForm] = useState<any>({ name: "", quotaMb: 1024, bandwidthGb: 100, domains: 1, emailAccounts: 10, databases: 5, ftpAccounts: 5, nodeApps: 1 });
+  const [updateStatus, setUpdateStatus] = useState<any | null>(null);
   const [panelNotice, setPanelNotice] = useState("");
   const [panelError, setPanelError] = useState("");
 
@@ -359,6 +396,41 @@ export default function AdminPanel({ onLogout }: AdminPanelProps) {
       groups[m.category].push(m);
     });
     return groups;
+  }, []);
+
+  const loadSummary = async () => {
+    const response = await fetch("/api/panel/summary");
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.message || "Unable to load dashboard summary.");
+    setSummary(data);
+  };
+
+  const loadHosting = async () => {
+    const response = await fetch("/api/panel/accounts");
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.message || "Unable to load hosting accounts.");
+    setHostingState(data);
+    if (data.packages?.[0]?.id && accountForm.packageId === "pkg-starter") {
+      setAccountForm((current: any) => ({ ...current, packageId: data.packages[0].id }));
+    }
+  };
+
+  const loadUpdateStatus = async () => {
+    const response = await fetch("/api/panel/update-status");
+    const data = await response.json();
+    if (response.ok && data.ok) setUpdateStatus(data);
+  };
+
+  useEffect(() => {
+    let mounted = true;
+    Promise.allSettled([loadSummary(), loadHosting(), loadUpdateStatus()]).then((results) => {
+      if (!mounted) return;
+      const failed = results.find((result) => result.status === "rejected") as PromiseRejectedResult | undefined;
+      if (failed) setPanelError(failed.reason?.message || "Unable to load tPanel dashboard data.");
+    });
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -395,6 +467,12 @@ export default function AdminPanel({ onLogout }: AdminPanelProps) {
     };
   }, [currentModule]);
 
+  useEffect(() => {
+    if (["acc-create", "acc-list", "pkg-add", "pkg-list"].includes(currentModule || "")) {
+      loadHosting().catch((error) => setPanelError(error.message || "Unable to load hosting data."));
+    }
+  }, [currentModule]);
+
   const saveDomainSettings = async (event: React.FormEvent) => {
     event.preventDefault();
     setPanelNotice("");
@@ -413,6 +491,63 @@ export default function AdminPanel({ onLogout }: AdminPanelProps) {
       setPanelError(error.message || "Unable to save domain settings.");
     }
   };
+
+  const createAccount = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setPanelNotice("");
+    setPanelError("");
+    try {
+      const response = await fetch("/api/panel/accounts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(accountForm)
+      });
+      const data = await response.json();
+      if (!response.ok || !data.ok) throw new Error(data.message || "Unable to create hosting account.");
+      setPanelNotice(`Account ${data.account.username} created for ${data.account.domain}.`);
+      setAccountForm(defaultAccountForm);
+      await loadHosting();
+    } catch (error: any) {
+      setPanelError(error.message || "Unable to create hosting account.");
+    }
+  };
+
+  const createPackage = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setPanelNotice("");
+    setPanelError("");
+    try {
+      const response = await fetch("/api/panel/packages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(packageForm)
+      });
+      const data = await response.json();
+      if (!response.ok || !data.ok) throw new Error(data.message || "Unable to save package.");
+      setPanelNotice(`Package ${data.package.name} saved.`);
+      setPackageForm({ name: "", quotaMb: 1024, bandwidthGb: 100, domains: 1, emailAccounts: 10, databases: 5, ftpAccounts: 5, nodeApps: 1 });
+      await loadHosting();
+    } catch (error: any) {
+      setPanelError(error.message || "Unable to save package.");
+    }
+  };
+
+  const runAccountAction = async (username: string, action: string) => {
+    setPanelNotice("");
+    setPanelError("");
+    try {
+      const response = await fetch(`/api/panel/accounts/${username}/${action}`, { method: "POST" });
+      const data = await response.json();
+      if (!response.ok || !data.ok) throw new Error(data.message || "Account action failed.");
+      setHostingState((current: any) => ({ ...current, accounts: data.accounts }));
+      setPanelNotice(`${username} ${action} command completed.`);
+    } catch (error: any) {
+      setPanelError(error.message || "Account action failed.");
+    }
+  };
+
+  const loadOne = Number(summary?.loadAverage?.[0] || 0);
+  const activeAccountCount = hostingState.accounts?.filter((account: any) => account.status !== "terminated").length || 0;
 
   return (
     <div className="flex h-screen bg-slate-950 text-slate-100 font-sans antialiased overflow-hidden">
@@ -484,7 +619,7 @@ export default function AdminPanel({ onLogout }: AdminPanelProps) {
                    <div className="w-8 h-8 rounded-full bg-slate-800 border border-slate-900/40 flex items-center justify-center text-slate-400 font-bold text-xs">R</div>
                    <div className="overflow-hidden">
                       <p className="text-[11px] font-bold text-slate-100 truncate">root</p>
-                      <p className="text-[10px] text-slate-500 truncate">v20.11.0</p>
+                      <p className="text-[10px] text-slate-500 truncate">Node v24.15</p>
                    </div>
                 </div>
                 <button onClick={onLogout} className="p-2 hover:bg-rose-500/10 hover:text-rose-500 rounded-lg text-slate-400 transition-colors">
@@ -549,30 +684,57 @@ export default function AdminPanel({ onLogout }: AdminPanelProps) {
               <>
                 <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
                    <div>
-                      <h1 className="text-2xl md:text-3xl font-black text-slate-100 tracking-tighter italic">
-                        {activeCategory === "all" ? "Global Infrastructure" : CATEGORIES.find(c => c.id === activeCategory)?.label}
+                      <h1 className="text-2xl md:text-3xl font-black text-slate-100 tracking-tight">
+                        {activeCategory === "all" ? "Server Administration Dashboard" : CATEGORIES.find(c => c.id === activeCategory)?.label}
                       </h1>
-                      <p className="text-sm text-slate-500 mt-1 font-medium">Manage and configure your server services and accounts.</p>
+                      <p className="text-sm text-slate-500 mt-1 font-medium">WHM-style root controls for accounts, packages, DNS, services, security, backups, and updates.</p>
                    </div>
                    <div className="flex gap-2">
                       <button className="px-4 py-2 bg-slate-900 border border-slate-800 rounded-lg text-xs font-bold text-slate-300 hover:bg-slate-800 transition-colors">
                         Documentation
                       </button>
-                      <button className="px-4 py-2 bg-[#0069ff] rounded-lg text-xs font-bold text-white hover:bg-[#0055d4] transition-all">
-                        Server Rebuild
+                      <button onClick={() => setCurrentModule("acc-create")} className="px-4 py-2 bg-[#0069ff] rounded-lg text-xs font-bold text-white hover:bg-[#0055d4] transition-all">
+                        Create Account
                       </button>
                    </div>
                 </div>
 
-                {/* Quick Stats Grid */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                   <StatCard label="Load Average" value="0.42" icon={Cpu} color="text-sky-400" />
-                   <StatCard label="Memory Usage" value="1.4 / 16 GB" icon={Activity} color="text-amber-400" />
-                   <StatCard label="Uptime" value="142 Days" icon={Server} color="text-emerald-400" />
-                   <StatCard label="Storage" value="84% full" icon={HardDrive} color="text-rose-400" />
+                   <StatCard label="Load Average" value={loadOne.toFixed(2)} icon={Cpu} color="text-sky-400" />
+                   <StatCard label="Memory Usage" value={`${summary?.ram?.usedMb || 0} / ${summary?.ram?.totalMb || 0} MB`} icon={Activity} color="text-amber-400" />
+                   <StatCard label="Accounts" value={String(activeAccountCount)} icon={Users} color="text-emerald-400" />
+                   <StatCard label="Storage" value={`${summary?.disk?.percent || 0}% full`} icon={HardDrive} color="text-rose-400" />
                 </div>
 
-                {/* Modules Grid */}
+                <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+                  <div className="xl:col-span-2 bg-slate-900/40 border border-slate-800 rounded-xl p-5">
+                    <div className="flex items-center justify-between mb-5">
+                      <div>
+                        <h2 className="text-sm font-black text-slate-100">Server Resource Graphs</h2>
+                        <p className="text-[11px] text-slate-500">Live OS summary from this tPanel node.</p>
+                      </div>
+                      <button onClick={() => loadSummary().catch((error) => setPanelError(error.message))} className="p-2 rounded-lg border border-slate-800 text-slate-400 hover:text-white hover:bg-slate-800">
+                        <RefreshCw className="w-4 h-4" />
+                      </button>
+                    </div>
+                    <div className="space-y-4">
+                      <UsageBar label="CPU Load" value={Math.min(100, Math.round(((summary?.loadAverage?.[0] || 0) / Math.max(1, summary?.cpuCount || 1)) * 100))} tone="bg-sky-500" />
+                      <UsageBar label="RAM Usage" value={summary?.ram?.percent || 0} tone="bg-amber-500" />
+                      <UsageBar label="Disk Usage" value={summary?.disk?.percent || 0} tone="bg-rose-500" />
+                    </div>
+                  </div>
+                  <div className="bg-slate-900/40 border border-slate-800 rounded-xl p-5">
+                    <h2 className="text-sm font-black text-slate-100">Forced Update Channel</h2>
+                    <p className="text-[11px] text-slate-500 mt-1">Central tPanel releases are checked by every installed server.</p>
+                    <div className="mt-5 space-y-3 text-xs">
+                      <div className="flex justify-between"><span className="text-slate-500">Current</span><span className="font-black text-slate-100">{updateStatus?.currentVersion || "0.0.0"}</span></div>
+                      <div className="flex justify-between"><span className="text-slate-500">Published</span><span className="font-black text-slate-100">{updateStatus?.update?.version || "none"}</span></div>
+                      <div className="flex justify-between"><span className="text-slate-500">Mode</span><span className={`font-black ${updateStatus?.updateRequired ? "text-rose-400" : "text-emerald-400"}`}>{updateStatus?.updateRequired ? "update required" : "ready"}</span></div>
+                    </div>
+                    <button onClick={() => setCurrentModule("soft-update")} className="mt-5 w-full px-4 py-2 bg-slate-950 border border-slate-800 rounded-lg text-xs font-bold text-slate-200 hover:border-[#0069ff]">Open Update Manager</button>
+                  </div>
+                </div>
+
                 <div>
                   <h2 className="text-xs font-black uppercase tracking-[0.2em] text-slate-500 mb-6 flex items-center gap-2">
                     <Box className="w-4 h-4" />
@@ -590,7 +752,7 @@ export default function AdminPanel({ onLogout }: AdminPanelProps) {
                            <module.icon className="w-5 h-5" />
                         </div>
                         <h3 className="font-black text-slate-100 text-xs uppercase tracking-wider leading-snug group-hover:text-white transition-colors">{module.label}</h3>
-                        <p className="text-[10px] text-slate-600 mt-2 font-medium">Standard tPanel root management tool for {module.category} functions.</p>
+                        <p className="text-[10px] text-slate-500 mt-2 font-medium leading-relaxed">{moduleDescription(module)}</p>
                       </button>
                     ))}
                   </div>
@@ -690,6 +852,104 @@ export default function AdminPanel({ onLogout }: AdminPanelProps) {
                              ))}
                            </tbody>
                          </table>
+                       </div>
+                     </div>
+                   ) : currentModule === "acc-create" ? (
+                     <form onSubmit={createAccount} className="w-full max-w-6xl text-left space-y-6">
+                       <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
+                         <div>
+                           <h1 className="text-3xl font-black text-slate-100 tracking-tight">Create a New Account</h1>
+                           <p className="text-sm text-slate-500 mt-2">Provision a cPanel-style hosting account with package limits, website runtime, DNS, email, FTP, database, and SSL options.</p>
+                         </div>
+                         <button className="px-5 py-2.5 bg-[#0069ff] text-white font-bold rounded-lg hover:bg-[#0055d4] transition-all text-sm">Create Account</button>
+                       </div>
+                       {(panelNotice || panelError) && (
+                         <div className={`rounded-lg border px-4 py-3 text-sm font-bold ${panelError ? "border-rose-500/20 bg-rose-500/10 text-rose-300" : "border-emerald-500/20 bg-emerald-500/10 text-emerald-300"}`}>
+                           {panelError || panelNotice}
+                         </div>
+                       )}
+                       <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+                         <div className="xl:col-span-2 bg-slate-950/50 border border-slate-800 rounded-lg p-5 space-y-5">
+                           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                             <Field label="Domain / Website Name" value={accountForm.domain} onChange={(value: string) => setAccountForm((current: any) => ({ ...current, domain: value, displayName: current.displayName || value }))} placeholder="example.com" />
+                             <Field label="Username" value={accountForm.username} onChange={(value: string) => setAccountForm((current: any) => ({ ...current, username: value }))} placeholder="example" />
+                             <Field label="Password" type="password" value={accountForm.password} onChange={(value: string) => setAccountForm((current: any) => ({ ...current, password: value }))} placeholder="Set account password" />
+                             <Field label="Owner Email" value={accountForm.ownerEmail} onChange={(value: string) => setAccountForm((current: any) => ({ ...current, ownerEmail: value }))} placeholder="owner@example.com" />
+                           </div>
+                           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                             <label className="block">
+                               <span className="text-[10px] font-black uppercase tracking-wider text-slate-500">Package</span>
+                               <select value={accountForm.packageId} onChange={(e) => setAccountForm((current: any) => ({ ...current, packageId: e.target.value }))} className="mt-2 w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-sm text-slate-100 outline-none focus:border-[#0069ff]">
+                                 {(hostingState.packages || []).map((pkg: any) => <option key={pkg.id} value={pkg.id}>{pkg.name}</option>)}
+                               </select>
+                             </label>
+                             <label className="block">
+                               <span className="text-[10px] font-black uppercase tracking-wider text-slate-500">Runtime</span>
+                               <select value={accountForm.runtime} onChange={(e) => setAccountForm((current: any) => ({ ...current, runtime: e.target.value }))} className="mt-2 w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-sm text-slate-100 outline-none focus:border-[#0069ff]">
+                                 <option value="php">PHP Website</option>
+                                 <option value="node">Node.js App</option>
+                                 <option value="static">Static Site</option>
+                               </select>
+                             </label>
+                             <Field label={accountForm.runtime === "node" ? "Node Port" : "PHP Version"} value={accountForm.runtime === "node" ? accountForm.nodePort : accountForm.phpVersion} onChange={(value: string) => setAccountForm((current: any) => accountForm.runtime === "node" ? ({ ...current, nodePort: value }) : ({ ...current, phpVersion: value }))} />
+                           </div>
+                           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                             {[
+                               ["ftpEnabled", "FTP"],
+                               ["emailEnabled", "Email"],
+                               ["mysqlEnabled", "MySQL"],
+                               ["sslEnabled", "Auto SSL"],
+                               ["shellAccess", "Shell"],
+                             ].map(([key, label]) => (
+                               <label key={key} className="flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs font-bold text-slate-300">
+                                 <input type="checkbox" checked={Boolean(accountForm[key])} onChange={(e) => setAccountForm((current: any) => ({ ...current, [key]: e.target.checked }))} />
+                                 {label}
+                               </label>
+                             ))}
+                           </div>
+                         </div>
+                         <div className="bg-slate-950/50 border border-slate-800 rounded-lg p-5 space-y-4">
+                           <h2 className="text-sm font-black text-slate-100">Resource Overrides</h2>
+                           <Field label="Disk Quota MB" value={accountForm.quotaMb} onChange={(value: string) => setAccountForm((current: any) => ({ ...current, quotaMb: value }))} placeholder="Package default" />
+                           <Field label="Bandwidth GB" value={accountForm.bandwidthGb} onChange={(value: string) => setAccountForm((current: any) => ({ ...current, bandwidthGb: value }))} placeholder="Package default" />
+                           <Field label="Addon Domains" value={accountForm.maxDomains} onChange={(value: string) => setAccountForm((current: any) => ({ ...current, maxDomains: value }))} placeholder="Package default" />
+                           <Field label="Email Accounts" value={accountForm.maxEmailAccounts} onChange={(value: string) => setAccountForm((current: any) => ({ ...current, maxEmailAccounts: value }))} placeholder="Package default" />
+                           <Field label="Databases" value={accountForm.maxDatabases} onChange={(value: string) => setAccountForm((current: any) => ({ ...current, maxDatabases: value }))} placeholder="Package default" />
+                           <Field label="Dedicated IP" value={accountForm.dedicatedIp} onChange={(value: string) => setAccountForm((current: any) => ({ ...current, dedicatedIp: value }))} placeholder="optional" />
+                         </div>
+                       </div>
+                     </form>
+                   ) : currentModule === "acc-list" ? (
+                     <AccountList accounts={hostingState.accounts || []} onAction={runAccountAction} />
+                   ) : currentModule === "pkg-add" ? (
+                     <form onSubmit={createPackage} className="w-full max-w-4xl text-left space-y-5">
+                       <div>
+                         <h1 className="text-3xl font-black text-slate-100 tracking-tight">Add a Package</h1>
+                         <p className="text-sm text-slate-500 mt-2">Define reusable hosting limits for accounts.</p>
+                       </div>
+                       {(panelNotice || panelError) && <div className={`rounded-lg border px-4 py-3 text-sm font-bold ${panelError ? "border-rose-500/20 bg-rose-500/10 text-rose-300" : "border-emerald-500/20 bg-emerald-500/10 text-emerald-300"}`}>{panelError || panelNotice}</div>}
+                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-slate-950/50 border border-slate-800 rounded-lg p-5">
+                         <Field label="Package Name" value={packageForm.name} onChange={(value: string) => setPackageForm((current: any) => ({ ...current, name: value }))} placeholder="Business Pro" />
+                         {["quotaMb", "bandwidthGb", "domains", "emailAccounts", "databases", "ftpAccounts", "nodeApps"].map((key) => (
+                           <Field key={key} label={key.replace(/([A-Z])/g, " $1")} value={packageForm[key]} onChange={(value: string) => setPackageForm((current: any) => ({ ...current, [key]: value }))} />
+                         ))}
+                       </div>
+                       <button className="px-5 py-2.5 bg-[#0069ff] text-white font-bold rounded-lg hover:bg-[#0055d4] transition-all text-sm">Save Package</button>
+                     </form>
+                   ) : currentModule === "pkg-list" ? (
+                     <PackageList packages={hostingState.packages || []} />
+                   ) : currentModule === "soft-update" ? (
+                     <div className="w-full max-w-4xl text-left space-y-5">
+                       <h1 className="text-3xl font-black text-slate-100 tracking-tight">System Update Manager</h1>
+                       <p className="text-sm text-slate-500">Installed servers run the tPanel auto-update timer every 10 minutes. Forced central releases are pulled and rebuilt by the server-side update service.</p>
+                       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                         <StatCard label="Current Version" value={updateStatus?.currentVersion || "0.0.0"} icon={Activity} color="text-sky-400" />
+                         <StatCard label="Published Version" value={updateStatus?.update?.version || "none"} icon={Upload} color="text-emerald-400" />
+                         <StatCard label="Mode" value={updateStatus?.updateRequired ? "forced" : "ready"} icon={ShieldCheck} color={updateStatus?.updateRequired ? "text-rose-400" : "text-emerald-400"} />
+                       </div>
+                       <div className="rounded-lg border border-slate-800 bg-slate-950/50 p-5">
+                         <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Server command</p>
+                         <code className="mt-2 block text-sm text-slate-200">sudo tpanel-update</code>
                        </div>
                      </div>
                    ) : currentModule === "sec-terminal" ? (
@@ -825,4 +1085,106 @@ function StatCard({ label, value, icon: Icon, color }: any) {
        </div>
     </div>
   )
+}
+
+function UsageBar({ label, value, tone }: any) {
+  const safeValue = Math.max(0, Math.min(100, Number(value || 0)));
+  return (
+    <div>
+      <div className="mb-2 flex items-center justify-between text-xs">
+        <span className="font-bold text-slate-400">{label}</span>
+        <span className="font-black text-slate-100">{safeValue}%</span>
+      </div>
+      <div className="h-3 overflow-hidden rounded bg-slate-950 border border-slate-800">
+        <div className={`h-full ${tone}`} style={{ width: `${safeValue}%` }} />
+      </div>
+    </div>
+  );
+}
+
+function Field({ label, value, onChange, placeholder = "", type = "text" }: any) {
+  return (
+    <label className="block">
+      <span className="text-[10px] font-black uppercase tracking-wider text-slate-500">{label}</span>
+      <input
+        type={type}
+        value={value ?? ""}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={placeholder}
+        className="mt-2 w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-sm text-slate-100 outline-none focus:border-[#0069ff]"
+      />
+    </label>
+  );
+}
+
+function AccountList({ accounts, onAction }: any) {
+  return (
+    <div className="w-full max-w-6xl text-left space-y-5">
+      <div>
+        <h1 className="text-3xl font-black text-slate-100 tracking-tight">List Accounts</h1>
+        <p className="text-sm text-slate-500 mt-2">Manage hosting accounts, document roots, runtimes, quotas, and suspension state.</p>
+      </div>
+      <div className="overflow-hidden rounded-lg border border-slate-800 bg-slate-950/40">
+        <table className="w-full min-w-[920px] text-xs">
+          <thead className="bg-slate-900 text-slate-500 uppercase">
+            <tr>
+              <th className="p-3 text-left">Domain</th>
+              <th className="p-3 text-left">User</th>
+              <th className="p-3 text-left">Package</th>
+              <th className="p-3 text-left">Runtime</th>
+              <th className="p-3 text-left">Quota</th>
+              <th className="p-3 text-left">Status</th>
+              <th className="p-3 text-left">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {accounts.length === 0 ? (
+              <tr><td colSpan={7} className="p-6 text-center text-slate-500 font-bold">No accounts created yet.</td></tr>
+            ) : accounts.map((account: any) => (
+              <tr key={account.id} className="border-t border-slate-800 text-slate-300">
+                <td className="p-3 font-black text-slate-100">{account.domain}</td>
+                <td className="p-3 font-mono">{account.username}</td>
+                <td className="p-3">{account.packageName}</td>
+                <td className="p-3 uppercase font-bold">{account.runtime}</td>
+                <td className="p-3">{account.quotaMb} MB / {account.bandwidthGb} GB</td>
+                <td className={`p-3 font-black ${account.status === "active" ? "text-emerald-400" : account.status === "suspended" ? "text-amber-400" : "text-rose-400"}`}>{account.status}</td>
+                <td className="p-3">
+                  <div className="flex flex-wrap gap-2">
+                    <button onClick={() => onAction(account.username, account.status === "suspended" ? "unsuspend" : "suspend")} className="px-2 py-1 rounded border border-slate-700 text-slate-200 hover:bg-slate-800">{account.status === "suspended" ? "Unsuspend" : "Suspend"}</button>
+                    <button onClick={() => onAction(account.username, "terminate")} className="px-2 py-1 rounded border border-rose-500/30 text-rose-300 hover:bg-rose-500/10">Terminate</button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function PackageList({ packages }: any) {
+  return (
+    <div className="w-full max-w-6xl text-left space-y-5">
+      <div>
+        <h1 className="text-3xl font-black text-slate-100 tracking-tight">List Packages</h1>
+        <p className="text-sm text-slate-500 mt-2">Reusable hosting plans available during account creation.</p>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {packages.map((pkg: any) => (
+          <div key={pkg.id} className="rounded-lg border border-slate-800 bg-slate-950/50 p-5">
+            <h2 className="text-lg font-black text-slate-100">{pkg.name}</h2>
+            <div className="mt-4 space-y-2 text-xs text-slate-400">
+              <p>Disk: <span className="font-black text-slate-100">{pkg.quotaMb} MB</span></p>
+              <p>Bandwidth: <span className="font-black text-slate-100">{pkg.bandwidthGb} GB</span></p>
+              <p>Domains: <span className="font-black text-slate-100">{pkg.domains}</span></p>
+              <p>Email: <span className="font-black text-slate-100">{pkg.emailAccounts}</span></p>
+              <p>Databases: <span className="font-black text-slate-100">{pkg.databases}</span></p>
+              <p>Node Apps: <span className="font-black text-slate-100">{pkg.nodeApps}</span></p>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }

@@ -40,6 +40,7 @@ export default function App() {
   const [licenseStatus, setLicenseStatus] = useState<any | null>(null);
   const [isLoggedIn, setIsLoggedIn] = useState<boolean>(false);
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
+  const [authReady, setAuthReady] = useState(false);
 
   const handleLogin = async (user: string, pass: string) => {
     const response = await fetch("/api/auth/login", {
@@ -51,18 +52,25 @@ export default function App() {
     if (!response.ok || !result.ok) {
       throw new Error(result.message || "Invalid tPanel username or password.");
     }
+    if (result.token) {
+      localStorage.setItem("tpanel_auth", JSON.stringify({ token: result.token, role: result.role, expiresAt: result.expiresAt }));
+    }
     if (result.role === "admin") {
       setIsLoggedIn(true);
       setIsAdmin(true);
+      window.history.replaceState(null, "", "/admin");
     } else {
       setIsLoggedIn(true);
       setIsAdmin(false);
+      window.history.replaceState(null, "", "/dashboard");
     }
   };
 
   const handleLogout = () => {
+    localStorage.removeItem("tpanel_auth");
     setIsLoggedIn(false);
     setIsAdmin(false);
+    window.history.replaceState(null, "", "/login");
   };
 
   // Dynamic Day/Night Mode: default to light as requested
@@ -109,6 +117,32 @@ export default function App() {
 
   useEffect(() => {
     let mounted = true;
+    const restoreSession = async () => {
+      try {
+        const saved = JSON.parse(localStorage.getItem("tpanel_auth") || "null");
+        if (!saved?.token || (saved.expiresAt && saved.expiresAt < Date.now())) {
+          localStorage.removeItem("tpanel_auth");
+          return;
+        }
+        const response = await fetch("/api/auth/session", {
+          headers: { Authorization: `Bearer ${saved.token}` }
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!mounted || !response.ok || !data.ok) {
+          localStorage.removeItem("tpanel_auth");
+          return;
+        }
+        setIsLoggedIn(true);
+        setIsAdmin(data.role === "admin");
+        if (window.location.pathname === "/" || window.location.pathname === "/login") {
+          window.history.replaceState(null, "", data.role === "admin" ? "/admin" : "/dashboard");
+        }
+      } catch {
+        localStorage.removeItem("tpanel_auth");
+      } finally {
+        if (mounted) setAuthReady(true);
+      }
+    };
     const loadLicense = async () => {
       try {
         const response = await fetch("/api/license/status");
@@ -118,6 +152,7 @@ export default function App() {
         if (mounted) setLicenseStatus({ ok: false, status: "offline", message: "Unable to reach license service." });
       }
     };
+    restoreSession();
     loadLicense();
     const timer = window.setInterval(loadLicense, 10 * 60 * 1000);
     return () => {
@@ -262,6 +297,10 @@ export default function App() {
         </div>
       </div>
     );
+  }
+
+  if (!authReady) {
+    return <div className="min-h-screen bg-slate-950 text-slate-400 flex items-center justify-center text-sm font-bold">Loading tPanel...</div>;
   }
 
   if (!isLoggedIn) {

@@ -283,6 +283,30 @@ echo "tPanel updated. Data was preserved."
 BASH
 chmod 700 /usr/local/sbin/tpanel-update
 
+cat >/etc/systemd/system/tpanel-auto-update.service <<SERVICE
+[Unit]
+Description=tPanel Pro automatic update
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/tpanel-update
+SERVICE
+
+cat >/etc/systemd/system/tpanel-auto-update.timer <<SERVICE
+[Unit]
+Description=Run tPanel Pro automatic update checks
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=10min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+SERVICE
+
 cat >/usr/local/sbin/tpanel-license-renew <<'BASH'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -407,6 +431,7 @@ ln -sf /usr/local/sbin/tpanel-license-renew /usr/local/sbin/tpanel-license-statu
 
 systemctl daemon-reload
 systemctl enable --now tpanel
+systemctl enable --now tpanel-auto-update.timer >/dev/null 2>&1 || true
 
 if have ufw; then
   ufw allow OpenSSH >/dev/null 2>&1 || true
