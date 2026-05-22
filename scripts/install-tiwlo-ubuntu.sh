@@ -74,6 +74,10 @@ ensure_system_postgres_database
 step "Preparing Tiwlo source at ${INSTALL_DIR}"
 mkdir -p "$(dirname "$INSTALL_DIR")"
 if [ -d "$INSTALL_DIR/.git" ]; then
+  if [ -n "$(git -C "$INSTALL_DIR" status --porcelain)" ]; then
+    step "Saving local server changes before update"
+    git -C "$INSTALL_DIR" stash push -u -m "tiwlo-installer-autostash-$(date +%Y%m%d%H%M%S)"
+  fi
   git -C "$INSTALL_DIR" fetch origin "$BRANCH"
   git -C "$INSTALL_DIR" checkout "$BRANCH"
   git -C "$INSTALL_DIR" pull --ff-only origin "$BRANCH"
