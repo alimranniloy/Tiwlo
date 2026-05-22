@@ -197,6 +197,19 @@ const defaultPackages = [
   }
 ];
 
+const TPANEL_TIMESTAMP_TABLES = [
+  'TPanelPackage',
+  'TPanelLicense',
+  'TPanelNode',
+  'TPanelUpdate',
+  'TPanelAccountPackage',
+  'TPanelManagedAccount',
+  'TPanelDnsZone',
+  'TPanelServiceState',
+  'TPanelSecurityRule',
+  'TPanelRemoteTask'
+];
+
 export const requiredServerPackages = [
   'nginx', 'apache2', 'php', 'php-fpm', 'php-cli', 'php-mysql', 'php-pgsql',
   'php-curl', 'php-gd', 'php-mbstring', 'php-xml', 'php-zip', 'php-bcmath',
@@ -448,6 +461,13 @@ const assertUsageWithinPlan = async (ctx, license, key, current, add, label) => 
   }
 };
 
+const ensureTimestampDefaults = async (prisma) => {
+  for (const table of TPANEL_TIMESTAMP_TABLES) {
+    await prisma.$executeRawUnsafe(`ALTER TABLE "${table}" ALTER COLUMN "createdAt" SET DEFAULT CURRENT_TIMESTAMP`);
+    await prisma.$executeRawUnsafe(`ALTER TABLE "${table}" ALTER COLUMN "updatedAt" SET DEFAULT CURRENT_TIMESTAMP`);
+  }
+};
+
 export const ensureTPanelTables = async (prisma) => {
   await prisma.$executeRawUnsafe(`
     CREATE TABLE IF NOT EXISTS "TPanelPackage" (
@@ -660,6 +680,8 @@ export const ensureTPanelTables = async (prisma) => {
     )
   `);
   await prisma.$executeRawUnsafe('CREATE INDEX IF NOT EXISTS "TPanelRemoteTask_license_status_idx" ON "TPanelRemoteTask" ("licenseId", "status", "priority")');
+
+  await ensureTimestampDefaults(prisma);
 
   for (const pkg of defaultPackages) {
     await prisma.$executeRawUnsafe(`
