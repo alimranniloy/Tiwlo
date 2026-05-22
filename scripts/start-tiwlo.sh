@@ -104,6 +104,11 @@ find_pg_bin() {
 
 install_postgres() {
   if find_pg_bin >/dev/null; then
+    if have systemctl; then
+      sudo_cmd systemctl enable --now postgresql >/dev/null 2>&1 || true
+    elif have service; then
+      sudo_cmd service postgresql start >/dev/null 2>&1 || true
+    fi
     return 0
   fi
 
@@ -120,6 +125,12 @@ install_postgres() {
   else
     echo "No supported package manager found. Install PostgreSQL, then rerun this script." >&2
     exit 1
+  fi
+
+  if have systemctl; then
+    sudo_cmd systemctl enable --now postgresql >/dev/null 2>&1 || true
+  elif have service; then
+    sudo_cmd service postgresql start >/dev/null 2>&1 || true
   fi
 }
 

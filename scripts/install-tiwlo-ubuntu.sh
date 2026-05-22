@@ -25,6 +25,22 @@ have() {
   command -v "$1" >/dev/null 2>&1
 }
 
+ensure_system_postgres_database() {
+  step "Preparing system PostgreSQL"
+  systemctl enable --now postgresql >/dev/null 2>&1 || true
+  for _ in $(seq 1 30); do
+    if pg_isready -h 127.0.0.1 -p 5432 -U postgres >/dev/null 2>&1 || pg_isready -p 5432 >/dev/null 2>&1; then
+      break
+    fi
+    sleep 1
+  done
+
+  sudo -u postgres psql -d postgres -c "ALTER USER postgres WITH PASSWORD 'postgres';" >/dev/null
+  if ! sudo -u postgres psql -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='tiwlo'" | grep -q 1; then
+    sudo -u postgres createdb tiwlo
+  fi
+}
+
 server_ip() {
   if have curl; then
     curl -fsS --max-time 5 https://api.ipify.org 2>/dev/null && return 0
@@ -53,6 +69,7 @@ apt-get install -y \
   sudo git curl wget ca-certificates xz-utils build-essential python3 make g++ \
   postgresql postgresql-contrib nginx ufw certbot python3-certbot-nginx
 systemctl enable --now postgresql nginx >/dev/null 2>&1 || true
+ensure_system_postgres_database
 
 step "Preparing Tiwlo source at ${INSTALL_DIR}"
 mkdir -p "$(dirname "$INSTALL_DIR")"
@@ -74,6 +91,7 @@ step "Installing and building Tiwlo"
 export FRONTEND_GRAPHQL_URL="/graphql"
 export FRONTEND_ORIGIN="$PUBLIC_ORIGIN"
 export API_BASE_URL="$PUBLIC_ORIGIN"
+export DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:5432/tiwlo?schema=public"
 export BACKEND_PORT
 export FRONTEND_PORT
 bash ./scripts/start-tiwlo.sh
@@ -83,6 +101,7 @@ BACKEND_URL="http://127.0.0.1:${BACKEND_PORT}" \
 FRONTEND_GRAPHQL_URL="/graphql" \
 FRONTEND_ORIGIN="$PUBLIC_ORIGIN" \
 API_BASE_URL="$PUBLIC_ORIGIN" \
+DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:5432/tiwlo?schema=public" \
 BACKEND_PORT="$BACKEND_PORT" \
 FRONTEND_PORT="$FRONTEND_PORT" \
 bash ./scripts/install-tiwlo-systemd.sh

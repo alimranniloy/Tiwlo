@@ -16,6 +16,8 @@ if [ -z "$NPM_BIN" ]; then
   exit 1
 fi
 export PATH="$(dirname "$NPM_BIN"):$PATH"
+NODE_BIN_DIR="$(dirname "$NPM_BIN")"
+SERVICE_PATH="${NODE_BIN_DIR}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 BACKEND_PORT="${BACKEND_PORT:-4000}"
 FRONTEND_PORT="${FRONTEND_PORT:-3000}"
 BACKEND_URL="${BACKEND_URL:-http://127.0.0.1:${BACKEND_PORT}}"
@@ -80,6 +82,7 @@ Type=simple
 WorkingDirectory=$ROOT/x
 EnvironmentFile=$ROOT/x/.env
 Environment=NODE_ENV=production
+Environment=PATH=$SERVICE_PATH
 Environment=PORT=$BACKEND_PORT
 ExecStart=$NPM_BIN run start
 Restart=always
@@ -100,6 +103,7 @@ Type=simple
 WorkingDirectory=$ROOT
 EnvironmentFile=$ROOT/.env
 Environment=NODE_ENV=production
+Environment=PATH=$SERVICE_PATH
 Environment=FRONTEND_PORT=$FRONTEND_PORT
 Environment=BACKEND_URL=$BACKEND_URL
 ExecStart=$NPM_BIN run start -- --port $FRONTEND_PORT

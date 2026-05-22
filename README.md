@@ -377,6 +377,12 @@ sudo systemctl status tiwlo-backend tiwlo-frontend nginx --no-pager
 sudo journalctl -u tiwlo-backend -n 100 --no-pager
 ```
 
+If Nginx shows `502 Bad Gateway` after a reboot, rerun the installer to refresh Node, PostgreSQL, Nginx, and systemd auto-start:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/alimranniloy/Tiwlo/main/scripts/install-tiwlo-ubuntu.sh | sudo env TIWLO_DOMAIN="tiwlo.com" TIWLO_EMAIL="admin@tiwlo.com" bash
+```
+
 Install or refresh reboot-safe services:
 
 ```bash
