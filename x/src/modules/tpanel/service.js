@@ -1870,6 +1870,31 @@ export const completeTPanelRemoteTaskForAgent = async (ctx, input) => {
 
 export const buildInstallScript = ({ license }) => {
   const api = apiBaseUrl();
+  const installerLicense = String(license || '').replace(/(["\\$`])/g, '\\$1');
+
+  if (process.env.TPANEL_INSTALLER_MODE !== 'legacy') {
+    return `#!/usr/bin/env bash
+set -euo pipefail
+
+TPANEL_DEFAULT_API_BASE="${api}"
+export TPANEL_API_BASE="\${TPANEL_API_BASE:-$TPANEL_DEFAULT_API_BASE}"
+export TPANEL_LICENSE_KEY="\${TPANEL_LICENSE_KEY:-${installerLicense}}"
+if [ -z "\${TPANEL_LICENSE_KEY:-}" ] && [ "$#" -gt 0 ]; then
+  export TPANEL_LICENSE_KEY="$1"
+fi
+
+INSTALLER_URL="\${TPANEL_INSTALLER_URL:-https://raw.githubusercontent.com/alimranniloy/Tiwlo/main/scripts/install-tpanel-node.sh}"
+if command -v curl >/dev/null 2>&1; then
+  curl -fsSL "$INSTALLER_URL" | bash
+elif command -v wget >/dev/null 2>&1; then
+  wget -qO- "$INSTALLER_URL" | bash
+else
+  echo "curl or wget is required to download the tPanel installer."
+  exit 1
+fi
+`;
+  }
+
   const repo = tPanelRepoUrl();
   const packages = requiredServerPackages.join(' ');
   const quotedLicense = String(license || '').replace(/"/g, '\\"');

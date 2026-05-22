@@ -10,6 +10,20 @@ TPANEL_PORT="${TPANEL_PORT:-2086}"
 TPANEL_DOMAIN="${TPANEL_DOMAIN:-tiwlo.com}"
 REPO_URL="${TPANEL_REPO_URL:-https://github.com/alimranniloy/Tiwlo.git}"
 BRANCH="${TPANEL_BRANCH:-main}"
+TOOLS_DIR="$TPANEL_DIR/tools"
+DOWNLOADS_DIR="$TOOLS_DIR/downloads"
+NODE_VERSION="${TPANEL_NODE_VERSION:-24.15.0}"
+NODE_OS="linux"
+case "$(uname -m)" in
+  x86_64|amd64) NODE_ARCH="x64" ;;
+  arm64|aarch64) NODE_ARCH="arm64" ;;
+  *) echo "Unsupported CPU architecture for automatic Node.js download: $(uname -m)" >&2; exit 1 ;;
+esac
+NODE_FOLDER="node-v${NODE_VERSION}-${NODE_OS}-${NODE_ARCH}"
+NODE_TARBALL="${NODE_FOLDER}.tar.xz"
+NODE_URL="https://nodejs.org/dist/v${NODE_VERSION}/${NODE_TARBALL}"
+NODE_BIN_DIR=""
+NPM_BIN=""
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "Run as root: curl -fsSL https://tiwlo.com/tpanel/install.sh | sudo env TPANEL_LICENSE_KEY=KEY bash"
@@ -23,6 +37,46 @@ fi
 
 have() {
   command -v "$1" >/dev/null 2>&1
+}
+
+download() {
+  local url="$1"
+  local output="$2"
+  [ -f "$output" ] && return 0
+  if have curl; then
+    curl -fL "$url" -o "$output"
+  elif have wget; then
+    wget -O "$output" "$url"
+  else
+    echo "curl or wget is required to download Node.js." >&2
+    exit 1
+  fi
+}
+
+ensure_node() {
+  if have node && have npm && [ "$(node -v)" = "v${NODE_VERSION}" ]; then
+    NODE_BIN_DIR="$(dirname "$(command -v node)")"
+    NPM_BIN="$(command -v npm)"
+    export PATH="$NODE_BIN_DIR:$PATH"
+    return 0
+  fi
+
+  local node_root="$TOOLS_DIR/node"
+  local node_bin="$node_root/$NODE_FOLDER/bin"
+  mkdir -p "$node_root" "$DOWNLOADS_DIR"
+  if [ ! -x "$node_bin/node" ]; then
+    echo "Installing bundled Node.js v${NODE_VERSION}..."
+    download "$NODE_URL" "$DOWNLOADS_DIR/$NODE_TARBALL"
+    tar -xJf "$DOWNLOADS_DIR/$NODE_TARBALL" -C "$node_root"
+  fi
+
+  NODE_BIN_DIR="$node_bin"
+  NPM_BIN="$node_bin/npm"
+  export PATH="$NODE_BIN_DIR:$PATH"
+  if [ "$("$node_bin/node" -v)" != "v${NODE_VERSION}" ]; then
+    echo "Bundled Node.js installation failed."
+    exit 1
+  fi
 }
 
 json_escape() {
@@ -70,23 +124,19 @@ echo "License active. Installing runtime packages..."
 if have apt-get; then
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -y
-  apt-get install -y git curl wget ca-certificates openssl nodejs npm nginx ufw certbot python3 python3-certbot-nginx build-essential || true
+  apt-get install -y git curl wget ca-certificates openssl xz-utils nginx ufw certbot python3 python3-certbot-nginx build-essential || true
 elif have dnf; then
-  dnf install -y git curl wget ca-certificates openssl nodejs npm nginx firewalld certbot python3 gcc gcc-c++ make || true
+  dnf install -y git curl wget ca-certificates openssl xz nginx firewalld certbot python3 gcc gcc-c++ make || true
 elif have yum; then
-  yum install -y git curl wget ca-certificates openssl nodejs npm nginx firewalld certbot python3 gcc gcc-c++ make || true
+  yum install -y git curl wget ca-certificates openssl xz nginx firewalld certbot python3 gcc gcc-c++ make || true
 else
-  echo "Unsupported Linux package manager. Install git, curl, nodejs, npm, and nginx, then rerun."
+  echo "Unsupported Linux package manager. Install git, curl, xz, and nginx, then rerun."
   exit 1
 fi
 
-NPM_BIN="$(command -v npm || true)"
-if [ -z "$NPM_BIN" ]; then
-  echo "npm was not found after package installation."
-  exit 1
-fi
-NODE_BIN_DIR="$(dirname "$NPM_BIN")"
+ensure_node
 SERVICE_PATH="${NODE_BIN_DIR}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+echo "Using Node.js $("${NODE_BIN_DIR}/node" -v) and npm $("$NPM_BIN" -v)"
 
 mkdir -p "$TPANEL_DIR"
 if [ -d "$SOURCE_DIR/.git" ]; then
@@ -102,8 +152,17 @@ else
 fi
 
 cd "$APP_DIR"
-npm install
-npm run build
+install_app_dependencies() {
+  rm -rf node_modules package-lock.json
+  "$NPM_BIN" install --include=optional
+}
+
+install_app_dependencies
+if ! "$NPM_BIN" run build; then
+  echo "Build failed. Retrying after a clean dependency install..."
+  install_app_dependencies
+  "$NPM_BIN" run build
+fi
 
 mkdir -p /etc/tpanel /var/lib/tpanel /var/log/tpanel
 if [ -f /root/tpanel-admin-password.txt ]; then
@@ -133,6 +192,8 @@ TPANEL_ADMIN_USER=admin
 TPANEL_ADMIN_PASSWORD=$ADMIN_PASSWORD
 NODE_ENV=production
 PORT=$TPANEL_PORT
+NODE_BIN_DIR=$NODE_BIN_DIR
+NPM_BIN=$NPM_BIN
 ENV
 chmod 600 /etc/tpanel/agent.env
 
@@ -175,10 +236,20 @@ if [ "$(id -u)" -ne 0 ]; then
   exit 1
 fi
 . /etc/tpanel/agent.env
+export PATH="${NODE_BIN_DIR:-/usr/local/bin}:$PATH"
+NPM_BIN="${NPM_BIN:-npm}"
 git -C "$SOURCE_DIR" pull --ff-only
 cd "$APP_DIR"
-npm install
-npm run build
+install_app_dependencies() {
+  rm -rf node_modules package-lock.json
+  "$NPM_BIN" install --include=optional
+}
+install_app_dependencies
+if ! "$NPM_BIN" run build; then
+  echo "Build failed. Retrying after a clean dependency install..."
+  install_app_dependencies
+  "$NPM_BIN" run build
+fi
 systemctl restart tpanel
 echo "tPanel updated. Data was preserved."
 BASH
