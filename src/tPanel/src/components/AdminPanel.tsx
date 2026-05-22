@@ -387,6 +387,10 @@ export default function AdminPanel({ onLogout }: AdminPanelProps) {
   const [accountForm, setAccountForm] = useState<any>(defaultAccountForm);
   const [packageForm, setPackageForm] = useState<any>({ name: "", quotaMb: 1024, bandwidthGb: 100, domains: 1, emailAccounts: 10, databases: 5, ftpAccounts: 5, nodeApps: 1 });
   const [updateStatus, setUpdateStatus] = useState<any | null>(null);
+  const [stackStatus, setStackStatus] = useState<any | null>(null);
+  const [provisioningState, setProvisioningState] = useState<any>({ accounts: [] });
+  const [stackInstallOutput, setStackInstallOutput] = useState("");
+  const [isInstallingStack, setIsInstallingStack] = useState(false);
   const [panelNotice, setPanelNotice] = useState("");
   const [panelError, setPanelError] = useState("");
 
@@ -430,9 +434,23 @@ export default function AdminPanel({ onLogout }: AdminPanelProps) {
     if (response.ok && data.ok) setUpdateStatus(data);
   };
 
+  const loadStackStatus = async () => {
+    const response = await fetch("/api/panel/hosting-stack", { headers: authHeaders() });
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.message || "Unable to load hosting stack status.");
+    setStackStatus(data.stack);
+  };
+
+  const loadProvisioning = async () => {
+    const response = await fetch("/api/panel/provisioning", { headers: authHeaders() });
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.message || "Unable to load provisioning status.");
+    setProvisioningState(data);
+  };
+
   useEffect(() => {
     let mounted = true;
-    Promise.allSettled([loadSummary(), loadHosting(), loadUpdateStatus()]).then((results) => {
+    Promise.allSettled([loadSummary(), loadHosting(), loadUpdateStatus(), loadStackStatus(), loadProvisioning()]).then((results) => {
       if (!mounted) return;
       const failed = results.find((result) => result.status === "rejected") as PromiseRejectedResult | undefined;
       if (failed) setPanelError(failed.reason?.message || "Unable to load tPanel dashboard data.");
@@ -479,6 +497,13 @@ export default function AdminPanel({ onLogout }: AdminPanelProps) {
   useEffect(() => {
     if (["acc-create", "acc-list", "pkg-add", "pkg-list"].includes(currentModule || "")) {
       loadHosting().catch((error) => setPanelError(error.message || "Unable to load hosting data."));
+    }
+  }, [currentModule]);
+
+  useEffect(() => {
+    if (["acc-list", "soft-easy", "soft-module", "soft-system", "srv-manager", "srv-status", "sys-status"].includes(currentModule || "")) {
+      loadStackStatus().catch((error) => setPanelError(error.message || "Unable to load hosting stack status."));
+      loadProvisioning().catch((error) => setPanelError(error.message || "Unable to load provisioning status."));
     }
   }, [currentModule]);
 
@@ -574,6 +599,46 @@ export default function AdminPanel({ onLogout }: AdminPanelProps) {
       setPanelNotice(`${username} password updated. The user can now log in from the tPanel login page.`);
     } catch (error: any) {
       setPanelError(error.message || "Password update failed.");
+    }
+  };
+
+  const installMissingStack = async () => {
+    setPanelNotice("");
+    setPanelError("");
+    setStackInstallOutput("");
+    setIsInstallingStack(true);
+    try {
+      const response = await fetch("/api/panel/hosting-stack/install", {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ packages: stackStatus?.missingPackages || [] })
+      });
+      const data = await response.json();
+      if (!response.ok || !data.ok) throw new Error(data.message || "Hosting stack install failed.");
+      setStackStatus(data.stack);
+      setStackInstallOutput(data.output || data.message || "Hosting stack is ready.");
+      setPanelNotice("Hosting stack packages installed and services enabled.");
+    } catch (error: any) {
+      setPanelError(error.message || "Hosting stack install failed.");
+    } finally {
+      setIsInstallingStack(false);
+    }
+  };
+
+  const retryProvisioning = async (username: string) => {
+    setPanelNotice("");
+    setPanelError("");
+    try {
+      const response = await fetch(`/api/panel/accounts/${username}/provision`, {
+        method: "POST",
+        headers: authHeaders()
+      });
+      const data = await response.json();
+      if (!response.ok || !data.ok) throw new Error(data.message || "Provisioning retry failed.");
+      await Promise.all([loadHosting(), loadProvisioning(), loadStackStatus()]);
+      setPanelNotice(`${username} provisioning retry started. Auto SSL will become active after DNS points to this server.`);
+    } catch (error: any) {
+      setPanelError(error.message || "Provisioning retry failed.");
     }
   };
 
@@ -766,6 +831,13 @@ export default function AdminPanel({ onLogout }: AdminPanelProps) {
                   </div>
                 </div>
 
+                <HostingStackOverview
+                  stack={stackStatus}
+                  provisioning={provisioningState}
+                  onOpenStack={() => setCurrentModule("soft-easy")}
+                  onOpenAccounts={() => setCurrentModule("acc-list")}
+                />
+
                 <div>
                   <h2 className="text-xs font-black uppercase tracking-[0.2em] text-slate-500 mb-6 flex items-center gap-2">
                     <Box className="w-4 h-4" />
@@ -951,7 +1023,13 @@ export default function AdminPanel({ onLogout }: AdminPanelProps) {
                        </div>
                      </form>
                    ) : currentModule === "acc-list" ? (
-                     <AccountList accounts={hostingState.accounts || []} onAction={runAccountAction} onPassword={updateAccountPassword} />
+                     <AccountList
+                       accounts={hostingState.accounts || []}
+                       provisioningAccounts={provisioningState.accounts || []}
+                       onAction={runAccountAction}
+                       onPassword={updateAccountPassword}
+                       onProvision={retryProvisioning}
+                     />
                    ) : currentModule === "pkg-add" ? (
                      <form onSubmit={createPackage} className="w-full max-w-4xl text-left space-y-5">
                        <div>
@@ -969,6 +1047,14 @@ export default function AdminPanel({ onLogout }: AdminPanelProps) {
                      </form>
                    ) : currentModule === "pkg-list" ? (
                      <PackageList packages={hostingState.packages || []} />
+                   ) : ["soft-easy", "soft-module", "soft-system", "srv-manager", "srv-status", "srv-php", "srv-http", "srv-mysql", "srv-bind"].includes(currentModule || "") ? (
+                     <HostingStackManager
+                       stack={stackStatus}
+                       output={stackInstallOutput}
+                       isInstalling={isInstallingStack}
+                       onRefresh={() => Promise.all([loadStackStatus(), loadProvisioning()])}
+                       onInstall={installMissingStack}
+                     />
                    ) : currentModule === "soft-update" ? (
                      <div className="w-full max-w-4xl text-left space-y-5">
                        <h1 className="text-3xl font-black text-slate-100 tracking-tight">System Update Manager</h1>
@@ -1104,6 +1190,107 @@ export default function AdminPanel({ onLogout }: AdminPanelProps) {
   );
 }
 
+function statusTone(status: string) {
+  const value = String(status || "").toLowerCase();
+  if (["active", "ready", "ok", "installed"].includes(value)) return "text-emerald-400";
+  if (["queued", "configuring", "pending_dns", "reload_failed"].includes(value)) return "text-amber-400";
+  if (["failed", "blocked", "inactive", "missing"].includes(value)) return "text-rose-400";
+  return "text-slate-400";
+}
+
+function HostingStackOverview({ stack, provisioning, onOpenStack, onOpenAccounts }: any) {
+  const accounts = provisioning?.accounts || [];
+  const activeSsl = accounts.filter((account: any) => account.provisioning?.ssl?.status === "active").length;
+  const pendingSsl = accounts.filter((account: any) => ["queued", "pending_dns", "blocked"].includes(account.provisioning?.ssl?.status)).length;
+  return (
+    <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+      <div className="xl:col-span-2 rounded-lg border border-slate-800 bg-slate-900/50 p-5">
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+          <div>
+            <h2 className="text-sm font-black text-slate-100">Hosting Stack Readiness</h2>
+            <p className="mt-1 text-[11px] text-slate-500">Nginx, PHP-FPM, MariaDB, DNS tools, Node.js, and Certbot health.</p>
+          </div>
+          <button onClick={onOpenStack} className="px-4 py-2 rounded-lg border border-[#0069ff]/40 bg-[#0069ff]/10 text-xs font-black text-[#66a3ff] hover:bg-[#0069ff]/15">
+            Open Stack Manager
+          </button>
+        </div>
+        <div className="mt-5 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {(stack?.checks || []).map((check: any) => (
+            <div key={check.id} className="rounded-lg border border-slate-800 bg-slate-950/60 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-xs font-black text-slate-100">{check.label}</p>
+                <span className={`text-[10px] font-black uppercase ${check.ok ? "text-emerald-400" : "text-rose-400"}`}>{check.ok ? "ready" : "fix"}</span>
+              </div>
+              <p className="mt-2 text-[10px] text-slate-500">Package: {check.packageOk ? "installed" : check.packageName || "unknown"}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-5">
+        <h2 className="text-sm font-black text-slate-100">Auto SSL Pipeline</h2>
+        <div className="mt-5 space-y-3 text-xs">
+          <div className="flex justify-between"><span className="text-slate-500">Active SSL</span><span className="font-black text-emerald-400">{activeSsl}</span></div>
+          <div className="flex justify-between"><span className="text-slate-500">Pending / DNS</span><span className="font-black text-amber-400">{pendingSsl}</span></div>
+          <div className="flex justify-between"><span className="text-slate-500">Missing Packages</span><span className="font-black text-rose-400">{stack?.missingPackages?.length || 0}</span></div>
+        </div>
+        <button onClick={onOpenAccounts} className="mt-5 w-full px-4 py-2 bg-slate-950 border border-slate-800 rounded-lg text-xs font-bold text-slate-200 hover:border-[#0069ff]">View Accounts</button>
+      </div>
+    </div>
+  );
+}
+
+function HostingStackManager({ stack, output, isInstalling, onRefresh, onInstall }: any) {
+  return (
+    <div className="w-full max-w-6xl text-left space-y-6">
+      <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-black text-slate-100 tracking-tight">Hosting Stack Manager</h1>
+          <p className="text-sm text-slate-500 mt-2">Install and verify the packages required for cPanel-style PHP, Node.js, database, DNS, Nginx, and Auto SSL hosting.</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button onClick={onRefresh} className="px-4 py-2 rounded-lg border border-slate-800 bg-slate-950 text-xs font-black text-slate-200 hover:border-[#0069ff]">Refresh</button>
+          <button disabled={isInstalling} onClick={onInstall} className="px-4 py-2 rounded-lg bg-[#0069ff] text-xs font-black text-white hover:bg-[#0055d4] disabled:opacity-60">
+            {isInstalling ? "Installing..." : "Install Missing Packages"}
+          </button>
+        </div>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <StatCard label="Manager" value={stack?.manager || "unknown"} icon={Terminal} color="text-sky-400" />
+        <StatCard label="Services Ready" value={`${stack?.servicesReady || 0}/${stack?.servicesTotal || 0}`} icon={Server} color="text-emerald-400" />
+        <StatCard label="Missing Packages" value={String(stack?.missingPackages?.length || 0)} icon={Download} color="text-rose-400" />
+        <StatCard label="Auto SSL Active" value={String(stack?.sslCounts?.active || 0)} icon={ShieldCheck} color="text-emerald-400" />
+      </div>
+      <div className="overflow-hidden rounded-lg border border-slate-800 bg-slate-950/40">
+        <table className="w-full min-w-[880px] text-xs">
+          <thead className="bg-slate-900 text-slate-500 uppercase">
+            <tr><th className="p-3 text-left">Stack Item</th><th className="p-3 text-left">Package</th><th className="p-3 text-left">Command</th><th className="p-3 text-left">Services</th><th className="p-3 text-left">Status</th></tr>
+          </thead>
+          <tbody>
+            {(stack?.checks || []).map((check: any) => (
+              <tr key={check.id} className="border-t border-slate-800 text-slate-300">
+                <td className="p-3 font-black text-slate-100">{check.label}</td>
+                <td className={`p-3 font-bold ${check.packageOk ? "text-emerald-400" : "text-rose-400"}`}>{check.packageName || "-"} {check.packageOk ? "installed" : "missing"}</td>
+                <td className={`p-3 font-bold ${check.commandOk ? "text-emerald-400" : "text-rose-400"}`}>{check.command} {check.commandOk ? "ok" : "missing"}</td>
+                <td className="p-3">{(check.services || []).map((item: any) => `${item.service}:${item.status}`).join(", ") || "not required"}</td>
+                <td className={`p-3 font-black ${check.ok ? "text-emerald-400" : "text-rose-400"}`}>{check.ok ? "ready" : "needs fix"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {stack?.missingPackages?.length > 0 && (
+        <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 p-4">
+          <p className="text-xs font-black text-amber-300">Missing packages</p>
+          <p className="mt-2 text-xs text-amber-100/80 break-words">{stack.missingPackages.join(", ")}</p>
+        </div>
+      )}
+      {output && (
+        <pre className="max-h-80 overflow-auto rounded-lg border border-slate-800 bg-black/60 p-4 text-[11px] text-slate-300 whitespace-pre-wrap">{output}</pre>
+      )}
+    </div>
+  );
+}
+
 function StatCard({ label, value, icon: Icon, color }: any) {
   return (
     <div className="bg-slate-900/40 p-5 rounded-xl border border-slate-800 flex items-center gap-5 transition-colors hover:border-slate-700">
@@ -1148,8 +1335,9 @@ function Field({ label, value, onChange, placeholder = "", type = "text" }: any)
   );
 }
 
-function AccountList({ accounts, onAction, onPassword }: any) {
+function AccountList({ accounts, provisioningAccounts = [], onAction, onPassword, onProvision }: any) {
   const [passwords, setPasswords] = useState<Record<string, string>>({});
+  const provisioningByUser = new Map((provisioningAccounts || []).map((account: any) => [account.username, account]));
 
   return (
     <div className="w-full max-w-6xl text-left space-y-5">
@@ -1175,19 +1363,27 @@ function AccountList({ accounts, onAction, onPassword }: any) {
           <tbody>
             {accounts.length === 0 ? (
               <tr><td colSpan={9} className="p-6 text-center text-slate-500 font-bold">No accounts created yet.</td></tr>
-            ) : accounts.map((account: any) => (
-              <tr key={account.id} className="border-t border-slate-800 text-slate-300">
-                <td className="p-3 font-black text-slate-100">{account.domain}</td>
+            ) : accounts.map((account: any) => {
+              const provision = (provisioningByUser.get(account.username) as any) || account;
+              const vhostStatus = provision.provisioning?.vhost?.status || "queued";
+              const sslStatus = provision.provisioning?.ssl?.status || (account.sslEnabled ? "queued" : "disabled");
+              return (
+              <tr key={account.id} className="border-t border-slate-800 text-slate-300 align-top">
+                <td className="p-3 font-black text-slate-100">
+                  <div>{account.domain}</div>
+                  <div className="mt-1 text-[10px] font-bold text-slate-500">{account.documentRoot}</div>
+                </td>
                 <td className="p-3 font-mono">{account.username}</td>
                 <td className="p-3">{account.packageName}</td>
                 <td className="p-3 uppercase font-bold">{account.runtime}</td>
                 <td className="p-3">
                   <div className="flex flex-col gap-1 text-[10px] font-bold">
-                    <span className={account.provisioning?.autoSubdomain ? "text-emerald-400" : "text-slate-400"}>
-                      {account.provisioning?.autoSubdomain ? "Auto subdomain" : "Domain"}
+                    <span className={provision.provisioning?.autoSubdomain ? "text-emerald-400" : "text-slate-400"}>
+                      {provision.provisioning?.autoSubdomain ? "Auto subdomain" : "Domain"}
                     </span>
-                    <span className={account.provisioning?.ssl?.enabled ? "text-sky-400" : "text-slate-500"}>
-                      SSL {account.provisioning?.ssl?.status || (account.sslEnabled ? "queued" : "disabled")}
+                    <span className={statusTone(vhostStatus)}>Vhost {vhostStatus}</span>
+                    <span className={statusTone(sslStatus)}>
+                      SSL {sslStatus}
                     </span>
                   </div>
                 </td>
@@ -1215,12 +1411,16 @@ function AccountList({ accounts, onAction, onPassword }: any) {
                 </td>
                 <td className="p-3">
                   <div className="flex flex-wrap gap-2">
+                    <button onClick={() => onProvision(account.username)} className="px-2 py-1 rounded border border-[#0069ff]/30 text-[#66a3ff] hover:bg-[#0069ff]/10">Retry SSL</button>
                     <button onClick={() => onAction(account.username, account.status === "suspended" ? "unsuspend" : "suspend")} className="px-2 py-1 rounded border border-slate-700 text-slate-200 hover:bg-slate-800">{account.status === "suspended" ? "Unsuspend" : "Suspend"}</button>
                     <button onClick={() => onAction(account.username, "terminate")} className="px-2 py-1 rounded border border-rose-500/30 text-rose-300 hover:bg-rose-500/10">Terminate</button>
                   </div>
+                  {(provision.provisioningLog || []).slice(-2).map((line: string) => (
+                    <div key={line} className="mt-2 max-w-[240px] truncate text-[10px] text-slate-500">{line}</div>
+                  ))}
                 </td>
               </tr>
-            ))}
+            )})}
           </tbody>
         </table>
       </div>

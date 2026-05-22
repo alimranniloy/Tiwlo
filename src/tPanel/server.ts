@@ -76,6 +76,33 @@ const REQUIRED_PORTS = [
   { port: 6379, protocol: "tcp", service: "Redis", purpose: "cache service, keep private", public: false }
 ];
 
+const HOSTING_STACK_PACKAGES = {
+  apt: [
+    "nginx", "certbot", "python3-certbot-nginx", "php-fpm", "php-cli", "php-mysql", "php-curl", "php-zip", "php-mbstring",
+    "php-xml", "php-gd", "php-intl", "php-bcmath", "php-soap", "php-opcache", "mariadb-server", "bind9", "dnsutils",
+    "unzip", "tar", "rsync", "logrotate", "cron", "acl"
+  ],
+  dnf: [
+    "nginx", "certbot", "python3-certbot-nginx", "php-fpm", "php-cli", "php-mysqlnd", "php-curl", "php-zip", "php-mbstring",
+    "php-xml", "php-gd", "php-intl", "php-bcmath", "php-soap", "php-opcache", "mariadb-server", "bind", "bind-utils",
+    "unzip", "tar", "rsync", "logrotate", "cronie", "acl"
+  ],
+  yum: [
+    "nginx", "certbot", "python3-certbot-nginx", "php-fpm", "php-cli", "php-mysqlnd", "php-curl", "php-zip", "php-mbstring",
+    "php-xml", "php-gd", "php-intl", "php-bcmath", "php-soap", "php-opcache", "mariadb-server", "bind", "bind-utils",
+    "unzip", "tar", "rsync", "logrotate", "cronie", "acl"
+  ]
+};
+
+const HOSTING_STACK_CHECKS = [
+  { id: "nginx", label: "Nginx Web Server", command: "nginx", services: ["nginx"], packageNames: { apt: "nginx", dnf: "nginx", yum: "nginx" } },
+  { id: "certbot", label: "Auto SSL Certbot", command: "certbot", services: [], packageNames: { apt: "certbot", dnf: "certbot", yum: "certbot" } },
+  { id: "php", label: "PHP Runtime", command: "php", services: ["php*-fpm"], packageNames: { apt: "php-fpm", dnf: "php-fpm", yum: "php-fpm" } },
+  { id: "mysql", label: "MariaDB/MySQL", command: "mysql", services: ["mariadb", "mysql"], packageNames: { apt: "mariadb-server", dnf: "mariadb-server", yum: "mariadb-server" } },
+  { id: "dns", label: "DNS Tools", command: "dig", services: ["bind9", "named"], packageNames: { apt: "dnsutils", dnf: "bind-utils", yum: "bind-utils" } },
+  { id: "node", label: "Node.js Runtime", command: "node", services: [], packageNames: { apt: "nodejs", dnf: "nodejs", yum: "nodejs" } }
+];
+
 app.use(express.json());
 
 const DEFAULT_PACKAGES = [
@@ -326,6 +353,39 @@ function writeAccountProvisioningPlan(account: any) {
   fs.writeFileSync(path.join(SITES_CONFIG_DIR, `${account.username}.json`), JSON.stringify(plan, null, 2));
 }
 
+function updateStoredAccount(username: string, updater: (account: any) => any) {
+  const state = readPanelState();
+  let updatedAccount: any = null;
+  const accounts = state.accounts.map((account: any) => {
+    if (account.username !== username) return account;
+    updatedAccount = updater(account);
+    return updatedAccount;
+  });
+  if (updatedAccount) {
+    writePanelState({ ...state, accounts });
+    writeAccountProvisioningPlan(updatedAccount);
+  }
+  return updatedAccount;
+}
+
+function patchAccountProvisioning(account: any, patch: any) {
+  const updated = updateStoredAccount(account.username, (current: any) => ({
+    ...current,
+    provisioning: {
+      ...(current.provisioning || {}),
+      ...patch,
+      ssl: { ...(current.provisioning?.ssl || {}), ...(patch.ssl || {}) },
+      vhost: { ...(current.provisioning?.vhost || {}), ...(patch.vhost || {}) }
+    },
+    updatedAt: new Date().toISOString()
+  }));
+  if (updated) {
+    account.provisioning = updated.provisioning;
+    account.updatedAt = updated.updatedAt;
+  }
+  return updated;
+}
+
 function accountNginxConfig(account: any) {
   const serverNames = [account.domain, ...(account.provisioning?.vhost?.aliases || [])].join(" ");
   if (account.runtime === "node") {
@@ -379,11 +439,25 @@ function appendProvisioningLog(account: any, message: string) {
   }
 }
 
+function readProvisioningLog(username: string, maxLines = 40) {
+  try {
+    const logPath = path.join(SITES_CONFIG_DIR, `${sanitizeSlug(username, "account")}.log`);
+    if (!fs.existsSync(logPath)) return [];
+    return fs.readFileSync(logPath, "utf8").trim().split(/\r?\n/).slice(-maxLines);
+  } catch {
+    return [];
+  }
+}
+
 function applyAccountProvisioning(account: any) {
   if (process.platform === "win32") return;
   const siteName = `tpanel-${account.username}`;
   const availablePath = `/etc/nginx/sites-available/${siteName}.conf`;
   const enabledPath = `/etc/nginx/sites-enabled/${siteName}.conf`;
+  patchAccountProvisioning(account, {
+    vhost: { status: "configuring", lastRunAt: new Date().toISOString() },
+    ssl: { status: account.sslEnabled ? "queued" : "disabled", lastRunAt: new Date().toISOString() }
+  });
   try {
     fs.mkdirSync("/etc/nginx/sites-available", { recursive: true });
     fs.mkdirSync("/etc/nginx/sites-enabled", { recursive: true });
@@ -396,17 +470,25 @@ function applyAccountProvisioning(account: any) {
     }
   } catch (error: any) {
     appendProvisioningLog(account, `Nginx vhost write failed: ${error.message}`);
+    patchAccountProvisioning(account, { vhost: { status: "failed", message: error.message } });
     return;
   }
+  patchAccountProvisioning(account, { vhost: { status: "configured", configPath: availablePath, enabledPath } });
 
   execFile("nginx", ["-t"], { timeout: 30000 }, (nginxError, stdout, stderr) => {
     if (nginxError) {
       appendProvisioningLog(account, `Nginx test failed: ${nginxError.message} ${stderr || stdout || ""}`.trim());
+      patchAccountProvisioning(account, { vhost: { status: "failed", message: stderr || nginxError.message }, ssl: { status: "blocked" } });
       return;
     }
     execFile("systemctl", ["reload", "nginx"], { timeout: 30000 }, (reloadError) => {
-      if (reloadError) appendProvisioningLog(account, `Nginx reload failed: ${reloadError.message}`);
-      else appendProvisioningLog(account, "Nginx vhost enabled and reloaded.");
+      if (reloadError) {
+        appendProvisioningLog(account, `Nginx reload failed: ${reloadError.message}`);
+        patchAccountProvisioning(account, { vhost: { status: "reload_failed", message: reloadError.message } });
+      } else {
+        appendProvisioningLog(account, "Nginx vhost enabled and reloaded.");
+        patchAccountProvisioning(account, { vhost: { status: "active", message: "Nginx vhost enabled and reloaded." } });
+      }
     });
 
     if (!account.sslEnabled) return;
@@ -416,9 +498,23 @@ function applyAccountProvisioning(account: any) {
     execFile("certbot", args, { timeout: 180000 }, (certbotError, certbotStdout, certbotStderr) => {
       if (certbotError) {
         appendProvisioningLog(account, `Auto SSL pending: ${certbotError.message} ${certbotStderr || certbotStdout || ""}`.trim());
+        patchAccountProvisioning(account, {
+          ssl: {
+            status: "pending_dns",
+            message: "Certbot could not issue yet. Confirm DNS A records point to this server, then retry SSL.",
+            lastError: certbotStderr || certbotStdout || certbotError.message
+          }
+        });
         return;
       }
       appendProvisioningLog(account, "Auto SSL installed by Certbot.");
+      patchAccountProvisioning(account, {
+        ssl: {
+          status: "active",
+          message: "Auto SSL installed by Certbot.",
+          issuedAt: new Date().toISOString()
+        }
+      });
     });
   });
 }
@@ -588,6 +684,94 @@ async function firewallStatus() {
   }
 }
 
+async function commandExists(command: string) {
+  if (process.platform === "win32") return false;
+  try {
+    await execFileAsync("sh", ["-lc", `command -v ${command} >/dev/null 2>&1`], { timeout: 10000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function serviceStatus(service: string) {
+  if (process.platform === "win32") return "unsupported";
+  try {
+    if (service.includes("*")) {
+      const { stdout } = await execFileAsync("sh", ["-lc", `systemctl list-units --type=service --all '${service}.service' --no-legend 2>/dev/null | awk '{print $1\":\"$3}' | head -n 5`], { timeout: 10000 });
+      const matches = stdout.trim().split(/\r?\n/).filter(Boolean);
+      if (!matches.length) return "missing";
+      return matches.some((line) => line.endsWith(":active")) ? "active" : matches.join(",");
+    }
+    const { stdout } = await execFileAsync("systemctl", ["is-active", service], { timeout: 10000 });
+    return stdout.trim() || "unknown";
+  } catch {
+    return "inactive";
+  }
+}
+
+async function installedPackage(manager: keyof typeof HOSTING_STACK_PACKAGES, packageName: string) {
+  if (process.platform === "win32") return false;
+  try {
+    if (manager === "apt") {
+      await execFileAsync("dpkg-query", ["-W", "-f=${Status}", packageName], { timeout: 10000 });
+      return true;
+    }
+    await execFileAsync("rpm", ["-q", packageName], { timeout: 10000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function packageManager(): Promise<keyof typeof HOSTING_STACK_PACKAGES | null> {
+  if (await commandExists("apt-get")) return "apt";
+  if (await commandExists("dnf")) return "dnf";
+  if (await commandExists("yum")) return "yum";
+  return null;
+}
+
+async function hostingStackStatus() {
+  const manager = await packageManager();
+  const checks = await Promise.all(HOSTING_STACK_CHECKS.map(async (check) => {
+    const packageName = manager ? (check.packageNames as any)[manager] : "";
+    const [commandOk, packageOk, services] = await Promise.all([
+      commandExists(check.command),
+      manager && packageName ? installedPackage(manager, packageName) : Promise.resolve(false),
+      Promise.all(check.services.map(async (service) => ({ service, status: await serviceStatus(service) })))
+    ]);
+    const serviceOk = services.length === 0 || services.some((item) => item.status === "active");
+    return {
+      ...check,
+      commandOk,
+      packageName,
+      packageOk,
+      services,
+      ok: commandOk && (services.length === 0 || serviceOk)
+    };
+  }));
+  const packageResults = manager
+    ? await Promise.all(HOSTING_STACK_PACKAGES[manager].map(async (packageName) => ({ packageName, installed: await installedPackage(manager, packageName) })))
+    : [];
+  const missingPackages = packageResults.filter((item) => !item.installed).map((item) => item.packageName);
+  const state = readPanelState();
+  const sslCounts = state.accounts.reduce((counts: any, account: any) => {
+    const status = account.provisioning?.ssl?.status || (account.sslEnabled ? "queued" : "disabled");
+    counts[status] = (counts[status] || 0) + 1;
+    return counts;
+  }, {});
+  return {
+    ok: checks.every((check) => check.ok),
+    manager,
+    checks,
+    missingPackages,
+    servicesReady: checks.filter((check) => check.ok).length,
+    servicesTotal: checks.length,
+    sslCounts,
+    generatedAt: new Date().toISOString()
+  };
+}
+
 app.get("/api/license/status", async (req, res) => {
   try {
     res.json(await verifyLicense(req));
@@ -752,6 +936,53 @@ app.get("/api/panel/system-status", async (req, res) => {
   });
 });
 
+app.get("/api/panel/hosting-stack", requireCapability("software"), async (_req, res) => {
+  res.json({ ok: true, stack: await hostingStackStatus() });
+});
+
+app.post("/api/panel/hosting-stack/install", requireCapability("software"), async (req, res) => {
+  if (process.platform === "win32") {
+    res.status(400).json({ ok: false, message: "Hosting stack package install is available on Linux servers only." });
+    return;
+  }
+  const manager = await packageManager();
+  if (!manager) {
+    res.status(400).json({ ok: false, message: "No supported package manager was detected." });
+    return;
+  }
+  const allowedPackages = HOSTING_STACK_PACKAGES[manager];
+  const requested = Array.isArray(req.body?.packages)
+    ? req.body.packages.map((item: any) => String(item)).filter((item: string) => allowedPackages.includes(item))
+    : [];
+  const packages = requested.length ? requested : (await hostingStackStatus()).missingPackages.filter((item: string) => allowedPackages.includes(item));
+  if (!packages.length) {
+    res.json({ ok: true, message: "Hosting stack packages are already installed.", stack: await hostingStackStatus() });
+    return;
+  }
+  const quoted = packages.map((item) => `'${item.replace(/'/g, "'\\''")}'`).join(" ");
+  const installCommand = manager === "apt"
+    ? `export DEBIAN_FRONTEND=noninteractive; apt-get update -y && apt-get install -y ${quoted}`
+    : `${manager} install -y ${quoted}`;
+  try {
+    const { stdout, stderr } = await execFileAsync("sh", ["-lc", `${installCommand}; systemctl enable --now nginx >/dev/null 2>&1 || true; systemctl enable --now mariadb >/dev/null 2>&1 || systemctl enable --now mysql >/dev/null 2>&1 || true; for svc in $(systemctl list-unit-files --type=service 'php*-fpm.service' 2>/dev/null | awk '/php.*-fpm\\.service/ {print $1}'); do systemctl enable --now "$svc" >/dev/null 2>&1 || true; done`], { timeout: 900000 });
+    res.json({ ok: true, packages, output: `${stdout || ""}${stderr || ""}`.trim(), stack: await hostingStackStatus() });
+  } catch (error: any) {
+    res.status(500).json({ ok: false, packages, message: error.message || "Package installation failed.", output: `${error.stdout || ""}${error.stderr || ""}`.trim() });
+  }
+});
+
+app.get("/api/panel/provisioning", requireCapability("accounts"), (_req, res) => {
+  const state = readPanelState();
+  res.json({
+    ok: true,
+    accounts: state.accounts.map((account: any) => ({
+      ...publicAccount(account),
+      provisioningLog: readProvisioningLog(account.username)
+    })),
+    updatedAt: state.updatedAt
+  });
+});
+
 app.get("/api/panel/accounts", requireCapability("accounts"), (_req, res) => {
   const state = readPanelState();
   res.json({ ok: true, accounts: state.accounts.map(publicAccount), packages: state.packages, updatedAt: state.updatedAt });
@@ -863,6 +1094,27 @@ app.post("/api/panel/accounts/:username/password", requireCapability("accounts")
   }
   writePanelState({ ...state, accounts });
   res.json({ ok: true, account: publicAccount(updatedAccount), accounts: accounts.map(publicAccount) });
+});
+
+app.post("/api/panel/accounts/:username/provision", requireCapability("accounts"), (req, res) => {
+  const state = readPanelState();
+  const account = state.accounts.find((item: any) => item.username === req.params.username);
+  if (!account) {
+    res.status(404).json({ ok: false, message: "Account not found." });
+    return;
+  }
+  if (account.status !== "active") {
+    res.status(409).json({ ok: false, message: "Only active accounts can be provisioned." });
+    return;
+  }
+  const updated = updateStoredAccount(account.username, (current: any) => ({
+    ...current,
+    provisioning: current.provisioning || buildAccountProvisioning(req, current),
+    updatedAt: new Date().toISOString()
+  })) || account;
+  appendProvisioningLog(updated, "Manual provisioning retry requested from tPanel admin.");
+  applyAccountProvisioning(updated);
+  res.json({ ok: true, account: publicAccount(updated), provisioningLog: readProvisioningLog(updated.username) });
 });
 
 app.post("/api/panel/accounts/:username/:action", requireCapability("accounts"), (req, res) => {
