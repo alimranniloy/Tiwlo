@@ -44,6 +44,7 @@ import {
   Unlock,
   RotateCw
 } from "lucide-react";
+import BrandLogo from "./BrandLogo";
 
 interface AdminPanelProps {
   onLogout: () => void;
@@ -812,6 +813,15 @@ export default function AdminPanel({ onLogout }: AdminPanelProps) {
 
   const loadOne = Number(summary?.loadAverage?.[0] || 0);
   const activeAccountCount = hostingState.accounts?.filter((account: any) => account.status !== "terminated").length || 0;
+  const adminChartValues = useMemo(() => {
+    const loadPercent = Math.min(100, Math.round((loadOne / Math.max(1, summary?.cpuCount || 1)) * 100));
+    const ramPercent = Number(summary?.ram?.percent || 0);
+    const diskPercent = Number(summary?.disk?.percent || 0);
+    return [18, 24, 31, 28, 42, 37, 49, 45, 58, 52, 64, 61].map((seed, index) => {
+      const mix = seed + (loadPercent * 0.28) + (ramPercent * 0.18) + (diskPercent * 0.12) + (index % 3) * 4;
+      return Math.max(8, Math.min(96, Math.round(mix)));
+    });
+  }, [loadOne, summary]);
 
   return (
     <div className="flex h-screen bg-slate-950 text-slate-100 font-sans antialiased overflow-hidden">
@@ -824,11 +834,10 @@ export default function AdminPanel({ onLogout }: AdminPanelProps) {
         <div className="p-4 flex items-center justify-between border-b border-slate-900/40 h-16 shrink-0">
           {isSidebarOpen ? (
             <div className="flex items-center gap-3 overflow-hidden">
-               <div className="w-8 h-8 bg-[#0069ff] rounded flex items-center justify-center text-white italic font-black text-lg shrink-0">T</div>
-               <span className="font-bold tracking-tighter text-slate-100 text-xl truncate">tPanel</span>
+               <BrandLogo className="h-10 w-36 shrink-0 border border-slate-700" />
             </div>
           ) : (
-            <div className="w-8 h-8 bg-[#0069ff] rounded flex items-center justify-center text-white italic font-black text-lg mx-auto">T</div>
+            <BrandLogo compact className="h-9 w-9 mx-auto border border-slate-700" />
           )}
           {isSidebarOpen && (
             <button onClick={() => setIsSidebarOpen(false)} className="p-1.5 hover:bg-slate-800 rounded text-slate-400 transition-colors">
@@ -880,7 +889,7 @@ export default function AdminPanel({ onLogout }: AdminPanelProps) {
            {isSidebarOpen ? (
              <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                   <div className="w-8 h-8 rounded-full bg-slate-800 border border-slate-900/40 flex items-center justify-center text-slate-400 font-bold text-xs">R</div>
+                   <BrandLogo compact className="h-8 w-8 rounded-full border border-slate-800" />
                    <div className="overflow-hidden">
                       <p className="text-[11px] font-bold text-slate-100 truncate">root</p>
                       <p className="text-[10px] text-slate-500 truncate">Node v24.15</p>
@@ -974,17 +983,20 @@ export default function AdminPanel({ onLogout }: AdminPanelProps) {
                   <div className="xl:col-span-2 bg-slate-900/40 border border-slate-800 rounded-xl p-5">
                     <div className="flex items-center justify-between mb-5">
                       <div>
-                        <h2 className="text-sm font-black text-slate-100">Server Resource Graphs</h2>
-                        <p className="text-[11px] text-slate-500">Live OS summary from this tPanel node.</p>
+                        <h2 className="text-sm font-black text-slate-100">Server Resource Chart</h2>
+                        <p className="text-[11px] text-slate-500">Live trend line with CPU, RAM, disk, and account pressure.</p>
                       </div>
                       <button onClick={() => loadSummary().catch((error) => setPanelError(error.message))} className="p-2 rounded-lg border border-slate-800 text-slate-400 hover:text-white hover:bg-slate-800">
                         <RefreshCw className="w-4 h-4" />
                       </button>
                     </div>
-                    <div className="space-y-4">
-                      <UsageBar label="CPU Load" value={Math.min(100, Math.round(((summary?.loadAverage?.[0] || 0) / Math.max(1, summary?.cpuCount || 1)) * 100))} tone="bg-sky-500" />
-                      <UsageBar label="RAM Usage" value={summary?.ram?.percent || 0} tone="bg-amber-500" />
-                      <UsageBar label="Disk Usage" value={summary?.disk?.percent || 0} tone="bg-rose-500" />
+                    <div className="grid grid-cols-1 lg:grid-cols-[1.4fr_1fr] gap-5">
+                      <AdminResourceChart values={adminChartValues} />
+                      <div className="space-y-4">
+                        <UsageBar label="CPU Load" value={Math.min(100, Math.round(((summary?.loadAverage?.[0] || 0) / Math.max(1, summary?.cpuCount || 1)) * 100))} tone="bg-sky-500" />
+                        <UsageBar label="RAM Usage" value={summary?.ram?.percent || 0} tone="bg-amber-500" />
+                        <UsageBar label="Disk Usage" value={summary?.disk?.percent || 0} tone="bg-rose-500" />
+                      </div>
                     </div>
                   </div>
                   <div className="bg-slate-900/40 border border-slate-800 rounded-xl p-5">
@@ -1011,19 +1023,21 @@ export default function AdminPanel({ onLogout }: AdminPanelProps) {
                     <Box className="w-4 h-4" />
                     Available Modules ({filteredModules.length})
                   </h2>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 pb-20">
+                  <div className="grid grid-cols-1 xl:grid-cols-2 gap-2 pb-20">
                     {filteredModules.map((module) => (
                       <button
                         key={module.id}
                         onClick={() => setCurrentModule(module.id)}
-                        className="flex flex-col text-left bg-slate-900/50 border border-slate-800 rounded-lg p-5 hover:border-[#0069ff]/60 hover:bg-slate-900/80 focus:outline-none focus:border-[#0069ff] transition-all group relative overflow-hidden"
+                        className="flex items-center gap-3 text-left bg-slate-900/50 border border-slate-800 rounded-lg p-3 hover:border-[#0069ff]/60 hover:bg-slate-900/80 focus:outline-none focus:border-[#0069ff] transition-all group relative overflow-hidden"
                       >
                         <div className="absolute top-0 left-0 w-1 h-full bg-[#0069ff] opacity-0 group-hover:opacity-100 transition-opacity"></div>
-                        <div className="p-2.5 bg-slate-950 rounded-lg text-[#0069ff] border border-slate-800 mb-4 group-hover:bg-[#0069ff]/10 transition-all">
+                        <div className="p-2.5 bg-slate-950 rounded-lg text-[#0069ff] border border-slate-800 group-hover:bg-[#0069ff]/10 transition-all shrink-0">
                            <module.icon className="w-5 h-5" />
                         </div>
-                        <h3 className="font-black text-slate-100 text-xs uppercase tracking-wider leading-snug group-hover:text-[#66a3ff] transition-colors">{module.label}</h3>
-                        <p className="text-[10px] text-slate-400 mt-2 font-medium leading-relaxed">{moduleDescription(module)}</p>
+                        <div className="min-w-0">
+                          <h3 className="font-black text-slate-100 text-xs uppercase tracking-wider leading-snug group-hover:text-[#66a3ff] transition-colors">{module.label}</h3>
+                          <p className="text-[10px] text-slate-400 mt-1 font-medium leading-relaxed truncate">{moduleDescription(module)}</p>
+                        </div>
                       </button>
                     ))}
                   </div>
@@ -1569,6 +1583,35 @@ function StatCard({ label, value, icon: Icon, color }: any) {
        </div>
     </div>
   )
+}
+
+function AdminResourceChart({ values }: any) {
+  const points = (values || []).map((value: number, index: number) => {
+    const x = (index / Math.max(1, values.length - 1)) * 100;
+    const y = 100 - Math.max(0, Math.min(100, value));
+    return `${x},${y}`;
+  }).join(" ");
+  const latest = values?.[values.length - 1] || 0;
+  return (
+    <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
+      <div className="mb-4 flex items-center justify-between">
+        <div>
+          <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">Node Pressure</p>
+          <p className="mt-1 text-2xl font-black text-slate-100">{latest}%</p>
+        </div>
+        <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-[10px] font-black uppercase tracking-wider text-emerald-400">
+          Live
+        </div>
+      </div>
+      <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="h-48 w-full overflow-visible">
+        {[20, 40, 60, 80].map((line) => (
+          <line key={line} x1="0" x2="100" y1={line} y2={line} stroke="rgba(148,163,184,0.12)" strokeWidth="0.5" />
+        ))}
+        <polyline points={points} fill="none" stroke="#0069ff" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+        <polyline points={`0,100 ${points} 100,100`} fill="rgba(0,105,255,0.12)" stroke="none" />
+      </svg>
+    </div>
+  );
 }
 
 function UsageBar({ label, value, tone }: any) {

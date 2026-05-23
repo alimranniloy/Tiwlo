@@ -256,6 +256,101 @@ RestartSec=5
 WantedBy=multi-user.target
 SERVICE
 
+cat >/usr/local/sbin/tpanel-repair-nginx <<'BASH'
+#!/usr/bin/env bash
+set -euo pipefail
+
+ENV_FILE="/etc/tpanel/agent.env"
+if [ "$(id -u)" -ne 0 ]; then
+  echo "Run as root: sudo tpanel-repair-nginx"
+  exit 1
+fi
+if [ ! -f "$ENV_FILE" ]; then
+  echo "$ENV_FILE was not found. Install tPanel first."
+  exit 1
+fi
+
+. "$ENV_FILE"
+TPANEL_PORT="${TPANEL_PORT:-2086}"
+TPANEL_DOMAIN="${TPANEL_DOMAIN:-${HOSTNAME_VALUE:-_}}"
+SERVER_IP="${TPANEL_SERVER_IP:-${SERVER_IP:-_}}"
+SITE_PATH="/etc/nginx/sites-available/tpanel-panel.conf"
+ENABLED_PATH="/etc/nginx/sites-enabled/tpanel-panel.conf"
+CERT_DIR="/etc/letsencrypt/live/$TPANEL_DOMAIN"
+
+mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled /var/log/nginx
+rm -f /etc/nginx/sites-enabled/default
+
+write_proxy_location() {
+  cat <<NGINX
+    client_max_body_size 256m;
+
+    location / {
+        proxy_pass http://127.0.0.1:${TPANEL_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_read_timeout 300;
+        proxy_send_timeout 300;
+    }
+NGINX
+}
+
+if [ -f "$CERT_DIR/fullchain.pem" ] && [ -f "$CERT_DIR/privkey.pem" ]; then
+  {
+    cat <<NGINX
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name ${SERVER_IP} _;
+$(write_proxy_location)
+}
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${TPANEL_DOMAIN} www.${TPANEL_DOMAIN};
+    return 301 https://\$host\$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name ${TPANEL_DOMAIN} www.${TPANEL_DOMAIN};
+    ssl_certificate ${CERT_DIR}/fullchain.pem;
+    ssl_certificate_key ${CERT_DIR}/privkey.pem;
+    access_log /var/log/nginx/tpanel-panel.access.log;
+    error_log /var/log/nginx/tpanel-panel.error.log;
+$(write_proxy_location)
+}
+NGINX
+  } >"$SITE_PATH"
+else
+  {
+    cat <<NGINX
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name ${TPANEL_DOMAIN} www.${TPANEL_DOMAIN} ${SERVER_IP} _;
+    access_log /var/log/nginx/tpanel-panel.access.log;
+    error_log /var/log/nginx/tpanel-panel.error.log;
+$(write_proxy_location)
+}
+NGINX
+  } >"$SITE_PATH"
+fi
+
+ln -sf "$SITE_PATH" "$ENABLED_PATH"
+nginx -t
+systemctl reload nginx || systemctl restart nginx
+echo "tPanel Nginx route repaired: http://${SERVER_IP}/ and http://${TPANEL_DOMAIN}/ (service port ${TPANEL_PORT})"
+BASH
+chmod 700 /usr/local/sbin/tpanel-repair-nginx
+
 cat >/usr/local/sbin/tpanel-update <<'BASH'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -277,6 +372,9 @@ if ! "$NPM_BIN" run build; then
   echo "Build failed. Retrying after a clean dependency install..."
   install_app_dependencies
   "$NPM_BIN" run build
+fi
+if [ -x /usr/local/sbin/tpanel-repair-nginx ]; then
+  /usr/local/sbin/tpanel-repair-nginx || true
 fi
 systemctl restart tpanel
 echo "tPanel updated. Data was preserved."
@@ -439,6 +537,7 @@ for svc in $(systemctl list-unit-files --type=service 'php*-fpm.service' 2>/dev/
 done
 systemctl enable --now tpanel
 systemctl enable --now tpanel-auto-update.timer >/dev/null 2>&1 || true
+/usr/local/sbin/tpanel-repair-nginx >/dev/null 2>&1 || true
 
 if have ufw; then
   ufw allow OpenSSH >/dev/null 2>&1 || true

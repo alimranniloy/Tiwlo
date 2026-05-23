@@ -7,6 +7,7 @@ import {
   Globe,
   Loader2
 } from "lucide-react";
+import BrandLogo from "./BrandLogo";
 
 interface LoginPageProps {
   onLogin: (user: string, pass: string) => Promise<void> | void;
@@ -38,10 +39,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
       {/* Refined Login Container - DigitalOcean Style */}
       <div className="w-full max-w-[400px] mb-8">
         <div className="flex justify-center mb-8">
-           <div className="flex items-center gap-2">
-              <div className="w-10 h-10 bg-[#0069ff] rounded flex items-center justify-center text-white italic font-black text-xl">T</div>
-              <span className="text-2xl font-black tracking-tighter text-slate-100">tPanel</span>
-           </div>
+           <BrandLogo className="h-16 w-52 border border-slate-200 shadow-[0_18px_45px_rgba(0,105,255,0.18)]" />
         </div>
 
         <div className="bg-slate-900 rounded-lg shadow-[0_2px_10px_rgba(0,0,0,0.05)] border border-slate-700 overflow-hidden">

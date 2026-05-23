@@ -46,7 +46,13 @@ interface FileManagerProps {
   setActiveTab: (tab: string) => void;
 }
 
+const fallbackFiles: VirtualItem[] = [
+  { id: "root-dir", name: "/", type: "directory", parentId: null, size: 4096, updatedAt: "2026-05-24 00:00:00", permissions: "0755" },
+  { id: "public-html-dir", name: "public_html", type: "directory", parentId: "root-dir", size: 4096, updatedAt: "2026-05-24 00:00:00", permissions: "0755" }
+];
+
 export default function FileManager({ files, setFiles, addActivity, openAiWithPrompt, setActiveTab }: FileManagerProps) {
+  const safeFiles = Array.isArray(files) && files.length ? files : fallbackFiles;
   const [currentFolderId, setCurrentFolderId] = useState<string>("root-dir"); // start at root-dir
   const [searchQuery, setSearchQuery] = useState("");
   const [isNewFolderModalOpen, setIsNewFolderModalOpen] = useState(false);
@@ -103,7 +109,7 @@ export default function FileManager({ files, setFiles, addActivity, openAiWithPr
 
   // Helper to find parent folder ID
   const getCurrentFolder = () => {
-    return files.find(f => f.id === currentFolderId) || files[0];
+    return safeFiles.find(f => f.id === currentFolderId) || safeFiles.find(f => f.id === "root-dir") || fallbackFiles[0];
   };
 
   const getBreadcrumbs = () => {
@@ -112,7 +118,7 @@ export default function FileManager({ files, setFiles, addActivity, openAiWithPr
     while (current) {
       list.unshift(current);
       if (current.parentId) {
-        const parent = files.find(f => f.id === current.parentId);
+        const parent = safeFiles.find(f => f.id === current.parentId);
         if (parent) {
           current = parent;
         } else {
@@ -126,12 +132,12 @@ export default function FileManager({ files, setFiles, addActivity, openAiWithPr
   };
 
   // Get Children of Current Path
-  const currentItems = files.filter(f => f.parentId === currentFolderId);
+  const currentItems = safeFiles.filter(f => f.parentId === currentFolderId);
 
   // Filtered by Search Query
   const filteredItems = searchQuery.trim() === ""
     ? currentItems
-    : files.filter(f => f.parentId === currentFolderId && f.name.toLowerCase().includes(searchQuery.toLowerCase()));
+    : safeFiles.filter(f => f.parentId === currentFolderId && f.name.toLowerCase().includes(searchQuery.toLowerCase()));
 
   // Premium GCP/Google Cloud inspired custom Icon Resolver (No raw emojis)
   const getItemIcon = (item: VirtualItem, className = "w-5 h-5") => {
@@ -800,7 +806,7 @@ export default function FileManager({ files, setFiles, addActivity, openAiWithPr
         </div>
         <div className="flex items-center gap-3">
           <span className="text-xs font-mono text-slate-400">
-            Total Path Elements: <strong className="text-indigo-400 font-black">{files.length}</strong>
+            Total Path Elements: <strong className="text-indigo-400 font-black">{safeFiles.length}</strong>
           </span>
         </div>
       </div>

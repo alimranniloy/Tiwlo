@@ -29,6 +29,7 @@ import {
   Terminal,
   LogOut
 } from "lucide-react";
+import BrandLogo from "./BrandLogo";
 
 interface SidebarProps {
   activeTab: string;
@@ -130,9 +131,7 @@ export default function Sidebar({
       {/* Mobile Top Navigation Ribbon - relative to scroll up organically with content */}
       <div className="lg:hidden bg-slate-900 border-b border-slate-800 px-4 py-3 flex items-center justify-between relative z-50 transition-all">
         <div className="flex items-center gap-2">
-          <div className="w-9 h-9 bg-[#0069ff] rounded-xl flex items-center justify-center select-none border border-white/10 transform hover:scale-105 duration-200">
-            <span className="text-xl font-black italic select-none text-white font-serif -skew-x-12 translate-x-px">T</span>
-          </div>
+          <BrandLogo compact className="h-9 w-9 border border-slate-700" />
           <div>
             <h1 className="text-sm font-black tracking-wider text-slate-100 leading-none">tPanel</h1>
             <p className="text-[9px] text-slate-500 font-bold mt-0.5 uppercase">Console v3.2</p>
@@ -164,11 +163,9 @@ export default function Sidebar({
         <div className="flex flex-col h-full overflow-hidden">
           {/* Logo / Header (Desktop only) */}
           <div className="hidden lg:flex items-center gap-3 border-b border-slate-800 pb-4 mb-4 shrink-0 px-2">
-            <div className="w-10 h-10 bg-[#0069ff] rounded-xl flex items-center justify-center shrink-0 select-none border border-white/10 transform hover:scale-110 duration-200">
-              <span className="text-2xl font-black italic select-none text-white font-serif -skew-x-12 translate-x-0.5">T</span>
-            </div>
-            <div>
-              <h1 className="text-base font-black tracking-wider text-slate-100">tPanel Pro</h1>
+            <BrandLogo className="h-12 w-40 border border-slate-700 shadow-[0_12px_35px_rgba(0,105,255,0.14)]" />
+            <div className="sr-only">
+              <h1>tPanel Pro</h1>
               <p className="text-[10px] text-emerald-500 font-medium flex items-center gap-1.5 mt-0.5">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
                 CORE v3.2 ONLINE

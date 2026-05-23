@@ -10,6 +10,7 @@ import AICopilot from "./components/AICopilot";
 import TPanelExtraManager from "./components/TPanelExtraManager";
 import LoginPage from "./components/LoginPage";
 import AdminPanel from "./components/AdminPanel";
+import BrandLogo from "./components/BrandLogo";
 import { Sun, Moon } from "lucide-react";
 
 import { 
@@ -33,6 +34,55 @@ const emptyServerStats: ServerStats = {
   diskMax: 5120,
   bandwidth: 0,
   bandwidthMax: 500
+};
+
+const defaultFiles: VirtualItem[] = [
+  {
+    id: "root-dir",
+    name: "/",
+    type: "directory",
+    parentId: null,
+    size: 4096,
+    updatedAt: "2026-05-24 00:00:00",
+    permissions: "0755"
+  },
+  {
+    id: "public-html-dir",
+    name: "public_html",
+    type: "directory",
+    parentId: "root-dir",
+    size: 4096,
+    updatedAt: "2026-05-24 00:00:00",
+    permissions: "0755"
+  },
+  {
+    id: "index-php-file",
+    name: "index.php",
+    type: "file",
+    parentId: "public-html-dir",
+    size: 96,
+    updatedAt: "2026-05-24 00:00:00",
+    permissions: "0644",
+    content: "<?php\n$site = $_SERVER['HTTP_HOST'] ?? 'tPanel site';\necho \"<h1>Welcome to {$site}</h1>\";\n"
+  }
+];
+
+const normalizeFiles = (items: unknown): VirtualItem[] => {
+  const list = Array.isArray(items) ? items.filter(Boolean) as VirtualItem[] : [];
+  if (!list.length) return defaultFiles;
+  const hasRoot = list.some((item) => item.id === "root-dir");
+  const hasPublicHtml = list.some((item) => item.id === "public-html-dir" || item.name === "public_html");
+  const safeList = [
+    ...(hasRoot ? [] : [defaultFiles[0]]),
+    ...(hasPublicHtml ? [] : [defaultFiles[1]]),
+    ...list
+  ];
+  return safeList.map((item) => ({
+    ...item,
+    size: Number(item.size || 0),
+    updatedAt: item.updatedAt || new Date().toISOString().replace("T", " ").substring(0, 19),
+    permissions: item.permissions || (item.type === "directory" ? "0755" : "0644")
+  }));
 };
 
 const DEFAULT_USER_PERMISSIONS: Record<string, boolean> = {
@@ -200,7 +250,7 @@ export default function App() {
   };
 
   // State Hooks
-  const [files, setFiles] = useState<VirtualItem[]>(() => getPersistedState("files", []));
+  const [files, setFiles] = useState<VirtualItem[]>(() => normalizeFiles(getPersistedState("files", defaultFiles)));
   const [domains, setDomains] = useState<DomainItem[]>(() => getPersistedState("domains", []));
   const [databases, setDatabases] = useState<DatabaseItem[]>(() => getPersistedState("databases", []));
   const [dbUsers, setDbUsers] = useState<DatabaseUser[]>(() => getPersistedState("dbUsers", []));
@@ -265,7 +315,7 @@ export default function App() {
   useEffect(() => {
     const nextScope = isAdmin ? "admin" : currentAccount?.username ? `account_${currentAccount.username}` : "guest";
     if (nextScope === storageScope) return;
-    setFiles(getPersistedState("files", [], nextScope));
+    setFiles(normalizeFiles(getPersistedState("files", defaultFiles, nextScope)));
     setDomains(getPersistedState("domains", [], nextScope));
     setDatabases(getPersistedState("databases", [], nextScope));
     setDbUsers(getPersistedState("dbUsers", [], nextScope));
@@ -430,7 +480,7 @@ export default function App() {
     return (
       <div className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center p-6">
         <div className="max-w-lg w-full rounded-lg border border-red-500/20 bg-slate-900 p-8 text-center shadow-2xl">
-          <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-xl bg-red-500/10 text-red-400 font-black">T</div>
+          <BrandLogo compact className="mx-auto mb-5 h-14 w-14 border border-red-500/20" />
           <h1 className="text-2xl font-black tracking-tight">tPanel License Check Failed</h1>
           <p className="mt-3 text-sm leading-6 text-slate-400">
             {licenseStatus.message || "Refresh the active license on this server, then restart the panel service."}
@@ -514,9 +564,7 @@ export default function App() {
                 </span>
               </div>
               
-              <div className="w-10 h-10 rounded-full bg-slate-850 border border-slate-700 flex items-center justify-center font-bold text-xs text-slate-300">
-                AMN
-              </div>
+              <BrandLogo compact className="h-10 w-10 rounded-full border border-slate-700" />
             </div>
           </header>
         )}
