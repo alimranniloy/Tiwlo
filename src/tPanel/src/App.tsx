@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Sidebar from "./components/Sidebar";
 import DashboardHome from "./components/DashboardHome";
 import FileManager from "./components/FileManager";
@@ -137,6 +137,49 @@ const TAB_PERMISSION_MAP: Record<string, string> = {
   copilot: "copilot"
 };
 
+const domainsFromAccount = (account: any): DomainItem[] => {
+  if (!account?.domain) return [];
+  const sslActive = account.provisioning?.ssl?.status === "active";
+  const sslType = account.sslEnabled === false ? "None" : "Let's Encrypt";
+  const dnsRecords = Array.isArray(account.provisioning?.dnsRecords)
+    ? account.provisioning.dnsRecords.map((record: any, index: number) => ({
+      id: `dns-${index}-${record.host || record.name || "record"}`,
+      type: record.type || "A",
+      name: record.host === account.domain ? "@" : String(record.host || record.name || "@").replace(`.${account.domain}`, ""),
+      value: record.value || "",
+      ttl: Number(record.ttl || 300)
+    }))
+    : [{ id: "dns-main", type: "A", name: "@", value: "SERVER_IP", ttl: 300 }];
+  const primary: DomainItem = {
+    id: `dom-${account.domain}`,
+    domainName: account.domain,
+    documentRoot: "/public_html",
+    sslActive,
+    sslType,
+    dnsRecords
+  };
+  const subdomains = Array.isArray(account.provisioning?.vhost?.subdomains)
+    ? account.provisioning.vhost.subdomains.map((route: any) => ({
+      id: `dom-${route.domain}`,
+      domainName: route.domain,
+      documentRoot: route.webPath || "/public_html",
+      sslActive,
+      sslType,
+      dnsRecords: [{ id: `dns-${route.domain}`, type: "A", name: "@", value: "SERVER_IP", ttl: 300 }]
+    }))
+    : [];
+  return [primary, ...subdomains];
+};
+
+const mergeAccountDomains = (saved: DomainItem[], account: any): DomainItem[] => {
+  const accountDomains = domainsFromAccount(account);
+  const seen = new Set(accountDomains.map((domain) => domain.domainName));
+  return [
+    ...accountDomains,
+    ...saved.filter((domain) => !seen.has(domain.domainName))
+  ];
+};
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<string>("dashboard");
   const [licenseStatus, setLicenseStatus] = useState<any | null>(null);
@@ -258,6 +301,8 @@ export default function App() {
   const [emails, setEmails] = useState<EmailAccount[]>(() => getPersistedState("emails", []));
   const [serverStats, setServerStats] = useState<ServerStats>(() => getPersistedState("serverStats", emptyServerStats));
   const [activities, setActivities] = useState<RecentActivity[]>(() => getPersistedState("activities", []));
+  const [serverFilesReady, setServerFilesReady] = useState(false);
+  const skipNextServerFileWrite = useRef(false);
 
   useEffect(() => {
     let mounted = true;
@@ -315,8 +360,10 @@ export default function App() {
   useEffect(() => {
     const nextScope = isAdmin ? "admin" : currentAccount?.username ? `account_${currentAccount.username}` : "guest";
     if (nextScope === storageScope) return;
+    setServerFilesReady(false);
     setFiles(normalizeFiles(getPersistedState("files", defaultFiles, nextScope)));
-    setDomains(getPersistedState("domains", [], nextScope));
+    const scopedDomains = getPersistedState("domains", [], nextScope);
+    setDomains(!isAdmin && currentAccount ? mergeAccountDomains(scopedDomains, currentAccount) : scopedDomains);
     setDatabases(getPersistedState("databases", [], nextScope));
     setDbUsers(getPersistedState("dbUsers", [], nextScope));
     setNodeApps(getPersistedState("nodeApps", [], nextScope));
@@ -325,6 +372,46 @@ export default function App() {
     setActivities(getPersistedState("activities", [], nextScope));
     setStorageScope(nextScope);
   }, [currentAccount?.username, isAdmin, storageScope]);
+
+  useEffect(() => {
+    if (!isLoggedIn || isAdmin || !currentAccount) return;
+    setDomains((current) => mergeAccountDomains(current, currentAccount));
+  }, [currentAccount?.domain, currentAccount?.username, currentAccount?.provisioning?.ssl?.status, currentAccount?.provisioning?.vhost?.subdomains, isAdmin, isLoggedIn]);
+
+  useEffect(() => {
+    if (!isLoggedIn || isAdmin || !currentAccount) {
+      setServerFilesReady(false);
+      return;
+    }
+    let mounted = true;
+    const loadServerFiles = async () => {
+      try {
+        const saved = JSON.parse(localStorage.getItem("tpanel_auth") || "null");
+        if (!saved?.token) {
+          if (mounted) setServerFilesReady(false);
+          return;
+        }
+        const response = await fetch("/api/user/files", {
+          headers: { Authorization: `Bearer ${saved.token}` }
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!mounted || !response.ok || !data.ok || !Array.isArray(data.files)) {
+          if (mounted) setServerFilesReady(false);
+          return;
+        }
+        skipNextServerFileWrite.current = true;
+        setFiles(normalizeFiles(data.files));
+        setServerFilesReady(true);
+      } catch {
+        // Keep browser-side file state usable if the filesystem sync endpoint is unavailable.
+        if (mounted) setServerFilesReady(false);
+      }
+    };
+    loadServerFiles();
+    return () => {
+      mounted = false;
+    };
+  }, [currentAccount?.username, isAdmin, isLoggedIn]);
 
   useEffect(() => {
     if (!isLoggedIn || isAdmin) return;
@@ -359,6 +446,31 @@ export default function App() {
   useEffect(() => {
     persistScopedState("files", files);
   }, [files, storageScope]);
+
+  useEffect(() => {
+    if (!isLoggedIn || isAdmin || !currentAccount || !serverFilesReady) return;
+    if (skipNextServerFileWrite.current) {
+      skipNextServerFileWrite.current = false;
+      return;
+    }
+    const timer = window.setTimeout(async () => {
+      try {
+        const saved = JSON.parse(localStorage.getItem("tpanel_auth") || "null");
+        if (!saved?.token) return;
+        await fetch("/api/user/files", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${saved.token}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({ files })
+        });
+      } catch {
+        // File edits stay in local state; the next save attempt can retry.
+      }
+    }, 900);
+    return () => window.clearTimeout(timer);
+  }, [currentAccount?.username, files, isAdmin, isLoggedIn, serverFilesReady]);
 
   useEffect(() => {
     persistScopedState("domains", domains);
@@ -480,7 +592,7 @@ export default function App() {
     return (
       <div className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center p-6">
         <div className="max-w-lg w-full rounded-lg border border-red-500/20 bg-slate-900 p-8 text-center shadow-2xl">
-          <BrandLogo compact className="mx-auto mb-5 h-14 w-14 border border-red-500/20" />
+          <BrandLogo compact className="mx-auto mb-5 h-14 w-14" />
           <h1 className="text-2xl font-black tracking-tight">tPanel License Check Failed</h1>
           <p className="mt-3 text-sm leading-6 text-slate-400">
             {licenseStatus.message || "Refresh the active license on this server, then restart the panel service."}
@@ -564,7 +676,7 @@ export default function App() {
                 </span>
               </div>
               
-              <BrandLogo compact className="h-10 w-10 rounded-full border border-slate-700" />
+              <BrandLogo compact className="h-10 w-10" />
             </div>
           </header>
         )}

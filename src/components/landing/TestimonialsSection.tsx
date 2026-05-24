@@ -16,7 +16,7 @@ export default function TestimonialsSection() {
     {
       name: "Michael Chen",
       role: "CTO, Tech Solutions",
-      text: "The WHM management interface is intuitive and powerful. Their security layers are truly enterprise-grade."
+      text: "The hosting management interface is intuitive and powerful. Their security layers are truly enterprise-grade."
     }
   ];
 

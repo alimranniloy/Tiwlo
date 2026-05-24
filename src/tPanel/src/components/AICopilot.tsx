@@ -81,13 +81,13 @@ export default function AICopilot({ filesContentHint, openAiPromptTrigger, setOp
       if (res.ok && data.text) {
          setMessages(prev => [...prev, { role: "assistant", text: data.text }]);
       } else {
-         throw new Error(data.error || "Failed to call Gemini API");
+         throw new Error(data.error || "Failed to call the AI provider API");
       }
     } catch (err: any) {
       console.error(err);
       setMessages(prev => [...prev, {
         role: "assistant",
-        text: `API connection error: ${err.message || "An unexpected error occurred."}\n\nMake sure GEMINI_API_KEY is configured on this tPanel server.`
+        text: `API connection error: ${err.message || "An unexpected error occurred."}\n\nMake sure AI_API_KEY is configured on this tPanel server.`
       }]);
     } finally {
       setIsLoading(false);
@@ -283,7 +283,7 @@ export default function AICopilot({ filesContentHint, openAiPromptTrigger, setOp
             <div className="bg-slate-900 px-4 py-3 border-b border-slate-850 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Terminal className="w-4.5 h-4.5 text-amber-400 shrink-0" />
-                <span className="text-xs font-semibold text-slate-300 font-mono">auth_agent_shell : gemini-3.5-flash</span>
+                <span className="text-xs font-semibold text-slate-300 font-mono">auth_agent_shell : tpanel-ai-runtime</span>
               </div>
               <div className="flex items-center gap-1.5 font-mono text-[9px] text-slate-500">
                 <span className="w-2 h-2 rounded-full bg-emerald-400"></span>

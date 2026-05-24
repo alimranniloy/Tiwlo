@@ -231,7 +231,7 @@ This runs the backend with `Type=simple`, serves the built frontend through the 
 
 ## tPanel License Install Command
 
-tPanel is the brand. It is a tPanel hosting-management system, not WHM. After a license is active, use this one-line installer:
+tPanel is the brand. It is a Tiwlo hosting-management system. After a license is active, use this one-line installer:
 
 ```bash
 curl -fsSL "https://tiwlo.com/tpanel/install.sh" | sudo env TPANEL_LICENSE_KEY="YOUR_LICENSE_KEY" bash

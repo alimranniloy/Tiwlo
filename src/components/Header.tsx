@@ -14,6 +14,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { fetchBillingOverviewWithApi, fetchSettingsWithApi } from '../lib/tiwloApi';
 import CurrencySwitcher from './CurrencySwitcher';
+import BrandLogo from './BrandLogo';
 import {
   CURRENCY_POLICY_KEY,
   chooseCurrencyForStorage,
@@ -105,10 +106,7 @@ export default function Header({ user, onLogout, isSidebarOpen, setIsSidebarOpen
         </button>
         {/* Mobile menu and logo area */}
         <div className="flex items-center gap-2">
-          <div className="w-7 h-7 bg-[#0069ff] rounded flex items-center justify-center text-white font-bold text-xs">
-            D
-          </div>
-          <span className="text-sm font-bold tracking-tight text-[#2e3d49] uppercase">Tiwlo Console</span>
+          <BrandLogo className="h-8 w-28" />
         </div>
       </div>
 

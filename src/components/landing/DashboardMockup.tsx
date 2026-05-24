@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Activity, Server, Users, Globe, Terminal, Plus, CheckCircle2, ShoppingBag, ShieldCheck, Database, FileText, Settings, Key, BarChart3, CreditCard, Cpu, HardDrive, Lock } from 'lucide-react';
+import BrandLogo from '../BrandLogo';
 
 // Sub-components for various states
 const IdleState = () => (
@@ -295,7 +296,7 @@ export default function DashboardMockup() {
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-2">
-             <div className="w-5 h-5 bg-blue-600 rounded flex items-center justify-center text-white text-[10px] font-black">T</div>
+             <BrandLogo variant="icon" className="h-5 w-5" />
              <div className="text-[11px] font-bold text-gray-900 tracking-tight">Main Console</div>
           </div>
           <div className="flex items-center gap-2">

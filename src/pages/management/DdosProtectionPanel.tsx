@@ -344,7 +344,7 @@ export default function DdosProtectionPanel() {
                 <div className="mt-4 grid grid-cols-1 gap-3 text-[12px] font-bold text-[#4a4a4a] sm:grid-cols-2">
                   {[
                     ['syncToConnectedServers', 'Auto-sync connected servers'],
-                    ['protectHostingNodes', 'WHM/Plesk/hosting nodes'],
+                    ['protectHostingNodes', 'Hosting control nodes'],
                     ['protectCloudResources', 'Cloud/system servers'],
                     ['protectDomains', 'DNS/subdomains'],
                     ['protectEcommerceDomains', 'Ecommerce domains']
@@ -490,7 +490,7 @@ export default function DdosProtectionPanel() {
                   <p className="text-[11px] leading-relaxed text-gray-400">Current mode is {policy.automationMode}. Remote execution is queued for installed agents; audit mode records the exact plan without running shell commands.</p>
                 </div>
               ) : (
-                <div className="rounded border border-white/10 bg-white/5 p-5 text-sm font-bold text-gray-400">Block rules will show Linux, WHM/cPanel, Plesk, and Nginx enforcement plans here.</div>
+                <div className="rounded border border-white/10 bg-white/5 p-5 text-sm font-bold text-gray-400">Block rules will show Linux, hosting panel, Plesk, and Nginx enforcement plans here.</div>
               )}
             </div>
           </div>

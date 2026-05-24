@@ -36,6 +36,7 @@ import {
 } from 'lucide-react';
 import { useState } from 'react';
 import { User } from '../types';
+import BrandLogo from './BrandLogo';
 
 interface SidebarProps {
   user: User;
@@ -168,11 +169,9 @@ export default function Sidebar({ user, isOpen, setIsOpen, onLogout }: SidebarPr
   const NavContent = () => (
     <div className="flex flex-col h-full bg-[#031b4e] text-[#94a3b8]">
       <div className="p-5 md:p-6 flex items-center gap-3 mb-2">
-        <div className="w-9 h-9 bg-white flex items-center justify-center text-[#031b4e] font-black text-[20px] border-2 border-indigo-500">
-          T
-        </div>
-        <div className="flex flex-col">
-          <span className="text-lg font-black tracking-tighter text-white uppercase leading-none">{isAdminUser ? 'Tiwlo Admin' : 'Tiwlo Console'}</span>
+        <BrandLogo variant="dark" className="h-12 w-36" />
+        <div className="sr-only">
+          <span>{isAdminUser ? 'Tiwlo Admin' : 'Tiwlo Console'}</span>
           <span className="text-[9px] font-bold text-indigo-400 uppercase tracking-widest mt-0.5">SaaS Infrastructure</span>
         </div>
       </div>

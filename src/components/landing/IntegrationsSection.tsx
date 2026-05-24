@@ -3,7 +3,7 @@ import { Layers, Database, Code2, Zap } from 'lucide-react';
 
 export default function IntegrationsSection() {
   const tools = [
-    { name: 'WHM', desc: 'Powerful Server Control' },
+    { name: 'Hosting Panel', desc: 'Powerful Server Control' },
     { name: 'CloudLinux', desc: 'Secure Server Environment' },
     { name: 'cPanel', desc: 'Industry leading panel' },
     { name: 'Linux', desc: 'Enterprise grade OS' },

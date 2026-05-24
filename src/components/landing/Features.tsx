@@ -13,7 +13,7 @@ export default function Features() {
     {
       icon: <ShoppingBag className="h-5 w-5" />,
       title: "Domains & Cloud Server",
-      description: "Secure Domain registration with cPanel & WHM. Scale instantly with high-performance Cloud Server environments.",
+      description: "Secure domain registration with DNS, SSL, and hosting automation. Scale instantly with high-performance Cloud Server environments.",
       color: "emerald",
       href: "#ecommerce"
     },

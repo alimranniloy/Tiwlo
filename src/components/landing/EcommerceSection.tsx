@@ -15,7 +15,7 @@ export default function EcommerceSection() {
             </h2>
             <p className="text-gray-500 font-medium leading-relaxed mb-10 max-w-lg">
               Registration to full-scale deployment. Get premier Domains, manage with 
-              cPanel & WHM, and scale with specialized Linux or Windows Cloud Servers 
+              hosting panels, DNS, SSL, and specialized Linux or Windows Cloud Servers 
               built for modern e-commerce storefronts.
             </p>
             <div className="grid grid-cols-2 gap-8 mb-10">

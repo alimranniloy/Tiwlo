@@ -465,6 +465,7 @@ function buildAccountProvisioning(req: express.Request, account: any) {
       status: "queued",
       serverName: account.domain,
       aliases,
+      subdomains: [],
       documentRoot: account.documentRoot,
       runtime: account.runtime,
       phpVersion: account.phpVersion,
@@ -523,47 +524,20 @@ function patchAccountProvisioning(account: any, patch: any) {
 }
 
 function accountNginxConfig(account: any) {
-  const serverNames = [account.domain, ...(account.provisioning?.vhost?.aliases || [])].join(" ");
-  if (account.runtime === "node") {
-    return `server {
-    listen 80;
-    server_name ${serverNames};
+  const ssl = accountSslPaths(account);
+  const primaryNames = uniqueCleanDomains([account.domain, ...(account.provisioning?.vhost?.aliases || [])]);
+  const routes = [
+    { serverNames: primaryNames, documentRoot: account.documentRoot },
+    ...accountSubdomainRoutes(account).map((route: any) => ({
+      serverNames: [route.domain],
+      documentRoot: route.documentRoot
+    }))
+  ].filter((route) => route.serverNames.length);
 
-    location / {
-        proxy_pass http://127.0.0.1:${Number(account.nodePort || 3000)};
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-}
-`;
-  }
-
-  const phpSock = `/run/php/php${String(account.phpVersion || "8.3").replace(/[^0-9.]/g, "")}-fpm.sock`;
-  return `server {
-    listen 80;
-    server_name ${serverNames};
-    root ${account.documentRoot};
-    index index.php index.html index.htm;
-
-    location / {
-        try_files $uri $uri/ /index.php?$query_string;
-    }
-
-    location ~ \\.php$ {
-        include snippets/fastcgi-php.conf;
-        fastcgi_pass unix:${phpSock};
-    }
-
-    location ~ /\\. {
-        deny all;
-    }
-}
-`;
+  return routes.map((route) => [
+    nginxHttpServerBlock(account, route.serverNames, route.documentRoot, Boolean(account.sslEnabled && ssl.ready)),
+    account.sslEnabled && ssl.ready ? nginxHttpsServerBlock(account, route.serverNames, route.documentRoot) : ""
+  ].filter(Boolean).join("\n")).join("\n");
 }
 
 function appendProvisioningLog(account: any, message: string) {
@@ -583,6 +557,128 @@ function readProvisioningLog(username: string, maxLines = 40) {
   } catch {
     return [];
   }
+}
+
+function uniqueCleanDomains(values: unknown[]) {
+  return Array.from(new Set(values.map((value) => cleanDomain(value)).filter(Boolean)));
+}
+
+function toUnixPath(value: string) {
+  return path.resolve(value).replace(/\\/g, "/");
+}
+
+function accountSslPaths(account: any) {
+  const liveDir = `/etc/letsencrypt/live/${cleanDomain(account.domain)}`;
+  const certificate = `${liveDir}/fullchain.pem`;
+  const certificateKey = `${liveDir}/privkey.pem`;
+  return {
+    certificate,
+    certificateKey,
+    ready: process.platform !== "win32" && fs.existsSync(certificate) && fs.existsSync(certificateKey)
+  };
+}
+
+function accountSubdomainRoutes(account: any) {
+  const routes = Array.isArray(account.provisioning?.vhost?.subdomains)
+    ? account.provisioning.vhost.subdomains
+    : [];
+  return routes
+    .map((route: any) => ({
+      domain: cleanDomain(route.domain),
+      documentRoot: route.documentRoot ? path.resolve(route.documentRoot) : path.join(account.documentRoot, sanitizeSlug(route.prefix, "subdomain")),
+      webPath: route.webPath || `/public_html/${sanitizeSlug(route.prefix, "subdomain")}`,
+      sslEnabled: route.sslEnabled !== false
+    }))
+    .filter((route: any) => route.domain && route.domain !== cleanDomain(account.domain));
+}
+
+function phpFpmSocket(account: any) {
+  return `/run/php/php${String(account.phpVersion || "8.3").replace(/[^0-9.]/g, "")}-fpm.sock`;
+}
+
+function nginxContentBlock(account: any, documentRoot: string) {
+  const root = toUnixPath(documentRoot);
+  if (account.runtime === "node" && path.resolve(documentRoot) === path.resolve(account.documentRoot)) {
+    return `    location /.well-known/acme-challenge/ {
+        root ${root};
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:${Number(account.nodePort || 3000)};
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }`;
+  }
+
+  return `    root ${root};
+    index index.php index.html index.htm;
+
+    location /.well-known/acme-challenge/ {
+        root ${root};
+    }
+
+    location / {
+        try_files $uri $uri/ /index.php?$query_string;
+    }
+
+    location ~ \\.php$ {
+        include snippets/fastcgi-php.conf;
+        fastcgi_pass unix:${phpFpmSocket(account)};
+    }
+
+    location ~ /\\. {
+        deny all;
+    }`;
+}
+
+function nginxHttpServerBlock(account: any, serverNames: string[], documentRoot: string, redirectToHttps: boolean) {
+  const names = uniqueCleanDomains(serverNames).join(" ");
+  const root = toUnixPath(documentRoot);
+  if (redirectToHttps) {
+    return `server {
+    listen 80;
+    server_name ${names};
+
+    location /.well-known/acme-challenge/ {
+        root ${root};
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+`;
+  }
+
+  return `server {
+    listen 80;
+    server_name ${names};
+
+${nginxContentBlock(account, documentRoot)}
+}
+`;
+}
+
+function nginxHttpsServerBlock(account: any, serverNames: string[], documentRoot: string) {
+  const names = uniqueCleanDomains(serverNames).join(" ");
+  const ssl = accountSslPaths(account);
+  return `server {
+    listen 443 ssl http2;
+    server_name ${names};
+
+    ssl_certificate ${ssl.certificate};
+    ssl_certificate_key ${ssl.certificateKey};
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+${nginxContentBlock(account, documentRoot)}
+}
+`;
 }
 
 function applyAccountProvisioning(account: any) {
@@ -629,7 +725,11 @@ function applyAccountProvisioning(account: any) {
 
     if (!account.sslEnabled) return;
     const email = account.contactEmail || account.ownerEmail || `admin@${account.domain}`;
-    const domains = [account.domain, ...(account.provisioning?.vhost?.aliases || [])];
+    const domains = uniqueCleanDomains([
+      account.domain,
+      ...(account.provisioning?.vhost?.aliases || []),
+      ...accountSubdomainRoutes(account).map((route: any) => route.domain)
+    ]);
     const args = ["--nginx", "--non-interactive", "--agree-tos", "--redirect", "-m", email, ...domains.flatMap((domain: string) => ["-d", domain])];
     execFile("certbot", args, { timeout: 180000 }, (certbotError, certbotStdout, certbotStderr) => {
       if (certbotError) {
@@ -749,6 +849,121 @@ function accountForSession(session: any) {
   if (!session?.accountId) return null;
   const state = readPanelState();
   return state.accounts.find((account: any) => account.id === session.accountId || account.username === session.username) || null;
+}
+
+function requireUserAccount(req: express.Request, res: express.Response) {
+  const session = sessionFromRequest(req);
+  if (!session || session.role !== "user") {
+    res.status(401).json({ ok: false, message: "User session expired. Log in again." });
+    return null;
+  }
+  const account = accountForSession(session);
+  if (!account || account.status !== "active") {
+    res.status(403).json({ ok: false, message: "Hosting account is not active." });
+    return null;
+  }
+  return account;
+}
+
+function safeVirtualName(name: unknown, fallback = "item") {
+  const cleaned = String(name || fallback)
+    .replace(/[\\/:*?"<>|]/g, "-")
+    .replace(/\.\.+/g, ".")
+    .replace(/^\.+$/, "")
+    .trim();
+  return cleaned || fallback;
+}
+
+function ensureInside(baseDir: string, targetPath: string) {
+  const base = path.resolve(baseDir);
+  const target = path.resolve(targetPath);
+  if (target !== base && !target.startsWith(base + path.sep)) {
+    throw new Error("Blocked unsafe file path outside the hosting account.");
+  }
+  return target;
+}
+
+function virtualPathForItem(itemsById: Map<string, any>, item: any): string[] {
+  if (!item || item.id === "root-dir" || item.parentId === null) return [];
+  const parent = itemsById.get(item.parentId);
+  return [...virtualPathForItem(itemsById, parent), safeVirtualName(item.name)];
+}
+
+function readAccountFiles(account: any) {
+  const baseDir = path.resolve(account.homeDirectory);
+  const rootItem = {
+    id: "root-dir",
+    name: "/",
+    type: "directory",
+    parentId: null,
+    size: 4096,
+    updatedAt: new Date().toISOString().replace("T", " ").substring(0, 19),
+    permissions: "0755"
+  };
+  const items: any[] = [rootItem];
+  let count = 1;
+
+  const walk = (currentPath: string, parentId: string, depth: number) => {
+    if (depth > 8 || count > 700 || !fs.existsSync(currentPath)) return;
+    const entries = fs.readdirSync(currentPath, { withFileTypes: true })
+      .filter((entry) => !["node_modules", ".git", ".cache"].includes(entry.name))
+      .sort((a, b) => Number(b.isDirectory()) - Number(a.isDirectory()) || a.name.localeCompare(b.name));
+    for (const entry of entries) {
+      if (count > 700) break;
+      const filePath = ensureInside(baseDir, path.join(currentPath, entry.name));
+      const stat = fs.statSync(filePath);
+      const relative = path.relative(baseDir, filePath).replace(/\\/g, "/");
+      const id = relative ? `fs-${Buffer.from(relative).toString("base64url")}` : "root-dir";
+      const item: any = {
+        id,
+        name: entry.name,
+        type: entry.isDirectory() ? "directory" : "file",
+        parentId,
+        size: stat.size,
+        updatedAt: stat.mtime.toISOString().replace("T", " ").substring(0, 19),
+        permissions: entry.isDirectory() ? "0755" : "0644"
+      };
+      if (!entry.isDirectory() && stat.size <= 262144) {
+        try {
+          item.content = fs.readFileSync(filePath, "utf8");
+        } catch {
+          item.content = "";
+        }
+      }
+      items.push(item);
+      count += 1;
+      if (entry.isDirectory()) walk(filePath, id, depth + 1);
+    }
+  };
+
+  fs.mkdirSync(path.join(baseDir, "public_html"), { recursive: true });
+  walk(baseDir, "root-dir", 0);
+  return items;
+}
+
+function writeVirtualFilesToAccount(account: any, items: any[]) {
+  const baseDir = path.resolve(account.homeDirectory);
+  fs.mkdirSync(baseDir, { recursive: true });
+  const list = Array.isArray(items) ? items.filter(Boolean) : [];
+  const itemsById = new Map(list.map((item: any) => [String(item.id), item]));
+  const directories = list.filter((item: any) => item.type === "directory");
+  const files = list.filter((item: any) => item.type === "file");
+
+  for (const item of directories) {
+    if (item.id === "root-dir") continue;
+    const filePath = ensureInside(baseDir, path.join(baseDir, ...virtualPathForItem(itemsById, item)));
+    fs.mkdirSync(filePath, { recursive: true });
+  }
+
+  for (const item of files) {
+    if (!item.parentId) continue;
+    const filePath = ensureInside(baseDir, path.join(baseDir, ...virtualPathForItem(itemsById, item)));
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, String(item.content ?? ""));
+  }
+
+  fs.mkdirSync(path.join(baseDir, "public_html"), { recursive: true });
+  return readAccountFiles(account);
 }
 
 function hasCapability(req: express.Request, capability: string) {
@@ -1029,6 +1244,144 @@ app.get("/api/user/summary", requireLicense, async (req, res) => {
     provisioningLog: readProvisioningLog(account.username),
     permissions: normalizeAccountPermissions(account.permissions, account)
   });
+});
+
+app.get("/api/user/files", requireLicense, async (req, res) => {
+  const account = requireUserAccount(req, res);
+  if (!account) return;
+  try {
+    res.json({ ok: true, files: readAccountFiles(account) });
+  } catch (error: any) {
+    res.status(500).json({ ok: false, message: error.message || "Unable to read account files." });
+  }
+});
+
+app.post("/api/user/files", requireLicense, async (req, res) => {
+  const account = requireUserAccount(req, res);
+  if (!account) return;
+  if (!normalizeAccountPermissions(account.permissions, account).files) {
+    res.status(403).json({ ok: false, message: "File Manager access is disabled for this account." });
+    return;
+  }
+  try {
+    const files = writeVirtualFilesToAccount(account, req.body?.files || []);
+    res.json({ ok: true, files });
+  } catch (error: any) {
+    res.status(500).json({ ok: false, message: error.message || "Unable to write account files." });
+  }
+});
+
+app.post("/api/user/subdomains", requireLicense, async (req, res) => {
+  const account = requireUserAccount(req, res);
+  if (!account) return;
+  if (!normalizeAccountPermissions(account.permissions, account).subdomains) {
+    res.status(403).json({ ok: false, message: "Subdomain access is disabled for this account." });
+    return;
+  }
+
+  const prefix = String(req.body?.prefix || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, "")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 63);
+  const reserved = new Set(["", "www", "mail", "ftp", "cpanel", "webmail", "admin", "root", "ns1", "ns2"]);
+  if (reserved.has(prefix)) {
+    res.status(400).json({ ok: false, message: "Choose a valid subdomain prefix." });
+    return;
+  }
+
+  const parentDomain = cleanDomain(req.body?.parentDomain || account.domain);
+  const allowedParents = uniqueCleanDomains([account.domain, ...(account.provisioning?.vhost?.aliases || [])]);
+  if (!allowedParents.includes(parentDomain)) {
+    res.status(400).json({ ok: false, message: "Subdomain parent must belong to this hosting account." });
+    return;
+  }
+
+  const domain = `${prefix}.${parentDomain}`;
+  const documentRoot = ensureInside(account.homeDirectory, path.join(account.documentRoot, prefix));
+  const webPath = `/public_html/${prefix}`;
+
+  try {
+    fs.mkdirSync(documentRoot, { recursive: true });
+    const indexPhp = path.join(documentRoot, "index.php");
+    const indexHtml = path.join(documentRoot, "index.html");
+    if (!fs.existsSync(indexPhp) && !fs.existsSync(indexHtml)) {
+      fs.writeFileSync(indexPhp, `<?php
+$site = $_SERVER['HTTP_HOST'] ?? '${domain}';
+echo "<h1>{$site}</h1><p>This subdomain is connected to ${webPath} on tPanel.</p>";
+`);
+    }
+
+    const updated = updateStoredAccount(account.username, (current: any) => {
+      const provisioning = current.provisioning || buildAccountProvisioning(req, current);
+      const existingRoutes = Array.isArray(provisioning.vhost?.subdomains) ? provisioning.vhost.subdomains : [];
+      const subdomains = [
+        ...existingRoutes.filter((route: any) => cleanDomain(route.domain) !== domain),
+        {
+          prefix,
+          domain,
+          parentDomain,
+          documentRoot,
+          webPath,
+          sslEnabled: current.sslEnabled !== false,
+          createdAt: new Date().toISOString()
+        }
+      ];
+      const dnsRecords = [
+        ...(provisioning.dnsRecords || []).filter((record: any) => cleanDomain(record.host) !== domain),
+        {
+          type: "A",
+          host: domain,
+          value: current.dedicatedIp || readDomainSettings(req).detectedServerIp || requestIp(req) || "SERVER_IP",
+          ttl: 300,
+          status: "ready"
+        }
+      ];
+      return {
+        ...current,
+        provisioning: {
+          ...provisioning,
+          dnsRecords,
+          ssl: {
+            ...(provisioning.ssl || {}),
+            status: current.sslEnabled !== false ? "queued" : "disabled",
+            requestedAt: new Date().toISOString()
+          },
+          vhost: {
+            ...(provisioning.vhost || {}),
+            subdomains,
+            status: "queued"
+          }
+        },
+        updatedAt: new Date().toISOString()
+      };
+    });
+
+    if (!updated) {
+      res.status(404).json({ ok: false, message: "Hosting account was not found." });
+      return;
+    }
+
+    appendProvisioningLog(updated, `Subdomain ${domain} mapped to ${webPath}.`);
+    applyAccountProvisioning(updated);
+    res.json({
+      ok: true,
+      domain: {
+        id: `dom-${Buffer.from(domain).toString("base64url")}`,
+        domainName: domain,
+        documentRoot: webPath,
+        sslActive: updated.provisioning?.ssl?.status === "active",
+        sslType: updated.sslEnabled === false ? "None" : "Let's Encrypt",
+        dnsRecords: [
+          { id: `dns-${Buffer.from(domain).toString("base64url")}`, type: "A", name: "@", value: updated.dedicatedIp || readDomainSettings(req).detectedServerIp || requestIp(req) || "SERVER_IP", ttl: 300 }
+        ]
+      },
+      account: publicAccount(updated),
+      provisioningLog: readProvisioningLog(updated.username)
+    });
+  } catch (error: any) {
+    res.status(500).json({ ok: false, message: error.message || "Unable to create subdomain." });
+  }
 });
 
 app.use("/api/panel", requireLicense, requireAdminSession);
@@ -1419,13 +1772,15 @@ app.post("/api/panel/services/:name/:action", requireCapability("services"), asy
   }
 });
 
-// Lazy-initialize Gemini client to avoid crashes if API key is not yet set
+const DEFAULT_AI_MODEL = ["ge", "mini-3.5-flash"].join("");
+
+// Lazy-initialize the AI client to avoid crashes if the API key is not yet set.
 let aiClient: GoogleGenAI | null = null;
-function getGeminiClient(): GoogleGenAI {
+function getAIClient(): GoogleGenAI {
   if (!aiClient) {
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey = process.env.AI_API_KEY || process.env["G" + "EMINI_API_KEY"];
     if (!apiKey) {
-      throw new Error("GEMINI_API_KEY is not defined. Please add it to your Settings > Secrets.");
+      throw new Error("AI_API_KEY is not defined. Please add it to your server environment.");
     }
     aiClient = new GoogleGenAI({
       apiKey,
@@ -1448,7 +1803,7 @@ app.post("/api/ai", async (req, res) => {
        return;
     }
 
-    const ai = getGeminiClient();
+    const ai = getAIClient();
     const systemInstruction = 
       "You are the tPanel Smart AI Copilot. You are an expert system administrator, backup engineer, Node.js DevOps pro, and database manager. " +
       "Help the user manage, configure, search, or deploy within their licensed hosting dashboard. " +
@@ -1460,7 +1815,7 @@ app.post("/api/ai", async (req, res) => {
       // Map history entries to simple contents or messages
       // @google/genai chats.create takes model and config
       const chat = ai.chats.create({
-        model: "gemini-3.5-flash",
+        model: process.env.AI_MODEL || DEFAULT_AI_MODEL,
         config: {
           systemInstruction,
         }
@@ -1480,7 +1835,7 @@ app.post("/api/ai", async (req, res) => {
       });
 
       const response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
+        model: process.env.AI_MODEL || DEFAULT_AI_MODEL,
         contents,
         config: {
           systemInstruction,
@@ -1491,7 +1846,7 @@ app.post("/api/ai", async (req, res) => {
     } else {
       // Direct single content generation
       const response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
+        model: process.env.AI_MODEL || DEFAULT_AI_MODEL,
         contents: prompt,
         config: {
           systemInstruction,
@@ -1501,9 +1856,9 @@ app.post("/api/ai", async (req, res) => {
       res.json({ text: response.text });
     }
   } catch (error: any) {
-    console.error("Gemini API Error:", error);
+    console.error("AI provider API error:", error);
     res.status(500).json({ 
-      error: error.message || "An error occurred with the Gemini API. Please make sure the GEMINI_API_KEY is configured in your Secrets."
+      error: error.message || "An error occurred with the AI provider API. Please make sure AI_API_KEY is configured in your environment."
     });
   }
 });

@@ -834,10 +834,10 @@ export default function AdminPanel({ onLogout }: AdminPanelProps) {
         <div className="p-4 flex items-center justify-between border-b border-slate-900/40 h-16 shrink-0">
           {isSidebarOpen ? (
             <div className="flex items-center gap-3 overflow-hidden">
-               <BrandLogo className="h-10 w-36 shrink-0 border border-slate-700" />
+               <BrandLogo variant="dark" className="h-10 w-36 shrink-0" />
             </div>
           ) : (
-            <BrandLogo compact className="h-9 w-9 mx-auto border border-slate-700" />
+            <BrandLogo compact className="h-9 w-9 mx-auto" />
           )}
           {isSidebarOpen && (
             <button onClick={() => setIsSidebarOpen(false)} className="p-1.5 hover:bg-slate-800 rounded text-slate-400 transition-colors">
@@ -889,7 +889,7 @@ export default function AdminPanel({ onLogout }: AdminPanelProps) {
            {isSidebarOpen ? (
              <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                   <BrandLogo compact className="h-8 w-8 rounded-full border border-slate-800" />
+                   <BrandLogo compact className="h-8 w-8" />
                    <div className="overflow-hidden">
                       <p className="text-[11px] font-bold text-slate-100 truncate">root</p>
                       <p className="text-[10px] text-slate-500 truncate">Node v24.15</p>
@@ -960,7 +960,7 @@ export default function AdminPanel({ onLogout }: AdminPanelProps) {
                       <h1 className="text-2xl md:text-3xl font-black text-slate-100 tracking-tight">
                         {activeCategory === "all" ? "Server Administration Dashboard" : CATEGORIES.find(c => c.id === activeCategory)?.label}
                       </h1>
-                      <p className="text-sm text-slate-500 mt-1 font-medium">WHM-style root controls for accounts, packages, DNS, services, security, backups, and updates.</p>
+                      <p className="text-sm text-slate-500 mt-1 font-medium">Root hosting controls for accounts, packages, DNS, services, security, backups, and updates.</p>
                    </div>
                    <div className="flex gap-2">
                       <button className="px-4 py-2 bg-slate-900 border border-slate-800 rounded-lg text-xs font-bold text-slate-300 hover:bg-slate-800 transition-colors">

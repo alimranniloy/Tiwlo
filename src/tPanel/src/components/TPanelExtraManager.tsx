@@ -97,6 +97,8 @@ export default function TPanelExtraManager({ activeTab, domains, setDomains, add
   // Subdomains
   const [newSubdomainPrefix, setNewSubdomainPrefix] = useState("");
   const [selectedSubDomain, setSelectedSubDomain] = useState(() => domains[0]?.domainName || "");
+  const [subdomainStatus, setSubdomainStatus] = useState("");
+  const [isCreatingSubdomain, setIsCreatingSubdomain] = useState(false);
 
   // 6. Emails extra (Forwarders & Autoresponders)
   const [emailForwarders, setEmailForwarders] = useState(() => getPersisted("forwarders", [
@@ -191,6 +193,10 @@ export default function TPanelExtraManager({ activeTab, domains, setDomains, add
   useEffect(() => { savePersisted("ruby_apps", rubyApps); }, [rubyApps]);
   useEffect(() => { savePersisted("installed_apps", installedApps); }, [installedApps]);
   useEffect(() => { savePersisted("cron_jobs", cronJobs); }, [cronJobs]);
+  useEffect(() => {
+    if (!selectedDNSDomain && domains[0]?.domainName) setSelectedDNSDomain(domains[0].domainName);
+    if (!selectedSubDomain && domains[0]?.domainName) setSelectedSubDomain(domains[0].domainName);
+  }, [domains, selectedDNSDomain, selectedSubDomain]);
 
   // Terminal scroll helper
   useEffect(() => {
@@ -294,24 +300,37 @@ export default function TPanelExtraManager({ activeTab, domains, setDomains, add
   };
 
   // Subdomain generation
-  const handleCreateSubdomain = (e: FormEvent) => {
+  const handleCreateSubdomain = async (e: FormEvent) => {
     e.preventDefault();
-    if (!newSubdomainPrefix.trim()) return;
-    const fullSubName = `${newSubdomainPrefix.toLowerCase()}.${selectedSubDomain}`;
-    // Register as a separate Domain Item
-    const newItem: DomainItem = {
-      id: "dom-" + Math.random().toString(36).substr(2, 9),
-      domainName: fullSubName,
-      documentRoot: `/public_html/${newSubdomainPrefix.toLowerCase()}`,
-      sslActive: false,
-      sslType: "None",
-      dnsRecords: [
-        { id: "dns-1", type: "A", name: "@", value: "164.92.210.82", ttl: 14400 }
-      ]
-    };
-    setDomains(prev => [...prev, newItem]);
-    addActivity("domain", `Subdomain routing created for ${fullSubName}`);
-    setNewSubdomainPrefix("");
+    const prefix = newSubdomainPrefix.trim().toLowerCase().replace(/[^a-z0-9-]/g, "");
+    if (!prefix || !selectedSubDomain) return;
+    setIsCreatingSubdomain(true);
+    setSubdomainStatus("Creating Nginx route, document root, DNS plan, and Auto SSL queue...");
+    try {
+      const saved = JSON.parse(localStorage.getItem("tpanel_auth") || "null");
+      const response = await fetch("/api/user/subdomains", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${saved?.token || ""}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ prefix, parentDomain: selectedSubDomain })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.ok || !data.domain) {
+        throw new Error(data.message || "Subdomain provisioning failed.");
+      }
+      const newItem = data.domain as DomainItem;
+      setDomains(prev => [newItem, ...prev.filter((dom) => dom.domainName !== newItem.domainName)]);
+      addActivity("domain", `Subdomain ${newItem.domainName} now serves files from ${newItem.documentRoot}`);
+      setSubdomainStatus(`${newItem.domainName} is mapped to ${newItem.documentRoot}. Auto SSL is queued and will activate when DNS resolves.`);
+      setNewSubdomainPrefix("");
+    } catch (error: any) {
+      setSubdomainStatus(error.message || "Subdomain provisioning failed.");
+      addActivity("domain", `Subdomain creation failed for ${prefix}.${selectedSubDomain}`);
+    } finally {
+      setIsCreatingSubdomain(false);
+    }
   };
 
   // Forwarder Adding
@@ -1006,11 +1025,18 @@ export default function TPanelExtraManager({ activeTab, domains, setDomains, add
               </div>
               <button
                 type="submit"
-                className="bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs px-4 py-2.5 rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer"
+                disabled={isCreatingSubdomain}
+                className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 disabled:cursor-not-allowed text-white font-semibold text-xs px-4 py-2.5 rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer"
               >
-                <Plus className="w-4 h-4" /> Deploy Subdomain
+                <Plus className="w-4 h-4" /> {isCreatingSubdomain ? "Deploying..." : "Deploy Subdomain"}
               </button>
             </form>
+
+            {subdomainStatus && (
+              <div className="mb-6 rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-xs font-semibold text-slate-300">
+                {subdomainStatus}
+              </div>
+            )}
 
             <div className="bg-slate-950 border border-slate-700 rounded-xl p-5">
               <h3 className="text-sm font-semibold text-slate-100 mb-3">Host routing directory table</h3>

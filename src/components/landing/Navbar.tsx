@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Lock } from 'lucide-react';
+import BrandLogo from '../BrandLogo';
 
 export default function Navbar() {
   const navigate = useNavigate();
@@ -20,10 +20,7 @@ export default function Navbar() {
             className="flex items-center gap-2 cursor-pointer" 
             onClick={() => navigate('/')}
           >
-            <div className="w-7 h-7 bg-blue-600 rounded flex items-center justify-center text-white font-bold text-sm">
-              T
-            </div>
-            <span className="text-sm font-bold text-gray-900 tracking-tight text-balance">Tiwlo <span className="text-blue-600">Cloud</span></span>
+            <BrandLogo className="h-9 w-28" />
           </div>
 
           <div className="hidden md:flex items-center gap-6">

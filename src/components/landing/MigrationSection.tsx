@@ -16,7 +16,7 @@ export default function MigrationSection() {
             <h2 className="text-3xl font-bold tracking-tight mb-6">Switch to Professional Hosting with Zero Downtime</h2>
             <p className="text-blue-100 font-medium mb-8 leading-relaxed max-w-md text-sm">
               Tired of slow support and lagging servers? Our migration specialists will move your entire 
-              infrastructure—including WHM, cPanel, and local data—completely free of charge.
+              infrastructure, hosting accounts, and local data completely free of charge.
             </p>
             <button className="px-6 py-3 bg-white text-blue-600 rounded font-bold text-sm hover:bg-blue-50 transition-all flex items-center gap-2">
               Request Free Migration <MoveRight className="h-4 w-4" />

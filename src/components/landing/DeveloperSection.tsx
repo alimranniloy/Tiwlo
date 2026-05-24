@@ -29,7 +29,7 @@ export default function DeveloperSection() {
                  </div>
                  <div>
                     <h4 className="text-sm font-bold text-gray-900 mb-1">Robust REST API</h4>
-                    <p className="text-xs text-gray-500 font-medium leading-relaxed">Everything you can do in the dashboard is available via our API. Perfect for custom WHM flows.</p>
+                    <p className="text-xs text-gray-500 font-medium leading-relaxed">Everything you can do in the dashboard is available via our API. Perfect for custom hosting workflows.</p>
                  </div>
               </div>
               <div className="flex gap-4">

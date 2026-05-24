@@ -16,7 +16,7 @@ import { createSystemServerWithApi, notifyDataRefresh } from '../../lib/tiwloApi
 const SERVER_TYPES = [
   { id: 'ubuntu', name: 'Ubuntu / Linux', description: 'Bare metal or virtual Linux instance', icon: Terminal, color: 'bg-orange-500' },
   { id: 'cpanel', name: 'cPanel', description: 'Web hosting control panel', icon: Globe, color: 'bg-orange-600' },
-  { id: 'whm', name: 'WHM', description: 'Web Host Manager access', icon: Shield, color: 'bg-blue-600' },
+  { id: 'hosting-panel', name: 'Hosting Panel', description: 'Server control panel access', icon: Shield, color: 'bg-blue-600' },
   { id: 'virtualizor', name: 'Virtualizor', description: 'VPS Control Panel', icon: Cpu, color: 'bg-indigo-600' },
   { id: 'plesk', name: 'Plesk', description: 'Windows/Linux Control Panel', icon: Database, color: 'bg-blue-400' },
 ];
@@ -150,7 +150,7 @@ export default function AddSystemServer() {
                     type="text" 
                     value={formData.port}
                     onChange={(e) => setFormData({ ...formData, port: e.target.value })}
-                    placeholder={selectedType === 'cpanel' ? '2083' : selectedType === 'whm' ? '2087' : '22'}
+                    placeholder={selectedType === 'cpanel' ? '2083' : selectedType === 'hosting-panel' ? '2087' : '22'}
                     className="w-full bg-[#f8f9fa] border border-[#e5e8ed] rounded px-4 py-2.5 text-[14px] focus:outline-none focus:border-[#0069ff]"
                   />
                 </div>
@@ -221,7 +221,7 @@ export default function AddSystemServer() {
           <div className="bg-white border border-[#e5e8ed] rounded-lg p-6">
             <h3 className="font-bold text-[#2e3d49] text-[14px] uppercase tracking-wide mb-4">Supported Panels</h3>
             <div className="flex flex-wrap gap-2">
-               {['cPanel 110+', 'WHM 110+', 'Ubuntu 20.04+', 'CentOS 7+', 'Virtualizor 3.0+'].map(v => (
+               {['cPanel 110+', 'Hosting Panel 110+', 'Ubuntu 20.04+', 'CentOS 7+', 'Virtualizor 3.0+'].map(v => (
                  <span key={v} className="text-[11px] font-bold text-gray-500 bg-gray-100 px-2 py-1 rounded">{v}</span>
                ))}
             </div>

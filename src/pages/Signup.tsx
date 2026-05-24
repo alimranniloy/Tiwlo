@@ -3,6 +3,7 @@ import { Mail, Lock, User, UserPlus, ShieldCheck, AlertCircle } from 'lucide-rea
 import { Link } from 'react-router-dom';
 import { User as UserType } from '../types';
 import { signupWithApi } from '../lib/tiwloApi';
+import BrandLogo from '../components/BrandLogo';
 
 interface SignupProps {
   onSignup: (user: UserType) => void;
@@ -34,13 +35,14 @@ export default function SignupPage({ onSignup }: SignupProps) {
     <div className="min-h-screen bg-[#f3f5f9] flex flex-col items-center justify-center p-4 md:p-6">
       <div className="w-full max-w-md space-y-6 md:space-y-8">
         <div className="flex flex-col items-center gap-3">
-          <div 
+          <button
+            type="button"
             onClick={() => window.location.href = '/'}
-            className="w-12 h-12 bg-gray-900 rounded-sm flex items-center justify-center text-white font-black text-2xl italic cursor-pointer shadow-xl shadow-gray-200"
+            className="cursor-pointer"
+            aria-label="Go to Tiwlo home"
           >
-             T
-          </div>
-          <h1 className="text-2xl font-black tracking-tight text-gray-900 uppercase">Tiwlo Cloud</h1>
+             <BrandLogo className="h-14 w-40" />
+          </button>
         </div>
 
         <div className="bg-white p-10 rounded-sm border border-gray-100 shadow-2xl shadow-gray-100 relative overflow-hidden">

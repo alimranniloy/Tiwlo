@@ -131,7 +131,7 @@ export default function Sidebar({
       {/* Mobile Top Navigation Ribbon - relative to scroll up organically with content */}
       <div className="lg:hidden bg-slate-900 border-b border-slate-800 px-4 py-3 flex items-center justify-between relative z-50 transition-all">
         <div className="flex items-center gap-2">
-          <BrandLogo compact className="h-9 w-9 border border-slate-700" />
+          <BrandLogo compact className="h-9 w-9" />
           <div>
             <h1 className="text-sm font-black tracking-wider text-slate-100 leading-none">tPanel</h1>
             <p className="text-[9px] text-slate-500 font-bold mt-0.5 uppercase">Console v3.2</p>
@@ -163,7 +163,7 @@ export default function Sidebar({
         <div className="flex flex-col h-full overflow-hidden">
           {/* Logo / Header (Desktop only) */}
           <div className="hidden lg:flex items-center gap-3 border-b border-slate-800 pb-4 mb-4 shrink-0 px-2">
-            <BrandLogo className="h-12 w-40 border border-slate-700 shadow-[0_12px_35px_rgba(0,105,255,0.14)]" />
+            <BrandLogo variant="dark" className="h-12 w-40" />
             <div className="sr-only">
               <h1>tPanel Pro</h1>
               <p className="text-[10px] text-emerald-500 font-medium flex items-center gap-1.5 mt-0.5">

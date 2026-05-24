@@ -9,7 +9,7 @@ const json = (value, fallback) => JSON.stringify(value ?? fallback);
 const number = (value, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback;
 const integer = (value, fallback = 0) => Number.isFinite(Number(value)) ? Math.floor(Number(value)) : fallback;
 const text = (value, fallback = '') => String(value ?? fallback).trim();
-const remoteWhmPanels = new Set(['whm', 'cpanel']);
+const remoteWhmPanels = new Set(['whm', 'hosting-panel', 'cpanel']);
 
 const normalizeRows = (rows) => toApi(rows || []);
 const first = (rows) => normalizeRows(rows)[0] || null;
@@ -506,7 +506,7 @@ export const createProvisioningOrder = async (ctx, input) => {
   }
 
   const provisioning = {
-    action: module === 'whm' || module === 'cpanel' ? 'createacct' : 'provision',
+    action: module === 'whm' || module === 'hosting-panel' || module === 'cpanel' ? 'createacct' : 'provision',
     panel: module,
     accountType,
     automation: shouldAttemptRemote ? 'remote_whm_api' : 'queued',

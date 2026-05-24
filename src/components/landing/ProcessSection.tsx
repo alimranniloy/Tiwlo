@@ -4,7 +4,7 @@ export default function ProcessSection() {
   const steps = [
     { n: '01', title: 'Pick a Plan', desc: 'Choose the hosting or ISP tier that fits your scale.' },
     { n: '02', title: 'Instance Launch', desc: 'Our automated system deploys your nodes in seconds.' },
-    { n: '03', title: 'Global Sync', desc: 'Integrate your WHM or ISP billing with our central hub.' },
+    { n: '03', title: 'Global Sync', desc: 'Integrate your hosting panel or ISP billing with our central hub.' },
     { n: '04', title: 'Go Live', desc: 'Accept payments and manage users from one professional dashboard.' }
   ];
 

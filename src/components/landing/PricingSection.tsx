@@ -11,7 +11,7 @@ export default function PricingSection() {
     {
       name: 'Professional',
       price: '$49',
-      features: ['1000 ISP Subscribers', '5 Cloud Servers', 'Dedicated WHM', 'Priority 24/7 Support'],
+      features: ['1000 ISP Subscribers', '5 Cloud Servers', 'Dedicated hosting panel', 'Priority 24/7 Support'],
       popular: true
     },
     {

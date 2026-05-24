@@ -1,4 +1,5 @@
 import React from 'react';
+import BrandLogo from '../BrandLogo';
 
 export default function Footer() {
   return (
@@ -7,10 +8,7 @@ export default function Footer() {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-12 mb-24">
           <div className="col-span-2 md:col-span-1">
             <div className="flex items-center gap-3 mb-6">
-              <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center text-white font-bold">
-                T
-              </div>
-              <span className="text-xl font-bold tracking-tight text-gray-900">Tiwlo</span>
+              <BrandLogo className="h-12 w-36" />
             </div>
             <p className="text-gray-500 text-sm font-medium leading-relaxed max-w-xs">
               Reliable infrastructure and management tools for modern businesses and ISP owners worldwide.

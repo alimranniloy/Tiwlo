@@ -36,8 +36,8 @@ import {
 } from '../../../lib/tiwloApi';
 import { useActionConfirmation } from '../../../components/ActionConfirmation';
 
-const panels = ['whm', 'cpanel', 'plesk', 'virtualizor', 'directadmin', 'droplet'];
-const modules = ['whm', 'cpanel', 'droplet', 'plesk', 'directadmin'];
+const panels = ['hosting-panel', 'cpanel', 'plesk', 'virtualizor', 'directadmin', 'droplet'];
+const modules = ['hosting-panel', 'cpanel', 'droplet', 'plesk', 'directadmin'];
 const accountTypes = ['shared', 'reseller', 'vps', 'dedicated'];
 const intervals = ['month', 'quarter', 'year', 'one_time'];
 
@@ -46,7 +46,7 @@ const blankNode = {
   name: '',
   hostname: '',
   ip: '',
-  panel: 'whm',
+  panel: 'hosting-panel',
   port: '2087',
   username: 'root',
   apiToken: '',
@@ -74,7 +74,7 @@ const blankProduct = {
   nodeId: '',
   code: '',
   name: '',
-  module: 'whm',
+  module: 'hosting-panel',
   accountType: 'shared',
   status: 'active',
   price: '0',
@@ -347,8 +347,8 @@ export default function WhmHostingModule() {
   const openPackage = async (pkg?: any) => {
     if (pkg) {
       const confirmed = await confirmEdit({
-        title: 'Edit WHM package?',
-        message: 'Are you sure you want to edit this WHM package?',
+        title: 'Edit hosting package?',
+        message: 'Are you sure you want to edit this hosting package?',
         resourceName: pkg.name
       });
       if (!confirmed) return;
@@ -458,7 +458,7 @@ export default function WhmHostingModule() {
         limits: limitsFrom(productForm),
         serverConfig: {
           whmPackageName: productForm.whmPackageName || productForm.code,
-          createMode: productForm.module === 'whm' || productForm.module === 'cpanel' ? 'createacct' : 'provision',
+          createMode: productForm.module === 'hosting-panel' || productForm.module === 'cpanel' ? 'createacct' : 'provision',
           reseller: productForm.accountType === 'reseller'
         },
         welcomeEmail: { template: 'hosting-welcome', includeCredentials: true }
@@ -512,7 +512,7 @@ export default function WhmHostingModule() {
         hostname: orderForm.hostname || orderForm.domain,
         username: orderForm.username,
         password: orderForm.password,
-        module: product?.module || 'whm',
+        module: product?.module || 'hosting-panel',
         accountType: pkg?.accountType || product?.accountType || 'shared',
         amount: Number(orderForm.amount || product?.price || pkg?.pricing?.monthly || 0),
         currency: orderForm.currency,
@@ -562,8 +562,8 @@ export default function WhmHostingModule() {
     <div className="space-y-6 pb-12">
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-[#2e3d49]">WHM / cPanel Hosting Module</h1>
-          <p className="mt-1 text-[13px] text-[#4a4a4a]">Compute nodes, hosting products, WHM packages, and account provisioning.</p>
+          <h1 className="text-2xl font-bold tracking-tight text-[#2e3d49]">Hosting Account Module</h1>
+          <p className="mt-1 text-[13px] text-[#4a4a4a]">Compute nodes, hosting products, package plans, and account provisioning.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button onClick={loadAll} className="inline-flex items-center gap-2 rounded border border-gray-200 bg-white px-4 py-2 text-[13px] font-bold text-gray-700 hover:bg-gray-50">
@@ -586,7 +586,7 @@ export default function WhmHostingModule() {
         {[
           { label: 'Compute Nodes', value: activeNodes.length, icon: Server },
           { label: 'Hosting Products', value: products.length, icon: Package },
-          { label: 'WHM Packages', value: packages.length, icon: Layers },
+          { label: 'Hosting Packages', value: packages.length, icon: Layers },
           { label: 'Provisioned Orders', value: orders.length, icon: CheckCircle2 }
         ].map((stat) => (
           <div key={stat.label} className="rounded border border-gray-200 bg-white p-5">
@@ -698,7 +698,7 @@ export default function WhmHostingModule() {
               <Plus className="h-4 w-4" /> Product Name
             </button>
             <button onClick={() => openPackage()} className="inline-flex items-center gap-2 rounded bg-[#2e3d49] px-4 py-2 text-xs font-bold text-white hover:bg-black">
-              <Plus className="h-4 w-4" /> WHM Package
+              <Plus className="h-4 w-4" /> Hosting Package
             </button>
           </div>
 
@@ -764,11 +764,11 @@ export default function WhmHostingModule() {
 
           <div className="rounded border border-gray-200 bg-white">
             <div className="border-b border-gray-200 bg-gray-50 px-4 py-3">
-              <h2 className="text-xs font-bold uppercase tracking-wider text-[#2e3d49]">WHM Packages</h2>
+              <h2 className="text-xs font-bold uppercase tracking-wider text-[#2e3d49]">Hosting Packages</h2>
             </div>
             <div className="grid grid-cols-1 gap-4 p-4 md:grid-cols-2 xl:grid-cols-3">
               {packages.length === 0 ? (
-                <div className="text-sm font-bold text-gray-400">No WHM packages.</div>
+                <div className="text-sm font-bold text-gray-400">No hosting packages.</div>
               ) : packages.map((pkg) => (
                 <button key={pkg.id} onClick={() => openPackage(pkg)} className="rounded border border-gray-200 p-4 text-left hover:border-blue-300 hover:bg-blue-50/30">
                   <p className="text-sm font-bold text-[#2e3d49]">{pkg.name}</p>
@@ -829,10 +829,10 @@ export default function WhmHostingModule() {
       {modal === 'node' && (
         <Modal title={nodeForm.id ? 'Edit Compute Node' : 'Add Compute Node'} onClose={() => setModal(null)}>
           <form onSubmit={saveNode} className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <FormInput required label="Server Name" value={nodeForm.name} onChange={(value) => setNodeForm({ ...nodeForm, name: value })} placeholder="WHM Node 01" />
+            <FormInput required label="Server Name" value={nodeForm.name} onChange={(value) => setNodeForm({ ...nodeForm, name: value })} placeholder="Hosting Node 01" />
             <FormInput required label="Hostname" value={nodeForm.hostname} onChange={(value) => setNodeForm({ ...nodeForm, hostname: value })} placeholder="server.example.com" />
             <FormInput required label="IP Address" value={nodeForm.ip} onChange={(value) => setNodeForm({ ...nodeForm, ip: value })} placeholder="192.0.2.10" />
-            <FormSelect label="Panel / Module" value={nodeForm.panel} onChange={(value) => setNodeForm({ ...nodeForm, panel: value, port: value === 'whm' ? '2087' : value === 'cpanel' ? '2083' : nodeForm.port })} options={panels.map((item) => ({ value: item, label: item.toUpperCase() }))} />
+            <FormSelect label="Panel / Module" value={nodeForm.panel} onChange={(value) => setNodeForm({ ...nodeForm, panel: value, port: value === 'hosting-panel' ? '2087' : value === 'cpanel' ? '2083' : nodeForm.port })} options={panels.map((item) => ({ value: item, label: item === 'hosting-panel' ? 'Hosting Panel' : item.toUpperCase() }))} />
             <FormInput label="Port" value={nodeForm.port} onChange={(value) => setNodeForm({ ...nodeForm, port: value })} type="number" />
             <FormInput required label="Username" value={nodeForm.username} onChange={(value) => setNodeForm({ ...nodeForm, username: value })} />
             <FormInput label="API Token" value={nodeForm.apiToken} onChange={(value) => setNodeForm({ ...nodeForm, apiToken: value })} type="password" />
@@ -880,7 +880,7 @@ export default function WhmHostingModule() {
             <FormInput label="Monthly Price" value={productForm.price} onChange={(value) => setProductForm({ ...productForm, price: value })} type="number" />
             <FormInput label="Setup Fee" value={productForm.setupFee} onChange={(value) => setProductForm({ ...productForm, setupFee: value })} type="number" />
             <FormSelect label="Billing Cycle" value={productForm.interval} onChange={(value) => setProductForm({ ...productForm, interval: value })} options={intervals.map((item) => ({ value: item, label: item }))} />
-            <FormInput label="WHM Package Name" value={productForm.whmPackageName} onChange={(value) => setProductForm({ ...productForm, whmPackageName: value })} />
+            <FormInput label="Hosting Package Name" value={productForm.whmPackageName} onChange={(value) => setProductForm({ ...productForm, whmPackageName: value })} />
             <FormInput label="CPU Cores" value={productForm.cpu} onChange={(value) => setProductForm({ ...productForm, cpu: value })} type="number" />
             <FormInput label="RAM MB" value={productForm.ramMb} onChange={(value) => setProductForm({ ...productForm, ramMb: value })} type="number" />
             <FormInput label="SSD GB" value={productForm.diskGb} onChange={(value) => setProductForm({ ...productForm, diskGb: value })} type="number" />
@@ -894,14 +894,14 @@ export default function WhmHostingModule() {
       )}
 
       {modal === 'package' && (
-        <Modal title={packageForm.id ? 'Edit WHM Package' : 'New WHM Package'} onClose={() => setModal(null)}>
+        <Modal title={packageForm.id ? 'Edit Hosting Package' : 'New Hosting Package'} onClose={() => setModal(null)}>
           <form onSubmit={savePackage} className="grid grid-cols-1 gap-4 md:grid-cols-3">
             <FormSelect label="Product" value={packageForm.productId} onChange={(value) => setPackageForm({ ...packageForm, productId: value })} options={productOptions} />
             <FormSelect label="Server" value={packageForm.nodeId} onChange={(value) => setPackageForm({ ...packageForm, nodeId: value })} options={nodeOptions} />
             <FormSelect label="Account Type" value={packageForm.accountType} onChange={(value) => setPackageForm({ ...packageForm, accountType: value })} options={accountTypes.map((item) => ({ value: item, label: item }))} />
             <FormSelect label="Package Status" value={packageForm.status} onChange={(value) => setPackageForm({ ...packageForm, status: value })} options={['active', 'hidden', 'archived'].map((item) => ({ value: item, label: item }))} />
             <FormInput required label="Package Name" value={packageForm.name} onChange={(value) => setPackageForm({ ...packageForm, name: value })} />
-            <FormInput required label="WHM Package Name" value={packageForm.whmPackageName} onChange={(value) => setPackageForm({ ...packageForm, whmPackageName: value })} />
+            <FormInput required label="Hosting Package Name" value={packageForm.whmPackageName} onChange={(value) => setPackageForm({ ...packageForm, whmPackageName: value })} />
             <FormInput label="Monthly Price" value={packageForm.price} onChange={(value) => setPackageForm({ ...packageForm, price: value })} type="number" />
             <FormInput label="CPU Cores" value={packageForm.cpu} onChange={(value) => setPackageForm({ ...packageForm, cpu: value })} type="number" />
             <FormInput label="RAM MB" value={packageForm.ramMb} onChange={(value) => setPackageForm({ ...packageForm, ramMb: value })} type="number" />

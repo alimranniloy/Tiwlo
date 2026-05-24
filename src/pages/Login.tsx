@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom';
 import { User } from '../types';
 import GlobalLoader from '../components/GlobalLoader';
 import { loginWithApi } from '../lib/tiwloApi';
+import BrandLogo from '../components/BrandLogo';
 
 interface LoginProps {
   onLogin: (user: User) => void;
@@ -42,13 +43,14 @@ export default function LoginPage({ onLogin }: LoginProps) {
 
       <div className="w-full max-w-sm space-y-8">
         <div className="flex flex-col items-center gap-3">
-          <div 
+          <button
+            type="button"
             onClick={() => window.location.href = '/'}
-            className="w-12 h-12 bg-gray-900 rounded-sm flex items-center justify-center text-white font-black text-2xl italic cursor-pointer shadow-xl shadow-gray-200"
+            className="cursor-pointer"
+            aria-label="Go to Tiwlo home"
           >
-             T
-          </div>
-          <h1 className="text-2xl font-black tracking-tight text-gray-900 uppercase">Tiwlo Cloud</h1>
+             <BrandLogo className="h-14 w-40" />
+          </button>
         </div>
 
         <div className="bg-white p-10 rounded-sm border border-gray-100 shadow-2xl shadow-gray-100">

@@ -39,7 +39,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
       {/* Refined Login Container - DigitalOcean Style */}
       <div className="w-full max-w-[400px] mb-8">
         <div className="flex justify-center mb-8">
-           <BrandLogo className="h-16 w-52 border border-slate-200 shadow-[0_18px_45px_rgba(0,105,255,0.18)]" />
+           <BrandLogo variant="dark" className="h-16 w-52" />
         </div>
 
         <div className="bg-slate-900 rounded-lg shadow-[0_2px_10px_rgba(0,0,0,0.05)] border border-slate-700 overflow-hidden">

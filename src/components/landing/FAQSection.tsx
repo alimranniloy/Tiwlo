@@ -5,15 +5,15 @@ export default function FAQSection() {
   const faqs = [
     {
       q: "What is included in the Cloud Server package?",
-      a: "Our cloud servers include root access, CloudLinux OS, daily backups, and a choice of cPanel or WHM control panels. All nodes are protected by enterprise-grade DDoS mitigation."
+      a: "Our cloud servers include root access, Linux hosting tools, daily backups, DNS, SSL, and managed control panel options. All nodes are protected by enterprise-grade DDoS mitigation."
     },
     {
       q: "How does the ISP Billing automation work?",
       a: "The system integrates via Radius API to monitor bandwidth. It automatically generates invoices and can suspend/resume accounts based on payment status without manual intervention."
     },
     {
-      q: "Can I migrate my existing WHMCS data?",
-      a: "Yes, we provide full migration support for WHMCS databases and cPanel accounts. Our technical team ensures zero downtime during the transfer."
+      q: "Can I migrate my existing billing and hosting data?",
+      a: "Yes, we provide full migration support for billing databases, hosting accounts, files, and domains. Our technical team keeps the transfer clean and downtime-aware."
     },
     {
       q: "Do you offer localized payment gateways?",
