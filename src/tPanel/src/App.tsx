@@ -303,6 +303,7 @@ export default function App() {
   const [activities, setActivities] = useState<RecentActivity[]>(() => getPersistedState("activities", []));
   const [serverFilesReady, setServerFilesReady] = useState(false);
   const skipNextServerFileWrite = useRef(false);
+  const reconciledSubdomains = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     let mounted = true;
@@ -377,6 +378,36 @@ export default function App() {
     if (!isLoggedIn || isAdmin || !currentAccount) return;
     setDomains((current) => mergeAccountDomains(current, currentAccount));
   }, [currentAccount?.domain, currentAccount?.username, currentAccount?.provisioning?.ssl?.status, currentAccount?.provisioning?.vhost?.subdomains, isAdmin, isLoggedIn]);
+
+  useEffect(() => {
+    if (!isLoggedIn || isAdmin || !currentAccount?.domain || !domains.length) return;
+    const known = new Set((currentAccount.provisioning?.vhost?.subdomains || []).map((route: any) => route.domain));
+    const suffix = `.${currentAccount.domain}`;
+    const candidates = domains
+      .filter((domain) => domain.domainName.endsWith(suffix))
+      .filter((domain) => domain.domainName !== currentAccount.domain)
+      .filter((domain) => !known.has(domain.domainName))
+      .filter((domain) => !reconciledSubdomains.current.has(domain.domainName))
+      .slice(0, 5);
+    if (!candidates.length) return;
+    const saved = JSON.parse(localStorage.getItem("tpanel_auth") || "null");
+    if (!saved?.token) return;
+    candidates.forEach((domain) => {
+      const prefix = domain.domainName.slice(0, -suffix.length);
+      if (!prefix || prefix.includes(".")) return;
+      reconciledSubdomains.current.add(domain.domainName);
+      fetch("/api/user/subdomains", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${saved.token}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ prefix, parentDomain: currentAccount.domain })
+      }).catch(() => {
+        reconciledSubdomains.current.delete(domain.domainName);
+      });
+    });
+  }, [currentAccount?.domain, currentAccount?.username, currentAccount?.provisioning?.vhost?.subdomains, domains, isAdmin, isLoggedIn]);
 
   useEffect(() => {
     if (!isLoggedIn || isAdmin || !currentAccount) {
