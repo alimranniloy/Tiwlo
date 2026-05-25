@@ -1,4 +1,4 @@
-import { requireAuth } from '../../core/auth.js';
+import { requireAdmin, requireAuth } from '../../core/auth.js';
 import * as service from './service.js';
 
 export const settingResolvers = {
@@ -9,6 +9,10 @@ export const settingResolvers = {
     }
   },
   Mutation: {
-    upsertSetting: (_, { input }, ctx) => service.upsertSetting(ctx, input)
+    upsertSetting: (_, { input }, ctx) => service.upsertSetting(ctx, input),
+    testSystemEmail: async (_, { input }, ctx) => {
+      await requireAdmin(ctx);
+      return service.testSystemEmail(ctx, input);
+    }
   }
 };

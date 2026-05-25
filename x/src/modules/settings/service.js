@@ -3,6 +3,7 @@ import { AppError } from '../../core/errors.js';
 import { isReadonlySetting } from '../../core/settings.js';
 import { toApi } from '../../core/format.js';
 import { writeAudit } from '../../core/audit.js';
+import { testTiwloEmail } from '../../core/email.js';
 
 const ensureCanWriteSetting = async (ctx, actor, input) => {
   if (isReadonlySetting(input.scope, input.key)) {
@@ -40,4 +41,14 @@ export const upsertSetting = async (ctx, input) => {
   });
   await writeAudit(ctx, 'upsert_setting', 'systemSetting', setting.id, { key: input.key, scope: input.scope });
   return toApi(setting);
+};
+
+export const testSystemEmail = async (ctx, input) => {
+  const result = await testTiwloEmail(ctx, input || {});
+  await writeAudit(ctx, 'test_system_email', 'systemSetting', 'systemEmail', {
+    ok: result.ok,
+    to: input?.to || input?.recipient,
+    host: input?.config?.host || input?.host
+  });
+  return result;
 };

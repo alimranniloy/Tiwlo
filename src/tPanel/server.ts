@@ -64,6 +64,7 @@ const REQUIRED_PORTS = [
   { port: 25, protocol: "tcp", service: "SMTP", purpose: "mail delivery", public: true },
   { port: 53, protocol: "tcp/udp", service: "DNS", purpose: "authoritative DNS", public: true },
   { port: 80, protocol: "tcp", service: "HTTP", purpose: "websites and SSL challenge", public: true },
+  { port: 110, protocol: "tcp", service: "POP3", purpose: "mailbox access", public: true },
   { port: 143, protocol: "tcp", service: "IMAP", purpose: "mailbox access", public: true },
   { port: 443, protocol: "tcp", service: "HTTPS", purpose: "secure websites and panel URL", public: true },
   { port: 465, protocol: "tcp", service: "SMTPS", purpose: "secure SMTP", public: true },
@@ -80,16 +81,19 @@ const HOSTING_STACK_PACKAGES = {
   apt: [
     "nginx", "certbot", "python3-certbot-nginx", "php-fpm", "php-cli", "php-mysql", "php-curl", "php-zip", "php-mbstring",
     "php-xml", "php-gd", "php-intl", "php-bcmath", "php-soap", "php-opcache", "mariadb-server", "bind9", "dnsutils",
+    "postfix", "dovecot-core", "dovecot-imapd", "dovecot-pop3d", "opendkim", "opendkim-tools", "rspamd", "mailutils", "libsasl2-modules",
     "unzip", "tar", "rsync", "logrotate", "cron", "acl"
   ],
   dnf: [
     "nginx", "certbot", "python3-certbot-nginx", "php-fpm", "php-cli", "php-mysqlnd", "php-curl", "php-zip", "php-mbstring",
     "php-xml", "php-gd", "php-intl", "php-bcmath", "php-soap", "php-opcache", "mariadb-server", "bind", "bind-utils",
+    "postfix", "dovecot", "opendkim", "opendkim-tools", "rspamd", "mailx", "cyrus-sasl", "cyrus-sasl-plain",
     "unzip", "tar", "rsync", "logrotate", "cronie", "acl"
   ],
   yum: [
     "nginx", "certbot", "python3-certbot-nginx", "php-fpm", "php-cli", "php-mysqlnd", "php-curl", "php-zip", "php-mbstring",
     "php-xml", "php-gd", "php-intl", "php-bcmath", "php-soap", "php-opcache", "mariadb-server", "bind", "bind-utils",
+    "postfix", "dovecot", "opendkim", "opendkim-tools", "rspamd", "mailx", "cyrus-sasl", "cyrus-sasl-plain",
     "unzip", "tar", "rsync", "logrotate", "cronie", "acl"
   ]
 };
@@ -100,6 +104,7 @@ const HOSTING_STACK_CHECKS = [
   { id: "php", label: "PHP Runtime", command: "php", services: ["php*-fpm"], packageNames: { apt: "php-fpm", dnf: "php-fpm", yum: "php-fpm" } },
   { id: "mysql", label: "MariaDB/MySQL", command: "mysql", services: ["mariadb", "mysql"], packageNames: { apt: "mariadb-server", dnf: "mariadb-server", yum: "mariadb-server" } },
   { id: "dns", label: "DNS Tools", command: "dig", services: ["bind9", "named"], packageNames: { apt: "dnsutils", dnf: "bind-utils", yum: "bind-utils" } },
+  { id: "mail", label: "Mail Stack", command: "postfix", services: ["postfix", "dovecot"], packageNames: { apt: "postfix", dnf: "postfix", yum: "postfix" } },
   { id: "node", label: "Node.js Runtime", command: "node", services: [], packageNames: { apt: "nodejs", dnf: "nodejs", yum: "nodejs" } }
 ];
 
@@ -1481,7 +1486,7 @@ app.post("/api/panel/hosting-stack/install", requireCapability("software"), asyn
     ? `export DEBIAN_FRONTEND=noninteractive; apt-get update -y && apt-get install -y ${quoted}`
     : `${manager} install -y ${quoted}`;
   try {
-    const { stdout, stderr } = await execFileAsync("sh", ["-lc", `${installCommand}; systemctl enable --now nginx >/dev/null 2>&1 || true; systemctl enable --now mariadb >/dev/null 2>&1 || systemctl enable --now mysql >/dev/null 2>&1 || true; for svc in $(systemctl list-unit-files --type=service 'php*-fpm.service' 2>/dev/null | awk '/php.*-fpm\\.service/ {print $1}'); do systemctl enable --now "$svc" >/dev/null 2>&1 || true; done`], { timeout: 900000 });
+    const { stdout, stderr } = await execFileAsync("sh", ["-lc", `${installCommand}; systemctl enable --now nginx >/dev/null 2>&1 || true; systemctl enable --now mariadb >/dev/null 2>&1 || systemctl enable --now mysql >/dev/null 2>&1 || true; systemctl enable --now postfix >/dev/null 2>&1 || true; systemctl enable --now dovecot >/dev/null 2>&1 || true; systemctl enable --now opendkim >/dev/null 2>&1 || true; systemctl enable --now rspamd >/dev/null 2>&1 || true; for svc in $(systemctl list-unit-files --type=service 'php*-fpm.service' 2>/dev/null | awk '/php.*-fpm\\.service/ {print $1}'); do systemctl enable --now "$svc" >/dev/null 2>&1 || true; done`], { timeout: 900000 });
     res.json({ ok: true, packages, output: `${stdout || ""}${stderr || ""}`.trim(), stack: await hostingStackStatus() });
   } catch (error: any) {
     res.status(500).json({ ok: false, packages, message: error.message || "Package installation failed.", output: `${error.stdout || ""}${error.stderr || ""}`.trim() });

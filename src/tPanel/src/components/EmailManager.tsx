@@ -40,9 +40,10 @@ export default function EmailManager({ emails, setEmails, domains, addActivity }
   // Create accounts form
   const [emailPrefix, setEmailPrefix] = useState("");
   const [emailDomain, setEmailDomain] = useState(domains[0]?.domainName || "");
+  const [emailPassword, setEmailPassword] = useState("");
   const [emailQuota, setEmailQuota] = useState(1024); // 1GB
 
-  // Webmail state
+  // Mailbox state
   const [viewingMailId, setViewingMailId] = useState<string | null>(null);
   const [sidebarTab, setSidebarTab] = useState<"inbox" | "starred" | "sent" | "trash" | "drafts">("inbox");
   const [isComposing, setIsComposing] = useState(false);
@@ -84,28 +85,33 @@ export default function EmailManager({ emails, setEmails, domains, addActivity }
 
   const handleCreateEmail = (e: FormEvent) => {
     e.preventDefault();
-    if (!emailPrefix.trim() || !emailDomain) return;
+    if (!emailPrefix.trim() || !emailDomain || !emailPassword.trim()) return;
 
     const sanitizedPrefix = emailPrefix.trim().toLowerCase().replace(/[^a-z0-9._-]/g, "");
     const fullAddress = `${sanitizedPrefix}@${emailDomain}`;
 
     if (emails.some(acc => acc.address === fullAddress)) {
-      alert("Mailbox identity already occupies this namespace.");
+      alert("Mailbox already exists.");
       return;
     }
+    const hostName = `mail.${emailDomain}`;
+    const portalHost = `email.${emailDomain}`;
 
     const newAccount: EmailAccount = {
       id: "email-" + Math.random().toString(36).substr(2, 9),
       address: fullAddress,
+      password: emailPassword,
+      hostName,
+      portalHost,
       quotaMB: Number(emailQuota),
       usageMB: 0.1,
       mails: [
         {
           id: "mail-welcome",
-          from: "tPanel Mail Core <security@tpanel.pro>",
+          from: "Tiwlo Mail <noreply@tiwlo.com>",
           to: fullAddress,
-          subject: "Identity Provisioning: Mailbox Activated",
-          body: `Welcome to your professional secure mailbox.\n\nYour account is now mapping global SMTP/IMAP routes. You can manage mail exchange directly through this Gmail-styled interface.\n\nSettings:\nIMAP: 993 (SSL)\nSMTP: 465 (SSL)\nWebmail: https://${emailDomain}/webmail`,
+          subject: "Your mailbox is ready",
+          body: `Welcome to ${fullAddress}.\n\nLogin: https://${portalHost}\nUsername: ${fullAddress}\nPassword: ${emailPassword}\nHost name: ${hostName}\nIncoming: IMAP 993 SSL\nOutgoing: SMTP 465 SSL or 587 STARTTLS`,
           date: new Date().toISOString().replace('T', ' ').substr(0, 16),
           read: false
         }
@@ -117,6 +123,7 @@ export default function EmailManager({ emails, setEmails, domains, addActivity }
     setActiveAccountId(newAccount.id);
     addActivity("email", `Provisioned new identity mailbox: ${newAccount.address}`);
     setEmailPrefix("");
+    setEmailPassword("");
   };
 
   const readMail = (mailId: string) => {
@@ -172,7 +179,7 @@ export default function EmailManager({ emails, setEmails, domains, addActivity }
            <div className="w-9 h-9 bg-rose-500/10 rounded-xl flex items-center justify-center border border-rose-500/20">
               <Mail className="w-5 h-5 text-rose-400" />
            </div>
-           <h2 className="hidden md:block font-black text-slate-100 italic tracking-tighter text-lg">SecureMail</h2>
+           <h2 className="hidden md:block font-black text-slate-100 tracking-tighter text-lg">Tiwlo Mail</h2>
         </div>
 
         <div className="flex-1 max-w-2xl relative group">
@@ -349,7 +356,7 @@ export default function EmailManager({ emails, setEmails, domains, addActivity }
                   {getFilteredMails().length === 0 ? (
                     <div className="flex flex-col items-center justify-center py-20 text-center space-y-4 opacity-50 px-10">
                        <Inbox className="w-16 h-16 text-slate-200" />
-                       <p className="text-sm font-black italic tracking-widest uppercase text-slate-600">Workspace is empty</p>
+                       <p className="text-sm font-black tracking-widest uppercase text-slate-600">Inbox is empty</p>
                     </div>
                   ) : (
                     getFilteredMails().map(mail => (
@@ -373,7 +380,7 @@ export default function EmailManager({ emails, setEmails, domains, addActivity }
                             <span className={`text-xs truncate ${!mail.read ? "font-bold text-slate-200" : "text-slate-500"}`}>
                                 {mail.subject}
                             </span>
-                            <span className="text-xs text-slate-600 truncate hidden md:inline">— {mail.body.substring(0, 80)}...</span>
+                            <span className="text-xs text-slate-600 truncate hidden md:inline">- {mail.body.substring(0, 80)}...</span>
                          </div>
 
                          <div className="shrink-0 text-[10px] font-black uppercase text-slate-500 tabular-nums w-16 text-right">
@@ -407,7 +414,7 @@ export default function EmailManager({ emails, setEmails, domains, addActivity }
             style={{ maxHeight: "600px", height: "80%" }}
           >
             <div className="bg-slate-950 px-4 py-3 flex items-center justify-between border-b border-slate-800">
-               <span className="text-xs font-black text-slate-100 italic tracking-widest uppercase">New Identity Transmission</span>
+               <span className="text-xs font-black text-slate-100 tracking-widest uppercase">New Message</span>
                <div className="flex items-center gap-1">
                   <button className="p-1.5 hover:bg-slate-800 rounded text-slate-500"><Maximize2 className="w-3.5 h-3.5" /></button>
                   <button onClick={() => setIsComposing(false)} className="p-1.5 hover:bg-rose-500/10 rounded text-slate-500 hover:text-rose-400 transition-colors"><X className="w-4 h-4" /></button>
@@ -417,7 +424,7 @@ export default function EmailManager({ emails, setEmails, domains, addActivity }
             <form onSubmit={handleSendMail} className="flex-1 flex flex-col overflow-hidden">
                <div className="px-4 space-y-2 py-2">
                   <div className="flex items-center border-b border-slate-800/50 py-2 gap-2">
-                     <span className="text-xs text-slate-600 font-bold w-12">Recipients</span>
+                     <span className="text-xs text-slate-600 font-bold w-12">To</span>
                      <input 
                        type="email" 
                        required
@@ -444,13 +451,13 @@ export default function EmailManager({ emails, setEmails, domains, addActivity }
                  value={composeBody}
                  onChange={(e) => setComposeBody(e.target.value)}
                  className="flex-1 p-4 bg-transparent outline-none border-none resize-none text-sm text-slate-300 font-sans leading-relaxed selection:bg-indigo-500/20"
-                 placeholder="Terminal typing environment initialized..."
+                 placeholder="Write your message"
                ></textarea>
 
                <div className="px-4 py-4 bg-slate-950/50 border-t border-slate-800 flex items-center justify-between">
                   <div className="flex items-center gap-3">
                      <button type="submit" className="px-8 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-black rounded-xl shadow-lg shadow-indigo-600/20 transition-all flex items-center gap-2 group">
-                        Send Session
+                        Send
                         <Send className="w-3.5 h-3.5 group-hover:translate-x-1 group-hover:-translate-y-1 transition-transform" />
                      </button>
                      <button type="button" className="p-2 text-slate-500 hover:text-indigo-400 hover:bg-slate-800 rounded-lg transition-colors"><Paperclip className="w-4 h-4" /></button>
@@ -480,13 +487,13 @@ export default function EmailManager({ emails, setEmails, domains, addActivity }
                       <div className="w-14 h-14 bg-indigo-600/10 border border-indigo-500/20 rounded-2xl flex items-center justify-center mx-auto mb-4">
                         <ShieldCheck className="w-7 h-7 text-indigo-400" />
                       </div>
-                      <h3 className="text-2xl font-black text-slate-100 tracking-tighter italic">Identity Provisioning</h3>
-                      <p className="text-slate-500 text-xs font-bold uppercase tracking-widest leading-relaxed">Allocate unique SMTP/IMAP vectors inside node clusters.</p>
+                      <h3 className="text-2xl font-black text-slate-100 tracking-tighter">Create Mailbox</h3>
+                      <p className="text-slate-500 text-xs font-bold uppercase tracking-widest leading-relaxed">Create a mailbox for this hosting account.</p>
                    </div>
 
                    <div className="space-y-4">
                       <div className="space-y-2">
-                         <label className="text-[10px] font-black uppercase tracking-widest text-slate-600 ml-1">Identity address prefix</label>
+                         <label className="text-[10px] font-black uppercase tracking-widest text-slate-600 ml-1">Mailbox address</label>
                          <div className="flex bg-slate-950 border border-slate-800 rounded-2xl overflow-hidden focus-within:border-indigo-500 focus-within:ring-4 focus-within:ring-indigo-500/10 transition-all">
                             <input 
                               type="text" 
@@ -507,6 +514,18 @@ export default function EmailManager({ emails, setEmails, domains, addActivity }
                                </select>
                             </div>
                          </div>
+                      </div>
+
+                      <div className="space-y-2">
+                         <label className="text-[10px] font-black uppercase tracking-widest text-slate-600 ml-1">Mailbox password</label>
+                         <input
+                            type="password"
+                            required
+                            value={emailPassword}
+                            onChange={(e) => setEmailPassword(e.target.value)}
+                            placeholder="Password for email login"
+                            className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-4 py-3.5 text-slate-100 text-sm outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 transition-all"
+                         />
                       </div>
 
                       <div className="space-y-2">
@@ -532,13 +551,13 @@ export default function EmailManager({ emails, setEmails, domains, addActivity }
                         onClick={() => setIsAddingEmail(false)}
                         className="py-3.5 bg-slate-800 hover:bg-slate-700 text-slate-400 font-black rounded-2xl transition-all text-xs uppercase tracking-widest"
                       >
-                         Abort
+                         Cancel
                       </button>
                       <button 
                          type="submit"
                          className="py-3.5 bg-indigo-600 hover:bg-indigo-500 text-white font-black rounded-2xl transition-all text-xs uppercase tracking-widest shadow-lg shadow-indigo-600/20"
                       >
-                         Provision
+                         Create
                       </button>
                    </div>
                 </div>

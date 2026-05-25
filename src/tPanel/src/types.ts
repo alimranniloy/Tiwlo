@@ -90,6 +90,9 @@ export interface EmailMail {
 export interface EmailAccount {
   id: string;
   address: string; // info@mydomain.com
+  password?: string;
+  hostName?: string;
+  portalHost?: string;
   quotaMB: number; // e.g. 500 MB
   usageMB: number;
   mails: EmailMail[];

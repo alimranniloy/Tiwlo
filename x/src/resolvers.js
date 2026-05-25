@@ -18,6 +18,7 @@ import { ddosResolvers } from './modules/ddos/resolvers.js';
 import { aiModelResolvers } from './modules/ai-model/resolvers.js';
 import { tiwloPayResolvers } from './modules/tiwlo-pay/resolvers.js';
 import { tPanelResolvers } from './modules/tpanel/resolvers.js';
+import { emailResolvers } from './modules/email/resolvers.js';
 
 export const resolvers = mergeResolvers(
   authResolvers,
@@ -37,6 +38,7 @@ export const resolvers = mergeResolvers(
   aiModelResolvers,
   tiwloPayResolvers,
   tPanelResolvers,
+  emailResolvers,
   rbacResolvers,
   notificationResolvers
 );

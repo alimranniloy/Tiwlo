@@ -1,16 +1,17 @@
 import React from 'react';
-import { AlertCircle, Mail, Plus, Save, Server, Settings, ShieldCheck, Trash2 } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Copy, Mail, Plus, Save, Send, Server, Settings, ShieldCheck, Trash2 } from 'lucide-react';
 import {
   deleteMainAdminRecordWithApi,
   fetchMainAdminRecordsWithApi,
   fetchSettingsWithApi,
+  testSystemEmailWithApi,
   upsertMainAdminRecordWithApi,
   upsertSettingWithApi
 } from '../../lib/tiwloApi';
 
 const emptyAccount = {
   username: '',
-  domain: 'tiwlo.app',
+  domain: 'tiwlo.com',
   password: '',
   quota: '1024',
   status: 'active',
@@ -18,15 +19,20 @@ const emptyAccount = {
 };
 
 const emptySystemEmail = {
-  host: 'mail.tiwlo.app',
+  host: 'mail.tiwlo.com',
   port: '465',
-  username: 'noreply@tiwlo.app',
+  username: 'noreply@tiwlo.com',
   password: '',
-  fromEmail: 'noreply@tiwlo.app',
-  fromName: 'Tiwlo',
-  replyTo: 'support@tiwlo.app',
+  fromEmail: 'noreply@tiwlo.com',
+  fromName: 'Tiwlo.com',
+  replyTo: 'support@tiwlo.com',
   secureSSL: true
 };
+
+const cleanDomain = (value: string) => value.trim().toLowerCase().replace(/^@/, '').replace(/^https?:\/\//, '').replace(/\/.*$/, '') || 'tiwlo.com';
+const cleanUsername = (value: string) => value.trim().toLowerCase().replace(/[^a-z0-9._-]/g, '');
+const hostForDomain = (domain: string) => `mail.${cleanDomain(domain)}`;
+const portalForDomain = (domain: string) => `email.${cleanDomain(domain)}`;
 
 export default function AdminEmail() {
   const [accounts, setAccounts] = React.useState<any[]>([]);
@@ -35,6 +41,10 @@ export default function AdminEmail() {
   const [editingId, setEditingId] = React.useState('');
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
+  const [testing, setTesting] = React.useState(false);
+  const [testRecipient, setTestRecipient] = React.useState('');
+  const [testResult, setTestResult] = React.useState<any | null>(null);
+  const [lastProvisioned, setLastProvisioned] = React.useState<any | null>(null);
   const [error, setError] = React.useState('');
   const [notice, setNotice] = React.useState('');
 
@@ -61,7 +71,9 @@ export default function AdminEmail() {
     loadEmail();
   }, [loadEmail]);
 
-  const fullAddress = `${accountForm.username.trim()}@${accountForm.domain.trim()}`;
+  const normalizedUsername = cleanUsername(accountForm.username);
+  const normalizedDomain = cleanDomain(accountForm.domain);
+  const fullAddress = `${normalizedUsername}@${normalizedDomain}`;
 
   const saveAccount = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -69,7 +81,10 @@ export default function AdminEmail() {
     setError('');
     setNotice('');
     try {
-      if (!accountForm.username.trim() || !accountForm.domain.trim()) throw new Error('Username and domain are required.');
+      if (!normalizedUsername || !normalizedDomain) throw new Error('Username and domain are required.');
+      if (!accountForm.password.trim()) throw new Error('Mailbox password is required so the user can sign in at the mail portal.');
+      const hostName = hostForDomain(normalizedDomain);
+      const portalHost = portalForDomain(normalizedDomain);
       await upsertMainAdminRecordWithApi({
         section: 'emailAccounts',
         id: editingId || undefined,
@@ -77,15 +92,28 @@ export default function AdminEmail() {
         status: accountForm.status,
         data: {
           ...accountForm,
+          username: normalizedUsername,
+          domain: normalizedDomain,
           address: fullAddress,
+          hostName,
+          portalHost,
           quotaMB: Number(accountForm.quota || 0),
-          incoming: { protocol: 'IMAP', port: accountForm.ssl ? 993 : 143, ssl: accountForm.ssl },
-          outgoing: { protocol: 'SMTP', port: accountForm.ssl ? 465 : 587, ssl: accountForm.ssl }
+          incoming: { host: hostName, protocol: 'IMAP', port: accountForm.ssl ? 993 : 143, ssl: accountForm.ssl },
+          outgoing: { host: hostName, protocol: 'SMTP', port: accountForm.ssl ? 465 : 587, ssl: accountForm.ssl }
         }
+      });
+      setLastProvisioned({
+        address: fullAddress,
+        username: fullAddress,
+        password: accountForm.password,
+        hostName,
+        portalHost,
+        incoming: `IMAP ${hostName}:993 SSL`,
+        outgoing: `SMTP ${hostName}:465 SSL / 587 STARTTLS`
       });
       setAccountForm(emptyAccount);
       setEditingId('');
-      setNotice('Email account saved.');
+      setNotice(`${fullAddress} mailbox is ready.`);
       await loadEmail();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to save email account');
@@ -98,7 +126,7 @@ export default function AdminEmail() {
     setEditingId(record.id);
     setAccountForm({
       username: record.data?.username || String(record.title || '').split('@')[0] || '',
-      domain: record.data?.domain || String(record.title || '').split('@')[1] || 'tiwlo.app',
+      domain: record.data?.domain || String(record.title || '').split('@')[1] || 'tiwlo.com',
       password: record.data?.password || '',
       quota: String(record.data?.quotaMB || record.data?.quota || 1024),
       status: record.status || 'active',
@@ -142,6 +170,43 @@ export default function AdminEmail() {
     }
   };
 
+  const testSystemEmail = async () => {
+    setTesting(true);
+    setError('');
+    setNotice('');
+    setTestResult(null);
+    try {
+      if (!testRecipient.trim()) throw new Error('Enter the email address where the test email should be sent.');
+      const result = await testSystemEmailWithApi({
+        to: testRecipient.trim(),
+        config: {
+          ...systemForm,
+          port: Number(systemForm.port || 465),
+          secureSSL: Boolean(systemForm.secureSSL)
+        }
+      });
+      setTestResult(result);
+      if (result.ok) {
+        setNotice(result.message || 'Test email sent successfully.');
+      } else {
+        setError(`${result.message || 'Test email failed.'} Allow server ports: ${(result.allowlist || []).join(', ') || '25/tcp, 465/tcp, 587/tcp, 993/tcp, 995/tcp'}.`);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to send test email');
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  const copyValue = async (value: string) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setNotice('Copied.');
+    } catch {
+      setNotice(value);
+    }
+  };
+
   return (
     <div className="space-y-6 pb-12">
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
@@ -150,8 +215,8 @@ export default function AdminEmail() {
             <Mail className="h-5 w-5" />
           </div>
           <div>
-            <h1 className="text-2xl font-bold text-[#111827]">Email</h1>
-            <p className="text-[13px] text-[#6B7280]">Mailbox accounts, no-reply sender, SMTP, SSL, and webmail instructions.</p>
+            <h1 className="text-2xl font-bold text-[#111827]">Tiwlo.com Email</h1>
+            <p className="text-[13px] text-[#6B7280]">Create mailboxes, test SMTP delivery, and publish the login details for email.tiwlo.com.</p>
           </div>
         </div>
       </div>
@@ -163,8 +228,8 @@ export default function AdminEmail() {
         <section className="rounded border border-[#E5E7EB] bg-white p-5">
           <div className="mb-5 flex items-center justify-between">
             <div>
-              <h2 className="text-sm font-black uppercase text-[#111827]">Create Email Account</h2>
-              <p className="mt-1 text-[12px] text-[#6B7280]">Create, edit, or delete mailbox records for your domain.</p>
+              <h2 className="text-sm font-black uppercase text-[#111827]">Create Mailbox</h2>
+              <p className="mt-1 text-[12px] text-[#6B7280]">The mailbox can sign in at email.tiwlo.com after it is saved.</p>
             </div>
             <Plus className="h-4 w-4 text-blue-600" />
           </div>
@@ -183,15 +248,44 @@ export default function AdminEmail() {
               SSL enabled
             </label>
             <button disabled={saving} className="inline-flex items-center justify-center gap-2 rounded bg-blue-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-blue-700 disabled:opacity-60 md:col-span-2">
-              <Save className="h-4 w-4" /> {editingId ? 'Update Email Account' : 'Create Email Account'}
+              <Save className="h-4 w-4" /> {editingId ? 'Update Mailbox' : 'Create Mailbox'}
             </button>
           </form>
+          {lastProvisioned && (
+            <div className="mt-5 rounded border border-emerald-100 bg-emerald-50 p-4">
+              <div className="mb-3 flex items-center gap-2 text-emerald-800">
+                <CheckCircle2 className="h-4 w-4" />
+                <p className="text-sm font-black">Mailbox credentials</p>
+              </div>
+              <div className="grid grid-cols-1 gap-3 text-[12px] md:grid-cols-2">
+                {[
+                  ['Login URL', `https://${lastProvisioned.portalHost}`],
+                  ['Host name', lastProvisioned.hostName],
+                  ['Username', lastProvisioned.username],
+                  ['Password', lastProvisioned.password],
+                  ['Incoming', lastProvisioned.incoming],
+                  ['Outgoing', lastProvisioned.outgoing]
+                ].map(([label, value]) => (
+                  <button key={label} type="button" onClick={() => copyValue(value)} className="rounded border border-emerald-200 bg-white p-3 text-left hover:border-emerald-400">
+                    <span className="block text-[10px] font-black uppercase text-emerald-700">{label}</span>
+                    <span className="mt-1 flex items-center justify-between gap-2 break-all font-bold text-[#111827]">
+                      {value}
+                      <Copy className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </section>
 
         <section className="rounded border border-[#E5E7EB] bg-white p-5">
           <div className="mb-5 flex items-center gap-2">
             <Settings className="h-4 w-4 text-blue-600" />
-            <h2 className="text-sm font-black uppercase text-[#111827]">Configure System Email</h2>
+            <div>
+              <h2 className="text-sm font-black uppercase text-[#111827]">Configure Sender</h2>
+              <p className="mt-1 text-[12px] text-[#6B7280]">Test the current values before saving them.</p>
+            </div>
           </div>
           <form onSubmit={saveSystemEmail} className="grid grid-cols-1 gap-3 md:grid-cols-2">
             <input value={systemForm.host} onChange={(event) => setSystemForm({ ...systemForm, host: event.target.value })} placeholder="SMTP host" className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" />
@@ -205,6 +299,21 @@ export default function AdminEmail() {
               <input type="checkbox" checked={systemForm.secureSSL} onChange={(event) => setSystemForm({ ...systemForm, secureSSL: event.target.checked })} />
               Use SSL/TLS
             </label>
+            <div className="grid grid-cols-1 gap-2 rounded border border-[#E5E7EB] bg-[#F9FAFB] p-3 md:col-span-2">
+              <label className="text-[10px] font-black uppercase tracking-widest text-[#6B7280]">Send test to</label>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_auto]">
+                <input type="email" value={testRecipient} onChange={(event) => setTestRecipient(event.target.value)} placeholder="you@example.com" className="rounded border border-[#DDE3EA] bg-white px-3 py-2 text-sm outline-none focus:border-blue-500" />
+                <button type="button" onClick={testSystemEmail} disabled={testing} className="inline-flex items-center justify-center gap-2 rounded border border-blue-200 bg-white px-4 py-2 text-sm font-bold text-blue-700 hover:border-blue-500 disabled:opacity-60">
+                  <Send className="h-4 w-4" /> {testing ? 'Testing...' : 'Test Email'}
+                </button>
+              </div>
+              <p className="text-[11px] font-semibold text-[#6B7280]">Server firewall should allow 25/tcp, 465/tcp, 587/tcp, 993/tcp, and 995/tcp for full mail service.</p>
+              {testResult && (
+                <p className={`rounded border px-3 py-2 text-[12px] font-bold ${testResult.ok ? 'border-emerald-100 bg-emerald-50 text-emerald-700' : 'border-red-100 bg-red-50 text-red-700'}`}>
+                  {testResult.message}
+                </p>
+              )}
+            </div>
             <button disabled={saving} className="inline-flex items-center justify-center gap-2 rounded bg-[#111827] px-4 py-2.5 text-sm font-bold text-white hover:bg-black disabled:opacity-60 md:col-span-2">
               <Save className="h-4 w-4" /> Save System Email
             </button>
@@ -223,7 +332,8 @@ export default function AdminEmail() {
             <div key={record.id} className="grid grid-cols-1 gap-4 px-5 py-4 md:grid-cols-[1fr_auto] md:items-center">
               <div>
                 <p className="text-[14px] font-black text-[#111827]">{record.data?.address || record.title}</p>
-                <p className="mt-1 text-[12px] text-[#6B7280]">IMAP {record.data?.incoming?.port || 993} SSL / SMTP {record.data?.outgoing?.port || 465} SSL / quota {record.data?.quotaMB || record.data?.quota || 0} MB</p>
+                <p className="mt-1 text-[12px] text-[#6B7280]">{record.data?.hostName || hostForDomain(record.data?.domain || 'tiwlo.com')} / IMAP {record.data?.incoming?.port || 993} SSL / SMTP {record.data?.outgoing?.port || 465} SSL / quota {record.data?.quotaMB || record.data?.quota || 0} MB</p>
+                <p className="mt-1 break-all text-[11px] font-bold text-[#9CA3AF]">Login: https://{record.data?.portalHost || portalForDomain(record.data?.domain || 'tiwlo.com')} / Username: {record.data?.address || record.title}</p>
               </div>
               <div className="flex flex-wrap gap-2">
                 <button onClick={() => editAccount(record)} className="rounded border border-[#DDE3EA] px-3 py-2 text-[12px] font-bold text-[#374151] hover:bg-[#F9FAFB]">Edit</button>
@@ -239,14 +349,14 @@ export default function AdminEmail() {
       <section className="rounded border border-[#E5E7EB] bg-white p-5">
         <div className="mb-4 flex items-center gap-2">
           <Server className="h-4 w-4 text-blue-600" />
-          <h2 className="text-sm font-black uppercase text-[#111827]">How To Connect Email</h2>
+          <h2 className="text-sm font-black uppercase text-[#111827]">Connection Details</h2>
         </div>
         <div className="grid grid-cols-1 gap-3 text-[13px] md:grid-cols-4">
           {[
-            ['Webmail', 'https://your-domain.com/webmail'],
-            ['Incoming IMAP', 'mail.your-domain.com : 993 SSL'],
-            ['Outgoing SMTP', 'mail.your-domain.com : 465 SSL'],
-            ['MX Record', 'MX 10 mail.your-domain.com']
+            ['Mail login', 'https://email.tiwlo.com'],
+            ['Incoming IMAP', 'mail.tiwlo.com : 993 SSL'],
+            ['Outgoing SMTP', 'mail.tiwlo.com : 465 SSL or 587 STARTTLS'],
+            ['MX Record', 'MX 10 mail.tiwlo.com']
           ].map(([label, value]) => (
             <div key={label} className="rounded border border-[#E5E7EB] bg-[#F9FAFB] p-4">
               <p className="text-[10px] font-black uppercase tracking-widest text-gray-400">{label}</p>

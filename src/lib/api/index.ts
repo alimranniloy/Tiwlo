@@ -13,4 +13,5 @@ export * from './ddos';
 export * from './ai-model';
 export * from './tiwlo-pay';
 export * from './tpanel';
+export * from './email';
 export * from './system-tools';

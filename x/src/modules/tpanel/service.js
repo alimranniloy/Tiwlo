@@ -219,8 +219,9 @@ export const requiredServerPackages = [
   'npm', 'pm2', 'python3', 'python3-pip', 'python3-venv', 'python3-dev',
   'ruby', 'bundler', 'rbenv', 'openjdk-17-jdk', 'certbot',
   'python3-certbot-nginx', 'python3-certbot-apache', 'pdns-server',
-  'pdns-backend-mysql', 'bind9', 'postfix', 'dovecot-core', 'opendkim',
-  'rspamd', 'roundcube', 'vsftpd', 'openssh-server', 'ufw', 'firewalld',
+  'pdns-backend-mysql', 'bind9', 'postfix', 'dovecot-core', 'dovecot-imapd',
+  'dovecot-pop3d', 'opendkim', 'opendkim-tools', 'rspamd', 'mailutils',
+  'libsasl2-modules', 'roundcube', 'vsftpd', 'openssh-server', 'ufw', 'firewalld',
   'fail2ban', 'clamav', 'maldet', 'libapache2-mod-security2', 'docker.io',
   'docker-compose-plugin', 'rclone', 'restic', 'borgbackup', 'cron', 'rsync',
   'git', 'curl', 'wget', 'zip', 'unzip', 'tar', 'nano', 'vim', 'htop',
@@ -2419,12 +2420,23 @@ BASH
 chmod 700 /usr/local/sbin/tpanel-update
 
 systemctl daemon-reload
+systemctl enable --now postfix >/dev/null 2>&1 || true
+systemctl enable --now dovecot >/dev/null 2>&1 || true
+systemctl enable --now opendkim >/dev/null 2>&1 || true
+systemctl enable --now rspamd >/dev/null 2>&1 || true
 systemctl enable --now tpanel
 
 if command -v ufw >/dev/null 2>&1; then
   ufw allow OpenSSH >/dev/null 2>&1 || true
   ufw allow 80/tcp >/dev/null 2>&1 || true
   ufw allow 443/tcp >/dev/null 2>&1 || true
+  ufw allow 25/tcp >/dev/null 2>&1 || true
+  ufw allow 110/tcp >/dev/null 2>&1 || true
+  ufw allow 143/tcp >/dev/null 2>&1 || true
+  ufw allow 465/tcp >/dev/null 2>&1 || true
+  ufw allow 587/tcp >/dev/null 2>&1 || true
+  ufw allow 993/tcp >/dev/null 2>&1 || true
+  ufw allow 995/tcp >/dev/null 2>&1 || true
   ufw allow "$TPANEL_PORT/tcp" >/dev/null 2>&1 || true
 fi
 

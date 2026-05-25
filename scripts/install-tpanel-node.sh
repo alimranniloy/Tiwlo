@@ -148,11 +148,11 @@ step "Installing runtime packages"
 if have apt-get; then
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -y
-  apt-get install -y git curl wget ca-certificates openssl xz-utils nginx ufw certbot python3 python3-certbot-nginx build-essential php-fpm php-cli php-mysql php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache mariadb-server bind9 dnsutils unzip tar rsync logrotate cron acl || true
+  apt-get install -y git curl wget ca-certificates openssl xz-utils nginx ufw certbot python3 python3-certbot-nginx build-essential php-fpm php-cli php-mysql php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache mariadb-server bind9 dnsutils postfix dovecot-core dovecot-imapd dovecot-pop3d opendkim opendkim-tools rspamd mailutils libsasl2-modules unzip tar rsync logrotate cron acl || true
 elif have dnf; then
-  dnf install -y git curl wget ca-certificates openssl xz nginx firewalld certbot python3 python3-certbot-nginx gcc gcc-c++ make php-fpm php-cli php-mysqlnd php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache mariadb-server bind bind-utils unzip tar rsync logrotate cronie acl || true
+  dnf install -y git curl wget ca-certificates openssl xz nginx firewalld certbot python3 python3-certbot-nginx gcc gcc-c++ make php-fpm php-cli php-mysqlnd php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache mariadb-server bind bind-utils postfix dovecot opendkim opendkim-tools rspamd mailx cyrus-sasl cyrus-sasl-plain unzip tar rsync logrotate cronie acl || true
 elif have yum; then
-  yum install -y git curl wget ca-certificates openssl xz nginx firewalld certbot python3 python3-certbot-nginx gcc gcc-c++ make php-fpm php-cli php-mysqlnd php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache mariadb-server bind bind-utils unzip tar rsync logrotate cronie acl || true
+  yum install -y git curl wget ca-certificates openssl xz nginx firewalld certbot python3 python3-certbot-nginx gcc gcc-c++ make php-fpm php-cli php-mysqlnd php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache mariadb-server bind bind-utils postfix dovecot opendkim opendkim-tools rspamd mailx cyrus-sasl cyrus-sasl-plain unzip tar rsync logrotate cronie acl || true
 else
   echo "Unsupported Linux package manager. Install git, curl, xz, and nginx, then rerun."
   exit 1
@@ -531,6 +531,10 @@ systemctl daemon-reload
 systemctl enable --now nginx >/dev/null 2>&1 || true
 systemctl enable --now mariadb >/dev/null 2>&1 || systemctl enable --now mysql >/dev/null 2>&1 || true
 systemctl enable --now bind9 >/dev/null 2>&1 || systemctl enable --now named >/dev/null 2>&1 || true
+systemctl enable --now postfix >/dev/null 2>&1 || true
+systemctl enable --now dovecot >/dev/null 2>&1 || true
+systemctl enable --now opendkim >/dev/null 2>&1 || true
+systemctl enable --now rspamd >/dev/null 2>&1 || true
 systemctl enable --now cron >/dev/null 2>&1 || systemctl enable --now crond >/dev/null 2>&1 || true
 for svc in $(systemctl list-unit-files --type=service 'php*-fpm.service' 2>/dev/null | awk '/php.*-fpm\.service/ {print $1}'); do
   systemctl enable --now "$svc" >/dev/null 2>&1 || true
@@ -545,6 +549,13 @@ if have ufw; then
   ufw allow 443/tcp >/dev/null 2>&1 || true
   ufw allow 53/tcp >/dev/null 2>&1 || true
   ufw allow 53/udp >/dev/null 2>&1 || true
+  ufw allow 25/tcp >/dev/null 2>&1 || true
+  ufw allow 110/tcp >/dev/null 2>&1 || true
+  ufw allow 143/tcp >/dev/null 2>&1 || true
+  ufw allow 465/tcp >/dev/null 2>&1 || true
+  ufw allow 587/tcp >/dev/null 2>&1 || true
+  ufw allow 993/tcp >/dev/null 2>&1 || true
+  ufw allow 995/tcp >/dev/null 2>&1 || true
   ufw allow "$TPANEL_PORT/tcp" >/dev/null 2>&1 || true
 fi
 

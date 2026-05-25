@@ -1,13 +1,15 @@
 import nodemailer from 'nodemailer';
 
-const DEFAULT_FROM = 'noreply@tiwlo.app';
+const DEFAULT_FROM = 'noreply@tiwlo.com';
+const SMTP_TIMEOUT_MS = Number(process.env.SMTP_TIMEOUT_MS || 8000);
+export const REQUIRED_EMAIL_PORTS = [25, 465, 587, 993, 995];
 
 function getPrisma(ctxOrPrisma) {
   return ctxOrPrisma?.prisma || ctxOrPrisma;
 }
 
 export function appOrigin() {
-  return process.env.FRONTEND_ORIGIN || process.env.PUBLIC_APP_URL || process.env.APP_URL || 'https://tiwlo.app';
+  return process.env.FRONTEND_ORIGIN || process.env.PUBLIC_APP_URL || process.env.APP_URL || 'https://tiwlo.com';
 }
 
 function escapeHtml(value = '') {
@@ -19,22 +21,100 @@ function escapeHtml(value = '') {
     .replace(/'/g, '&#039;');
 }
 
-async function systemEmailConfig(prisma) {
+async function readSavedSystemEmail(prisma) {
+  if (!prisma) return {};
   const setting = await prisma.systemSetting.findUnique({
     where: { scope_scopeId_key: { scope: 'platform', scopeId: '', key: 'systemEmail' } }
   }).catch(() => null);
-  const saved = setting?.value || {};
-  const port = Number(saved.port || process.env.SMTP_PORT || 465);
+  return setting?.value || {};
+}
+
+export async function systemEmailConfig(prisma, override = {}) {
+  const saved = await readSavedSystemEmail(prisma);
+  const source = { ...saved, ...override };
+  const port = Number(source.port || process.env.SMTP_PORT || 465);
+  const secureFromInput = source.secureSSL ?? source.secure;
+  const secure = secureFromInput !== undefined
+    ? Boolean(secureFromInput)
+    : String(process.env.SMTP_SECURE || '').toLowerCase() !== 'false' && port === 465;
   return {
-    host: saved.host || process.env.SMTP_HOST,
+    host: source.host || process.env.SMTP_HOST,
     port,
-    secure: saved.secureSSL !== undefined ? Boolean(saved.secureSSL) : String(process.env.SMTP_SECURE || '').toLowerCase() !== 'false' && port === 465,
-    username: saved.username || process.env.SMTP_USER,
-    password: saved.password || process.env.SMTP_PASS,
-    fromEmail: saved.fromEmail || process.env.MAIL_FROM || DEFAULT_FROM,
-    fromName: saved.fromName || process.env.MAIL_FROM_NAME || 'Tiwlo',
-    replyTo: saved.replyTo || process.env.MAIL_REPLY_TO || saved.fromEmail || process.env.MAIL_FROM || DEFAULT_FROM
+    secure,
+    username: source.username || process.env.SMTP_USER,
+    password: source.password || process.env.SMTP_PASS,
+    fromEmail: source.fromEmail || process.env.MAIL_FROM || DEFAULT_FROM,
+    fromName: source.fromName || process.env.MAIL_FROM_NAME || 'Tiwlo.com',
+    replyTo: source.replyTo || process.env.MAIL_REPLY_TO || source.fromEmail || process.env.MAIL_FROM || DEFAULT_FROM
   };
+}
+
+export function emailServerAdvice(config = {}) {
+  const port = Number(config.port || 465);
+  return {
+    host: config.host || '',
+    port,
+    secure: Boolean(config.secure),
+    requiredPorts: REQUIRED_EMAIL_PORTS,
+    allowlist: REQUIRED_EMAIL_PORTS.map((item) => `${item}/tcp`),
+    message: `Allow SMTP/IMAP ports ${REQUIRED_EMAIL_PORTS.join(', ')} on the mail server firewall. Use ${port === 465 ? '465 SSL' : '587 STARTTLS'} for authenticated outgoing mail.`
+  };
+}
+
+function createTransporter(config) {
+  return nodemailer.createTransport({
+    host: config.host,
+    port: config.port,
+    secure: config.secure,
+    auth: { user: config.username, pass: config.password },
+    connectionTimeout: SMTP_TIMEOUT_MS,
+    greetingTimeout: SMTP_TIMEOUT_MS,
+    socketTimeout: SMTP_TIMEOUT_MS
+  });
+}
+
+async function deliverEmail(config, message) {
+  if (!config.host || !config.username || !config.password) {
+    return { sent: false, reason: 'not-configured', advice: emailServerAdvice(config) };
+  }
+  const transporter = createTransporter(config);
+  await transporter.sendMail(message);
+  return { sent: true, advice: emailServerAdvice(config) };
+}
+
+export async function testTiwloEmail(ctxOrPrisma, input = {}) {
+  const prisma = getPrisma(ctxOrPrisma);
+  const config = await systemEmailConfig(prisma, input.config || input);
+  const to = input.to || input.recipient;
+  if (!to) return { ok: false, message: 'Test recipient email is required.', ...emailServerAdvice(config) };
+  try {
+    const result = await deliverEmail(config, {
+      to,
+      from: `"${config.fromName}" <${config.fromEmail}>`,
+      replyTo: config.replyTo,
+      subject: input.subject || 'Tiwlo.com test email',
+      text: 'This is a live SMTP test from Tiwlo.com.',
+      html: brandedHtml({
+        title: 'Tiwlo.com email test',
+        preview: 'Your SMTP configuration can send email.',
+        bodyHtml: [
+          paragraph('Success. Tiwlo.com connected to your SMTP server and sent this test email.'),
+          paragraph(emailServerAdvice(config).message)
+        ].join('')
+      })
+    });
+    if (!result.sent) return { ok: false, message: 'SMTP is not configured.', ...result.advice };
+    return { ok: true, message: `Test email sent to ${to}.`, to, fromEmail: config.fromEmail, ...result.advice };
+  } catch (error) {
+    const advice = emailServerAdvice(config);
+    return {
+      ok: false,
+      message: error?.message || 'Unable to send test email.',
+      to,
+      fromEmail: config.fromEmail,
+      ...advice
+    };
+  }
 }
 
 function brandedHtml({ title, preview, bodyHtml }) {
@@ -70,22 +150,20 @@ function brandedHtml({ title, preview, bodyHtml }) {
   `;
 }
 
-export async function sendTiwloEmail(ctxOrPrisma, { to, subject, title, preview, html, text }) {
+export async function sendTiwloEmail(ctxOrPrisma, { to, subject, title, preview, html, text, fromEmail, fromName, replyTo }) {
   const prisma = getPrisma(ctxOrPrisma);
   if (!prisma || !to) return { sent: false, reason: 'missing-recipient' };
   try {
-    const config = await systemEmailConfig(prisma);
+    const config = await systemEmailConfig(prisma, {
+      ...(fromEmail ? { fromEmail } : {}),
+      ...(fromName ? { fromName } : {}),
+      ...(replyTo ? { replyTo } : {})
+    });
     if (!config.host || !config.username || !config.password) {
       console.warn('[email] SMTP systemEmail is not configured; skipped', subject);
       return { sent: false, reason: 'not-configured' };
     }
-    const transporter = nodemailer.createTransport({
-      host: config.host,
-      port: config.port,
-      secure: config.secure,
-      auth: { user: config.username, pass: config.password }
-    });
-    await transporter.sendMail({
+    const result = await deliverEmail(config, {
       to,
       from: `"${config.fromName}" <${config.fromEmail}>`,
       replyTo: config.replyTo,
@@ -93,7 +171,7 @@ export async function sendTiwloEmail(ctxOrPrisma, { to, subject, title, preview,
       text: text || preview || subject,
       html: brandedHtml({ title: title || subject, preview, bodyHtml: html || `<p>${escapeHtml(text || preview || subject)}</p>` })
     });
-    return { sent: true };
+    return result;
   } catch (error) {
     console.warn('[email] send failed:', error?.message || error);
     return { sent: false, reason: 'send-failed' };

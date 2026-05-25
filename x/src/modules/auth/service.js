@@ -35,6 +35,14 @@ async function sendVerificationEmail(ctx, user, token) {
   });
 }
 
+function queueAuthEmail(ctx, payload) {
+  setImmediate(() => {
+    sendTiwloEmail(ctx, payload).catch((error) => {
+      console.warn('[auth-email] send failed:', error?.message || error);
+    });
+  });
+}
+
 export const login = async (ctx, input) => {
   const email = normalizeEmail(input.email);
   const user = await ctx.prisma.user.findUnique({ where: { email } });
@@ -45,7 +53,7 @@ export const login = async (ctx, input) => {
   if (!validPassword) throw new AppError('Invalid credentials', 'UNAUTHENTICATED');
 
   await writeAudit({ ...ctx, user }, 'login', 'user', user.id, { email });
-  await sendTiwloEmail(ctx, {
+  queueAuthEmail(ctx, {
     to: user.email,
     subject: 'New login to your Tiwlo account',
     title: 'New login detected',
@@ -63,7 +71,7 @@ export const signup = async (ctx, input) => {
   const email = normalizeEmail(input.email);
   const existing = await ctx.prisma.user.findUnique({ where: { email } });
   if (existing) throw new AppError('Account already exists', 'BAD_USER_INPUT');
-  if (email === 'admin@tiwlo.app') {
+  if (['admin@tiwlo.app', 'admin@tiwlo.com'].includes(email)) {
     throw new AppError('Administrator accounts cannot be created from public signup', 'FORBIDDEN');
   }
 
@@ -74,7 +82,6 @@ export const signup = async (ctx, input) => {
   }
   const profile = profileCompletionData(input);
   if (profile.error) throw new AppError(profile.error, 'BAD_USER_INPUT');
-  const verificationToken = randomToken();
   const user = await ctx.prisma.user.create({
     data: {
       email,
@@ -82,14 +89,25 @@ export const signup = async (ctx, input) => {
       name: input.name,
       credits: newAccountCredit,
       role: 'user',
-      emailVerificationToken: verificationToken,
-      emailVerificationExpires: addHours(48),
+      emailVerifiedAt: new Date(),
+      emailVerificationToken: null,
+      emailVerificationExpires: null,
       ...profile.data
     }
   });
 
   await writeAudit({ ...ctx, user }, 'signup', 'user', user.id, { email });
-  await sendVerificationEmail(ctx, user, verificationToken);
+  queueAuthEmail(ctx, {
+    to: user.email,
+    subject: 'Welcome to Tiwlo.com',
+    title: 'Your Tiwlo account is ready',
+    preview: 'Your Tiwlo account was created successfully.',
+    html: [
+      paragraph(`Hi ${user.name || 'there'},`),
+      paragraph('Your account is ready. Email verification is not required, so you can sign in and use Tiwlo immediately.'),
+      cta('Open Tiwlo', appOrigin().replace(/\/$/, ''))
+    ].join('')
+  });
   return { token: createToken(user), user: toApi(user) };
 };
 
@@ -141,7 +159,7 @@ export const requestPasswordReset = async (ctx, emailInput) => {
     }
   });
   const link = `${appOrigin().replace(/\/$/, '')}/reset-password?token=${token}`;
-  await sendTiwloEmail(ctx, {
+  queueAuthEmail(ctx, {
     to: user.email,
     subject: 'Reset your Tiwlo password',
     title: 'Reset your password',
@@ -176,7 +194,7 @@ export const resetPassword = async (ctx, token, password) => {
     }
   });
   await writeAudit({ ...ctx, user: updated }, 'reset_password', 'user', updated.id, {});
-  await sendTiwloEmail(ctx, {
+  queueAuthEmail(ctx, {
     to: updated.email,
     subject: 'Your Tiwlo password was changed',
     title: 'Password changed',
@@ -188,15 +206,14 @@ export const resetPassword = async (ctx, token, password) => {
 
 export const resendEmailVerification = async (ctx, actor) => {
   if (actor.emailVerifiedAt) return true;
-  const token = randomToken();
-  const user = await ctx.prisma.user.update({
+  await ctx.prisma.user.update({
     where: { id: actor.id },
     data: {
-      emailVerificationToken: token,
-      emailVerificationExpires: addHours(48)
+      emailVerifiedAt: new Date(),
+      emailVerificationToken: null,
+      emailVerificationExpires: null
     }
   });
-  await sendVerificationEmail(ctx, user, token);
   return true;
 };
 

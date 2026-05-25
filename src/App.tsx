@@ -74,6 +74,7 @@ import SignupPage from './pages/Signup';
 import ForgotPassword from './pages/ForgotPassword';
 import ResetPassword from './pages/ResetPassword';
 import VerifyEmail from './pages/VerifyEmail';
+import EmailPortal from './pages/EmailPortal';
 import LandingPage from './pages/LandingPage';
 import BannedAccount from './pages/BannedAccount';
 import CompleteProfile from './pages/CompleteProfile';
@@ -150,7 +151,8 @@ function AppContent({
                      location.pathname.startsWith('/isp-billing/admin') ||
                      location.pathname.startsWith('/management/ecommerce') ||
                      location.pathname.startsWith('/management/isp') ||
-                     location.pathname.startsWith('/pay/');
+                     location.pathname.startsWith('/pay/') ||
+                     location.pathname === '/email';
 
   return (
     <div className="flex min-h-screen bg-[#F3F5F9] font-sans text-[#141414]">
@@ -277,6 +279,7 @@ function AppContent({
               setUser(nextUser);
               localStorage.setItem('tiwlo_user', JSON.stringify(nextUser));
             }} />} />
+            <Route path="/email" element={<EmailPortal />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>
@@ -288,6 +291,7 @@ function AppContent({
 export default function App() {
   const [appInitializing, setAppInitializing] = useState(false);
   const storefrontHost = getStorefrontHostContext();
+  const isEmailHost = typeof window !== 'undefined' && window.location.hostname.toLowerCase().startsWith('email.');
 
   const [user, setUser] = useState<User | null>(() => {
     const saved = localStorage.getItem('tiwlo_user');
@@ -365,6 +369,16 @@ export default function App() {
     return <GlobalLoader onComplete={() => setAppInitializing(false)} />;
   }
 
+  if (isEmailHost) {
+    return (
+      <Router>
+        <Routes>
+          <Route path="*" element={<EmailPortal />} />
+        </Routes>
+      </Router>
+    );
+  }
+
   if (storefrontHost) {
     return (
       <Router>
@@ -395,6 +409,7 @@ export default function App() {
           <Route path="/forgot-password" element={<ForgotPassword />} />
           <Route path="/reset-password" element={<ResetPassword onLogin={handleLogin} />} />
           <Route path="/verify-email" element={<VerifyEmail onLogin={handleLogin} />} />
+          <Route path="/email" element={<EmailPortal />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Router>

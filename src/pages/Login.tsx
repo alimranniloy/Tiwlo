@@ -1,8 +1,7 @@
 import React, { useState } from 'react';
-import { Mail, Lock, AlertCircle } from 'lucide-react';
+import { AlertCircle } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { User } from '../types';
-import GlobalLoader from '../components/GlobalLoader';
 import { loginWithApi } from '../lib/tiwloApi';
 import BrandLogo from '../components/BrandLogo';
 
@@ -14,8 +13,6 @@ export default function LoginPage({ onLogin }: LoginProps) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
-  const [showSuccessLoader, setShowSuccessLoader] = useState(false);
-  const [authenticatedUser, setAuthenticatedUser] = useState<User | null>(null);
   const [error, setError] = useState('');
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -24,8 +21,7 @@ export default function LoginPage({ onLogin }: LoginProps) {
     setIsLoggingIn(true);
     try {
       const result = await loginWithApi(email, password);
-      setAuthenticatedUser(result.user);
-      setShowSuccessLoader(true);
+      onLogin(result.user);
     } catch (err) {
       setError('Incorrect credentials');
     } finally {
@@ -33,14 +29,8 @@ export default function LoginPage({ onLogin }: LoginProps) {
     }
   };
 
-  const completeLogin = () => {
-    if (authenticatedUser) onLogin(authenticatedUser);
-  };
-
   return (
     <div className="min-h-screen bg-[#f3f5f9] flex flex-col items-center justify-center p-6">
-      {showSuccessLoader && <GlobalLoader onComplete={completeLogin} />}
-
       <div className="w-full max-w-sm space-y-8">
         <div className="flex flex-col items-center gap-3">
           <button
