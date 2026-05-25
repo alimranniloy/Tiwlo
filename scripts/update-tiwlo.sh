@@ -33,18 +33,21 @@ install_system_email_stack() {
   if ! command -v apt-get >/dev/null 2>&1; then
     return 0
   fi
-  echo "Preparing email/webmail packages..."
+  echo "Preparing Tiwlo Mail packages..."
   echo "postfix postfix/mailname string ${TIWLO_MAIL_DOMAIN:-tiwlo.local}" | run_sudo debconf-set-selections >/dev/null 2>&1 || true
   echo "postfix postfix/main_mailer_type select Internet Site" | run_sudo debconf-set-selections >/dev/null 2>&1 || true
   run_sudo env DEBIAN_FRONTEND=noninteractive apt-get update >/dev/null 2>&1 || true
   run_sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y \
-    postfix dovecot-imapd dovecot-pop3d roundcube roundcube-core roundcube-pgsql \
-    opendkim opendkim-tools mailutils >/dev/null 2>&1 || true
-  run_sudo systemctl enable --now postfix dovecot opendkim >/dev/null 2>&1 || true
+    postfix dovecot-core dovecot-imapd dovecot-pop3d opendkim opendkim-tools \
+    rspamd mailutils libsasl2-modules >/dev/null 2>&1 || true
+  run_sudo systemctl enable --now postfix dovecot opendkim rspamd >/dev/null 2>&1 || true
   run_sudo ufw allow 25/tcp >/dev/null 2>&1 || true
+  run_sudo ufw allow 110/tcp >/dev/null 2>&1 || true
+  run_sudo ufw allow 143/tcp >/dev/null 2>&1 || true
   run_sudo ufw allow 465/tcp >/dev/null 2>&1 || true
   run_sudo ufw allow 587/tcp >/dev/null 2>&1 || true
   run_sudo ufw allow 993/tcp >/dev/null 2>&1 || true
+  run_sudo ufw allow 995/tcp >/dev/null 2>&1 || true
 }
 
 set_env_value() {
@@ -92,6 +95,10 @@ npm --prefix x run db:push
 
 echo "Building frontend..."
 npm run build
+if [ -d "$ROOT/src/tPanel" ]; then
+  npm --prefix src/tPanel install
+  npm --prefix src/tPanel run build
+fi
 
 if command -v systemctl >/dev/null 2>&1; then
   sudo systemctl restart tiwlo-backend 2>/dev/null || true
