@@ -22,7 +22,7 @@ function addHours(hours) {
 
 async function sendVerificationEmail(ctx, user, token) {
   const link = `${appOrigin().replace(/\/$/, '')}/verify-email?token=${token}`;
-  await sendTiwloEmail(ctx, {
+  return sendTiwloEmail(ctx, {
     to: user.email,
     subject: 'Verify your Tiwlo email',
     title: 'Verify your email address',
@@ -35,11 +35,43 @@ async function sendVerificationEmail(ctx, user, token) {
   });
 }
 
-function queueAuthEmail(ctx, payload) {
+function queueAuthEmail(ctx, payload, onResult) {
   setImmediate(() => {
-    sendTiwloEmail(ctx, payload).catch((error) => {
-      console.warn('[auth-email] send failed:', error?.message || error);
-    });
+    sendTiwloEmail(ctx, payload)
+      .then((result) => onResult?.(result))
+      .catch((error) => {
+        console.warn('[auth-email] send failed:', error?.message || error);
+        onResult?.({ sent: false, reason: 'send-failed', message: error?.message || String(error) });
+      });
+  });
+}
+
+function queueVerificationEmail(ctx, user, token) {
+  setImmediate(() => {
+    sendVerificationEmail(ctx, user, token)
+      .then(async (result) => {
+        if (result?.sent) return;
+        await ctx.prisma.user.update({
+          where: { id: user.id },
+          data: {
+            emailVerifiedAt: new Date(),
+            emailVerificationToken: null,
+            emailVerificationExpires: null
+          }
+        }).catch(() => null);
+        console.warn('[auth-email] verification email skipped; user auto-verified:', result?.reason || result?.message || user.email);
+      })
+      .catch(async (error) => {
+        await ctx.prisma.user.update({
+          where: { id: user.id },
+          data: {
+            emailVerifiedAt: new Date(),
+            emailVerificationToken: null,
+            emailVerificationExpires: null
+          }
+        }).catch(() => null);
+        console.warn('[auth-email] verification email failed; user auto-verified:', error?.message || error);
+      });
   });
 }
 
@@ -82,6 +114,7 @@ export const signup = async (ctx, input) => {
   }
   const profile = profileCompletionData(input);
   if (profile.error) throw new AppError(profile.error, 'BAD_USER_INPUT');
+  const verificationToken = randomToken();
   const user = await ctx.prisma.user.create({
     data: {
       email,
@@ -89,25 +122,15 @@ export const signup = async (ctx, input) => {
       name: input.name,
       credits: newAccountCredit,
       role: 'user',
-      emailVerifiedAt: new Date(),
-      emailVerificationToken: null,
-      emailVerificationExpires: null,
+      emailVerifiedAt: null,
+      emailVerificationToken: verificationToken,
+      emailVerificationExpires: addHours(48),
       ...profile.data
     }
   });
 
   await writeAudit({ ...ctx, user }, 'signup', 'user', user.id, { email });
-  queueAuthEmail(ctx, {
-    to: user.email,
-    subject: 'Welcome to Tiwlo.com',
-    title: 'Your Tiwlo account is ready',
-    preview: 'Your Tiwlo account was created successfully.',
-    html: [
-      paragraph(`Hi ${user.name || 'there'},`),
-      paragraph('Your account is ready. Email verification is not required, so you can sign in and use Tiwlo immediately.'),
-      cta('Open Tiwlo', appOrigin().replace(/\/$/, ''))
-    ].join('')
-  });
+  queueVerificationEmail(ctx, user, verificationToken);
   return { token: createToken(user), user: toApi(user) };
 };
 
@@ -206,14 +229,15 @@ export const resetPassword = async (ctx, token, password) => {
 
 export const resendEmailVerification = async (ctx, actor) => {
   if (actor.emailVerifiedAt) return true;
-  await ctx.prisma.user.update({
+  const token = randomToken();
+  const user = await ctx.prisma.user.update({
     where: { id: actor.id },
     data: {
-      emailVerifiedAt: new Date(),
-      emailVerificationToken: null,
-      emailVerificationExpires: null
+      emailVerificationToken: token,
+      emailVerificationExpires: addHours(48)
     }
   });
+  queueVerificationEmail(ctx, user, token);
   return true;
 };
 

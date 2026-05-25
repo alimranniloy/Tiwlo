@@ -1,4 +1,6 @@
 import nodemailer from 'nodemailer';
+import dns from 'node:dns/promises';
+import net from 'node:net';
 
 const DEFAULT_FROM = 'noreply@tiwlo.com';
 const SMTP_TIMEOUT_MS = Number(process.env.SMTP_TIMEOUT_MS || 8000);
@@ -73,6 +75,96 @@ function createTransporter(config) {
   });
 }
 
+async function checkTcpPort(host, port) {
+  return new Promise((resolve) => {
+    const socket = net.createConnection({ host, port, timeout: SMTP_TIMEOUT_MS });
+    const done = (ok, error = null) => {
+      socket.removeAllListeners();
+      socket.destroy();
+      resolve({
+        ok,
+        error: error?.message || null,
+        code: error?.code || null
+      });
+    };
+    socket.once('connect', () => done(true));
+    socket.once('timeout', () => done(false, { message: `Connection to ${host}:${port} timed out`, code: 'ETIMEDOUT' }));
+    socket.once('error', (error) => done(false, error));
+  });
+}
+
+export async function diagnoseSmtpConfig(config = {}) {
+  const host = config.host || '';
+  const port = Number(config.port || 465);
+  const diagnostic = {
+    host,
+    port,
+    secure: Boolean(config.secure),
+    resolvedAddresses: [],
+    dnsOk: false,
+    tcpOk: false,
+    tcpError: null,
+    tcpCode: null
+  };
+
+  if (!host) {
+    return { ...diagnostic, stage: 'config', ok: false, message: 'SMTP host is missing.' };
+  }
+
+  try {
+    const addresses = await dns.lookup(host, { all: true });
+    diagnostic.resolvedAddresses = addresses.map((item) => item.address);
+    diagnostic.dnsOk = diagnostic.resolvedAddresses.length > 0;
+  } catch (error) {
+    return {
+      ...diagnostic,
+      stage: 'dns',
+      ok: false,
+      code: error?.code || 'DNS_ERROR',
+      message: `SMTP host ${host} does not resolve from the backend server. Check the A/CNAME record.`
+    };
+  }
+
+  const tcp = await checkTcpPort(host, port);
+  diagnostic.tcpOk = Boolean(tcp.ok);
+  diagnostic.tcpError = tcp.error;
+  diagnostic.tcpCode = tcp.code;
+  if (!tcp.ok) {
+    return {
+      ...diagnostic,
+      stage: 'tcp',
+      ok: false,
+      code: tcp.code || 'TCP_FAILED',
+      message: `Backend cannot connect to ${host}:${port}. Open this port on the VPS firewall, provider security group, and mail service listener.`
+    };
+  }
+
+  return { ...diagnostic, stage: 'smtp', ok: true, message: `Backend can reach ${host}:${port}.` };
+}
+
+function smtpErrorMessage(error, config, diagnostic = {}) {
+  const code = error?.code || '';
+  const responseCode = Number(error?.responseCode || 0);
+  const raw = error?.message || 'Unable to send test email.';
+
+  if (code === 'EAUTH' || [454, 530, 534, 535, 538].includes(responseCode)) {
+    return `SMTP authentication failed for ${config.username || 'the configured user'}. Check the mailbox exists on the mail server and the SMTP password is correct.`;
+  }
+  if (code === 'ESOCKET' || /ssl|tls|certificate|wrong version|self-signed/i.test(raw)) {
+    return `SMTP TLS/SSL failed on ${config.host}:${config.port}. Use SSL/TLS on port 465, or use port 587 with SSL/TLS unchecked for STARTTLS.`;
+  }
+  if (['ECONNECTION', 'ECONNREFUSED', 'ETIMEDOUT', 'EHOSTUNREACH', 'ENOTFOUND'].includes(code)) {
+    if (diagnostic.tcpOk) {
+      return `TCP reaches ${config.host}:${config.port}, but SMTP did not complete. Check Postfix/Dovecot SMTP submission, TLS mode, and auth settings.`;
+    }
+    return `Cannot reach ${config.host}:${config.port}. Check DNS, firewall, provider security group, and whether SMTP is listening.`;
+  }
+  if (code === 'EENVELOPE' || responseCode >= 550) {
+    return `SMTP server rejected the sender or recipient. Check From email ${config.fromEmail}, recipient address, SPF/DKIM/DMARC, and relay permissions.`;
+  }
+  return raw;
+}
+
 async function deliverEmail(config, message) {
   if (!config.host || !config.username || !config.password) {
     return { sent: false, reason: 'not-configured', advice: emailServerAdvice(config) };
@@ -87,6 +179,33 @@ export async function testTiwloEmail(ctxOrPrisma, input = {}) {
   const config = await systemEmailConfig(prisma, input.config || input);
   const to = input.to || input.recipient;
   if (!to) return { ok: false, message: 'Test recipient email is required.', ...emailServerAdvice(config) };
+  if (!config.host || !config.username || !config.password) {
+    return {
+      ok: false,
+      stage: 'config',
+      code: 'NOT_CONFIGURED',
+      message: 'SMTP host, username, and password are required before Tiwlo can send email.',
+      to,
+      fromEmail: config.fromEmail,
+      diagnostic: { host: config.host || '', port: config.port, secure: config.secure },
+      ...emailServerAdvice(config)
+    };
+  }
+
+  const diagnostic = await diagnoseSmtpConfig(config);
+  if (!diagnostic.ok) {
+    return {
+      ok: false,
+      stage: diagnostic.stage,
+      code: diagnostic.code,
+      message: diagnostic.message,
+      to,
+      fromEmail: config.fromEmail,
+      diagnostic,
+      ...emailServerAdvice(config)
+    };
+  }
+
   try {
     const result = await deliverEmail(config, {
       to,
@@ -103,15 +222,43 @@ export async function testTiwloEmail(ctxOrPrisma, input = {}) {
         ].join('')
       })
     });
-    if (!result.sent) return { ok: false, message: 'SMTP is not configured.', ...result.advice };
-    return { ok: true, message: `Test email sent to ${to}.`, to, fromEmail: config.fromEmail, ...result.advice };
+    if (!result.sent) {
+      return {
+        ok: false,
+        stage: 'config',
+        code: result.reason || 'SEND_FAILED',
+        message: result.reason === 'not-configured' ? 'SMTP is not configured.' : 'SMTP send failed.',
+        to,
+        fromEmail: config.fromEmail,
+        diagnostic,
+        ...result.advice
+      };
+    }
+    return {
+      ok: true,
+      stage: 'sent',
+      code: 'OK',
+      message: `Nodemailer sent a real test email to ${to}.`,
+      to,
+      fromEmail: config.fromEmail,
+      diagnostic,
+      ...result.advice
+    };
   } catch (error) {
     const advice = emailServerAdvice(config);
     return {
       ok: false,
-      message: error?.message || 'Unable to send test email.',
+      stage: 'smtp-send',
+      code: error?.code || String(error?.responseCode || 'SEND_FAILED'),
+      message: smtpErrorMessage(error, config, diagnostic),
       to,
       fromEmail: config.fromEmail,
+      diagnostic: {
+        ...diagnostic,
+        responseCode: error?.responseCode || null,
+        command: error?.command || null,
+        rawMessage: error?.message || null
+      },
       ...advice
     };
   }
@@ -174,7 +321,12 @@ export async function sendTiwloEmail(ctxOrPrisma, { to, subject, title, preview,
     return result;
   } catch (error) {
     console.warn('[email] send failed:', error?.message || error);
-    return { sent: false, reason: 'send-failed' };
+    return {
+      sent: false,
+      reason: 'send-failed',
+      code: error?.code || String(error?.responseCode || ''),
+      message: smtpErrorMessage(error, await systemEmailConfig(prisma))
+    };
   }
 }
 

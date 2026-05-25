@@ -33,6 +33,8 @@ export async function testSystemEmailWithApi(input: Record<string, unknown>) {
       testSystemEmail(input: $input) {
         ok
         message
+        code
+        stage
         to
         fromEmail
         host
@@ -40,6 +42,7 @@ export async function testSystemEmailWithApi(input: Record<string, unknown>) {
         secure
         requiredPorts
         allowlist
+        diagnostic
       }
     }`,
     { input }

@@ -317,6 +317,8 @@ type SystemSetting {
 type EmailTestResult {
   ok: Boolean!
   message: String!
+  code: String
+  stage: String
   to: String
   fromEmail: String
   host: String
@@ -324,6 +326,7 @@ type EmailTestResult {
   secure: Boolean
   requiredPorts: [Int!]!
   allowlist: [String!]!
+  diagnostic: JSON
 }
 
 type MailboxAccount {

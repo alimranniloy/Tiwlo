@@ -263,6 +263,56 @@ cd /var/www/Tiwlo && bash ./scripts/update-tiwlo.sh
 
 The update command runs `git pull`, installs dependencies, runs Prisma `db:push`, rebuilds the frontend, and restarts systemd services if they exist. It does not run `prisma migrate reset`, `DROP DATABASE`, or delete `.data/postgres`.
 
+## Tiwlo Mail And SMTP Troubleshooting
+
+Tiwlo uses `nodemailer` for real outgoing email. If SMTP is not configured, configured incorrectly, or the mail server rejects the message, Tiwlo login and signup must still continue. Email verification links are sent only when SMTP works; if verification email cannot be sent, the user is not blocked from signing in.
+
+Recommended DNS for `tiwlo.com`:
+
+```text
+tiwlo.com       A     153.75.245.4
+www.tiwlo.com   A     153.75.245.4
+mail.tiwlo.com  A     153.75.245.4
+email.tiwlo.com A     153.75.245.4
+tiwlo.com       MX    10 mail.tiwlo.com
+tiwlo.com       TXT   "v=spf1 ip4:153.75.245.4 -all"
+```
+
+Keep mail records as **DNS only** in Cloudflare. Do not proxy SMTP/IMAP through the orange cloud; Cloudflare only proxies web ports. `email.tiwlo.com` can be the Tiwlo Mail web login, while `mail.tiwlo.com` should be the SMTP/IMAP host. If both MX records point to the same server it can still work, but `mail.tiwlo.com` as the single MX is cleaner.
+
+Required mail ports on the VPS firewall and provider firewall:
+
+```bash
+sudo ufw allow 25/tcp
+sudo ufw allow 110/tcp
+sudo ufw allow 143/tcp
+sudo ufw allow 465/tcp
+sudo ufw allow 587/tcp
+sudo ufw allow 993/tcp
+sudo ufw allow 995/tcp
+sudo systemctl enable --now postfix dovecot opendkim rspamd
+```
+
+If the admin email test fails, read the exact stage:
+
+- `dns`: `mail.tiwlo.com` does not resolve from the backend server.
+- `tcp`: the backend cannot connect to the SMTP port; fix firewall, security group, or service listener.
+- `smtp-send` with `EAUTH` or `535`: username/password is wrong, or that mailbox does not exist on the mail server.
+- `smtp-send` with TLS/SSL wording: use port `465` with SSL enabled, or port `587` with SSL disabled so STARTTLS can be negotiated.
+- `smtp-send` with sender/recipient rejection: check `fromEmail`, SPF, DKIM, DMARC, and relay permissions.
+
+Quick server checks:
+
+```bash
+dig +short mail.tiwlo.com
+nc -vz mail.tiwlo.com 25
+nc -vz mail.tiwlo.com 465
+nc -vz mail.tiwlo.com 587
+nc -vz mail.tiwlo.com 993
+sudo journalctl -u postfix -n 100 --no-pager
+sudo journalctl -u dovecot -n 100 --no-pager
+```
+
 ## Manual Development Setup
 
 Use this when you want separate frontend/backend terminals instead of the one-command script.

@@ -189,7 +189,7 @@ export default function AdminEmail() {
       if (result.ok) {
         setNotice(result.message || 'Test email sent successfully.');
       } else {
-        setError(`${result.message || 'Test email failed.'} Allow server ports: ${(result.allowlist || []).join(', ') || '25/tcp, 465/tcp, 587/tcp, 993/tcp, 995/tcp'}.`);
+        setError(result.message || 'Test email failed.');
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to send test email');
@@ -309,9 +309,16 @@ export default function AdminEmail() {
               </div>
               <p className="text-[11px] font-semibold text-[#6B7280]">Server firewall should allow 25/tcp, 465/tcp, 587/tcp, 993/tcp, and 995/tcp for full mail service.</p>
               {testResult && (
-                <p className={`rounded border px-3 py-2 text-[12px] font-bold ${testResult.ok ? 'border-emerald-100 bg-emerald-50 text-emerald-700' : 'border-red-100 bg-red-50 text-red-700'}`}>
-                  {testResult.message}
-                </p>
+                <div className={`rounded border px-3 py-2 text-[12px] ${testResult.ok ? 'border-emerald-100 bg-emerald-50 text-emerald-700' : 'border-red-100 bg-red-50 text-red-700'}`}>
+                  <p className="font-bold">{testResult.message}</p>
+                  <div className="mt-2 grid grid-cols-1 gap-1 font-mono text-[11px] text-current/80 sm:grid-cols-2">
+                    <span>stage: {testResult.stage || '-'}</span>
+                    <span>code: {testResult.code || '-'}</span>
+                    <span>host: {testResult.host || systemForm.host}:{testResult.port || systemForm.port}</span>
+                    <span>tcp: {testResult.diagnostic?.tcpOk ? 'reachable' : testResult.diagnostic?.tcpError || '-'}</span>
+                    <span className="sm:col-span-2">dns: {(testResult.diagnostic?.resolvedAddresses || []).join(', ') || '-'}</span>
+                  </div>
+                </div>
               )}
             </div>
             <button disabled={saving} className="inline-flex items-center justify-center gap-2 rounded bg-[#111827] px-4 py-2.5 text-sm font-bold text-white hover:bg-black disabled:opacity-60 md:col-span-2">
