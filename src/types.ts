@@ -22,7 +22,16 @@ export interface User {
   credits?: number;
   status?: string;
   phone?: string;
+  mobileCountryCode?: string;
   primaryRegion?: string;
+  country?: string;
+  addressLine1?: string;
+  city?: string;
+  state?: string;
+  postalCode?: string;
+  billingName?: string;
+  profileCompletedAt?: string;
+  emailVerifiedAt?: string;
   role: 'super_admin' | 'admin' | 'manager' | 'staff' | 'user' | 'store_owner' | 'store_customer' | 'isp_admin';
 }
 

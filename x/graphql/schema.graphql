@@ -9,7 +9,16 @@ type User {
   role: String!
   status: String
   phone: String
+  mobileCountryCode: String
   primaryRegion: String
+  country: String
+  addressLine1: String
+  city: String
+  state: String
+  postalCode: String
+  billingName: String
+  profileCompletedAt: String
+  emailVerifiedAt: String
   createdAt: String
   updatedAt: String
 }
@@ -1388,13 +1397,28 @@ input SignupInput {
   name: String!
   email: String!
   password: String!
+  phone: String
+  mobileCountryCode: String
+  country: String
+  addressLine1: String
+  city: String
+  state: String
+  postalCode: String
+  billingName: String
 }
 
 input UpdateProfileInput {
   id: ID
   name: String
   phone: String
+  mobileCountryCode: String
   primaryRegion: String
+  country: String
+  addressLine1: String
+  city: String
+  state: String
+  postalCode: String
+  billingName: String
   avatar: String
 }
 
@@ -1406,7 +1430,14 @@ input UpdateUserInput {
   status: String
   credits: Float
   phone: String
+  mobileCountryCode: String
   primaryRegion: String
+  country: String
+  addressLine1: String
+  city: String
+  state: String
+  postalCode: String
+  billingName: String
   avatar: String
 }
 
@@ -2302,6 +2333,10 @@ type Mutation {
   login(input: LoginInput!): AuthPayload!
   signup(input: SignupInput!): AuthPayload!
   updateProfile(input: UpdateProfileInput!): User!
+  requestPasswordReset(email: String!): Boolean!
+  resetPassword(token: String!, password: String!): AuthPayload!
+  resendEmailVerification: Boolean!
+  verifyEmail(token: String!): AuthPayload!
   verifyPassword(password: String!): Boolean!
   updateUserRole(id: ID!, role: String!): User!
   updateUser(input: UpdateUserInput!): User!

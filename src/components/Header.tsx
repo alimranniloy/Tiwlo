@@ -11,8 +11,13 @@ import {
 } from 'lucide-react';
 import { User } from '../types';
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
-import { fetchBillingOverviewWithApi, fetchSettingsWithApi } from '../lib/tiwloApi';
+import { Link, useNavigate } from 'react-router-dom';
+import {
+  fetchBillingOverviewWithApi,
+  fetchNotificationsWithApi,
+  fetchSettingsWithApi,
+  markNotificationReadWithApi
+} from '../lib/tiwloApi';
 import CurrencySwitcher from './CurrencySwitcher';
 import BrandLogo from './BrandLogo';
 import {
@@ -35,7 +40,10 @@ interface HeaderProps {
 }
 
 export default function Header({ user, onLogout, isSidebarOpen, setIsSidebarOpen }: HeaderProps) {
+  const navigate = useNavigate();
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
+  const [isNotificationOpen, setIsNotificationOpen] = useState(false);
+  const [notifications, setNotifications] = useState<any[]>([]);
   const [creditBalance, setCreditBalance] = useState<number | null>(typeof user.credits === 'number' ? user.credits : null);
   const [currencyPolicy, setCurrencyPolicy] = useState(() => normalizeCurrencyPolicy(DEFAULT_CURRENCY_POLICY));
   const currencyStorageKey = currencySelectionStorageKey('platform', 'console', user.id);
@@ -62,6 +70,27 @@ export default function Header({ user, onLogout, isSidebarOpen, setIsSidebarOpen
       window.removeEventListener('tiwlo:data-refresh', loadCreditBalance);
     };
   }, [user.id, user.credits]);
+
+  useEffect(() => {
+    let isMounted = true;
+    const loadNotifications = () => {
+      fetchNotificationsWithApi(undefined, 'unread')
+        .then((items) => {
+          if (isMounted) setNotifications((items || []).slice(0, 8));
+        })
+        .catch(() => {
+          if (isMounted) setNotifications([]);
+        });
+    };
+
+    loadNotifications();
+    window.addEventListener('tiwlo:data-refresh', loadNotifications);
+
+    return () => {
+      isMounted = false;
+      window.removeEventListener('tiwlo:data-refresh', loadNotifications);
+    };
+  }, [user.id]);
 
   useEffect(() => {
     let isMounted = true;
@@ -95,18 +124,44 @@ export default function Header({ user, onLogout, isSidebarOpen, setIsSidebarOpen
     ? 'Administrator'
     : user.role.split('_').map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(' ');
 
+  const notificationRoute = (notification: any) => {
+    const metadata = notification?.metadata || {};
+    const target = String(metadata.path || metadata.url || '');
+    if (target.startsWith('/')) return target;
+    const fingerprint = `${notification?.scope || ''} ${notification?.type || ''} ${notification?.title || ''} ${metadata.module || ''}`.toLowerCase();
+    if (fingerprint.includes('invoice')) return '/invoices';
+    if (fingerprint.includes('billing') || fingerprint.includes('credit') || fingerprint.includes('payment')) return '/billing';
+    if (fingerprint.includes('support') || fingerprint.includes('ticket')) return '/support';
+    if (fingerprint.includes('tiwlo') || fingerprint.includes('withdrawal') || fingerprint.includes('payout')) return '/tiwlo-pay/overview';
+    if (fingerprint.includes('tpanel') || fingerprint.includes('license')) return '/tpanel';
+    if (fingerprint.includes('isp') || fingerprint.includes('router')) return '/isp-billing';
+    if (fingerprint.includes('store') || fingerprint.includes('order') || fingerprint.includes('ecommerce')) return '/store';
+    return '/alerts';
+  };
+
+  const openNotification = async (notification: any) => {
+    setIsNotificationOpen(false);
+    setNotifications((current) => current.filter((item) => item.id !== notification.id));
+    try {
+      await markNotificationReadWithApi(notification.id);
+    } catch {
+      // Best-effort read receipt; navigation is more important here.
+    }
+    navigate(notificationRoute(notification));
+  };
+
   return (
-    <header className="h-14 md:h-16 bg-white border-b border-[#e5e8ed] px-4 md:px-8 flex items-center justify-between sticky top-0 z-30">
-      <div className="flex items-center gap-3 lg:hidden">
+    <header className="h-14 md:h-16 bg-white border-b border-[#e5e8ed] px-2 sm:px-4 md:px-8 flex items-center justify-between sticky top-0 z-30">
+      <div className="flex items-center gap-2 lg:hidden">
         <button 
           onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-          className="p-2 text-[#2e3d49] hover:bg-gray-100 rounded-md transition-colors"
+          className="p-1.5 text-[#2e3d49] hover:bg-gray-100 rounded-md transition-colors"
         >
           {isSidebarOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
         </button>
         {/* Mobile menu and logo area */}
         <div className="flex items-center gap-2">
-          <BrandLogo className="h-8 w-28" />
+          <BrandLogo className="h-8 w-20 sm:w-28" />
         </div>
       </div>
 
@@ -121,7 +176,7 @@ export default function Header({ user, onLogout, isSidebarOpen, setIsSidebarOpen
         </div>
       </div>
 
-      <div className="flex items-center gap-2 md:gap-5 ml-auto">
+      <div className="flex items-center gap-1.5 md:gap-5 ml-auto">
         <CurrencySwitcher
           policy={currencyPolicy}
           storageKey={currencyStorageKey}
@@ -131,27 +186,70 @@ export default function Header({ user, onLogout, isSidebarOpen, setIsSidebarOpen
           scopeId="console"
           actorId={user.id}
           compact
-          className="hidden sm:inline-flex"
+          className="inline-flex"
+          selectClassName="w-[62px] px-1.5 sm:w-[78px] sm:px-2.5"
         />
 
         <Link
           to="/billing"
-          className={`${isCreditEmpty ? 'flex' : 'hidden md:flex'} items-center gap-2 rounded-lg border px-3 py-1 mr-2 shrink-0 ${
+          className={`flex items-center gap-1.5 rounded-lg border px-2 py-1 md:px-3 shrink-0 ${
             isCreditEmpty
               ? 'border-red-200 bg-red-50 text-red-700 hover:bg-red-100/70'
               : 'border-green-100 bg-green-50 text-green-700 hover:border-green-200 hover:bg-green-100/70'
           }`}
         >
           {isCreditEmpty ? <AlertTriangle className="h-3.5 w-3.5" /> : <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>}
-          <span className="max-w-[160px] truncate text-[11px] font-bold tracking-tight sm:max-w-[240px]">
+          <span className="hidden max-w-[160px] truncate text-[11px] font-bold tracking-tight sm:inline sm:max-w-[240px]">
             {isCreditEmpty ? 'Add credit now: all servers will stay off' : `Credits: ${creditText}`}
+          </span>
+          <span className="max-w-[58px] truncate text-[10px] font-black tracking-tight sm:hidden">
+            {isCreditEmpty ? 'Add' : creditText}
           </span>
         </Link>
 
-        <button className="p-2 text-[#6B7280] hover:bg-gray-50 rounded-md transition-colors relative shrink-0">
-           <Bell className="h-5 w-5" />
-           <span className="absolute top-2.5 right-2.5 w-1.5 h-1.5 bg-red-500 rounded-full border border-white"></span>
-        </button>
+        <div className="relative shrink-0">
+          <button
+            type="button"
+            onClick={() => setIsNotificationOpen((value) => !value)}
+            className="p-1.5 sm:p-2 text-[#6B7280] hover:bg-gray-50 rounded-md transition-colors relative"
+            aria-label="Notifications"
+            aria-expanded={isNotificationOpen}
+          >
+             <Bell className="h-5 w-5" />
+             {notifications.length > 0 && (
+               <span className="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full border border-white bg-red-500 px-1 text-[9px] font-black text-white">
+                 {notifications.length > 9 ? '9+' : notifications.length}
+               </span>
+             )}
+          </button>
+
+          {isNotificationOpen && (
+            <>
+              <div className="fixed inset-0 z-[60]" onClick={() => setIsNotificationOpen(false)}></div>
+              <div className="absolute right-0 top-full z-[100] mt-2 w-[min(20rem,calc(100vw-1rem))] overflow-hidden rounded border border-[#e5e8ed] bg-white">
+                <div className="flex items-center justify-between border-b border-[#f3f5f9] bg-[#f8f9fa] px-4 py-3">
+                  <p className="text-[12px] font-black uppercase tracking-wider text-[#2e3d49]">Notifications</p>
+                  <Link to="/alerts" onClick={() => setIsNotificationOpen(false)} className="text-[11px] font-bold text-[#0069ff]">View all</Link>
+                </div>
+                <div className="max-h-80 overflow-y-auto">
+                  {notifications.length === 0 ? (
+                    <div className="px-4 py-8 text-center text-[12px] font-bold text-gray-400">No unread notifications.</div>
+                  ) : notifications.map((notification) => (
+                    <button
+                      key={notification.id}
+                      type="button"
+                      onClick={() => openNotification(notification)}
+                      className="block w-full border-b border-[#f3f5f9] px-4 py-3 text-left transition-colors last:border-b-0 hover:bg-[#f8f9fa]"
+                    >
+                      <p className="line-clamp-1 text-[13px] font-black text-[#2e3d49]">{notification.title}</p>
+                      <p className="mt-1 line-clamp-2 text-[12px] leading-5 text-[#6B7280]">{notification.message}</p>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
+        </div>
         
         <div className="h-6 w-[1px] bg-[#e5e8ed] mx-1 hidden sm:block"></div>
 

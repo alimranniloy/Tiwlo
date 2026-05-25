@@ -187,6 +187,17 @@ export async function updateAdminModuleStatus(key: string, status: string) {
   return data.updateAdminModuleStatus;
 }
 
+export async function upsertAdminModuleWithApi(input: Record<string, unknown>) {
+  const data = await graphQL<{ upsertAdminModule: any }>(
+    `mutation UpsertAdminModule($input: UpsertAdminModuleInput!) {
+      upsertAdminModule(input: $input) { ${moduleFields} }
+    }`,
+    { input }
+  );
+
+  return data.upsertAdminModule;
+}
+
 export async function fetchAuditLogs(resource?: string, resourceId?: string) {
   const data = await graphQL<{ auditLogs: any[] }>(
     `query AuditLogs($resource: String, $resourceId: String) {

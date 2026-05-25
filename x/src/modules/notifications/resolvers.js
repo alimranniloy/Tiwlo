@@ -11,8 +11,8 @@ export const notificationResolvers = {
       return service.createNotification(ctx, input);
     },
     markNotificationRead: async (_, { id }, ctx) => {
-      await requireAuth(ctx);
-      return service.markRead(ctx, id);
+      const actor = await requireAuth(ctx);
+      return service.markRead(ctx, actor, id);
     }
   }
 };

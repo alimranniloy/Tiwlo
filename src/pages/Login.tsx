@@ -80,6 +80,7 @@ export default function LoginPage({ onLogin }: LoginProps) {
               <div className="space-y-1">
                 <div className="flex justify-between items-center">
                   <label className="block text-[12px] font-bold text-[#4a4a4a] uppercase tracking-wider">Password</label>
+                  <Link to="/forgot-password" className="text-[12px] font-bold text-[#0069ff] hover:underline">Forgot?</Link>
                 </div>
                 <input
                   required

@@ -30,13 +30,16 @@ import {
   ShoppingBag,
   Puzzle,
   Lock,
+  Mail,
   Settings,
   Coins,
   Archive
 } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { User } from '../types';
 import BrandLogo from './BrandLogo';
+import { fetchAdminModules } from '../lib/tiwloApi';
+import { SERVICE_MODULE_GROUP, SERVICE_MODULE_KEYS, serviceEnabled } from '../lib/serviceModules';
 
 interface SidebarProps {
   user: User;
@@ -47,6 +50,23 @@ interface SidebarProps {
 
 export default function Sidebar({ user, isOpen, setIsOpen, onLogout }: SidebarProps) {
   const isAdminUser = ['admin', 'super_admin'].includes(user.role);
+  const [serviceModules, setServiceModules] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (isAdminUser) return;
+    let isMounted = true;
+    fetchAdminModules(SERVICE_MODULE_GROUP)
+      .then((modules) => {
+        if (isMounted) setServiceModules(modules || []);
+      })
+      .catch(() => {
+        if (isMounted) setServiceModules([]);
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, [isAdminUser]);
+
   const sections = [
     ...(isAdminUser ? [
       {
@@ -102,6 +122,7 @@ export default function Sidebar({ user, isOpen, setIsOpen, onLogout }: SidebarPr
         label: 'UTILITIES & SETUP',
         items: [
           { name: 'Automation Logs', icon: Terminal, path: '/management/logs' },
+          { name: 'Email', icon: Mail, path: '/management/email' },
           { name: 'API Management', icon: Zap, path: '/management/api' },
           { name: 'Security Policy', icon: Lock, path: '/management/security' },
           { name: 'Backup', icon: Archive, path: '/management/backup' },
@@ -114,10 +135,10 @@ export default function Sidebar({ user, isOpen, setIsOpen, onLogout }: SidebarPr
         label: 'MANAGE',
         items: [
           { name: 'Droplets', icon: Server, path: '/droplets' },
-          { name: 'Ecommerce Center', icon: ShoppingBag, path: '/store' },
-          { name: 'Connectivity Hub', icon: Activity, path: '/isp-billing' },
-          { name: 'Tiwlo Pay', icon: CreditCard, path: '/tiwlo-pay/overview' },
-          { name: 'tPanel', icon: Server, path: '/tpanel' },
+          { name: 'Ecommerce Center', icon: ShoppingBag, path: '/store', serviceKey: SERVICE_MODULE_KEYS.ecommerce },
+          { name: 'Connectivity Hub', icon: Activity, path: '/isp-billing', serviceKey: SERVICE_MODULE_KEYS.isp },
+          { name: 'Tiwlo Pay', icon: CreditCard, path: '/tiwlo-pay/overview', serviceKey: SERVICE_MODULE_KEYS.tiwloPay },
+          { name: 'tPanel', icon: Server, path: '/tpanel', serviceKey: SERVICE_MODULE_KEYS.tpanel },
           { name: 'Kubernetes', icon: Layers, path: '/kubernetes' },
           { name: 'Volumes', icon: HardDrive, path: '/volumes' },
           { name: 'Databases', icon: Database, path: '/databases' },
@@ -166,6 +187,13 @@ export default function Sidebar({ user, isOpen, setIsOpen, onLogout }: SidebarPr
     }
   ];
 
+  const visibleSections = sections
+    .map((section) => ({
+      ...section,
+      items: section.items.filter((item) => isAdminUser || !(item as any).serviceKey || serviceEnabled(serviceModules, (item as any).serviceKey))
+    }))
+    .filter((section) => section.items.length > 0);
+
   const NavContent = () => (
     <div className="flex flex-col h-full bg-[#031b4e] text-[#94a3b8]">
       <div className="p-5 md:p-6 flex items-center gap-3 mb-2">
@@ -187,7 +215,7 @@ export default function Sidebar({ user, isOpen, setIsOpen, onLogout }: SidebarPr
       </div>
 
       <nav className="flex-1 px-3 overflow-y-auto no-scrollbar pb-10">
-        {sections.map((section) => (
+        {visibleSections.map((section) => (
           <div key={section.label} className="mt-6 first:mt-0 mb-2">
             <h3 className="px-4 text-[10px] font-bold text-[#5b6e96] uppercase tracking-[0.1em] mb-2">{section.label}</h3>
             <div className="space-y-0.5">

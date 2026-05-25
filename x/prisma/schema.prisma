@@ -17,7 +17,20 @@ model User {
   role          String          @default("user")
   status        String          @default("active")
   phone         String?
+  mobileCountryCode String?
   primaryRegion String?
+  country       String?
+  addressLine1  String?
+  city          String?
+  state         String?
+  postalCode    String?
+  billingName   String?
+  profileCompletedAt DateTime?
+  emailVerifiedAt DateTime?
+  emailVerificationToken String?
+  emailVerificationExpires DateTime?
+  passwordResetTokenHash String?
+  passwordResetExpires DateTime?
   createdAt     DateTime        @default(now())
   updatedAt     DateTime        @updatedAt
 

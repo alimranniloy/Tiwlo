@@ -3,6 +3,7 @@ import { randomIp, removeUndefined, toApi } from '../../core/format.js';
 import { writeAudit } from '../../core/audit.js';
 import { AppError } from '../../core/errors.js';
 import { pagination } from '../../core/validation.js';
+import { paragraph, sendTiwloEmail } from '../../core/email.js';
 import { ensureOwnerHasCredit, runCreditAutomationForOwner, runCreditAutomationJob } from './creditAutomation.js';
 import {
   createBkashPayment,
@@ -27,6 +28,35 @@ const autoIpResourceTypes = new Set(['droplet', 'system_server']);
 const CREDIT_CURRENCY = 'USD';
 
 const invoiceNumber = (prefix) => `${prefix}-${Date.now().toString(36).toUpperCase()}`;
+
+const moneyLabel = (amount, currency = CREDIT_CURRENCY) => `${String(currency || CREDIT_CURRENCY).toUpperCase()} ${Number(amount || 0).toFixed(2)}`;
+
+async function notifyBillingEvent(ctx, invoice, title, message, path = '/invoices') {
+  if (!invoice?.ownerId) return;
+  await ctx.prisma.notification.create({
+    data: {
+      ownerId: invoice.ownerId,
+      scope: 'billing',
+      scopeId: invoice.id,
+      type: 'invoice',
+      title,
+      message,
+      status: 'unread',
+      metadata: { invoiceId: invoice.id, number: invoice.number, path }
+    }
+  }).catch(() => null);
+  const owner = await ctx.prisma.user.findUnique({ where: { id: invoice.ownerId } }).catch(() => null);
+  await sendTiwloEmail(ctx, {
+    to: owner?.email,
+    subject: title,
+    title,
+    preview: message,
+    html: [
+      paragraph(message),
+      paragraph(`Invoice ${invoice.number} total: ${moneyLabel(invoice.amount, invoice.currency)}.`)
+    ].join('')
+  });
+}
 
 const exchangeRate = (fromCurrency, toCurrency) => {
   const from = String(fromCurrency || CREDIT_CURRENCY).toUpperCase();
@@ -627,6 +657,7 @@ export const createInvoice = async (ctx, input) => {
     }
   });
   await writeAudit(ctx, 'create_invoice', 'invoice', invoice.id, { scope: input.scope });
+  await notifyBillingEvent(ctx, invoice, 'New invoice created', `${invoice.number} is ready for ${moneyLabel(invoice.amount, invoice.currency)}.`);
   return toApi(invoice);
 };
 
@@ -880,12 +911,13 @@ export const startCreditTopUp = async (ctx, input) => {
     }
   });
   await writeAudit(ctx, 'create_credit_topup', 'invoice', invoice.id, { provider: input.provider });
+  await notifyBillingEvent(ctx, invoice, 'Credit top-up started', `${invoice.number} was created for ${moneyLabel(amount, currency)}.`, '/billing');
   return startInvoicePayment(ctx, { invoiceId: invoice.id, provider: input.provider || 'bkash' });
 };
 
 const createCloudOrderInvoice = async (ctx, actor, resourceInput, billing) => {
   const amount = roundMoney(billing.initialCharge);
-  return ctx.prisma.invoice.create({
+  const invoice = await ctx.prisma.invoice.create({
     data: {
       ownerId: actor.id,
       number: invoiceNumber('CLD'),
@@ -918,6 +950,8 @@ const createCloudOrderInvoice = async (ctx, actor, resourceInput, billing) => {
       }
     }
   });
+  await notifyBillingEvent(ctx, invoice, 'Cloud order invoice created', `${resourceInput.name} is waiting for payment.`, '/billing');
+  return invoice;
 };
 
 export const createCloudResourceOrder = async (ctx, input) => {

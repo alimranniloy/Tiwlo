@@ -1,8 +1,51 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [ -n "${TIWLO_INSTALL_DIR:-}" ]; then
+  ROOT="$TIWLO_INSTALL_DIR"
+elif [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
+  ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+elif [ -d "/var/www/Tiwlo/.git" ]; then
+  ROOT="/var/www/Tiwlo"
+else
+  ROOT="$PWD"
+fi
+
+if [ ! -d "$ROOT/.git" ]; then
+  echo "Could not find a Tiwlo git checkout at $ROOT."
+  echo "Run from the Tiwlo directory or set TIWLO_INSTALL_DIR=/path/to/Tiwlo."
+  exit 1
+fi
+
 cd "$ROOT"
+
+run_sudo() {
+  if [ "$(id -u)" -eq 0 ]; then
+    "$@"
+  elif command -v sudo >/dev/null 2>&1; then
+    sudo "$@"
+  else
+    return 1
+  fi
+}
+
+install_system_email_stack() {
+  if ! command -v apt-get >/dev/null 2>&1; then
+    return 0
+  fi
+  echo "Preparing email/webmail packages..."
+  echo "postfix postfix/mailname string ${TIWLO_MAIL_DOMAIN:-tiwlo.local}" | run_sudo debconf-set-selections >/dev/null 2>&1 || true
+  echo "postfix postfix/main_mailer_type select Internet Site" | run_sudo debconf-set-selections >/dev/null 2>&1 || true
+  run_sudo env DEBIAN_FRONTEND=noninteractive apt-get update >/dev/null 2>&1 || true
+  run_sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y \
+    postfix dovecot-imapd dovecot-pop3d roundcube roundcube-core roundcube-pgsql \
+    opendkim opendkim-tools mailutils >/dev/null 2>&1 || true
+  run_sudo systemctl enable --now postfix dovecot opendkim >/dev/null 2>&1 || true
+  run_sudo ufw allow 25/tcp >/dev/null 2>&1 || true
+  run_sudo ufw allow 465/tcp >/dev/null 2>&1 || true
+  run_sudo ufw allow 587/tcp >/dev/null 2>&1 || true
+  run_sudo ufw allow 993/tcp >/dev/null 2>&1 || true
+}
 
 set_env_value() {
   local file="$1"
@@ -26,6 +69,8 @@ set_env_value() {
 
 echo "Updating Tiwlo code..."
 git pull --ff-only
+
+install_system_email_stack
 
 echo "Preparing production GraphQL routing..."
 set_env_value "$ROOT/.env" VITE_GRAPHQL_URL "${FRONTEND_GRAPHQL_URL:-/graphql}"

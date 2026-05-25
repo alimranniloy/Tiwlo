@@ -16,7 +16,19 @@ export async function loginWithApi(email: string, password: string) {
   return data.login;
 }
 
-export async function signupWithApi(name: string, email: string, password: string) {
+export async function signupWithApi(input: {
+  name: string;
+  email: string;
+  password: string;
+  phone?: string;
+  mobileCountryCode?: string;
+  country?: string;
+  addressLine1?: string;
+  city?: string;
+  state?: string;
+  postalCode?: string;
+  billingName?: string;
+}) {
   const data = await graphQL<{ signup: { token: string; user: User } }>(
     `mutation Signup($input: SignupInput!) {
       signup(input: $input) {
@@ -24,7 +36,7 @@ export async function signupWithApi(name: string, email: string, password: strin
         user { ${userFields} }
       }
     }`,
-    { input: { name, email, password } }
+    { input }
   );
 
   setAuthToken(data.signup.token);
@@ -40,4 +52,55 @@ export async function verifyCurrentPasswordWithApi(password: string) {
   );
 
   return data.verifyPassword;
+}
+
+export async function requestPasswordResetWithApi(email: string) {
+  const data = await graphQL<{ requestPasswordReset: boolean }>(
+    `mutation RequestPasswordReset($email: String!) {
+      requestPasswordReset(email: $email)
+    }`,
+    { email }
+  );
+
+  return data.requestPasswordReset;
+}
+
+export async function resetPasswordWithApi(token: string, password: string) {
+  const data = await graphQL<{ resetPassword: { token: string; user: User } }>(
+    `mutation ResetPassword($token: String!, $password: String!) {
+      resetPassword(token: $token, password: $password) {
+        token
+        user { ${userFields} }
+      }
+    }`,
+    { token, password }
+  );
+
+  setAuthToken(data.resetPassword.token);
+  return data.resetPassword;
+}
+
+export async function resendEmailVerificationWithApi() {
+  const data = await graphQL<{ resendEmailVerification: boolean }>(
+    `mutation ResendEmailVerification {
+      resendEmailVerification
+    }`
+  );
+
+  return data.resendEmailVerification;
+}
+
+export async function verifyEmailWithApi(token: string) {
+  const data = await graphQL<{ verifyEmail: { token: string; user: User } }>(
+    `mutation VerifyEmail($token: String!) {
+      verifyEmail(token: $token) {
+        token
+        user { ${userFields} }
+      }
+    }`,
+    { token }
+  );
+
+  setAuthToken(data.verifyEmail.token);
+  return data.verifyEmail;
 }

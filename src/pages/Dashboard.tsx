@@ -18,7 +18,6 @@ import {
 import { Link } from 'react-router-dom';
 import { Domain, Droplet, User } from '../types';
 import {
-  fetchAuditLogs,
   fetchBillingOverviewWithApi,
   fetchCloudResourcesWithApi,
   notifyDataRefresh,
@@ -56,15 +55,14 @@ export default function Dashboard({ user, droplets, domains }: DashboardProps) {
     Promise.all([
       fetchCloudResourcesWithApi(),
       settleUsageBillingWithApi().catch(() => fetchBillingOverviewWithApi()),
-      fetchSupportTicketsWithApi(),
-      fetchAuditLogs()
+      fetchSupportTicketsWithApi()
     ])
-      .then(([nextResources, nextBilling, nextTickets, nextLogs]) => {
+      .then(([nextResources, nextBilling, nextTickets]) => {
         setResources(nextResources);
         setBillingOverview(nextBilling);
         setInvoices(nextBilling?.invoices || []);
         setTickets(nextTickets);
-        setLogs(nextLogs);
+        setLogs([]);
         notifyDataRefresh();
       })
       .catch((err) => {

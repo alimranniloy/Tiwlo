@@ -310,6 +310,22 @@ function normalizeSettings(runtime: StoreThemeRuntime | null | undefined, record
   };
 }
 
+function setMetaThemeColor(color: string) {
+  if (typeof document === 'undefined') return () => undefined;
+  const safeColor = /^#[0-9a-f]{3,8}$/i.test(color) ? color : '#0069ff';
+  let meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
+  if (!meta) {
+    meta = document.createElement('meta');
+    meta.name = 'theme-color';
+    document.head.appendChild(meta);
+  }
+  const previous = meta.getAttribute('content');
+  meta.setAttribute('content', safeColor);
+  return () => {
+    if (previous) meta?.setAttribute('content', previous);
+  };
+}
+
 function normalizeReviews(records: Record<string, StorefrontRecord[]>, includeFallback = true): StorefrontReview[] {
   const reviews = activeRecords(records, 'reviews').map((record, index) => ({
     id: record.id,
@@ -346,6 +362,9 @@ export function StorefrontRuntimeProvider({
   const records = React.useMemo(() => normalizeRecords(runtime), [runtime]);
   const baseStore = React.useMemo(() => normalizeStore(runtime), [runtime]);
   const settings = React.useMemo(() => normalizeSettings(runtime, records), [records, runtime]);
+
+  React.useEffect(() => setMetaThemeColor(settings.accentColor), [settings.accentColor]);
+
   const currencyPolicy = React.useMemo(() => normalizeCurrencyPolicy(
     runtime?.store?.settings?.currencyPolicy || settings.currencyPolicy || DEFAULT_CURRENCY_POLICY,
     baseStore.currency || 'USD'

@@ -85,7 +85,7 @@ export default function CurrencySwitcher({
       >
         <Coins className={`h-3.5 w-3.5 text-[#0069ff] ${iconClassName}`} />
         <span className="min-w-0 flex-1 truncate text-left text-[11px] font-black uppercase leading-none">
-          {compact ? safeSelected : `${safeSelected} · ${selectedInfo.symbol}`}
+          {compact ? safeSelected : `${safeSelected} ${selectedInfo.symbol}`}
         </span>
         <ChevronDown className={`h-3.5 w-3.5 text-gray-400 transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>

@@ -693,6 +693,7 @@ async function main() {
 
   const settings = [
     { scope: 'platform', scopeId: '', key: 'branding', value: { name: 'Tiwlo Cloud', supportEmail: 'support@tiwlo.app' } },
+    { scope: 'platform', scopeId: '', key: 'systemEmail', value: { host: 'mail.tiwlo.app', port: 465, username: 'noreply@tiwlo.app', fromEmail: 'noreply@tiwlo.app', fromName: 'Tiwlo', replyTo: 'support@tiwlo.app', secureSSL: true } },
     { scope: 'platform', scopeId: '', key: 'paymentGateways', value: { stripe: true, paypal: false, manualBank: true } },
     { scope: 'store', scopeId: store.id, key: 'checkout', value: { provider: 'stripe', taxIncluded: false, currency: 'USD' } },
     { scope: 'isp', scopeId: ispSite.id, key: 'radius', value: { authPort: 1812, accountingPort: 1813, nasSync: true } }
@@ -707,9 +708,15 @@ async function main() {
   }
 
   const adminModules = [
+    ['service.ecommerce', 'service-control', 'E-Commerce', '/management/ecommerce', 'Storefronts, themes, merchant dashboards, and customer store links.'],
+    ['service.isp', 'service-control', 'ISP Billing', '/management/isp', 'ISP billing portals, routers, subscribers, and connectivity dashboards.'],
+    ['service.tiwlo-pay', 'service-control', 'Tiwlo Pay', '/management/tiwlo-pay', 'Payment links, merchant verification, checkout, and payouts.'],
+    ['service.tpanel', 'service-control', 'tPanel', '/management/tpanel', 'tPanel license ordering, activation, packages, and server panel tools.'],
+
     ['admin.system-overview', 'main-admin', 'System Overview', '/', 'Platform-wide overview, health, revenue, and live operations.'],
     ['admin.service-statistics', 'main-admin', 'Service Statistics', '/activity', 'Usage statistics across cloud services and products.'],
     ['admin.notifications', 'main-admin', 'Live Notifications', '/alerts', 'Operational alerts, customer notifications, and incident feed.'],
+    ['admin.email', 'main-admin', 'Email', '/management/email', 'Mailbox accounts, system SMTP sender, SSL, and webmail setup.'],
     ['admin.clients', 'main-admin', 'Client List', '/management/users', 'Search, verify, suspend, and support user accounts.'],
     ['admin.identity', 'main-admin', 'User Identities', '/management/identity', 'KYC, MFA, roles, and account identity controls.'],
     ['admin.support', 'main-admin', 'Support Tickets', '/management/support', 'Central support inbox with SLA and escalation.'],
@@ -897,6 +904,7 @@ async function main() {
   );
 
   for (const [key, group, label, path, description] of adminModules) {
+    const isServiceControl = group === 'service-control';
     await prisma.adminModule.upsert({
       where: { key },
       create: {
@@ -914,7 +922,7 @@ async function main() {
         label,
         path,
         description,
-        status: 'active',
+        ...(isServiceControl ? {} : { status: 'active' }),
         config: { productionReady: true, source: 'seed' }
       }
     });

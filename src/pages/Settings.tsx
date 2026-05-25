@@ -18,6 +18,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { User } from '../types';
 import { fetchBillingOverviewWithApi, updateProfileWithApi } from '../lib/tiwloApi';
+import { COUNTRIES, countryByCode, phoneValidationMessage } from '../lib/countries';
 
 interface SettingsProps {
   user: User;
@@ -27,6 +28,12 @@ interface SettingsProps {
 export default function SettingsPage({ user, setUser }: SettingsProps) {
   const [name, setName] = React.useState(user.name);
   const [phone, setPhone] = React.useState(user.phone || '');
+  const [country, setCountry] = React.useState(user.country || 'BD');
+  const [billingName, setBillingName] = React.useState(user.billingName || user.name);
+  const [addressLine1, setAddressLine1] = React.useState(user.addressLine1 || '');
+  const [city, setCity] = React.useState(user.city || '');
+  const [state, setState] = React.useState(user.state || '');
+  const [postalCode, setPostalCode] = React.useState(user.postalCode || '');
   const [primaryRegion, setPrimaryRegion] = React.useState(user.primaryRegion || 'New York 3');
   const [isSaving, setIsSaving] = React.useState(false);
   const [error, setError] = React.useState('');
@@ -56,7 +63,22 @@ export default function SettingsPage({ user, setUser }: SettingsProps) {
     setIsSaving(true);
 
     try {
-      const updatedUser = await updateProfileWithApi({ id: user.id, name, phone, primaryRegion });
+      const phoneError = phoneValidationMessage(country, phone);
+      if (phoneError) throw new Error(phoneError);
+      const selectedCountry = countryByCode(country);
+      const updatedUser = await updateProfileWithApi({
+        id: user.id,
+        name,
+        phone,
+        mobileCountryCode: selectedCountry.dialCode,
+        country,
+        billingName,
+        addressLine1,
+        city,
+        state,
+        postalCode,
+        primaryRegion
+      });
       const nextUser = { ...user, ...updatedUser };
       setUser(nextUser);
       localStorage.setItem('tiwlo_user', JSON.stringify(nextUser));
@@ -154,9 +176,65 @@ export default function SettingsPage({ user, setUser }: SettingsProps) {
                         type="text"
                         value={phone}
                         onChange={(event) => setPhone(event.target.value)}
+                        placeholder={country === 'BD' ? '1712345678' : 'Mobile number'}
                         className="w-full rounded-md border border-[#D1D5DB] bg-[#F9FAFB] px-5 py-3 pl-12 text-[14px] transition-all focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-600/20"
                       />
                     </div>
+                  </label>
+                  <label className="space-y-2">
+                    <span className="ml-1 text-[11px] font-bold uppercase tracking-widest text-[#6B7280]">Country</span>
+                    <select
+                      value={country}
+                      onChange={(event) => setCountry(event.target.value)}
+                      className="w-full rounded-md border border-[#D1D5DB] bg-[#F9FAFB] px-5 py-3 text-[14px] font-bold transition-all focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-600/20"
+                    >
+                      {COUNTRIES.map((item) => <option key={item.code} value={item.code}>{item.name}</option>)}
+                    </select>
+                  </label>
+                  <label className="space-y-2">
+                    <span className="ml-1 text-[11px] font-bold uppercase tracking-widest text-[#6B7280]">Billing Name</span>
+                    <input
+                      type="text"
+                      value={billingName}
+                      onChange={(event) => setBillingName(event.target.value)}
+                      className="w-full rounded-md border border-[#D1D5DB] bg-[#F9FAFB] px-5 py-3 text-[14px] transition-all focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-600/20"
+                    />
+                  </label>
+                  <label className="space-y-2 md:col-span-2">
+                    <span className="ml-1 text-[11px] font-bold uppercase tracking-widest text-[#6B7280]">Billing Address</span>
+                    <input
+                      type="text"
+                      value={addressLine1}
+                      onChange={(event) => setAddressLine1(event.target.value)}
+                      className="w-full rounded-md border border-[#D1D5DB] bg-[#F9FAFB] px-5 py-3 text-[14px] transition-all focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-600/20"
+                    />
+                  </label>
+                  <label className="space-y-2">
+                    <span className="ml-1 text-[11px] font-bold uppercase tracking-widest text-[#6B7280]">City</span>
+                    <input
+                      type="text"
+                      value={city}
+                      onChange={(event) => setCity(event.target.value)}
+                      className="w-full rounded-md border border-[#D1D5DB] bg-[#F9FAFB] px-5 py-3 text-[14px] transition-all focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-600/20"
+                    />
+                  </label>
+                  <label className="space-y-2">
+                    <span className="ml-1 text-[11px] font-bold uppercase tracking-widest text-[#6B7280]">State / Division</span>
+                    <input
+                      type="text"
+                      value={state}
+                      onChange={(event) => setState(event.target.value)}
+                      className="w-full rounded-md border border-[#D1D5DB] bg-[#F9FAFB] px-5 py-3 text-[14px] transition-all focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-600/20"
+                    />
+                  </label>
+                  <label className="space-y-2">
+                    <span className="ml-1 text-[11px] font-bold uppercase tracking-widest text-[#6B7280]">Postal Code</span>
+                    <input
+                      type="text"
+                      value={postalCode}
+                      onChange={(event) => setPostalCode(event.target.value)}
+                      className="w-full rounded-md border border-[#D1D5DB] bg-[#F9FAFB] px-5 py-3 text-[14px] transition-all focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-600/20"
+                    />
                   </label>
                   <label className="space-y-2">
                     <span className="ml-1 text-[11px] font-bold uppercase tracking-widest text-[#6B7280]">Primary Region</span>

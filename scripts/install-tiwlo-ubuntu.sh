@@ -64,12 +64,28 @@ if [ -z "$EMAIL" ] && [ -n "$DOMAIN" ]; then
 fi
 
 step "Installing Ubuntu packages"
+echo "postfix postfix/mailname string ${DOMAIN:-tiwlo.local}" | debconf-set-selections || true
+echo "postfix postfix/main_mailer_type select Internet Site" | debconf-set-selections || true
 apt-get update
 apt-get install -y \
   sudo git curl wget ca-certificates xz-utils build-essential python3 make g++ \
-  postgresql postgresql-contrib nginx ufw certbot python3-certbot-nginx
-systemctl enable --now postgresql nginx >/dev/null 2>&1 || true
+  postgresql postgresql-contrib nginx ufw certbot python3-certbot-nginx \
+  postfix dovecot-imapd dovecot-pop3d roundcube roundcube-core roundcube-pgsql \
+  opendkim opendkim-tools mailutils
+systemctl enable --now postgresql nginx postfix dovecot opendkim >/dev/null 2>&1 || true
 ensure_system_postgres_database
+
+step "Configuring system email services"
+MAIL_DOMAIN="${DOMAIN:-tiwlo.local}"
+MAIL_HOSTNAME="mail.${MAIL_DOMAIN}"
+postconf -e "myhostname = ${MAIL_HOSTNAME}" || true
+postconf -e "myorigin = /etc/mailname" || true
+postconf -e "inet_interfaces = all" || true
+postconf -e "home_mailbox = Maildir/" || true
+postconf -e "smtpd_tls_security_level = may" || true
+postconf -e "smtp_tls_security_level = may" || true
+printf '%s\n' "${MAIL_DOMAIN}" >/etc/mailname
+systemctl restart postfix dovecot >/dev/null 2>&1 || true
 
 step "Preparing Tiwlo source at ${INSTALL_DIR}"
 mkdir -p "$(dirname "$INSTALL_DIR")"
@@ -102,6 +118,16 @@ export API_BASE_URL="$PUBLIC_ORIGIN"
 export DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:5432/tiwlo?schema=public"
 export BACKEND_PORT
 export FRONTEND_PORT
+mkdir -p x
+{
+  echo "SMTP_HOST=\"${MAIL_HOSTNAME}\""
+  echo "SMTP_PORT=\"465\""
+  echo "SMTP_SECURE=\"true\""
+  echo "SMTP_USER=\"noreply@${MAIL_DOMAIN}\""
+  echo "MAIL_FROM=\"noreply@${MAIL_DOMAIN}\""
+  echo "MAIL_FROM_NAME=\"Tiwlo\""
+  echo "MAIL_REPLY_TO=\"${EMAIL:-support@${MAIL_DOMAIN}}\""
+} >> x/.env
 bash ./scripts/start-tiwlo.sh
 
 step "Installing reboot-safe systemd services"
@@ -184,6 +210,10 @@ systemctl reload nginx
 step "Configuring firewall"
 ufw allow OpenSSH >/dev/null 2>&1 || true
 ufw allow 'Nginx Full' >/dev/null 2>&1 || true
+ufw allow 25/tcp >/dev/null 2>&1 || true
+ufw allow 465/tcp >/dev/null 2>&1 || true
+ufw allow 587/tcp >/dev/null 2>&1 || true
+ufw allow 993/tcp >/dev/null 2>&1 || true
 ufw --force enable >/dev/null 2>&1 || true
 
 if [ -n "$DOMAIN" ] && ! is_ip_address "$DOMAIN"; then
@@ -208,5 +238,6 @@ systemctl is-enabled tiwlo-backend tiwlo-frontend >/dev/null
 echo
 echo "Tiwlo install complete."
 echo "Website: ${PUBLIC_ORIGIN}"
+echo "Webmail: ${PUBLIC_ORIGIN}/webmail (Roundcube package installed; point mail.${MAIL_DOMAIN} DNS to this server)"
 echo "Backend: http://127.0.0.1:${BACKEND_PORT}/graphql"
 echo "Auto-start: systemd services tiwlo-backend and tiwlo-frontend are enabled."

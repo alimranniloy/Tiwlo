@@ -87,8 +87,16 @@ export default function BillingPage() {
       {error && <div className="rounded border border-red-100 bg-red-50 px-4 py-3 text-[13px] font-bold text-red-600">{error}</div>}
 
       {overview && Number(overview.credits || 0) <= 0 && !loading && (
-        <div className="rounded border border-red-100 bg-red-50 px-4 py-3 text-[13px] font-bold text-red-700">
-          Add credit now. Orders are blocked and servers stay off while the balance is 0.
+        <div className="flex flex-col gap-3 rounded border border-red-100 bg-red-50 px-4 py-3 text-red-700 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-start gap-3">
+            <AlertCircle className="mt-0.5 h-5 w-5 shrink-0" />
+            <p className="text-[13px] font-bold leading-5">
+              Add credit now. Orders are blocked and servers stay off while the balance is 0.
+            </p>
+          </div>
+          <a href="#add-credit" className="inline-flex shrink-0 items-center justify-center rounded bg-red-600 px-4 py-2 text-[12px] font-black text-white hover:bg-red-700">
+            Add Credit
+          </a>
         </div>
       )}
 
@@ -121,7 +129,7 @@ export default function BillingPage() {
             </div>
           </section>
 
-          <section className="rounded-md border border-[#E5E7EB] bg-white p-6">
+          <section id="add-credit" className="rounded-md border border-[#E5E7EB] bg-white p-6">
             <div className="mb-5 flex items-center justify-between">
               <div>
                 <h2 className="text-sm font-bold uppercase tracking-wide text-[#111827]">Add Credit</h2>
@@ -129,7 +137,29 @@ export default function BillingPage() {
               </div>
               <Plus className="h-4 w-4 text-blue-600" />
             </div>
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-[1fr_120px_1fr_auto]">
+            <div className="grid grid-cols-1 gap-4">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                {[
+                  { key: 'USD', title: 'USD Credit', detail: 'Add exact cloud credit balance' },
+                  { key: 'BDT', title: 'BDT Payment', detail: 'Pay local amount, convert to credit' }
+                ].map((option) => (
+                  <button
+                    key={option.key}
+                    type="button"
+                    onClick={() => setTopUpCurrency(option.key)}
+                    className={`rounded border px-4 py-3 text-left transition-colors ${
+                      topUpCurrency === option.key
+                        ? 'border-blue-500 bg-blue-50 text-blue-700'
+                        : 'border-gray-200 bg-white text-[#111827] hover:bg-gray-50'
+                    }`}
+                  >
+                    <span className="block text-sm font-black">{option.title}</span>
+                    <span className="mt-1 block text-[12px] font-medium text-[#6B7280]">{option.detail}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-[1fr_1fr_auto]">
               <input
                 value={topUpAmount}
                 onChange={(event) => setTopUpAmount(event.target.value)}
@@ -137,16 +167,8 @@ export default function BillingPage() {
                 min="1"
                 step="0.01"
                 className="rounded border border-gray-200 px-3 py-2 text-sm outline-none focus:border-blue-500"
-                placeholder="Amount"
+                placeholder={topUpCurrency === 'BDT' ? 'Amount in BDT' : 'Amount in USD'}
               />
-              <select
-                value={topUpCurrency}
-                onChange={(event) => setTopUpCurrency(event.target.value)}
-                className="rounded border border-gray-200 px-3 py-2 text-sm font-bold outline-none focus:border-blue-500"
-              >
-                <option value="USD">USD credit</option>
-                <option value="BDT">BDT amount</option>
-              </select>
               <select
                 value={topUpProvider}
                 onChange={(event) => setTopUpProvider(event.target.value)}

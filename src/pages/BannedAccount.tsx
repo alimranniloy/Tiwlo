@@ -16,30 +16,39 @@ function statusTitle(status?: string) {
 
 export default function BannedAccount({ user, onLogout }: BannedAccountProps) {
   return (
-    <div className="min-h-screen bg-[#f3f5f9] px-4 py-8 text-[#2e3d49]">
-      <div className="mx-auto flex min-h-[calc(100vh-4rem)] max-w-3xl items-center justify-center">
-        <div className="w-full overflow-hidden rounded-md border border-red-100 bg-white">
-          <div className="border-b border-red-100 bg-red-50 px-6 py-5">
-            <div className="flex items-center gap-3">
-              <div className="flex h-11 w-11 items-center justify-center rounded bg-red-600 text-white">
-                <ShieldOff className="h-6 w-6" />
+    <div className="min-h-screen bg-[#f3f5f9] px-3 py-5 text-[#2e3d49] sm:px-4 sm:py-8">
+      <div className="mx-auto flex min-h-[calc(100vh-2.5rem)] max-w-4xl items-center justify-center">
+        <div className="w-full overflow-hidden rounded-lg border border-red-100 bg-white">
+          <div className="border-b border-red-100 bg-red-50 px-5 py-5 sm:px-6">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-center gap-3">
+                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded bg-red-600 text-white">
+                  <ShieldOff className="h-6 w-6" />
+                </div>
+                <div>
+                  <p className="text-[11px] font-bold uppercase tracking-widest text-red-600">Access Denied</p>
+                  <h1 className="text-xl font-black tracking-tight text-[#2e3d49]">{statusTitle(user.status)}</h1>
+                </div>
               </div>
-              <div>
-                <p className="text-[11px] font-bold uppercase tracking-widest text-red-600">Access Denied</p>
-                <h1 className="text-xl font-black tracking-tight text-[#2e3d49]">{statusTitle(user.status)}</h1>
+              <div className="rounded border border-red-200 bg-white/80 px-3 py-2 text-[11px] font-black uppercase text-red-700">
+                {user.status || 'restricted'}
               </div>
             </div>
           </div>
 
-          <div className="space-y-6 p-6 md:p-8">
+          <div className="space-y-5 p-5 sm:space-y-6 sm:p-8">
             <div className="rounded border border-[#e5e8ed] bg-[#f8f9fa] p-5">
+              <div className="mb-3 flex items-center gap-2 text-[#111827]">
+                <ShieldOff className="h-6 w-6" />
+                <p className="text-sm font-black">Dashboard is locked</p>
+              </div>
               <p className="text-[13px] font-medium leading-6 text-[#4a4a4a]">
                 This account cannot access the Tiwlo dashboard right now. Your login is valid, but dashboard,
                 billing, cloud, store, and ISP tools are locked until an administrator restores access.
               </p>
             </div>
 
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <div className="rounded border border-[#e5e8ed] bg-white p-4">
                 <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Account</p>
                 <p className="mt-1 break-all text-[13px] font-bold text-[#2e3d49]">{user.email}</p>
@@ -61,16 +70,16 @@ export default function BannedAccount({ user, onLogout }: BannedAccountProps) {
               </p>
             </div>
 
-            <div className="flex flex-col gap-3 border-t border-[#f3f5f9] pt-6 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-col-reverse gap-3 border-t border-[#f3f5f9] pt-5 sm:flex-row sm:items-center sm:justify-between">
               <a
                 href="mailto:support@tiwlo.app"
-                className="flex items-center justify-center gap-2 rounded border border-[#e5e8ed] bg-white px-4 py-2 text-[13px] font-bold text-[#4a4a4a] hover:bg-[#f3f5f9]"
+                className="flex w-full items-center justify-center gap-2 rounded border border-[#e5e8ed] bg-white px-4 py-2.5 text-[13px] font-bold text-[#4a4a4a] hover:bg-[#f3f5f9] sm:w-auto"
               >
                 <LifeBuoy className="h-4 w-4" /> Contact Support
               </a>
               <button
                 onClick={onLogout}
-                className="flex items-center justify-center gap-2 rounded bg-[#111827] px-5 py-2 text-[13px] font-bold text-white hover:bg-black"
+                className="flex w-full items-center justify-center gap-2 rounded bg-[#111827] px-5 py-2.5 text-[13px] font-bold text-white hover:bg-black sm:w-auto"
               >
                 <LogOut className="h-4 w-4" /> Sign Out
               </button>

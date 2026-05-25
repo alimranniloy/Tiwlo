@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, type ReactElement } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { Droplet, Domain, User } from './types';
 
@@ -53,6 +53,7 @@ import AdminCore from './pages/management/AdminCore';
 import AdminAiModel from './pages/management/AdminAiModel';
 import AdminSupport from './pages/management/AdminSupport';
 import AdminNotifications from './pages/management/AdminNotifications';
+import AdminEmail from './pages/management/AdminEmail';
 import AdminPlans from './pages/management/AdminPlans';
 import AdminCurrencies from './pages/management/AdminCurrencies';
 import AdminResourcesPage from './pages/management/AdminResourcesPage';
@@ -70,15 +71,21 @@ import IspDashboard from './pages/management/isp/IspDashboard';
 import IspClientManagement from './pages/management/isp/IspClientManagement';
 import LoginPage from './pages/Login';
 import SignupPage from './pages/Signup';
+import ForgotPassword from './pages/ForgotPassword';
+import ResetPassword from './pages/ResetPassword';
+import VerifyEmail from './pages/VerifyEmail';
 import LandingPage from './pages/LandingPage';
 import BannedAccount from './pages/BannedAccount';
+import CompleteProfile from './pages/CompleteProfile';
 import GlobalLoader from './components/GlobalLoader';
 import FloatingAIWidget from './components/FloatingAIWidget';
 import ISPStorefront from './pages/isp/ISPStorefront';
 import ISPAddRouter from './pages/isp/ISPAddRouter';
 import ISPAdminRoot from './pages/isp/admin/ISPAdminRoot';
-import { clearAuthToken, fetchConsoleData, getAuthToken } from './lib/tiwloApi';
+import { clearAuthToken, fetchAdminModules, fetchConsoleData, getAuthToken } from './lib/tiwloApi';
 import { getStorefrontHostContext } from './lib/storefrontHost';
+import { isProfileComplete } from './lib/countries';
+import { SERVICE_MODULE_GROUP, SERVICE_MODULE_KEYS, serviceEnabled } from './lib/serviceModules';
 
 // Components
 import Sidebar from './components/Sidebar';
@@ -109,10 +116,33 @@ function AppContent({
 }) {
   const location = useLocation();
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [serviceModules, setServiceModules] = useState<any[]>([]);
+  const isAdminUser = ['admin', 'super_admin'].includes(user.role);
 
   useEffect(() => {
     setIsSidebarOpen(false); // Close sidebar on route change
   }, [location.pathname]);
+
+  useEffect(() => {
+    let isMounted = true;
+    fetchAdminModules(SERVICE_MODULE_GROUP)
+      .then((modules) => {
+        if (isMounted) setServiceModules(modules || []);
+      })
+      .catch(() => {
+        if (isMounted) setServiceModules([]);
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const serviceRoute = (key: string, element: ReactElement, adminPath: string) => {
+    const enabled = serviceEnabled(serviceModules, key);
+    if (!enabled && isAdminUser) return <Navigate to={adminPath} replace />;
+    if (!enabled) return <Navigate to="/" replace />;
+    return element;
+  };
 
   const hideLayout = location.pathname.startsWith('/store/admin') || 
                      location.pathname.startsWith('/store/user') || 
@@ -145,7 +175,7 @@ function AppContent({
         
         <main className={`flex-1 overflow-y-auto ${hideLayout ? '' : 'p-3 md:p-8'}`}>
           <Routes>
-            {['admin', 'super_admin'].includes(user.role) ? (
+            {isAdminUser ? (
               <>
                 <Route path="/" element={<AdminDashboard user={user} />} />
                 <Route path="/management/ecommerce/*" element={
@@ -170,6 +200,7 @@ function AppContent({
                 <Route path="/management/servers" element={<AddSystemServer />} />
                 <Route path="/management/statistics" element={<AdminServiceStatistics />} />
                 <Route path="/management/notifications" element={<AdminNotifications />} />
+                <Route path="/management/email" element={<AdminEmail />} />
                 <Route path="/management/payments" element={<AdminPayments />} />
                 <Route path="/management/tiwlo-pay" element={<AdminTiwloPay />} />
                 <Route path="/management/tpanel/*" element={<AdminTPanel />} />
@@ -202,17 +233,17 @@ function AppContent({
               path="/droplets" 
               element={<DropletsPage droplets={droplets} setDroplets={setDroplets} />} 
             />
-            <Route path="/store" element={<CloudStorePage />} />
-            <Route path="/store/create" element={<EcommerceCreateStore />} />
-            <Route path="/store/management" element={<StoreManagementPage />} />
-            <Route path="/store/admin/*" element={<StoreAdminDashboard />} />
-            <Route path="/store/user/*" element={<StoreUserDashboard />} />
-            <Route path="/themes/eplaza/*" element={<EplazaPreview />} />
-            <Route path="/themes/aura/*" element={<AuraPreview />} />
-            <Route path="/themes/*" element={<AuraPreview />} />
-            <Route path="/isp-billing" element={<ISPStorefront />} />
-            <Route path="/isp-billing/add-router" element={<ISPAddRouter />} />
-            <Route path="/isp-billing/admin/*" element={<ISPAdminRoot />} />
+            <Route path="/store" element={serviceRoute(SERVICE_MODULE_KEYS.ecommerce, <CloudStorePage />, '/management/ecommerce')} />
+            <Route path="/store/create" element={serviceRoute(SERVICE_MODULE_KEYS.ecommerce, <EcommerceCreateStore />, '/management/ecommerce')} />
+            <Route path="/store/management" element={serviceRoute(SERVICE_MODULE_KEYS.ecommerce, <StoreManagementPage />, '/management/ecommerce')} />
+            <Route path="/store/admin/*" element={serviceRoute(SERVICE_MODULE_KEYS.ecommerce, <StoreAdminDashboard />, '/management/ecommerce')} />
+            <Route path="/store/user/*" element={serviceRoute(SERVICE_MODULE_KEYS.ecommerce, <StoreUserDashboard />, '/management/ecommerce')} />
+            <Route path="/themes/eplaza/*" element={serviceRoute(SERVICE_MODULE_KEYS.ecommerce, <EplazaPreview />, '/management/ecommerce')} />
+            <Route path="/themes/aura/*" element={serviceRoute(SERVICE_MODULE_KEYS.ecommerce, <AuraPreview />, '/management/ecommerce')} />
+            <Route path="/themes/*" element={serviceRoute(SERVICE_MODULE_KEYS.ecommerce, <AuraPreview />, '/management/ecommerce')} />
+            <Route path="/isp-billing" element={serviceRoute(SERVICE_MODULE_KEYS.isp, <ISPStorefront />, '/management/isp')} />
+            <Route path="/isp-billing/add-router" element={serviceRoute(SERVICE_MODULE_KEYS.isp, <ISPAddRouter />, '/management/isp')} />
+            <Route path="/isp-billing/admin/*" element={serviceRoute(SERVICE_MODULE_KEYS.isp, <ISPAdminRoot />, '/management/isp')} />
             <Route 
               path="/domains" 
               element={<DomainsPage domains={domains} setDomains={setDomains} />} 
@@ -236,12 +267,16 @@ function AppContent({
             <Route path="/documentation" element={<DocumentationPage />} />
             <Route path="/team" element={<TeamPage user={user} />} />
             <Route path="/billing" element={<BillingPage />} />
-            <Route path="/tiwlo-pay/*" element={<TiwloPay />} />
-            <Route path="/tpanel" element={<TPanel />} />
+            <Route path="/tiwlo-pay/*" element={serviceRoute(SERVICE_MODULE_KEYS.tiwloPay, <TiwloPay />, '/management/tiwlo-pay')} />
+            <Route path="/tpanel" element={serviceRoute(SERVICE_MODULE_KEYS.tpanel, <TPanel />, '/management/tpanel')} />
             <Route path="/pay/:slug" element={<TiwloPayCheckout />} />
             <Route path="/api" element={<APIPage />} />
             <Route path="/droplets/create" element={<CreateDroplet />} />
             <Route path="/settings" element={<SettingsPage user={user} setUser={setUser} />} />
+            <Route path="/verify-email" element={<VerifyEmail onLogin={(nextUser) => {
+              setUser(nextUser);
+              localStorage.setItem('tiwlo_user', JSON.stringify(nextUser));
+            }} />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>
@@ -357,6 +392,9 @@ export default function App() {
           <Route path="/store/user/*" element={<StoreUserDashboard />} />
           <Route path="/login" element={<LoginPage onLogin={handleLogin} />} />
           <Route path="/signup" element={<SignupPage onSignup={handleLogin} />} />
+          <Route path="/forgot-password" element={<ForgotPassword />} />
+          <Route path="/reset-password" element={<ResetPassword onLogin={handleLogin} />} />
+          <Route path="/verify-email" element={<VerifyEmail onLogin={handleLogin} />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Router>
@@ -367,6 +405,14 @@ export default function App() {
     return (
       <Router>
         <BannedAccount user={user} onLogout={handleLogout} />
+      </Router>
+    );
+  }
+
+  if (!['admin', 'super_admin'].includes(user.role) && !isProfileComplete(user)) {
+    return (
+      <Router>
+        <CompleteProfile user={user} setUser={setUser} onLogout={handleLogout} />
       </Router>
     );
   }

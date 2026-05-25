@@ -39,9 +39,6 @@ export async function updateProfileWithApi(input: Record<string, unknown>) {
     `mutation UpdateProfile($input: UpdateProfileInput!) {
       updateProfile(input: $input) {
         ${userFields}
-        phone
-        primaryRegion
-        updatedAt
       }
     }`,
     { input }

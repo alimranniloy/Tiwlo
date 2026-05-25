@@ -6,6 +6,7 @@ import { normalizeEmail, removeUndefined, slugify, toApi } from '../../core/form
 import { writeAudit } from '../../core/audit.js';
 import { AppError } from '../../core/errors.js';
 import { pagination, searchWhere } from '../../core/validation.js';
+import { paragraph, sendTiwloEmail } from '../../core/email.js';
 import { ensureOwnerHasCredit } from '../billing/creditAutomation.js';
 import { ECOMMERCE_CONTROL_SECTIONS, findEcommerceControlSection } from './controlCatalog.js';
 import {
@@ -185,6 +186,11 @@ const requireStoreAccess = async (ctx, storeId) => {
 
 const ensurePublicStorefrontAccess = async (ctx, store) => {
   const actor = await getActor(ctx);
+  const serviceModule = await ctx.prisma.adminModule.findUnique({ where: { key: 'service.ecommerce' } }).catch(() => null);
+  const ecommerceDisabled = ['disabled', 'inactive', 'off', 'suspended'].includes(String(serviceModule?.status || '').toLowerCase());
+  if (ecommerceDisabled && !(actor && isAdmin(actor))) {
+    throw new AppError('Storefront is not available', 'FORBIDDEN');
+  }
   if (actor && (isAdmin(actor) || actor.id === store.ownerId)) return actor;
   if (['deleted', 'closed', 'suspended', 'disabled'].includes(String(store.status || '').toLowerCase())) {
     throw new AppError('Storefront is not available', 'FORBIDDEN');
@@ -1021,6 +1027,41 @@ export const createOrder = async (ctx, input) => {
       })));
   }
   await writeAudit(ctx, 'create_order', 'storeOrder', order.id, { storeId: input.storeId });
+  await ctx.prisma.notification.create({
+    data: {
+      ownerId: store.ownerId,
+      scope: 'store',
+      scopeId: store.id,
+      type: 'order',
+      title: 'New store order',
+      message: `${store.name} received order ${order.number} for ${order.currency} ${Number(order.total || 0).toFixed(2)}.`,
+      status: 'unread',
+      metadata: { storeId: store.id, orderId: order.id, path: '/store/admin/orders' }
+    }
+  }).catch(() => null);
+  const owner = await ctx.prisma.user.findUnique({ where: { id: store.ownerId } }).catch(() => null);
+  await sendTiwloEmail(ctx, {
+    to: owner?.email,
+    subject: `New order ${order.number}`,
+    title: 'New store order',
+    preview: `${store.name} received a new order.`,
+    html: [
+      paragraph(`${store.name} received order ${order.number}.`),
+      paragraph(`Total: ${order.currency} ${Number(order.total || 0).toFixed(2)}.`)
+    ].join('')
+  });
+  if (storeCustomer?.email) {
+    await sendTiwloEmail(ctx, {
+      to: storeCustomer.email,
+      subject: `Order ${order.number} received`,
+      title: 'Order received',
+      preview: `${store.name} received your order.`,
+      html: [
+        paragraph(`Thanks ${storeCustomer.name || 'there'}, your order ${order.number} was received by ${store.name}.`),
+        paragraph(`Total: ${order.currency} ${Number(order.total || 0).toFixed(2)}.`)
+      ].join('')
+    });
+  }
   return toApi(order);
 };
 

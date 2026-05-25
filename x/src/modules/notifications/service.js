@@ -1,6 +1,7 @@
 import { isAdmin } from '../../core/auth.js';
 import { removeUndefined, toApi } from '../../core/format.js';
 import { writeAudit } from '../../core/audit.js';
+import { forbidden } from '../../core/errors.js';
 
 export const listNotifications = async (ctx, actor, { scope, status, type } = {}) => {
   const where = {
@@ -37,7 +38,12 @@ export const createNotification = async (ctx, input) => {
   return toApi(notification);
 };
 
-export const markRead = async (ctx, id) => {
+export const markRead = async (ctx, actor, id) => {
+  const current = await ctx.prisma.notification.findUnique({ where: { id } });
+  if (!current) forbidden('Notification was not found');
+  if (!isAdmin(actor) && current.ownerId && current.ownerId !== actor.id) {
+    forbidden('You cannot update this notification');
+  }
   const notification = await ctx.prisma.notification.update({
     where: { id },
     data: { status: 'read', readAt: new Date() }

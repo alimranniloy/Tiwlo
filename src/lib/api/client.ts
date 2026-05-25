@@ -18,7 +18,16 @@ export const userFields = `
   role
   status
   phone
+  mobileCountryCode
   primaryRegion
+  country
+  addressLine1
+  city
+  state
+  postalCode
+  billingName
+  profileCompletedAt
+  emailVerifiedAt
   createdAt
   updatedAt
 `;

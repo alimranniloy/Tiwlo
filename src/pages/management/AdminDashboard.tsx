@@ -5,9 +5,11 @@ import {
   AlertCircle,
   BarChart3,
   ChevronRight,
+  CreditCard,
   Database,
   FileText,
   Globe,
+  Power,
   RefreshCw,
   Server,
   Shield,
@@ -27,7 +29,18 @@ import {
   YAxis
 } from 'recharts';
 import type { User } from '../../types';
-import { fetchAdminTPanelOverviewWithApi, fetchAuditLogs, fetchDashboardSummary, fetchEcommerceAdminSummary, fetchIspDashboardSummary } from '../../lib/tiwloApi';
+import {
+  fetchAdminModules,
+  fetchAdminTiwloPayOverviewWithApi,
+  fetchAdminTPanelOverviewWithApi,
+  fetchAuditLogs,
+  fetchDashboardSummary,
+  fetchEcommerceAdminSummary,
+  fetchIspDashboardSummary,
+  updateAdminModuleStatus,
+  upsertAdminModuleWithApi
+} from '../../lib/tiwloApi';
+import { SERVICE_MODULE_GROUP, SERVICE_MODULE_KEYS, SERVICE_MODULES, serviceEnabled } from '../../lib/serviceModules';
 
 interface AdminDashboardProps {
   user: User;
@@ -35,6 +48,33 @@ interface AdminDashboardProps {
 
 const numberValue = (value?: number) => (typeof value === 'number' ? value.toLocaleString() : '0');
 const moneyValue = (value?: number) => `$${Number(value || 0).toLocaleString()}`;
+
+const serviceDescriptions: Record<string, string> = {
+  [SERVICE_MODULE_KEYS.ecommerce]: 'Storefronts, themes, merchant dashboards, and customer store links.',
+  [SERVICE_MODULE_KEYS.isp]: 'ISP billing portals, routers, subscribers, and connectivity dashboards.',
+  [SERVICE_MODULE_KEYS.tiwloPay]: 'Payment links, merchant verification, checkout, and payouts.',
+  [SERVICE_MODULE_KEYS.tpanel]: 'tPanel license ordering, activation, packages, and server panel tools.'
+};
+
+async function ensureServiceControlModules() {
+  const existing = await fetchAdminModules(SERVICE_MODULE_GROUP);
+  const next = [...existing];
+  for (const service of SERVICE_MODULES) {
+    if (next.some((module) => module.key === service.key)) continue;
+    const created = await upsertAdminModuleWithApi({
+      key: service.key,
+      group: SERVICE_MODULE_GROUP,
+      label: service.label,
+      path: service.adminPath,
+      status: 'active',
+      description: serviceDescriptions[service.key],
+      config: { userPaths: service.userPaths, adminPath: service.adminPath, source: 'service-control' },
+      metrics: { health: 'ready' }
+    });
+    next.push(created);
+  }
+  return next;
+}
 
 const relativeDate = (value?: string) => {
   if (!value) return '-';
@@ -48,7 +88,9 @@ export default function AdminDashboard({ user }: AdminDashboardProps) {
   const [summary, setSummary] = React.useState<any>(null);
   const [commerce, setCommerce] = React.useState<any>(null);
   const [isp, setIsp] = React.useState<any>(null);
+  const [tiwloPay, setTiwloPay] = React.useState<any>(null);
   const [tpanel, setTpanel] = React.useState<any>(null);
+  const [serviceModules, setServiceModules] = React.useState<any[]>([]);
   const [auditLogs, setAuditLogs] = React.useState<any[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState('');
@@ -57,24 +99,30 @@ export default function AdminDashboard({ user }: AdminDashboardProps) {
     setLoading(true);
     setError('');
     try {
-      const [mainSummary, commerceSummary, ispSummary, tpanelOverview, logs] = await Promise.all([
+      const [mainSummary, commerceSummary, ispSummary, tiwloPayOverview, tpanelOverview, logs, modules] = await Promise.all([
         fetchDashboardSummary(),
         fetchEcommerceAdminSummary(),
         fetchIspDashboardSummary(),
+        fetchAdminTiwloPayOverviewWithApi(),
         fetchAdminTPanelOverviewWithApi(),
-        fetchAuditLogs()
+        fetchAuditLogs(),
+        ensureServiceControlModules()
       ]);
       setSummary(mainSummary);
       setCommerce(commerceSummary);
       setIsp(ispSummary);
+      setTiwloPay(tiwloPayOverview?.summary || null);
       setTpanel(tpanelOverview?.summary || null);
       setAuditLogs(logs);
+      setServiceModules(modules);
     } catch (err) {
       setSummary(null);
       setCommerce(null);
       setIsp(null);
+      setTiwloPay(null);
       setTpanel(null);
       setAuditLogs([]);
+      setServiceModules([]);
       setError(err instanceof Error ? err.message : 'Unable to load dashboard data');
     } finally {
       setLoading(false);
@@ -113,6 +161,39 @@ export default function AdminDashboard({ user }: AdminDashboardProps) {
   }));
 
   const totalResources = resourceData.reduce((sum, item) => sum + item.value, 0);
+  const isServiceActive = (key: string) => serviceEnabled(serviceModules, key);
+  const toggleService = async (event: React.MouseEvent, key: string) => {
+    event.stopPropagation();
+    const nextStatus = isServiceActive(key) ? 'disabled' : 'active';
+    setServiceModules((current) => current.map((module) => module.key === key ? { ...module, status: nextStatus } : module));
+    try {
+      const updated = await updateAdminModuleStatus(key, nextStatus);
+      setServiceModules((current) => current.map((module) => module.key === key ? updated : module));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to update service status');
+      loadDashboard();
+    }
+  };
+
+  const ServiceSwitch = ({ serviceKey }: { serviceKey: string }) => {
+    const active = isServiceActive(serviceKey);
+    return (
+      <button
+        type="button"
+        onClick={(event) => toggleService(event, serviceKey)}
+        className={`inline-flex shrink-0 items-center gap-2 rounded-full border px-2.5 py-1 text-[11px] font-black uppercase transition-colors ${
+          active ? 'border-green-200 bg-green-50 text-green-700' : 'border-red-200 bg-red-50 text-red-700'
+        }`}
+        aria-pressed={active}
+      >
+        <Power className="h-3.5 w-3.5" />
+        <span>{active ? 'On' : 'Off'}</span>
+        <span className={`relative h-4 w-7 rounded-full ${active ? 'bg-green-500' : 'bg-red-400'}`}>
+          <span className={`absolute top-0.5 h-3 w-3 rounded-full bg-white transition-transform ${active ? 'left-3.5' : 'left-0.5'}`}></span>
+        </span>
+      </button>
+    );
+  };
 
   return (
     <div className="space-y-8 pb-12">
@@ -149,6 +230,7 @@ export default function AdminDashboard({ user }: AdminDashboardProps) {
                   <span className="text-[11px] font-medium text-indigo-600">Merchant management</span>
                 </div>
               </div>
+              <ServiceSwitch serviceKey={SERVICE_MODULE_KEYS.ecommerce} />
             </div>
             <div className="mt-8 grid grid-cols-3 gap-4 pt-6 border-t border-gray-50">
               <div>
@@ -186,6 +268,7 @@ export default function AdminDashboard({ user }: AdminDashboardProps) {
                   <span className="text-[11px] font-medium text-blue-600">ISP sites and subscribers</span>
                 </div>
               </div>
+              <ServiceSwitch serviceKey={SERVICE_MODULE_KEYS.isp} />
             </div>
             <div className="mt-8 grid grid-cols-3 gap-4 pt-6 border-t border-gray-50">
               <div>
@@ -209,6 +292,44 @@ export default function AdminDashboard({ user }: AdminDashboardProps) {
         </div>
 
         <div
+          onClick={() => navigate('/management/tiwlo-pay')}
+          className="group bg-white border border-[#e5e8ed] hover:border-emerald-500 hover:shadow-md transition-all cursor-pointer flex flex-col h-full rounded-lg"
+        >
+          <div className="p-6 flex-1">
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 bg-emerald-50 text-emerald-600 flex items-center justify-center rounded-lg group-hover:bg-emerald-600 group-hover:text-white transition-all duration-300">
+                  <CreditCard className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-lg text-[#2e3d49]">Tiwlo Pay</h3>
+                  <span className="text-[11px] font-medium text-emerald-600">Checkout and merchant verification</span>
+                </div>
+              </div>
+              <ServiceSwitch serviceKey={SERVICE_MODULE_KEYS.tiwloPay} />
+            </div>
+            <div className="mt-8 grid grid-cols-3 gap-4 pt-6 border-t border-gray-50">
+              <div>
+                <span className="block text-[11px] font-medium text-gray-400 uppercase tracking-wider mb-1">Merchants</span>
+                <span className="text-xl font-bold text-[#2e3d49] tabular-nums">{numberValue(tiwloPay?.merchants)}</span>
+              </div>
+              <div>
+                <span className="block text-[11px] font-medium text-gray-400 uppercase tracking-wider mb-1">Paid</span>
+                <span className="text-xl font-bold text-[#2e3d49] tabular-nums">{moneyValue(tiwloPay?.paidVolume)}</span>
+              </div>
+              <div>
+                <span className="block text-[11px] font-medium text-gray-400 uppercase tracking-wider mb-1">Pending</span>
+                <span className="text-xl font-bold text-emerald-600 tabular-nums">{moneyValue(tiwloPay?.pendingWithdrawal)}</span>
+              </div>
+            </div>
+          </div>
+          <div className="px-6 py-4 flex items-center justify-between bg-white border-t border-gray-50 group-hover:bg-gray-50 transition-colors rounded-b-lg">
+            <span className="text-[13px] font-semibold text-emerald-600">Manage Payments</span>
+            <ChevronRight className="w-4 h-4 text-emerald-400 group-hover:translate-x-1 transition-all" />
+          </div>
+        </div>
+
+        <div
           onClick={() => navigate('/management/tpanel')}
           className="group bg-white border border-[#e5e8ed] hover:border-sky-500 hover:shadow-md transition-all cursor-pointer flex flex-col h-full rounded-lg"
         >
@@ -223,6 +344,7 @@ export default function AdminDashboard({ user }: AdminDashboardProps) {
                   <span className="text-[11px] font-medium text-sky-600">tPanel server licenses</span>
                 </div>
               </div>
+              <ServiceSwitch serviceKey={SERVICE_MODULE_KEYS.tpanel} />
             </div>
             <div className="mt-8 grid grid-cols-3 gap-4 pt-6 border-t border-gray-50">
               <div>
