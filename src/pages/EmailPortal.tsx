@@ -4,6 +4,7 @@ import {
   fetchMailboxOverviewWithApi,
   mailboxLoginWithApi,
   mailboxRegisterWithApi,
+  requestMailboxRecoveryOtpWithApi,
   sendMailboxEmailWithApi,
   updateMailboxMessageWithApi
 } from '../lib/tiwloApi';
@@ -62,11 +63,12 @@ export default function EmailPortal() {
   const [search, setSearch] = React.useState('');
   const [loading, setLoading] = React.useState(Boolean(token));
   const [sending, setSending] = React.useState(false);
+  const [otpSending, setOtpSending] = React.useState(false);
   const [error, setError] = React.useState('');
   const [notice, setNotice] = React.useState('');
   const [authMode, setAuthMode] = React.useState<'signin' | 'create'>('signin');
   const [loginForm, setLoginForm] = React.useState({ email: '', password: '' });
-  const [registerForm, setRegisterForm] = React.useState({ username: '', domain: defaultMailDomain(), password: '', confirmPassword: '', displayName: '', recoveryEmail: '' });
+  const [registerForm, setRegisterForm] = React.useState({ username: '', domain: defaultMailDomain(), password: '', confirmPassword: '', displayName: '', recoveryEmail: '', recoveryOtp: '' });
   const [composeOpen, setComposeOpen] = React.useState(false);
   const [compose, setCompose] = React.useState({ to: '', subject: '', body: '' });
 
@@ -118,23 +120,46 @@ export default function EmailPortal() {
     setNotice('');
     try {
       if (registerForm.password !== registerForm.confirmPassword) throw new Error('Passwords do not match.');
+      if (!registerForm.recoveryEmail.trim()) throw new Error('Recovery email is required.');
+      if (!registerForm.recoveryOtp.trim()) throw new Error('Enter the OTP sent to your recovery email.');
       const result = await mailboxRegisterWithApi({
         username: registerForm.username,
         domain: registerForm.domain,
         password: registerForm.password,
         displayName: registerForm.displayName,
-        recoveryEmail: registerForm.recoveryEmail
+        recoveryEmail: registerForm.recoveryEmail,
+        recoveryOtp: registerForm.recoveryOtp
       });
       localStorage.setItem(MAILBOX_TOKEN_KEY, result.token);
       setToken(result.token);
       setAccount(result.account);
-      setRegisterForm({ username: '', domain: defaultMailDomain(), password: '', confirmPassword: '', displayName: '', recoveryEmail: '' });
+      setRegisterForm({ username: '', domain: defaultMailDomain(), password: '', confirmPassword: '', displayName: '', recoveryEmail: '', recoveryOtp: '' });
       setNotice('Your TMail inbox is ready.');
       await loadMailbox(result.token);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to create TMail account');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const requestRecoveryOtp = async () => {
+    setOtpSending(true);
+    setError('');
+    setNotice('');
+    try {
+      if (!registerForm.username.trim()) throw new Error('Choose your TMail name first.');
+      if (!registerForm.recoveryEmail.trim()) throw new Error('Recovery email is required.');
+      const result = await requestMailboxRecoveryOtpWithApi({
+        username: registerForm.username,
+        domain: registerForm.domain,
+        recoveryEmail: registerForm.recoveryEmail
+      });
+      setNotice(result.message || 'OTP sent to your recovery email.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to send recovery OTP');
+    } finally {
+      setOtpSending(false);
     }
   };
 
@@ -214,7 +239,13 @@ export default function EmailPortal() {
                   <input required value={registerForm.username} onChange={(event) => setRegisterForm((current) => ({ ...current, username: event.target.value.toLowerCase().replace(/[^a-z0-9._-]/g, '') }))} className="min-w-0 px-4 py-3 text-sm outline-none" placeholder="choose-name" />
                   <span className="border-l border-[#DDE3EA] bg-[#F8FAFC] px-3 py-3 text-sm font-bold text-[#64748B]">@{registerForm.domain}</span>
                 </div>
-                <input value={registerForm.recoveryEmail} onChange={(event) => setRegisterForm((current) => ({ ...current, recoveryEmail: event.target.value }))} className="w-full rounded border border-[#DDE3EA] px-4 py-3 text-sm outline-none focus:border-blue-600" placeholder="Recovery email (optional)" />
+                <div className="grid grid-cols-[1fr_auto] overflow-hidden rounded border border-[#DDE3EA] focus-within:border-blue-600">
+                  <input type="email" required value={registerForm.recoveryEmail} onChange={(event) => setRegisterForm((current) => ({ ...current, recoveryEmail: event.target.value }))} className="min-w-0 px-4 py-3 text-sm outline-none" placeholder="Recovery email" />
+                  <button type="button" onClick={requestRecoveryOtp} disabled={otpSending} className="border-l border-[#DDE3EA] bg-[#F8FAFC] px-3 py-3 text-xs font-black text-blue-700 disabled:opacity-60">
+                    {otpSending ? 'Sending' : 'Send OTP'}
+                  </button>
+                </div>
+                <input inputMode="numeric" required value={registerForm.recoveryOtp} onChange={(event) => setRegisterForm((current) => ({ ...current, recoveryOtp: event.target.value.replace(/\D/g, '').slice(0, 6) }))} className="w-full rounded border border-[#DDE3EA] px-4 py-3 text-sm outline-none focus:border-blue-600" placeholder="6 digit OTP" />
                 <input type="password" required value={registerForm.password} onChange={(event) => setRegisterForm((current) => ({ ...current, password: event.target.value }))} className="w-full rounded border border-[#DDE3EA] px-4 py-3 text-sm outline-none focus:border-blue-600" placeholder="Create password" />
                 <input type="password" required value={registerForm.confirmPassword} onChange={(event) => setRegisterForm((current) => ({ ...current, confirmPassword: event.target.value }))} className="w-full rounded border border-[#DDE3EA] px-4 py-3 text-sm outline-none focus:border-blue-600" placeholder="Confirm password" />
               </>

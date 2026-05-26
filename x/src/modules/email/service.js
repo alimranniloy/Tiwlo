@@ -1,18 +1,22 @@
 import jwt from 'jsonwebtoken';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomInt, randomUUID } from 'node:crypto';
 import { AppError } from '../../core/errors.js';
-import { sendTiwloEmail, emailServerAdvice, systemEmailConfig } from '../../core/email.js';
+import { paragraph, sendTiwloEmail, emailServerAdvice, systemEmailConfig } from '../../core/email.js';
 import { getPowerDnsConfig } from '../powerdns/service.js';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret';
 const MAILBOX_SCOPE = 'admin';
 const MAILBOX_SCOPE_ID = 'main-admin';
 const MAILBOX_KEY = 'mainAdmin:emailaccounts';
+const MAILBOX_OTP_KEY = 'mainAdmin:mailboxRecoveryOtps';
+const RECOVERY_OTP_TTL_MS = 10 * 60 * 1000;
 
 const normalizeAddress = (value = '') => String(value || '').trim().toLowerCase();
 const now = () => new Date().toISOString();
 const cleanMailboxDomain = (value = '') => normalizeAddress(value || 'tiwlo.com').replace(/^((mail|email|tmail|www)\.)+/, '').replace(/[^a-z0-9.-]/g, '').replace(/^\.+|\.+$/g, '') || 'tiwlo.com';
 const cleanMailboxUser = (value = '') => normalizeAddress(value).split('@')[0].replace(/[^a-z0-9._-]/g, '').slice(0, 48);
+const isEmail = (value = '') => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizeAddress(value));
+const otpHash = (value = '') => createHash('sha256').update(`${JWT_SECRET}:${value}`).digest('hex');
 
 function settingRecords(setting) {
   return Array.isArray(setting?.value?.records) ? setting.value.records : [];
@@ -26,6 +30,26 @@ async function readMailboxSetting(prisma) {
 
 async function readMailboxRecords(prisma) {
   return settingRecords(await readMailboxSetting(prisma));
+}
+
+async function readRecoveryOtpRecords(prisma) {
+  const setting = await prisma.systemSetting.findUnique({
+    where: { scope_scopeId_key: { scope: MAILBOX_SCOPE, scopeId: MAILBOX_SCOPE_ID, key: MAILBOX_OTP_KEY } }
+  }).catch(() => null);
+  return Array.isArray(setting?.value?.records) ? setting.value.records : [];
+}
+
+async function saveRecoveryOtpRecords(prisma, records) {
+  return prisma.systemSetting.upsert({
+    where: { scope_scopeId_key: { scope: MAILBOX_SCOPE, scopeId: MAILBOX_SCOPE_ID, key: MAILBOX_OTP_KEY } },
+    create: {
+      scope: MAILBOX_SCOPE,
+      scopeId: MAILBOX_SCOPE_ID,
+      key: MAILBOX_OTP_KEY,
+      value: { section: 'mailboxRecoveryOtps', records }
+    },
+    update: { value: { section: 'mailboxRecoveryOtps', records } }
+  });
 }
 
 async function saveMailboxRecords(prisma, records) {
@@ -146,6 +170,85 @@ async function allowedMailboxDomains(ctx) {
   ].filter(Boolean)));
 }
 
+export const requestMailboxRecoveryOtp = async (ctx, input = {}) => {
+  const username = cleanMailboxUser(input.username || input.email);
+  const requestedDomain = cleanMailboxDomain(input.domain || String(input.email || '').split('@').pop() || '');
+  const domains = await allowedMailboxDomains(ctx);
+  const domain = domains.includes(requestedDomain) ? requestedDomain : domains[0] || requestedDomain;
+  const address = normalizeAddress(input.email || `${username}@${domain}`);
+  const recoveryEmail = normalizeAddress(input.recoveryEmail);
+  if (!username || username.length < 3) throw new AppError('Choose an email name first.', 'BAD_USER_INPUT');
+  if (!isEmail(recoveryEmail)) throw new AppError('A valid recovery email is required.', 'BAD_USER_INPUT');
+  if (recoveryEmail === address) throw new AppError('Recovery email must be different from the new TMail address.', 'BAD_USER_INPUT');
+
+  const records = await readMailboxRecords(ctx.prisma);
+  if (records.some((item) => recordAddress(item) === address)) {
+    throw new AppError('That TMail address is already taken.', 'BAD_USER_INPUT');
+  }
+
+  const code = String(randomInt(100000, 999999));
+  const expiresAt = new Date(Date.now() + RECOVERY_OTP_TTL_MS).toISOString();
+  const existingOtps = await readRecoveryOtpRecords(ctx.prisma);
+  const liveOtps = existingOtps.filter((item) => new Date(item.expiresAt).getTime() > Date.now());
+  const nextRecord = {
+    id: `recovery-otp-${randomUUID()}`,
+    address,
+    recoveryEmail,
+    codeHash: otpHash(code),
+    attempts: 0,
+    createdAt: now(),
+    expiresAt
+  };
+  await saveRecoveryOtpRecords(ctx.prisma, [
+    nextRecord,
+    ...liveOtps.filter((item) => !(item.address === address && item.recoveryEmail === recoveryEmail))
+  ]);
+
+  await sendTiwloEmail(ctx, {
+    to: recoveryEmail,
+    subject: 'Verify your TMail recovery email',
+    title: 'Verify your recovery email',
+    preview: `Your TMail verification code is ${code}`,
+    text: `Use ${code} to verify the recovery email for ${address}. This code expires in 10 minutes.`,
+    html: [
+      paragraph(`Use this code to verify the recovery email for ${address}.`),
+      `<div style="margin:22px 0;padding:16px 20px;border-radius:10px;background:#eef4ff;border:1px solid #cfe0ff;font-size:28px;letter-spacing:6px;font-weight:800;text-align:center;color:#0b63f6;">${code}</div>`,
+      paragraph('This code expires in 10 minutes. If you did not request this, you can safely ignore the email.')
+    ].join('')
+  });
+
+  return {
+    ok: true,
+    message: `OTP sent to ${recoveryEmail}.`,
+    recoveryEmail,
+    expiresAt
+  };
+};
+
+async function verifyMailboxRecoveryOtp(ctx, { address, recoveryEmail, code }) {
+  const normalizedCode = String(code || '').trim();
+  if (!/^\d{6}$/.test(normalizedCode)) throw new AppError('Enter the 6 digit recovery email OTP.', 'BAD_USER_INPUT');
+  const records = await readRecoveryOtpRecords(ctx.prisma);
+  const liveRecords = records.filter((item) => new Date(item.expiresAt).getTime() > Date.now());
+  const otpRecord = liveRecords.find((item) => item.address === address && item.recoveryEmail === recoveryEmail);
+  if (!otpRecord) {
+    await saveRecoveryOtpRecords(ctx.prisma, liveRecords);
+    throw new AppError('Recovery email OTP expired. Send a new code.', 'BAD_USER_INPUT');
+  }
+  if (Number(otpRecord.attempts || 0) >= 5) {
+    await saveRecoveryOtpRecords(ctx.prisma, liveRecords.filter((item) => item.id !== otpRecord.id));
+    throw new AppError('Too many OTP attempts. Send a new code.', 'BAD_USER_INPUT');
+  }
+  if (otpRecord.codeHash !== otpHash(normalizedCode)) {
+    await saveRecoveryOtpRecords(ctx.prisma, liveRecords.map((item) => (
+      item.id === otpRecord.id ? { ...item, attempts: Number(item.attempts || 0) + 1 } : item
+    )));
+    throw new AppError('Recovery email OTP is incorrect.', 'BAD_USER_INPUT');
+  }
+  await saveRecoveryOtpRecords(ctx.prisma, liveRecords.filter((item) => item.id !== otpRecord.id));
+  return true;
+}
+
 export const registerMailbox = async (ctx, input = {}) => {
   const username = cleanMailboxUser(input.username || input.email);
   const requestedDomain = cleanMailboxDomain(input.domain || String(input.email || '').split('@').pop() || '');
@@ -153,15 +256,19 @@ export const registerMailbox = async (ctx, input = {}) => {
   const domain = domains.includes(requestedDomain) ? requestedDomain : domains[0] || requestedDomain;
   const address = normalizeAddress(`${username}@${domain}`);
   const password = String(input.password || '').trim();
+  const recoveryEmail = normalizeAddress(input.recoveryEmail);
   if (!username || username.length < 3) throw new AppError('Choose an email name with at least 3 characters.', 'BAD_USER_INPUT');
   if (!/^[a-z0-9](?:[a-z0-9._-]{1,46}[a-z0-9])$/.test(username)) throw new AppError('Email name can use letters, numbers, dots, dashes, and underscores.', 'BAD_USER_INPUT');
   if (!password || password.length < 8) throw new AppError('Use a mailbox password with at least 8 characters.', 'BAD_USER_INPUT');
   if (!domains.includes(domain)) throw new AppError('This mail domain is not available for self signup.', 'BAD_USER_INPUT');
+  if (!isEmail(recoveryEmail)) throw new AppError('A valid recovery email is required.', 'BAD_USER_INPUT');
+  if (recoveryEmail === address) throw new AppError('Recovery email must be different from your TMail address.', 'BAD_USER_INPUT');
 
   const records = await readMailboxRecords(ctx.prisma);
   if (records.some((item) => recordAddress(item) === address)) {
     throw new AppError('That TMail address is already taken.', 'BAD_USER_INPUT');
   }
+  await verifyMailboxRecoveryOtp(ctx, { address, recoveryEmail, code: input.recoveryOtp });
 
   const hostName = mailboxHost(domain);
   const nextRecord = {
@@ -176,7 +283,8 @@ export const registerMailbox = async (ctx, input = {}) => {
       address,
       password,
       displayName: String(input.displayName || username).trim().slice(0, 80),
-      recoveryEmail: normalizeAddress(input.recoveryEmail || ''),
+      recoveryEmail,
+      recoveryEmailVerifiedAt: now(),
       hostName,
       portalHost: portalHost(domain),
       quotaMB: Number(input.quotaMB || 1024),

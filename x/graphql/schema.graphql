@@ -1490,7 +1490,21 @@ input MailboxRegisterInput {
   domain: String
   password: String!
   displayName: String
-  recoveryEmail: String
+  recoveryEmail: String!
+  recoveryOtp: String!
+}
+
+input RequestMailboxRecoveryOtpInput {
+  username: String!
+  domain: String
+  recoveryEmail: String!
+}
+
+type MailboxRecoveryOtpPayload {
+  ok: Boolean!
+  message: String!
+  recoveryEmail: String!
+  expiresAt: DateTime!
 }
 
 input SendMailboxEmailInput {
@@ -2511,6 +2525,7 @@ type Mutation {
   verifyEmail(token: String!): AuthPayload!
   verifyPassword(password: String!): Boolean!
   mailboxLogin(input: MailboxLoginInput!): MailboxLoginPayload!
+  requestMailboxRecoveryOtp(input: RequestMailboxRecoveryOtpInput!): MailboxRecoveryOtpPayload!
   mailboxRegister(input: MailboxRegisterInput!): MailboxLoginPayload!
   sendMailboxEmail(input: SendMailboxEmailInput!): MailboxMessage!
   updateMailboxMessage(input: UpdateMailboxMessageInput!): MailboxMessage!
