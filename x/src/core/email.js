@@ -37,6 +37,16 @@ function localSmtpUsername(value = '') {
   return String(value || '').trim().split('@')[0].replace(/[^a-zA-Z0-9._-]/g, '') || 'noreply';
 }
 
+function extractEmailAddress(value = '') {
+  const raw = String(value || '').trim();
+  const match = raw.match(/<([^<>@\s]+@[^<>@\s]+)>/);
+  return (match?.[1] || raw).replace(/^mailto:/i, '').trim().toLowerCase();
+}
+
+function hasEmailAddress(value = '') {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(extractEmailAddress(value));
+}
+
 function smtpAuthUsernameForHost(username = '', host = '') {
   const raw = String(username || '').trim();
   if (!raw) return raw;
@@ -67,12 +77,18 @@ const isConnectionOrHandshakeFailure = (errorOrResult = {}) => {
     /ssl|tls|handshake|wrong version|greeting|socket/i.test(message);
 };
 
+const isMessagePolicyFailure = (errorOrResult = {}) => {
+  const responseCode = Number(errorOrResult.responseCode || 0);
+  return errorOrResult.code === 'EMESSAGE' || [550, 553, 554, 556].includes(responseCode);
+};
+
 function envAuthFallbackConfig(config = {}) {
   const envPassword = process.env.SMTP_PASS;
   if (!envPassword) return null;
   const host = cleanHost(process.env.SMTP_HOST || config.host);
   const username = smtpAuthUsernameForHost(process.env.SMTP_USER || config.username, host);
-  if (envPassword === config.password && username === config.username && host === cleanHost(config.host)) return null;
+  const envFromEmail = process.env.MAIL_FROM || (String(process.env.SMTP_USER || '').includes('@') ? process.env.SMTP_USER : config.fromEmail);
+  if (envPassword === config.password && username === config.username && host === cleanHost(config.host) && envFromEmail === config.fromEmail) return null;
   return {
     ...config,
     host,
@@ -81,6 +97,8 @@ function envAuthFallbackConfig(config = {}) {
     password: envPassword,
     secureSSL: process.env.SMTP_SECURE !== undefined ? process.env.SMTP_SECURE : config.secureSSL ?? config.secure,
     tlsRejectUnauthorized: config.tlsRejectUnauthorized,
+    fromEmail: envFromEmail || config.fromEmail,
+    replyTo: process.env.MAIL_REPLY_TO || config.replyTo || envFromEmail || config.fromEmail,
     authSource: 'env'
   };
 }
@@ -273,6 +291,38 @@ function createTransporter(config) {
   });
 }
 
+function smtpEnvelopeFrom(config = {}) {
+  const envFrom = process.env.MAIL_FROM;
+  if (hasEmailAddress(envFrom)) return extractEmailAddress(envFrom);
+  if (hasEmailAddress(config.fromEmail)) return extractEmailAddress(config.fromEmail);
+  if (hasEmailAddress(config.username)) return extractEmailAddress(config.username);
+  const user = localSmtpUsername(config.username || process.env.SMTP_USER || 'noreply');
+  return `${user}@${domainFromMailConfig(config)}`;
+}
+
+function brandedAddress(name = 'Tiwlo', email = DEFAULT_FROM) {
+  return `"${String(name || 'Tiwlo').replace(/"/g, "'")}" <${email}>`;
+}
+
+function deliveryMessage(config, message, { forceSafeFrom = false } = {}) {
+  const envelopeFrom = smtpEnvelopeFrom(config);
+  const requestedFromEmail = extractEmailAddress(message.from || config.fromEmail || envelopeFrom);
+  const visibleFrom = forceSafeFrom
+    ? brandedAddress(config.fromName || 'Tiwlo', envelopeFrom)
+    : (message.from || brandedAddress(config.fromName || 'Tiwlo', config.fromEmail || envelopeFrom));
+  const replyTo = message.replyTo || (requestedFromEmail && requestedFromEmail !== envelopeFrom ? requestedFromEmail : config.replyTo);
+  return {
+    ...message,
+    from: visibleFrom,
+    replyTo,
+    sender: requestedFromEmail && requestedFromEmail !== envelopeFrom ? brandedAddress(config.fromName || 'Tiwlo', envelopeFrom) : message.sender,
+    envelope: {
+      from: envelopeFrom,
+      to: message.to
+    }
+  };
+}
+
 function emailLogoAttachment() {
   const candidates = [
     process.env.MAIL_LOGO_PATH,
@@ -447,6 +497,9 @@ function smtpErrorMessage(error, config, diagnostic = {}) {
     }
     return `Cannot reach ${config.host}:${config.port}. Check DNS, firewall, provider security group, and whether SMTP is listening.`;
   }
+  if (code === 'EMESSAGE') {
+    return `${raw} Tiwlo will retry with the authenticated MAIL FROM identity; if it still fails, check Postfix content policy, DKIM milter, recipient restrictions, and sender domain alignment.`;
+  }
   if (code === 'EENVELOPE' || responseCode >= 550) {
     return `SMTP server rejected the sender or recipient. Check From email ${config.fromEmail}, recipient address, SPF/DKIM/DMARC, and relay permissions.`;
   }
@@ -470,7 +523,17 @@ async function deliverEmail(config, message) {
     ...(message.headers || {})
   };
   try {
-    await transporter.sendMail({ ...message, headers, attachments });
+    const preparedMessage = { ...message, headers, attachments };
+    try {
+      await transporter.sendMail(deliveryMessage(config, preparedMessage));
+    } catch (error) {
+      const envelopeFrom = smtpEnvelopeFrom(config);
+      const requestedFrom = extractEmailAddress(message.from || config.fromEmail || '');
+      if (!isMessagePolicyFailure(error) || !requestedFrom || requestedFrom === envelopeFrom) {
+        throw error;
+      }
+      await transporter.sendMail(deliveryMessage(config, preparedMessage, { forceSafeFrom: true }));
+    }
   } finally {
     transporter.close();
   }

@@ -204,7 +204,7 @@ export const requestMailboxRecoveryOtp = async (ctx, input = {}) => {
     ...liveOtps.filter((item) => !(item.address === address && item.recoveryEmail === recoveryEmail))
   ]);
 
-  await sendTiwloEmail(ctx, {
+  const otpDelivery = await sendTiwloEmail(ctx, {
     to: recoveryEmail,
     subject: 'Verify your TMail recovery email',
     title: 'Verify your recovery email',
@@ -216,6 +216,9 @@ export const requestMailboxRecoveryOtp = async (ctx, input = {}) => {
       paragraph('This code expires in 10 minutes. If you did not request this, you can safely ignore the email.')
     ].join('')
   });
+  if (!otpDelivery.sent) {
+    throw new AppError(`Recovery OTP email could not be sent. ${otpDelivery.message || otpDelivery.reason || 'Check SMTP delivery.'}`, 'BAD_USER_INPUT');
+  }
 
   return {
     ok: true,

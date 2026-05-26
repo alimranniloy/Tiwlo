@@ -555,6 +555,7 @@ export default function AdminEmail() {
                     <span>tcp: {testResult.diagnostic?.tcpOk ? 'reachable' : testResult.diagnostic?.tcpError || '-'}</span>
                     <span className="sm:col-span-2">dns: {(testResult.diagnostic?.resolvedAddresses || []).join(', ') || '-'}</span>
                     {testResult.diagnostic?.authSource && <span className="sm:col-span-2">source: {testResult.diagnostic.authSource}</span>}
+                    {testResult.diagnostic?.rawMessage && <span className="sm:col-span-2 break-words">smtp: {testResult.diagnostic.rawMessage}</span>}
                     {testResult.diagnostic?.fallback && <span className="sm:col-span-2">fallback: {testResult.diagnostic.fallback.host} / {testResult.diagnostic.fallback.code}</span>}
                   </div>
                 </div>
