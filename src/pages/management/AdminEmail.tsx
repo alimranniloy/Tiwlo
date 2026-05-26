@@ -44,8 +44,11 @@ const bimiLogoForDomain = (domain: string) => `https://${mailBaseDomain(domain)}
 const dmarcForDomain = (domain: string) => `v=DMARC1; p=quarantine; pct=100; rua=mailto:postmaster@${mailBaseDomain(domain)}; ruf=mailto:postmaster@${mailBaseDomain(domain)}; fo=1`;
 const bimiTxtForDomain = (domain: string, logoUrl = '', certificateUrl = '') => {
   const cert = certificateUrl.trim();
-  const logo = logoUrl.trim() || bimiLogoForDomain(domain);
-  return cert ? `v=BIMI1; l=; a=${cert}` : `v=BIMI1; l=${logo}`;
+  const logo = logoUrl.trim();
+  if (!logo && !cert) return '';
+  if (logo && cert) return `v=BIMI1; l=${logo}; a=${cert}`;
+  if (logo) return `v=BIMI1; l=${logo}`;
+  return '';
 };
 const localPart = (value: string) => cleanUsername(String(value || '').split('@')[0] || 'noreply') || 'noreply';
 const domainFromEmail = (value: string, fallback = 'tiwlo.com') => mailBaseDomain(String(value || '').includes('@') ? String(value).split('@').pop() || fallback : fallback);
@@ -116,8 +119,9 @@ export default function AdminEmail() {
   const systemAddress = `${systemSender}@${systemDomain}`;
   const publicMailHost = hostForDomain(systemDomain);
   const emailPortalHost = portalForDomain(systemDomain);
-  const activeBimiLogoUrl = systemForm.bimiLogoUrl.trim() || bimiLogoForDomain(systemDomain);
+  const activeBimiLogoUrl = systemForm.bimiLogoUrl.trim();
   const activeBimiCertificateUrl = systemForm.bimiCertificateUrl.trim();
+  const activeBimiTxt = bimiTxtForDomain(systemDomain, activeBimiLogoUrl, activeBimiCertificateUrl);
   const selectedSmtpPort = systemForm.smtpMode === '587' ? 587 : 465;
   const selectedSmtpMode = selectedSmtpPort === 587 ? '587 STARTTLS' : '465 SSL';
   const normalizedSystemEmail = React.useCallback(() => {
@@ -137,7 +141,7 @@ export default function AdminEmail() {
       replyTo: String(systemForm.replyTo || '').trim(),
       domain: mailBaseDomain(systemForm.domain),
       bimi: {
-        logoUrl: systemForm.bimiLogoUrl.trim() || bimiLogoForDomain(mailBaseDomain(systemForm.domain)),
+        logoUrl: systemForm.bimiLogoUrl.trim(),
         certificateUrl: systemForm.bimiCertificateUrl.trim()
       }
     };
@@ -265,22 +269,24 @@ export default function AdminEmail() {
     }
 
     const domain = await findManagedDomain(domainName);
-    const logoUrl = systemForm.bimiLogoUrl.trim() || bimiLogoForDomain(domainName);
+    const logoUrl = systemForm.bimiLogoUrl.trim();
     const certificateUrl = systemForm.bimiCertificateUrl.trim();
     const bimiValue = bimiTxtForDomain(domainName, logoUrl, certificateUrl);
     await upsertDnsTxt(domain.id, '_dmarc', dmarcForDomain(domainName), { provider: 'powerdns', source: 'bimi_blue_badge', managed: true });
-    await upsertDnsTxt(domain.id, 'default._bimi', bimiValue, { provider: 'powerdns', source: 'bimi_blue_badge', managed: true });
+    if (bimiValue) {
+      await upsertDnsTxt(domain.id, 'default._bimi', bimiValue, { provider: 'powerdns', source: 'bimi_blue_badge', managed: true });
+    }
     return {
       domainName,
       logoUrl,
       certificateUrl,
       dnsValue: bimiValue,
-      status: certificateUrl ? 'gmail_blue_ready' : 'pending_vmc_or_cmc',
+      status: logoUrl && certificateUrl ? 'gmail_blue_ready' : logoUrl ? 'pending_vmc_or_cmc' : 'pending_bimi_svg',
       steps: [
-        { label: 'SVG Tiny PS hosted', status: 'done', detail: logoUrl },
+        { label: 'SVG Tiny PS hosted', status: logoUrl ? 'done' : 'pending', detail: logoUrl || 'Optional: add a BIMI SVG URL when you want BIMI DNS published.' },
         { label: 'DMARC enforced', status: 'done', detail: `_dmarc.${domainName} uses p=quarantine and pct=100.` },
-        { label: 'BIMI DNS published', status: 'done', detail: `default._bimi.${domainName}` },
-        { label: 'Gmail blue check', status: certificateUrl ? 'done' : 'pending', detail: certificateUrl ? 'VMC/CMC PEM URL is attached.' : 'Add a VMC/CMC PEM URL to show Gmail verified checkmark.' }
+        { label: 'BIMI DNS published', status: bimiValue ? 'done' : 'pending', detail: bimiValue ? `default._bimi.${domainName}` : 'Skipped until a BIMI SVG URL is provided.' },
+        { label: 'Gmail blue check', status: logoUrl && certificateUrl ? 'done' : 'pending', detail: logoUrl && certificateUrl ? 'BIMI SVG and VMC/CMC PEM URLs are attached.' : 'Optional: add both BIMI SVG and VMC/CMC PEM URLs for Gmail verified checkmark.' }
       ]
     };
   };
@@ -501,20 +507,20 @@ export default function AdminEmail() {
               <input value={systemForm.replyTo} onChange={(event) => setSystemForm({ ...systemForm, replyTo: event.target.value })} placeholder={`support@${systemDomain}`} className="w-full rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" />
             </label>
             <label className="space-y-1">
-              <span className="text-[10px] font-black uppercase text-[#6B7280]">BIMI SVG URL</span>
+              <span className="text-[10px] font-black uppercase text-[#6B7280]">BIMI SVG URL Optional</span>
               <input value={systemForm.bimiLogoUrl} onChange={(event) => setSystemForm({ ...systemForm, bimiLogoUrl: event.target.value })} placeholder={bimiLogoForDomain(systemDomain)} className="w-full rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" />
             </label>
             <label className="space-y-1">
-              <span className="text-[10px] font-black uppercase text-[#6B7280]">VMC/CMC PEM URL</span>
+              <span className="text-[10px] font-black uppercase text-[#6B7280]">VMC/CMC PEM URL Optional</span>
               <input value={systemForm.bimiCertificateUrl} onChange={(event) => setSystemForm({ ...systemForm, bimiCertificateUrl: event.target.value })} placeholder="https://example.com/brand/certificate.pem" className="w-full rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" />
             </label>
             <div className="rounded border border-blue-100 bg-blue-50 p-3 md:col-span-2">
               <div className="grid grid-cols-1 gap-2 text-[11px] font-bold text-blue-800 sm:grid-cols-4">
                 {[
-                  ['SVG Tiny PS', activeBimiLogoUrl],
+                  ['SVG Tiny PS', activeBimiLogoUrl || 'Optional'],
                   ['DMARC', `p=quarantine; pct=100`],
-                  ['BIMI TXT', activeBimiCertificateUrl ? 'PEM certificate mode' : 'SVG mode'],
-                  ['Gmail check', activeBimiCertificateUrl ? 'Ready after DNS propagation' : 'Needs VMC/CMC PEM']
+                  ['BIMI TXT', activeBimiTxt || 'Not published'],
+                  ['Gmail check', activeBimiLogoUrl && activeBimiCertificateUrl ? 'Ready after DNS propagation' : 'Optional']
                 ].map(([label, value]) => (
                   <div key={label} className="rounded border border-blue-100 bg-white p-2">
                     <p className="text-[9px] font-black uppercase text-blue-500">{label}</p>
@@ -578,7 +584,7 @@ export default function AdminEmail() {
           {accounts.map((record) => {
             const enabled = blueBadgeEnabled(record);
             const bimi = record.data?.bimi || {};
-            const gmailReady = enabled && Boolean(bimi.certificateUrl);
+            const gmailReady = enabled && Boolean(bimi.logoUrl && bimi.certificateUrl);
             const statusLabel = enabled ? (gmailReady ? 'Gmail blue ready' : 'VMC pending') : 'Off';
             return (
               <div key={record.id} className="grid grid-cols-1 gap-4 px-5 py-4 md:grid-cols-[1fr_auto] md:items-center">
@@ -595,7 +601,7 @@ export default function AdminEmail() {
                     <div className="mt-3 grid grid-cols-1 gap-2 text-[11px] sm:grid-cols-2">
                       {(Array.isArray(bimi.steps) ? bimi.steps : [
                         { label: 'BIMI DNS', status: 'done', detail: bimi.dnsValue || bimiTxtForDomain(record.data?.domain || systemDomain, bimi.logoUrl, bimi.certificateUrl) },
-                        { label: 'Gmail blue check', status: gmailReady ? 'done' : 'pending', detail: gmailReady ? 'VMC/CMC PEM is attached.' : 'Needs VMC/CMC PEM URL.' }
+                        { label: 'Gmail blue check', status: gmailReady ? 'done' : 'pending', detail: gmailReady ? 'BIMI SVG and VMC/CMC PEM are attached.' : 'Optional: add BIMI SVG and VMC/CMC PEM URLs.' }
                       ]).map((step: any) => (
                         <div key={step.label} className={`rounded border p-2 ${step.status === 'pending' ? 'border-amber-100 bg-amber-50 text-amber-800' : 'border-emerald-100 bg-emerald-50 text-emerald-800'}`}>
                           <p className="font-black">{step.label}</p>
@@ -631,7 +637,7 @@ export default function AdminEmail() {
             ['Incoming IMAP', `${publicMailHost} : 993 SSL`],
             ['Outgoing SMTP', `${publicMailHost} : 465 SSL or 587 STARTTLS`],
             ['MX Record', `MX 10 ${publicMailHost}`],
-            ['BIMI TXT', bimiTxtForDomain(systemDomain, activeBimiLogoUrl, activeBimiCertificateUrl)]
+            ['BIMI TXT', activeBimiTxt || 'Optional: add BIMI SVG URL to publish default._bimi']
           ].map(([label, value]) => (
             <div key={label} className="rounded border border-[#E5E7EB] bg-[#F9FAFB] p-4">
               <p className="text-[10px] font-black uppercase tracking-widest text-gray-400">{label}</p>

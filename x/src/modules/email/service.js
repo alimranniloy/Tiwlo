@@ -350,7 +350,7 @@ export const sendMailboxMessage = async (ctx, input) => {
   if (!result.sent) {
     const config = await systemEmailConfig(ctx.prisma);
     const advice = emailServerAdvice(config);
-    throw new AppError(`Email could not be sent. ${advice.message}`, 'BAD_USER_INPUT');
+    throw new AppError(`Email could not be sent. ${result.message || advice.message}`, 'BAD_USER_INPUT');
   }
 
   const message = {

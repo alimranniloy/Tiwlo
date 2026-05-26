@@ -82,6 +82,13 @@ const isMessagePolicyFailure = (errorOrResult = {}) => {
   return errorOrResult.code === 'EMESSAGE' || [550, 553, 554, 556].includes(responseCode);
 };
 
+const isTemporaryMessagePolicyFailure = (errorOrResult = {}) => {
+  const responseCode = Number(errorOrResult.responseCode || 0);
+  return errorOrResult.code === 'EMESSAGE' && responseCode >= 400 && responseCode < 500;
+};
+
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 function envAuthFallbackConfig(config = {}) {
   const envPassword = process.env.SMTP_PASS;
   if (!envPassword) return null;
@@ -498,6 +505,9 @@ function smtpErrorMessage(error, config, diagnostic = {}) {
     return `Cannot reach ${config.host}:${config.port}. Check DNS, firewall, provider security group, and whether SMTP is listening.`;
   }
   if (code === 'EMESSAGE') {
+    if (responseCode >= 400 && responseCode < 500) {
+      return `${raw} Postfix temporarily rejected the message. Tiwlo config now fails open for unavailable DKIM/policy milters; rerun the update script, then check: sudo postconf milter_default_action smtpd_milters non_smtpd_milters`;
+    }
     return `${raw} Tiwlo will retry with the authenticated MAIL FROM identity; if it still fails, check Postfix content policy, DKIM milter, recipient restrictions, and sender domain alignment.`;
   }
   if (code === 'EENVELOPE' || responseCode >= 550) {
@@ -529,10 +539,14 @@ async function deliverEmail(config, message) {
     } catch (error) {
       const envelopeFrom = smtpEnvelopeFrom(config);
       const requestedFrom = extractEmailAddress(message.from || config.fromEmail || '');
-      if (!isMessagePolicyFailure(error) || !requestedFrom || requestedFrom === envelopeFrom) {
+      if (isTemporaryMessagePolicyFailure(error)) {
+        await delay(1200);
+        await transporter.sendMail(deliveryMessage(config, preparedMessage, { forceSafeFrom: true }));
+      } else if (!isMessagePolicyFailure(error) || !requestedFrom || requestedFrom === envelopeFrom) {
         throw error;
+      } else {
+        await transporter.sendMail(deliveryMessage(config, preparedMessage, { forceSafeFrom: true }));
       }
-      await transporter.sendMail(deliveryMessage(config, preparedMessage, { forceSafeFrom: true }));
     }
   } finally {
     transporter.close();
@@ -646,7 +660,7 @@ export async function testTiwloEmail(ctxOrPrisma, input = {}) {
       ...result.advice
     };
   } catch (error) {
-    if (isConnectionOrHandshakeFailure(error) && config) {
+    if ((isConnectionOrHandshakeFailure(error) || isTemporaryMessagePolicyFailure(error)) && config) {
       for (const fallbackConfig of localMailFallbackConfigs(config)) {
         if (isSameSmtpMode(fallbackConfig, config)) continue;
         try {
@@ -810,7 +824,7 @@ export async function sendTiwloEmail(ctxOrPrisma, { to, subject, title, preview,
     });
     return result;
   } catch (error) {
-    if (isConnectionOrHandshakeFailure(error) && config) {
+    if ((isConnectionOrHandshakeFailure(error) || isTemporaryMessagePolicyFailure(error)) && config) {
       for (const fallbackConfig of localMailFallbackConfigs(config)) {
         if (isSameSmtpMode(fallbackConfig, config)) continue;
         try {

@@ -83,6 +83,26 @@ verify_listener() {
   fi
 }
 
+configure_postfix_delivery_safety() {
+  if ! command -v postconf >/dev/null 2>&1; then
+    return 0
+  fi
+
+  run_sudo postconf -e "milter_default_action = accept" || true
+  run_sudo postconf -e "milter_protocol = 6" || true
+  run_sudo postconf -e "milter_connect_timeout = 3s" || true
+  run_sudo postconf -e "milter_command_timeout = 10s" || true
+  run_sudo postconf -e "milter_content_timeout = 30s" || true
+  run_sudo postconf -e "smtpd_client_restrictions = permit_mynetworks" || true
+  run_sudo postconf -e "smtpd_sender_restrictions =" || true
+  run_sudo postconf -e "smtpd_data_restrictions =" || true
+  run_sudo postconf -e "smtpd_end_of_data_restrictions =" || true
+  run_sudo postconf -e "smtpd_recipient_restrictions = permit_sasl_authenticated,permit_mynetworks,reject_unauth_destination" || true
+  run_sudo postconf -e "smtpd_relay_restrictions = permit_sasl_authenticated,permit_mynetworks,reject_unauth_destination" || true
+  run_sudo postconf -P "submission/inet/smtpd_relay_restrictions=permit_sasl_authenticated,reject" || true
+  run_sudo postconf -P "smtps/inet/smtpd_relay_restrictions=permit_sasl_authenticated,reject" || true
+}
+
 detect_public_ipv4() {
   if command -v ip >/dev/null 2>&1; then
     ip -4 route get 1.1.1.1 2>/dev/null | awk '{ for (i = 1; i <= NF; i++) if ($i == "src") { print $(i + 1); exit } }' && return 0
@@ -190,6 +210,7 @@ configure_postfix_dovecot() {
   run_sudo postconf -e "smtpd_sasl_security_options = noanonymous" || true
   run_sudo postconf -e "smtpd_recipient_restrictions = permit_sasl_authenticated,permit_mynetworks,reject_unauth_destination" || true
   run_sudo postconf -e "smtpd_relay_restrictions = permit_sasl_authenticated,permit_mynetworks,reject_unauth_destination" || true
+  configure_postfix_delivery_safety
   run_sudo postconf -M "submission/inet=submission inet n - n - - smtpd" || true
   run_sudo postconf -P "submission/inet/syslog_name=postfix/submission" || true
   run_sudo postconf -P "submission/inet/smtpd_tls_security_level=encrypt" || true
@@ -200,6 +221,7 @@ configure_postfix_dovecot() {
   run_sudo postconf -P "smtps/inet/smtpd_tls_wrappermode=yes" || true
   run_sudo postconf -P "smtps/inet/smtpd_sasl_auth_enable=yes" || true
   run_sudo postconf -P "smtps/inet/smtpd_recipient_restrictions=permit_sasl_authenticated,reject" || true
+  configure_postfix_delivery_safety
 
   run_sudo mkdir -p /etc/dovecot/conf.d
 
@@ -394,12 +416,30 @@ CONF
   printf '%s\n' "*@${mail_domain} ${selector}._domainkey.${mail_domain}" | run_sudo tee /etc/opendkim/signing.table >/dev/null
   printf '%s\n' "127.0.0.1" "localhost" "$mail_domain" ".${mail_domain}" | run_sudo tee /etc/opendkim/trusted.hosts >/dev/null
 
-  run_sudo postconf -e "milter_default_action = accept" || true
-  run_sudo postconf -e "milter_protocol = 6" || true
-  run_sudo postconf -e "smtpd_milters = inet:127.0.0.1:8891" || true
-  run_sudo postconf -e "non_smtpd_milters = inet:127.0.0.1:8891" || true
+  configure_postfix_delivery_safety
+  run_sudo mkdir -p /run/opendkim
+  run_sudo chown opendkim:opendkim /run/opendkim >/dev/null 2>&1 || true
   run_sudo systemctl enable --now opendkim >/dev/null 2>&1 || true
-  run_sudo systemctl restart opendkim postfix >/dev/null 2>&1 || true
+  run_sudo systemctl restart opendkim >/dev/null 2>&1 || true
+  local milter_ready=0
+  if command -v ss >/dev/null 2>&1; then
+    for _ in $(seq 1 10); do
+      if ss -ltn 2>/dev/null | grep -Eq '(^|[[:space:]])127\.0\.0\.1:8891[[:space:]]|(^|[[:space:]])0\.0\.0\.0:8891[[:space:]]|(^|[[:space:]])\[::\]:8891[[:space:]]'; then
+        milter_ready=1
+        break
+      fi
+      sleep 1
+    done
+  fi
+  if [ "$milter_ready" -eq 1 ]; then
+    run_sudo postconf -e "smtpd_milters = inet:127.0.0.1:8891" || true
+    run_sudo postconf -e "non_smtpd_milters = inet:127.0.0.1:8891" || true
+  else
+    echo "OpenDKIM milter is not ready; disabling Postfix milter to avoid SMTP 451 tempfail."
+    run_sudo postconf -e "smtpd_milters =" || true
+    run_sudo postconf -e "non_smtpd_milters =" || true
+  fi
+  run_sudo systemctl restart postfix >/dev/null 2>&1 || true
 
   if [ -f "$txt_file" ]; then
     public_key="$(run_sudo cat "$txt_file" 2>/dev/null | awk -F'"' '/"/ { for (i = 2; i <= NF; i += 2) printf "%s", $i } END { print "" }' | sed -E 's/^.*p=//; s/[;[:space:]]+$//')"
