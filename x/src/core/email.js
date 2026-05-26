@@ -6,6 +6,7 @@ const DEFAULT_FROM = 'noreply@tiwlo.com';
 const SMTP_TIMEOUT_MS = Number(process.env.SMTP_TIMEOUT_MS || 8000);
 export const REQUIRED_EMAIL_PORTS = [25, 465, 587, 993, 995];
 const FALSE_VALUES = new Set(['0', 'false', 'no', 'off', 'unchecked']);
+const LOCAL_SMTP_HOSTS = new Set(['127.0.0.1', 'localhost', '::1']);
 
 function booleanValue(value, fallback = false) {
   if (value === undefined || value === null || value === '') return fallback;
@@ -54,6 +55,30 @@ function envAuthFallbackConfig(config = {}) {
   };
 }
 
+function domainFromMailConfig(config = {}) {
+  const email = String(config.username || config.fromEmail || process.env.SMTP_USER || process.env.MAIL_FROM || '').trim();
+  if (email.includes('@')) return cleanHost(email.split('@').pop());
+  const host = cleanHost(config.tlsServername || config.host || process.env.SMTP_PUBLIC_HOST || process.env.SMTP_HOST || '');
+  return cleanHost(host.replace(/^mail\./, '')) || 'tiwlo.com';
+}
+
+function localMailFallbackConfig(config = {}) {
+  if (booleanValue(process.env.SMTP_DISABLE_LOCAL_FALLBACK, false)) return null;
+  const currentHost = cleanHost(config.host || '');
+  if (!currentHost || LOCAL_SMTP_HOSTS.has(currentHost)) return null;
+  const domain = domainFromMailConfig(config);
+  const tlsServername = cleanHost(config.tlsServername || process.env.SMTP_TLS_SERVERNAME || process.env.SMTP_PUBLIC_HOST || `mail.${domain}`);
+  return {
+    ...config,
+    host: cleanHost(process.env.SMTP_LOCAL_HOST || '127.0.0.1'),
+    port: Number(process.env.SMTP_LOCAL_PORT || config.port || process.env.SMTP_PORT || 465),
+    secureSSL: process.env.SMTP_SECURE !== undefined ? process.env.SMTP_SECURE : config.secureSSL ?? config.secure ?? true,
+    tlsServername,
+    tlsRejectUnauthorized: config.tlsRejectUnauthorized,
+    authSource: 'local-loopback'
+  };
+}
+
 function getPrisma(ctxOrPrisma) {
   return ctxOrPrisma?.prisma || ctxOrPrisma;
 }
@@ -83,10 +108,10 @@ export async function systemEmailConfig(prisma, override = {}) {
   const saved = await readSavedSystemEmail(prisma);
   const source = { ...saved, ...override };
   const port = Number(source.port || process.env.SMTP_PORT || 465);
-  const host = cleanHost(source.host || process.env.SMTP_HOST);
+  const host = cleanHost(source.host || process.env.SMTP_HOST || process.env.SMTP_LOCAL_HOST);
   const secureFromInput = source.secureSSL ?? source.secure;
   const mode = smtpModeForPort(port, secureFromInput ?? process.env.SMTP_SECURE);
-  const tlsServername = cleanHost(source.tlsServername || process.env.SMTP_TLS_SERVERNAME || host);
+  const tlsServername = cleanHost(source.tlsServername || process.env.SMTP_TLS_SERVERNAME || process.env.SMTP_PUBLIC_HOST || host);
   return {
     host,
     port: mode.port,
@@ -220,7 +245,7 @@ export async function diagnoseSmtpConfig(config = {}) {
       stage: 'tcp',
       ok: false,
       code: tcp.code || 'TCP_FAILED',
-      message: `Backend cannot connect to ${host}:${mode.port}. Open this port on the VPS firewall, provider security group, and mail service listener.`
+      message: `Backend cannot connect to ${host}:${mode.port}. Tiwlo will try the local mail listener next; if that also fails, start Postfix/Dovecot and open ${mode.port}/tcp.`
     };
   }
 
@@ -324,6 +349,32 @@ export async function testTiwloEmail(ctxOrPrisma, input = {}) {
   }
 
   let diagnostic = await diagnoseSmtpConfig(config);
+  if (!diagnostic.ok && ['dns', 'tcp'].includes(diagnostic.stage)) {
+    const fallbackConfig = localMailFallbackConfig(config);
+    if (fallbackConfig) {
+      const fallbackDiagnostic = await diagnoseSmtpConfig(fallbackConfig);
+      if (fallbackDiagnostic.ok) {
+        config = fallbackConfig;
+        diagnostic = {
+          ...fallbackDiagnostic,
+          authSource: 'local-loopback',
+          publicHost: diagnostic.host,
+          publicStage: diagnostic.stage,
+          publicCode: diagnostic.code
+        };
+      } else {
+        diagnostic = {
+          ...diagnostic,
+          fallback: {
+            stage: fallbackDiagnostic.stage,
+            code: fallbackDiagnostic.code,
+            host: fallbackDiagnostic.host,
+            message: fallbackDiagnostic.message
+          }
+        };
+      }
+    }
+  }
   if (!diagnostic.ok && diagnostic.stage === 'smtp-auth') {
     const fallbackConfig = envAuthFallbackConfig(config);
     if (fallbackConfig) {
@@ -395,6 +446,45 @@ export async function testTiwloEmail(ctxOrPrisma, input = {}) {
       ...result.advice
     };
   } catch (error) {
+    if (['ECONNECTION', 'ECONNREFUSED', 'ETIMEDOUT', 'EHOSTUNREACH', 'ENOTFOUND', 'ESOCKET'].includes(error?.code) && config) {
+      const fallbackConfig = localMailFallbackConfig(config);
+      if (fallbackConfig) {
+        try {
+          const retryDiagnostic = await diagnoseSmtpConfig(fallbackConfig);
+          if (retryDiagnostic.ok) {
+            const retryResult = await deliverEmail(fallbackConfig, {
+              to,
+              from: `"${fallbackConfig.fromName}" <${fallbackConfig.fromEmail}>`,
+              replyTo: fallbackConfig.replyTo,
+              subject: input.subject || 'Tiwlo.com test email',
+              text: 'This is a live SMTP test from Tiwlo.com.',
+              html: brandedHtml({
+                title: 'Tiwlo.com email test',
+                preview: 'Your SMTP configuration can send email.',
+                bodyHtml: [
+                  paragraph('Success. Tiwlo.com connected to your local mail server and sent this test email.'),
+                  paragraph(emailServerAdvice(fallbackConfig).message)
+                ].join('')
+              })
+            });
+            if (retryResult.sent) {
+              return {
+                ok: true,
+                stage: 'sent',
+                code: 'OK',
+                message: `Nodemailer sent a real test email to ${to}.`,
+                to,
+                fromEmail: fallbackConfig.fromEmail,
+                diagnostic: { ...retryDiagnostic, authSource: 'local-loopback' },
+                ...retryResult.advice
+              };
+            }
+          }
+        } catch {
+          // Report the original connection error below.
+        }
+      }
+    }
     if (isAuthFailure(error)) {
       const fallbackConfig = envAuthFallbackConfig(config);
       if (fallbackConfig) {
@@ -510,6 +600,24 @@ export async function sendTiwloEmail(ctxOrPrisma, { to, subject, title, preview,
     });
     return result;
   } catch (error) {
+    if (['ECONNECTION', 'ECONNREFUSED', 'ETIMEDOUT', 'EHOSTUNREACH', 'ENOTFOUND', 'ESOCKET'].includes(error?.code) && config) {
+      const fallbackConfig = localMailFallbackConfig(config);
+      if (fallbackConfig) {
+        try {
+          const result = await deliverEmail(fallbackConfig, {
+            to,
+            from: `"${fallbackConfig.fromName}" <${fallbackConfig.fromEmail}>`,
+            replyTo: fallbackConfig.replyTo,
+            subject,
+            text: text || preview || subject,
+            html: brandedHtml({ title: title || subject, preview, bodyHtml: html || `<p>${escapeHtml(text || preview || subject)}</p>` })
+          });
+          return { ...result, authSource: 'local-loopback' };
+        } catch {
+          // Report the original connection failure below.
+        }
+      }
+    }
     if (isAuthFailure(error) && config) {
       const fallbackConfig = envAuthFallbackConfig(config);
       if (fallbackConfig) {

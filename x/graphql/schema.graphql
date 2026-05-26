@@ -165,6 +165,7 @@ type PowerDnsSyncResult {
   zones: Int!
   records: Int!
   message: String!
+  details: JSON
 }
 
 type Plan {

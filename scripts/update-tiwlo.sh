@@ -37,6 +37,49 @@ random_secret() {
   openssl rand -base64 32 2>/dev/null | tr -dc 'A-Za-z0-9' | head -c 24 || date +%s%N
 }
 
+open_network_ports() {
+  local tcp_ports="25 465 587 993 995 80 443 53"
+  local udp_ports="53"
+  local port
+  if command -v ufw >/dev/null 2>&1; then
+    for port in $tcp_ports; do run_sudo ufw allow "${port}/tcp" >/dev/null 2>&1 || true; done
+    for port in $udp_ports; do run_sudo ufw allow "${port}/udp" >/dev/null 2>&1 || true; done
+  fi
+  if command -v firewall-cmd >/dev/null 2>&1; then
+    for port in $tcp_ports; do
+      run_sudo firewall-cmd --permanent --add-port="${port}/tcp" >/dev/null 2>&1 || true
+      run_sudo firewall-cmd --add-port="${port}/tcp" >/dev/null 2>&1 || true
+    done
+    for port in $udp_ports; do
+      run_sudo firewall-cmd --permanent --add-port="${port}/udp" >/dev/null 2>&1 || true
+      run_sudo firewall-cmd --add-port="${port}/udp" >/dev/null 2>&1 || true
+    done
+    run_sudo firewall-cmd --reload >/dev/null 2>&1 || true
+  fi
+  if command -v iptables >/dev/null 2>&1; then
+    for port in $tcp_ports; do
+      run_sudo iptables -C INPUT -p tcp --dport "$port" -j ACCEPT >/dev/null 2>&1 || \
+        run_sudo iptables -I INPUT -p tcp --dport "$port" -j ACCEPT >/dev/null 2>&1 || true
+    done
+    for port in $udp_ports; do
+      run_sudo iptables -C INPUT -p udp --dport "$port" -j ACCEPT >/dev/null 2>&1 || \
+        run_sudo iptables -I INPUT -p udp --dport "$port" -j ACCEPT >/dev/null 2>&1 || true
+    done
+  fi
+}
+
+verify_listener() {
+  local port="$1"
+  local label="$2"
+  if command -v ss >/dev/null 2>&1; then
+    if ss -ltnup 2>/dev/null | grep -Eq "[:.]${port}[[:space:]]"; then
+      echo "${label}: listening on ${port}"
+    else
+      echo "${label}: not listening on ${port}. Check service status and provider firewall."
+    fi
+  fi
+}
+
 configure_postfix_dovecot() {
   local mail_domain="$1"
   local mail_hostname="$2"
@@ -64,6 +107,8 @@ configure_postfix_dovecot() {
   run_sudo postconf -e "mydomain = ${mail_domain}" || true
   run_sudo postconf -e "myorigin = /etc/mailname" || true
   run_sudo postconf -e "inet_interfaces = all" || true
+  run_sudo postconf -e "inet_protocols = all" || true
+  run_sudo postconf -e "mynetworks = 127.0.0.0/8 [::1]/128" || true
   run_sudo postconf -e "home_mailbox = Maildir/" || true
   run_sudo postconf -e "smtpd_tls_cert_file = ${cert_file}" || true
   run_sudo postconf -e "smtpd_tls_key_file = ${key_file}" || true
@@ -92,6 +137,8 @@ configure_postfix_dovecot() {
 disable_plaintext_auth = yes
 auth_mechanisms = plain login
 auth_username_format = %n
+protocols = imap pop3 lmtp
+mail_location = maildir:~/Maildir
 
 service auth {
   unix_listener /var/spool/postfix/private/auth {
@@ -102,8 +149,31 @@ service auth {
 }
 DOVECOT
 
+  cat <<DOVECOTSSL | run_sudo tee /etc/dovecot/conf.d/99-tiwlo-mail-ssl.conf >/dev/null
+ssl = required
+ssl_cert = <${cert_file}
+ssl_key = <${key_file}
+
+service imap-login {
+  inet_listener imaps {
+    port = 993
+    ssl = yes
+  }
+}
+
+service pop3-login {
+  inet_listener pop3s {
+    port = 995
+    ssl = yes
+  }
+}
+DOVECOTSSL
+
   run_sudo systemctl enable --now postfix dovecot >/dev/null 2>&1 || true
   run_sudo systemctl restart postfix dovecot >/dev/null 2>&1 || true
+  verify_listener 465 "Postfix SMTPS"
+  verify_listener 587 "Postfix submission"
+  verify_listener 993 "Dovecot IMAPS"
 }
 
 provision_system_mailbox() {
@@ -129,8 +199,10 @@ provision_system_mailbox() {
   run_sudo chmod -R 700 "$home_dir/Maildir" >/dev/null 2>&1 || true
 
   run_sudo mkdir -p /etc/tiwlo-mail
-  cat <<MAILENV | run_sudo tee /etc/tiwlo-mail/system-smtp.env >/dev/null
-SMTP_HOST=mail.${mail_domain}
+cat <<MAILENV | run_sudo tee /etc/tiwlo-mail/system-smtp.env >/dev/null
+SMTP_HOST=127.0.0.1
+SMTP_PUBLIC_HOST=mail.${mail_domain}
+SMTP_TLS_SERVERNAME=mail.${mail_domain}
 SMTP_PORT=465
 SMTP_SECURE=true
 SMTP_USER=${smtp_user}
@@ -184,13 +256,7 @@ install_system_email_stack() {
     rspamd mailutils libsasl2-modules ssl-cert >/dev/null 2>&1 || true
   run_sudo systemctl enable --now postfix dovecot opendkim rspamd >/dev/null 2>&1 || true
   configure_postfix_dovecot "$mail_domain" "$mail_hostname"
-  run_sudo ufw allow 25/tcp >/dev/null 2>&1 || true
-  run_sudo ufw allow 110/tcp >/dev/null 2>&1 || true
-  run_sudo ufw allow 143/tcp >/dev/null 2>&1 || true
-  run_sudo ufw allow 465/tcp >/dev/null 2>&1 || true
-  run_sudo ufw allow 587/tcp >/dev/null 2>&1 || true
-  run_sudo ufw allow 993/tcp >/dev/null 2>&1 || true
-  run_sudo ufw allow 995/tcp >/dev/null 2>&1 || true
+  open_network_ports
 }
 
 install_system_ssl_stack() {
@@ -204,8 +270,7 @@ install_system_ssl_stack() {
   elif command -v yum >/dev/null 2>&1; then
     run_sudo yum install -y certbot python3-certbot-nginx ca-certificates openssl cronie >/dev/null 2>&1 || true
   fi
-  run_sudo ufw allow 80/tcp >/dev/null 2>&1 || true
-  run_sudo ufw allow 443/tcp >/dev/null 2>&1 || true
+  open_network_ports
   run_sudo systemctl enable --now certbot.timer >/dev/null 2>&1 || true
 }
 
@@ -234,9 +299,10 @@ PDNS
   elif command -v yum >/dev/null 2>&1; then
     run_sudo yum install -y pdns pdns-backend-postgresql bind-utils >/dev/null 2>&1 || true
   fi
-  run_sudo ufw allow 53/tcp >/dev/null 2>&1 || true
-  run_sudo ufw allow 53/udp >/dev/null 2>&1 || true
+  open_network_ports
   run_sudo systemctl enable --now pdns >/dev/null 2>&1 || true
+  run_sudo systemctl restart pdns >/dev/null 2>&1 || true
+  verify_listener 53 "PowerDNS authoritative"
 }
 
 set_env_value() {
@@ -282,6 +348,7 @@ install_system_email_stack
 install_system_ssl_stack
 ensure_mail_tls_certificate
 install_system_powerdns_stack
+open_network_ports
 
 echo "Preparing production GraphQL routing..."
 set_env_value "$ROOT/.env" VITE_GRAPHQL_URL "${FRONTEND_GRAPHQL_URL:-/graphql}"
@@ -295,7 +362,9 @@ SYSTEM_SMTP_USER="$(get_env_value "$ROOT/x/.env" SMTP_USER)"
 SYSTEM_SMTP_USER="${SYSTEM_SMTP_USER:-noreply@${MAIL_DOMAIN}}"
 SYSTEM_SMTP_PASS="$(get_env_value "$ROOT/x/.env" SMTP_PASS)"
 SYSTEM_SMTP_PASS="${SYSTEM_SMTP_PASS:-$(random_secret)}"
-set_env_value_if_missing "$ROOT/x/.env" SMTP_HOST "mail.${MAIL_DOMAIN}"
+set_env_value "$ROOT/x/.env" SMTP_HOST "127.0.0.1"
+set_env_value "$ROOT/x/.env" SMTP_PUBLIC_HOST "mail.${MAIL_DOMAIN}"
+set_env_value "$ROOT/x/.env" SMTP_TLS_SERVERNAME "mail.${MAIL_DOMAIN}"
 set_env_value "$ROOT/x/.env" SMTP_USER "$SYSTEM_SMTP_USER"
 set_env_value "$ROOT/x/.env" SMTP_PASS "$SYSTEM_SMTP_PASS"
 set_env_value_if_missing "$ROOT/x/.env" MAIL_FROM "$SYSTEM_SMTP_USER"

@@ -170,6 +170,7 @@ export async function fetchPowerDnsStatusWithApi() {
         zones
         records
         message
+        details
       }
     }`
   );

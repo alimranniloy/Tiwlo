@@ -16,6 +16,7 @@ import {
   deletePowerDnsHostnameWithApi,
   fetchPowerDnsConfigWithApi,
   fetchPowerDnsHostnamesWithApi,
+  fetchPowerDnsStatusWithApi,
   syncPowerDnsWithApi,
   updatePowerDnsConfigWithApi,
   upsertPowerDnsHostnameWithApi
@@ -40,6 +41,7 @@ const targetFor = (row: any) => (row.recordType === 'CNAME' ? row.target : row.i
 
 export default function AdminDnsHostnames({ mode = 'hostnames' }: { mode?: 'hostnames' | 'nameservers' }) {
   const [config, setConfig] = React.useState<any>({ primaryDomain: '', serverIp: '', nameservers: [], soaEmail: '', automationEnabled: true, dnssecEnabled: false });
+  const [status, setStatus] = React.useState<any>(null);
   const [hostnames, setHostnames] = React.useState<any[]>([]);
   const [form, setForm] = React.useState<any>(emptyHostname);
   const [nameserverRows, setNameserverRows] = React.useState<string[]>([]);
@@ -61,14 +63,16 @@ export default function AdminDnsHostnames({ mode = 'hostnames' }: { mode?: 'host
   const load = React.useCallback(async () => {
     setError('');
     try {
-      const [nextConfig, nextHostnames] = await Promise.all([
+      const [nextConfig, nextHostnames, nextStatus] = await Promise.all([
         fetchPowerDnsConfigWithApi(),
-        fetchPowerDnsHostnamesWithApi()
+        fetchPowerDnsHostnamesWithApi(),
+        fetchPowerDnsStatusWithApi().catch(() => null)
       ]);
       const nextNameservers = uniqueRows(nextConfig.nameservers || []);
       setConfig(nextConfig);
       setNameserverRows(nextNameservers.length ? nextNameservers : defaultNameservers(nextConfig.primaryDomain || 'tiwlo.com'));
       setHostnames(nextHostnames);
+      setStatus(nextStatus);
       setForm((current: any) => ({
         ...current,
         ipAddress: current.ipAddress || nextConfig.serverIp || ''
@@ -282,6 +286,7 @@ export default function AdminDnsHostnames({ mode = 'hostnames' }: { mode?: 'host
               {[
                 ['Glue hostnames', activeNameservers.join(', ')],
                 ['Glue IP target', config.serverIp || 'SERVER_IP'],
+                ['Current parent NS', (status?.details?.publicNameservers || []).join(', ') || 'not visible yet'],
                 ['PowerDNS service', 'Port 53 TCP/UDP'],
                 ['Parent registry NS', activeNameservers.join(' / ')]
               ].map(([label, value]) => (
@@ -294,7 +299,9 @@ export default function AdminDnsHostnames({ mode = 'hostnames' }: { mode?: 'host
                 </button>
               ))}
               <div className="rounded border border-amber-100 bg-amber-50 px-3 py-3 text-[12px] font-bold text-amber-800">
-                GoDaddy glue can be correct while public NS checks still wait on parent registry propagation or closed DNS port 53.
+                {status?.details?.nameserverAligned
+                  ? 'Parent registry nameservers match this PowerDNS setup.'
+                  : 'GoDaddy glue can be correct while public NS checks still wait on parent registry propagation or closed DNS port 53.'}
               </div>
             </div>
           </div>

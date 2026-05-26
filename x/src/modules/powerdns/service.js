@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import dns from 'node:dns/promises';
 import { isIP } from 'node:net';
 import { requireAdmin, canManageOwnerResource, isAdmin } from '../../core/auth.js';
 import { AppError } from '../../core/errors.js';
@@ -661,11 +662,35 @@ export const powerDnsStatus = async (ctx) => {
     ctx.prisma.$queryRaw`SELECT COUNT(*)::int AS count FROM domains`,
     ctx.prisma.$queryRaw`SELECT COUNT(*)::int AS count FROM records`
   ]);
+  const expectedNameservers = uniqueHosts(config.nameservers);
+  const publicNameservers = await dns.resolveNs(config.primaryDomain).then(uniqueHosts).catch(() => []);
+  const mailHost = `mail.${config.primaryDomain}`;
+  const mailAddresses = await dns.lookup(mailHost, { all: true }).then((items) => items.map((item) => item.address)).catch(() => []);
+  const serverIp = text(config.serverIp);
+  const missingExpectedNs = expectedNameservers.filter((ns) => !publicNameservers.includes(ns));
+  const nameserverAligned = expectedNameservers.length > 0 && missingExpectedNs.length === 0;
+  const mailAligned = !serverIp || serverIp === 'SERVER_IP' || mailAddresses.includes(serverIp);
+  const issues = [
+    ...(nameserverAligned ? [] : [`Parent registry still shows ${publicNameservers.join(', ') || 'no nameservers'} instead of ${expectedNameservers.join(', ')}.`]),
+    ...(mailAligned ? [] : [`${mailHost} does not resolve to ${serverIp}.`])
+  ];
   return {
-    ok: true,
+    ok: issues.length === 0,
     zones: Number(zones?.[0]?.count || 0),
     records: Number(records?.[0]?.count || 0),
-    message: `PowerDNS is configured for ${config.primaryDomain}.`
+    message: issues[0] || `PowerDNS is configured for ${config.primaryDomain}.`,
+    details: {
+      primaryDomain: config.primaryDomain,
+      serverIp,
+      expectedNameservers,
+      publicNameservers,
+      missingExpectedNs,
+      nameserverAligned,
+      mailHost,
+      mailAddresses,
+      mailAligned,
+      requiredPorts: ['53/tcp', '53/udp', '25/tcp', '465/tcp', '587/tcp', '993/tcp', '995/tcp']
+    }
   };
 };
 

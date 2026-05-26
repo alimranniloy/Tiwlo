@@ -325,6 +325,12 @@ export default function AdminDns() {
 
       {error && <div className="flex items-center gap-2 rounded border border-red-100 bg-red-50 px-4 py-3 text-[13px] font-bold text-red-700"><AlertCircle className="h-4 w-4" /> {error}</div>}
       {notice && <div className="rounded border border-emerald-100 bg-emerald-50 px-4 py-3 text-[13px] font-bold text-emerald-700">{notice}</div>}
+      {status && status.ok === false && (
+        <div className="rounded border border-amber-100 bg-amber-50 px-4 py-3 text-[13px] font-bold text-amber-800">
+          {status.message}
+          {status.details?.publicNameservers?.length ? ` Current parent NS: ${status.details.publicNameservers.join(', ')}` : ''}
+        </div>
+      )}
 
       <section className="grid grid-cols-1 gap-4 md:grid-cols-4">
         {[

@@ -3,6 +3,7 @@ import { AlertCircle, CheckCircle2, Copy, Mail, Plus, Save, Send, Server, Settin
 import {
   deleteMainAdminRecordWithApi,
   fetchMainAdminRecordsWithApi,
+  fetchPowerDnsConfigWithApi,
   fetchSettingsWithApi,
   testSystemEmailWithApi,
   upsertMainAdminRecordWithApi,
@@ -19,32 +20,19 @@ const emptyAccount = {
 };
 
 const emptySystemEmail = {
-  host: 'mail.tiwlo.com',
-  port: '465',
-  username: 'noreply@tiwlo.com',
+  domain: 'tiwlo.com',
+  sender: 'noreply',
   password: '',
-  fromEmail: 'noreply@tiwlo.com',
-  fromName: 'Tiwlo.com',
-  replyTo: 'support@tiwlo.com',
-  secureSSL: true
+  fromName: 'Tiwlo',
+  replyTo: 'support@tiwlo.com'
 };
 
 const cleanDomain = (value: string) => value.trim().toLowerCase().replace(/^@/, '').replace(/^https?:\/\//, '').replace(/\/.*$/, '') || 'tiwlo.com';
 const cleanUsername = (value: string) => value.trim().toLowerCase().replace(/[^a-z0-9._-]/g, '');
 const hostForDomain = (domain: string) => `mail.${cleanDomain(domain)}`;
 const portalForDomain = (domain: string) => `email.${cleanDomain(domain)}`;
-const falseValues = new Set(['0', 'false', 'no', 'off', 'unchecked']);
-const booleanValue = (value: any, fallback = false) => {
-  if (value === undefined || value === null || value === '') return fallback;
-  if (typeof value === 'boolean') return value;
-  if (typeof value === 'number') return value !== 0;
-  return !falseValues.has(String(value).trim().toLowerCase());
-};
-const secureForPort = (port: number, value: any) => {
-  if (port === 465) return true;
-  if (port === 587) return false;
-  return booleanValue(value, false);
-};
+const localPart = (value: string) => cleanUsername(String(value || '').split('@')[0] || 'noreply') || 'noreply';
+const domainFromEmail = (value: string, fallback = 'tiwlo.com') => cleanDomain(String(value || '').includes('@') ? String(value).split('@').pop() || fallback : fallback);
 
 export default function AdminEmail() {
   const [accounts, setAccounts] = React.useState<any[]>([]);
@@ -68,16 +56,22 @@ export default function AdminEmail() {
         fetchMainAdminRecordsWithApi('emailAccounts'),
         fetchSettingsWithApi('platform')
       ]);
+      const powerDnsConfig = await fetchPowerDnsConfigWithApi().catch(() => null);
       setAccounts(nextAccounts);
       const systemEmail = settings.find((setting) => setting.key === 'systemEmail')?.value;
       if (systemEmail) {
-        const port = Number(systemEmail.port || 465);
+        const domain = domainFromEmail(systemEmail.username || systemEmail.fromEmail, powerDnsConfig?.primaryDomain || 'tiwlo.com');
         setSystemForm({
           ...emptySystemEmail,
-          ...systemEmail,
-          port: String(port),
-          secureSSL: secureForPort(port, systemEmail.secureSSL ?? systemEmail.secure)
+          domain,
+          sender: localPart(systemEmail.username || systemEmail.fromEmail || 'noreply'),
+          password: systemEmail.password || '',
+          fromName: systemEmail.fromName || 'Tiwlo',
+          replyTo: systemEmail.replyTo || `support@${domain}`
         });
+      } else if (powerDnsConfig?.primaryDomain) {
+        const domain = cleanDomain(powerDnsConfig.primaryDomain);
+        setSystemForm((current) => ({ ...current, domain, replyTo: `support@${domain}` }));
       }
     } catch (err) {
       setAccounts([]);
@@ -94,27 +88,27 @@ export default function AdminEmail() {
   const normalizedUsername = cleanUsername(accountForm.username);
   const normalizedDomain = cleanDomain(accountForm.domain);
   const fullAddress = `${normalizedUsername}@${normalizedDomain}`;
+  const systemDomain = cleanDomain(systemForm.domain);
+  const systemSender = localPart(systemForm.sender);
+  const systemAddress = `${systemSender}@${systemDomain}`;
+  const publicMailHost = hostForDomain(systemDomain);
+  const emailPortalHost = portalForDomain(systemDomain);
   const normalizedSystemEmail = React.useCallback(() => {
-    const port = Number(systemForm.port || 465);
     return {
-      ...systemForm,
-      host: String(systemForm.host || '').trim(),
-      username: String(systemForm.username || '').trim(),
-      fromEmail: String(systemForm.fromEmail || '').trim(),
+      host: '127.0.0.1',
+      publicHost: hostForDomain(cleanDomain(systemForm.domain)),
+      tlsServername: hostForDomain(cleanDomain(systemForm.domain)),
+      port: 465,
+      secureSSL: true,
+      tlsRejectUnauthorized: false,
+      username: `${localPart(systemForm.sender)}@${cleanDomain(systemForm.domain)}`,
+      password: String(systemForm.password || '').trim(),
+      fromEmail: `${localPart(systemForm.sender)}@${cleanDomain(systemForm.domain)}`,
+      fromName: String(systemForm.fromName || 'Tiwlo').trim(),
       replyTo: String(systemForm.replyTo || '').trim(),
-      port,
-      secureSSL: secureForPort(port, systemForm.secureSSL)
+      domain: cleanDomain(systemForm.domain)
     };
   }, [systemForm]);
-
-  const updateSystemPort = (value: string) => {
-    const port = Number(value);
-    setSystemForm({
-      ...systemForm,
-      port: value,
-      secureSSL: secureForPort(port, systemForm.secureSSL)
-    });
-  };
 
   const saveAccount = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -321,21 +315,45 @@ export default function AdminEmail() {
             <Settings className="h-4 w-4 text-blue-600" />
             <div>
               <h2 className="text-sm font-black uppercase text-[#111827]">Configure Sender</h2>
-              <p className="mt-1 text-[12px] text-[#6B7280]">Test the current values before saving them.</p>
+              <p className="mt-1 text-[12px] text-[#6B7280]">Tiwlo uses the local mail listener for backend delivery and keeps public mail details ready for users.</p>
             </div>
           </div>
           <form onSubmit={saveSystemEmail} className="grid grid-cols-1 gap-3 md:grid-cols-2">
-            <input value={systemForm.host} onChange={(event) => setSystemForm({ ...systemForm, host: event.target.value })} placeholder="SMTP host" className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" />
-            <input value={systemForm.port} onChange={(event) => updateSystemPort(event.target.value)} placeholder="Port" className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" />
-            <input value={systemForm.username} onChange={(event) => setSystemForm({ ...systemForm, username: event.target.value })} placeholder="SMTP username" className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" />
-            <input type="password" value={systemForm.password} onChange={(event) => setSystemForm({ ...systemForm, password: event.target.value })} placeholder="SMTP password" className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" />
-            <input value={systemForm.fromEmail} onChange={(event) => setSystemForm({ ...systemForm, fromEmail: event.target.value })} placeholder="From email" className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" />
-            <input value={systemForm.fromName} onChange={(event) => setSystemForm({ ...systemForm, fromName: event.target.value })} placeholder="From name" className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" />
-            <input value={systemForm.replyTo} onChange={(event) => setSystemForm({ ...systemForm, replyTo: event.target.value })} placeholder="Reply-to email" className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500 md:col-span-2" />
-            <label className="flex items-center gap-2 rounded border border-[#DDE3EA] px-3 py-2 text-sm font-bold text-[#374151] md:col-span-2">
-              <input type="checkbox" checked={booleanValue(systemForm.secureSSL)} onChange={(event) => setSystemForm({ ...systemForm, secureSSL: event.target.checked })} disabled={Number(systemForm.port || 465) === 465 || Number(systemForm.port || 465) === 587} />
-              Use SSL/TLS {Number(systemForm.port || 465) === 587 ? '(STARTTLS)' : ''}
+            <label className="space-y-1">
+              <span className="text-[10px] font-black uppercase text-[#6B7280]">Mail Domain</span>
+              <input value={systemForm.domain} onChange={(event) => setSystemForm({ ...systemForm, domain: cleanDomain(event.target.value), replyTo: `support@${cleanDomain(event.target.value)}` })} placeholder="tiwlo.com" className="w-full rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" />
             </label>
+            <label className="space-y-1">
+              <span className="text-[10px] font-black uppercase text-[#6B7280]">Sender</span>
+              <div className="grid grid-cols-[1fr_auto] overflow-hidden rounded border border-[#DDE3EA] bg-white focus-within:border-blue-500">
+                <input value={systemForm.sender} onChange={(event) => setSystemForm({ ...systemForm, sender: event.target.value })} placeholder="noreply" className="min-w-0 px-3 py-2 text-sm outline-none" />
+                <span className="border-l border-[#DDE3EA] bg-[#F9FAFB] px-3 py-2 text-sm font-bold text-[#6B7280]">@{systemDomain}</span>
+              </div>
+            </label>
+            <label className="space-y-1">
+              <span className="text-[10px] font-black uppercase text-[#6B7280]">SMTP Password</span>
+              <input type="password" value={systemForm.password} onChange={(event) => setSystemForm({ ...systemForm, password: event.target.value })} placeholder="Mailbox password" className="w-full rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" />
+            </label>
+            <label className="space-y-1">
+              <span className="text-[10px] font-black uppercase text-[#6B7280]">From Name</span>
+              <input value={systemForm.fromName} onChange={(event) => setSystemForm({ ...systemForm, fromName: event.target.value })} placeholder="Tiwlo" className="w-full rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" />
+            </label>
+            <label className="space-y-1 md:col-span-2">
+              <span className="text-[10px] font-black uppercase text-[#6B7280]">Reply To</span>
+              <input value={systemForm.replyTo} onChange={(event) => setSystemForm({ ...systemForm, replyTo: event.target.value })} placeholder={`support@${systemDomain}`} className="w-full rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" />
+            </label>
+            <div className="grid grid-cols-1 gap-3 md:col-span-2 sm:grid-cols-3">
+              {[
+                ['Backend SMTP', '127.0.0.1 : 465 SSL'],
+                ['Public Host', `${publicMailHost} : 465 SSL`],
+                ['From Email', systemAddress]
+              ].map(([label, value]) => (
+                <div key={label} className="rounded border border-[#E5E7EB] bg-[#F9FAFB] p-3">
+                  <p className="text-[10px] font-black uppercase text-gray-400">{label}</p>
+                  <p className="mt-1 break-all font-mono text-[12px] font-bold text-[#111827]">{value}</p>
+                </div>
+              ))}
+            </div>
             <div className="grid grid-cols-1 gap-2 rounded border border-[#E5E7EB] bg-[#F9FAFB] p-3 md:col-span-2">
               <label className="text-[10px] font-black uppercase tracking-widest text-[#6B7280]">Send test to</label>
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_auto]">
@@ -351,10 +369,12 @@ export default function AdminEmail() {
                   <div className="mt-2 grid grid-cols-1 gap-1 font-mono text-[11px] text-current/80 sm:grid-cols-2">
                     <span>stage: {testResult.stage || '-'}</span>
                     <span>code: {testResult.code || '-'}</span>
-                    <span>host: {testResult.host || systemForm.host}:{testResult.port || systemForm.port}</span>
+                    <span>host: {testResult.diagnostic?.host || testResult.host || '127.0.0.1'}:{testResult.diagnostic?.port || testResult.port || 465}</span>
                     <span>mode: {testResult.smtpMode || (testResult.diagnostic?.requireTLS ? '587 STARTTLS' : testResult.diagnostic?.secure ? '465 SSL' : '-')}</span>
                     <span>tcp: {testResult.diagnostic?.tcpOk ? 'reachable' : testResult.diagnostic?.tcpError || '-'}</span>
                     <span className="sm:col-span-2">dns: {(testResult.diagnostic?.resolvedAddresses || []).join(', ') || '-'}</span>
+                    {testResult.diagnostic?.authSource && <span className="sm:col-span-2">source: {testResult.diagnostic.authSource}</span>}
+                    {testResult.diagnostic?.fallback && <span className="sm:col-span-2">fallback: {testResult.diagnostic.fallback.host} / {testResult.diagnostic.fallback.code}</span>}
                   </div>
                 </div>
               )}
@@ -398,10 +418,10 @@ export default function AdminEmail() {
         </div>
         <div className="grid grid-cols-1 gap-3 text-[13px] md:grid-cols-4">
           {[
-            ['Mail login', 'https://email.tiwlo.com'],
-            ['Incoming IMAP', 'mail.tiwlo.com : 993 SSL'],
-            ['Outgoing SMTP', 'mail.tiwlo.com : 465 SSL or 587 STARTTLS'],
-            ['MX Record', 'MX 10 mail.tiwlo.com']
+            ['Mail login', `https://${emailPortalHost}`],
+            ['Incoming IMAP', `${publicMailHost} : 993 SSL`],
+            ['Outgoing SMTP', `${publicMailHost} : 465 SSL or 587 STARTTLS`],
+            ['MX Record', `MX 10 ${publicMailHost}`]
           ].map(([label, value]) => (
             <div key={label} className="rounded border border-[#E5E7EB] bg-[#F9FAFB] p-4">
               <p className="text-[10px] font-black uppercase tracking-widest text-gray-400">{label}</p>

@@ -25,6 +25,49 @@ have() {
   command -v "$1" >/dev/null 2>&1
 }
 
+open_network_ports() {
+  local tcp_ports="25 465 587 993 995 80 443 53"
+  local udp_ports="53"
+  local port
+  if have ufw; then
+    for port in $tcp_ports; do ufw allow "${port}/tcp" >/dev/null 2>&1 || true; done
+    for port in $udp_ports; do ufw allow "${port}/udp" >/dev/null 2>&1 || true; done
+  fi
+  if have firewall-cmd; then
+    for port in $tcp_ports; do
+      firewall-cmd --permanent --add-port="${port}/tcp" >/dev/null 2>&1 || true
+      firewall-cmd --add-port="${port}/tcp" >/dev/null 2>&1 || true
+    done
+    for port in $udp_ports; do
+      firewall-cmd --permanent --add-port="${port}/udp" >/dev/null 2>&1 || true
+      firewall-cmd --add-port="${port}/udp" >/dev/null 2>&1 || true
+    done
+    firewall-cmd --reload >/dev/null 2>&1 || true
+  fi
+  if have iptables; then
+    for port in $tcp_ports; do
+      iptables -C INPUT -p tcp --dport "$port" -j ACCEPT >/dev/null 2>&1 || \
+        iptables -I INPUT -p tcp --dport "$port" -j ACCEPT >/dev/null 2>&1 || true
+    done
+    for port in $udp_ports; do
+      iptables -C INPUT -p udp --dport "$port" -j ACCEPT >/dev/null 2>&1 || \
+        iptables -I INPUT -p udp --dport "$port" -j ACCEPT >/dev/null 2>&1 || true
+    done
+  fi
+}
+
+verify_listener() {
+  local port="$1"
+  local label="$2"
+  if have ss; then
+    if ss -ltnup 2>/dev/null | grep -Eq "[:.]${port}[[:space:]]"; then
+      echo "${label}: listening on ${port}"
+    else
+      echo "${label}: not listening on ${port}. Check service status and provider firewall."
+    fi
+  fi
+}
+
 ensure_system_postgres_database() {
   step "Preparing system PostgreSQL"
   systemctl enable --now postgresql >/dev/null 2>&1 || true
@@ -58,6 +101,8 @@ webserver=no
 PDNS
   chmod 640 /etc/powerdns/pdns.d/tiwlo-pgsql.conf || true
   systemctl enable --now pdns >/dev/null 2>&1 || true
+  systemctl restart pdns >/dev/null 2>&1 || true
+  verify_listener 53 "PowerDNS authoritative"
 }
 
 configure_system_email_services() {
@@ -84,6 +129,8 @@ configure_system_email_services() {
   postconf -e "mydomain = ${MAIL_DOMAIN}" || true
   postconf -e "myorigin = /etc/mailname" || true
   postconf -e "inet_interfaces = all" || true
+  postconf -e "inet_protocols = all" || true
+  postconf -e "mynetworks = 127.0.0.0/8 [::1]/128" || true
   postconf -e "home_mailbox = Maildir/" || true
   postconf -e "smtpd_tls_cert_file = ${CERT_FILE}" || true
   postconf -e "smtpd_tls_key_file = ${KEY_FILE}" || true
@@ -112,6 +159,8 @@ configure_system_email_services() {
 disable_plaintext_auth = yes
 auth_mechanisms = plain login
 auth_username_format = %n
+protocols = imap pop3 lmtp
+mail_location = maildir:~/Maildir
 
 service auth {
   unix_listener /var/spool/postfix/private/auth {
@@ -122,8 +171,31 @@ service auth {
 }
 DOVECOT
 
+  cat >/etc/dovecot/conf.d/99-tiwlo-mail-ssl.conf <<DOVECOTSSL
+ssl = required
+ssl_cert = <${CERT_FILE}
+ssl_key = <${KEY_FILE}
+
+service imap-login {
+  inet_listener imaps {
+    port = 993
+    ssl = yes
+  }
+}
+
+service pop3-login {
+  inet_listener pop3s {
+    port = 995
+    ssl = yes
+  }
+}
+DOVECOTSSL
+
   systemctl enable --now postfix dovecot >/dev/null 2>&1 || true
   systemctl restart postfix dovecot >/dev/null 2>&1 || true
+  verify_listener 465 "Postfix SMTPS"
+  verify_listener 587 "Postfix submission"
+  verify_listener 993 "Dovecot IMAPS"
 }
 
 random_secret() {
@@ -152,8 +224,10 @@ provision_system_mailbox() {
   chmod -R 700 "$home_dir/Maildir" >/dev/null 2>&1 || true
 
   mkdir -p /etc/tiwlo-mail
-  cat >/etc/tiwlo-mail/system-smtp.env <<MAILENV
-SMTP_HOST=${MAIL_HOSTNAME}
+cat >/etc/tiwlo-mail/system-smtp.env <<MAILENV
+SMTP_HOST=127.0.0.1
+SMTP_PUBLIC_HOST=${MAIL_HOSTNAME}
+SMTP_TLS_SERVERNAME=${MAIL_HOSTNAME}
 SMTP_PORT=465
 SMTP_SECURE=true
 SMTP_USER=${smtp_user}
@@ -200,6 +274,7 @@ systemctl enable --now postgresql nginx postfix dovecot opendkim certbot.timer p
 ensure_system_postgres_database
 configure_powerdns
 configure_system_email_services
+open_network_ports
 
 step "Preparing Tiwlo source at ${INSTALL_DIR}"
 mkdir -p "$(dirname "$INSTALL_DIR")"
@@ -236,7 +311,9 @@ SMTP_PASSWORD="${SMTP_PASS:-$(random_secret)}"
 provision_system_mailbox "noreply@${MAIL_DOMAIN}" "$SMTP_PASSWORD"
 mkdir -p x
 {
-  echo "SMTP_HOST=\"${MAIL_HOSTNAME}\""
+  echo "SMTP_HOST=\"127.0.0.1\""
+  echo "SMTP_PUBLIC_HOST=\"${MAIL_HOSTNAME}\""
+  echo "SMTP_TLS_SERVERNAME=\"${MAIL_HOSTNAME}\""
   echo "SMTP_PORT=\"465\""
   echo "SMTP_SECURE=\"true\""
   echo "SMTP_TLS_REJECT_UNAUTHORIZED=\"false\""
@@ -331,15 +408,7 @@ systemctl reload nginx
 step "Configuring firewall"
 ufw allow OpenSSH >/dev/null 2>&1 || true
 ufw allow 'Nginx Full' >/dev/null 2>&1 || true
-ufw allow 80/tcp >/dev/null 2>&1 || true
-ufw allow 443/tcp >/dev/null 2>&1 || true
-ufw allow 25/tcp >/dev/null 2>&1 || true
-ufw allow 465/tcp >/dev/null 2>&1 || true
-ufw allow 587/tcp >/dev/null 2>&1 || true
-ufw allow 993/tcp >/dev/null 2>&1 || true
-ufw allow 995/tcp >/dev/null 2>&1 || true
-ufw allow 53/tcp >/dev/null 2>&1 || true
-ufw allow 53/udp >/dev/null 2>&1 || true
+open_network_ports
 ufw --force enable >/dev/null 2>&1 || true
 
 if [ -n "$DOMAIN" ] && ! is_ip_address "$DOMAIN"; then
