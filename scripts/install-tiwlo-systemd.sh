@@ -85,6 +85,7 @@ Environment=NODE_ENV=production
 Environment=PATH=$SERVICE_PATH
 Environment=PORT=$BACKEND_PORT
 ExecStart=$NPM_BIN run start
+ExecStartPost=/bin/bash -lc 'for i in \$(seq 1 45); do curl -fsS http://127.0.0.1:$BACKEND_PORT/health >/dev/null 2>&1 && exit 0; sleep 1; done; echo "Tiwlo backend did not become healthy on port $BACKEND_PORT" >&2; exit 1'
 Restart=always
 RestartSec=5
 
@@ -107,6 +108,7 @@ Environment=PATH=$SERVICE_PATH
 Environment=FRONTEND_PORT=$FRONTEND_PORT
 Environment=BACKEND_URL=$BACKEND_URL
 ExecStart=$NPM_BIN run start -- --port $FRONTEND_PORT
+ExecStartPost=/bin/bash -lc 'for i in \$(seq 1 45); do curl -fsS http://127.0.0.1:$FRONTEND_PORT >/dev/null 2>&1 && exit 0; sleep 1; done; echo "Tiwlo frontend did not become healthy on port $FRONTEND_PORT" >&2; exit 1'
 Restart=always
 RestartSec=5
 
