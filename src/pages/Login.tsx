@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom';
 import { User } from '../types';
 import { loginWithApi } from '../lib/tiwloApi';
 import BrandLogo from '../components/BrandLogo';
+import AuthCard, { AuthShell, authInputClass } from '../components/AuthCard';
 
 interface LoginProps {
   onLogin: (user: User) => void;
@@ -30,89 +31,72 @@ export default function LoginPage({ onLogin }: LoginProps) {
   };
 
   return (
-    <div className="min-h-screen bg-[#f3f5f9] flex flex-col items-center justify-center p-6">
-      <div className="w-full max-w-sm space-y-8">
-        <div className="flex flex-col items-center gap-3">
-          <button
-            type="button"
-            onClick={() => window.location.href = '/'}
-            className="cursor-pointer"
-            aria-label="Go to Tiwlo home"
-          >
-             <BrandLogo className="h-14 w-40" />
+    <AuthShell>
+      <AuthCard
+        title="Welcome Back!"
+        logo={(
+          <button type="button" onClick={() => window.location.href = '/'} aria-label="Go to Tiwlo home">
+            <BrandLogo className="h-14 w-40" />
           </button>
-        </div>
-
-        <div className="bg-white p-10 rounded-sm border border-gray-100 shadow-2xl shadow-gray-100">
-          <div className="mb-8 text-center">
-            <h2 className="text-lg font-bold text-[#2e3d49]">Sign in to your account</h2>
-            <p className="text-[13px] text-gray-500 mt-1">Manage your virtual machine instances.</p>
+        )}
+        footer={(
+          <p>
+            Don't have an account?
+            <Link to="/signup" className="ml-1 font-normal text-[#1778f2] hover:underline">Sign up now</Link>
+          </p>
+        )}
+      >
+        <form onSubmit={handleSubmit} className="flex flex-col gap-3">
+          <div className="flex flex-col gap-0.5">
+            <label htmlFor="email" className="mb-1 block">Email</label>
+            <input
+              required
+              id="email"
+              type="text"
+              value={email}
+              onFocus={(e) => e.target.select()}
+              onChange={(e) => {
+                setEmail(e.target.value);
+                setError('');
+              }}
+              className={authInputClass()}
+              placeholder="Enter your email"
+            />
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-6">
-            <div className="space-y-4">
-              <div className="space-y-1">
-                <label className="block text-[12px] font-bold text-[#4a4a4a] uppercase tracking-wider">Email Address</label>
-                <input
-                  required
-                  type="text"
-                  value={email}
-                  onFocus={(e) => e.target.select()}
-                  onChange={(e) => {
-                    setEmail(e.target.value);
-                    setError('');
-                  }}
-                  className="w-full bg-white border border-gray-200 rounded-sm px-4 py-3 text-[14px] focus:outline-none focus:border-blue-600 transition-all font-medium"
-                  placeholder="you@example.com"
-                />
-              </div>
+          <div className="flex flex-col gap-0.5">
+            <label htmlFor="password" className="mb-1 block">Password</label>
+            <input
+              required
+              id="password"
+              type="password"
+              value={password}
+              onChange={(e) => {
+                setPassword(e.target.value);
+                setError('');
+              }}
+              className={authInputClass()}
+              placeholder="Enter your password"
+            />
+          </div>
 
-              <div className="space-y-1">
-                <div className="flex justify-between items-center">
-                  <label className="block text-[12px] font-bold text-[#4a4a4a] uppercase tracking-wider">Password</label>
-                  <Link to="/forgot-password" className="text-[12px] font-bold text-[#0069ff] hover:underline">Forgot?</Link>
-                </div>
-                <input
-                  required
-                  type="password"
-                  value={password}
-                  onChange={(e) => {
-                    setPassword(e.target.value);
-                    setError('');
-                  }}
-                  className="w-full bg-white border border-gray-200 rounded-sm px-4 py-3 text-[14px] focus:outline-none focus:border-blue-600 transition-all font-medium"
-                  placeholder="Your password"
-                />
-              </div>
+          {error && (
+            <div className="flex items-start gap-2 rounded-md border border-red-100 bg-red-50 px-3 py-2 text-[12px] font-bold text-red-600">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>Incorrect credentials</span>
             </div>
+          )}
 
-            {error && (
-              <div className="flex items-start gap-2 rounded-sm border border-red-100 bg-red-50 px-3 py-2 text-[12px] font-bold text-red-600">
-                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                <span>Incorrect credentials</span>
-              </div>
-            )}
+          <button
+            disabled={isLoggingIn}
+            className="my-3 flex w-full cursor-pointer items-center justify-center gap-2 rounded-md border-0 bg-[#212121] px-4 py-3 text-sm text-white shadow-[0_0_3px_rgba(0,0,0,0.084),0_2px_3px_rgba(0,0,0,0.168)] transition hover:bg-[#313131] active:scale-95 disabled:cursor-not-allowed disabled:opacity-70"
+          >
+            {isLoggingIn ? <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" /> : 'Sign In'}
+          </button>
+        </form>
 
-            <button
-              disabled={isLoggingIn}
-              className="w-full bg-gray-900 text-white py-4 rounded-sm font-black text-xs uppercase tracking-widest hover:bg-black transition-all disabled:opacity-70 flex items-center justify-center shadow-lg shadow-gray-100"
-            >
-              {isLoggingIn ? (
-                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-              ) : "Sign In"}
-            </button>
-          </form>
-
-          <div className="mt-8 text-center text-[13px]">
-            <p className="text-gray-500">
-              Not a member?{' '}
-              <Link to="/signup" className="text-[#0069ff] font-bold hover:underline">
-                Create account
-              </Link>
-            </p>
-          </div>
-        </div>
-      </div>
-    </div>
+        <Link to="/forgot-password" className="-mt-5 self-end text-[#1778f2] hover:underline">Forgot Password</Link>
+      </AuthCard>
+    </AuthShell>
   );
 }

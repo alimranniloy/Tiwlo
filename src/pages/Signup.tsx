@@ -5,6 +5,7 @@ import { User as UserType } from '../types';
 import { signupWithApi } from '../lib/tiwloApi';
 import BrandLogo from '../components/BrandLogo';
 import { COUNTRIES, countryByCode, phoneValidationMessage } from '../lib/countries';
+import AuthCard, { AuthShell } from '../components/AuthCard';
 
 interface SignupProps {
   onSignup: (user: UserType) => void;
@@ -128,27 +129,27 @@ export default function SignupPage({ onSignup }: SignupProps) {
   };
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center bg-[#f3f5f9] p-4 md:p-6">
-      <div className="w-full max-w-2xl space-y-6">
-        <div className="flex flex-col items-center gap-3">
+    <AuthShell>
+      <AuthCard
+        wide
+        title="Create Account"
+        socialLabel="Sign up with"
+        logo={(
           <button type="button" onClick={() => window.location.href = '/'} className="cursor-pointer" aria-label="Go to Tiwlo home">
             <BrandLogo className="h-14 w-40" />
           </button>
-        </div>
-
-        <div className="relative overflow-hidden rounded-md border border-gray-100 bg-white p-6 shadow-2xl shadow-gray-100 md:p-10">
-          <div className="absolute left-0 top-0 h-1.5 w-full bg-gray-900" />
-
-          <div className="mb-6 text-center md:mb-8">
-            <div className="mx-auto mb-4 grid h-9 w-44 grid-cols-2 overflow-hidden rounded-full border border-gray-200 bg-gray-50 p-1 text-[11px] font-black uppercase">
+        )}
+        footer={(
+          <p>
+            Already have an account?
+            <Link to="/login" className="ml-1 font-normal text-[#1778f2] hover:underline">Sign In</Link>
+          </p>
+        )}
+      >
+          <div className="grid h-9 w-full grid-cols-2 overflow-hidden rounded-full border border-gray-200 bg-gray-50 p-1 text-[11px] font-black uppercase">
               <span className={`grid place-items-center rounded-full ${step === 1 ? 'bg-gray-900 text-white' : 'text-gray-500'}`}>Account</span>
               <span className={`grid place-items-center rounded-full ${step === 2 ? 'bg-gray-900 text-white' : 'text-gray-500'}`}>Billing</span>
             </div>
-            <h2 className="text-xl font-bold text-[#2e3d49] md:text-2xl">Get Started</h2>
-            <p className="mt-2 text-sm text-gray-500">
-              {step === 1 ? 'Create your cloud infrastructure account.' : 'Complete billing address and mobile verification details.'}
-            </p>
-          </div>
 
           <form onSubmit={handleSubmit} className="space-y-5">
             {step === 1 ? (
@@ -208,32 +209,22 @@ export default function SignupPage({ onSignup }: SignupProps) {
 
             <div className="flex flex-col gap-3 sm:flex-row">
               {step === 2 && (
-                <button type="button" onClick={() => setStep(1)} className="inline-flex items-center justify-center gap-2 rounded-sm border border-gray-200 bg-white px-5 py-4 text-xs font-black uppercase tracking-widest text-gray-700 transition-all hover:border-gray-900">
+                <button type="button" onClick={() => setStep(1)} className="inline-flex items-center justify-center gap-2 rounded-md border border-gray-200 bg-white px-5 py-3 text-xs font-black uppercase tracking-widest text-gray-700 transition-all hover:border-gray-900 active:scale-95">
                   <ArrowLeft className="h-4 w-4" /> Back
                 </button>
               )}
               {step === 1 ? (
-                <button type="button" onClick={nextStep} className="flex w-full items-center justify-center gap-2 rounded-sm bg-gray-900 py-4 text-xs font-black uppercase tracking-widest text-white shadow-xl shadow-gray-100 transition-all hover:bg-black">
+                <button type="button" onClick={nextStep} className="flex w-full items-center justify-center gap-2 rounded-md bg-[#212121] py-3 text-xs font-black uppercase tracking-widest text-white shadow-[0_0_3px_rgba(0,0,0,0.084),0_2px_3px_rgba(0,0,0,0.168)] transition-all hover:bg-[#313131] active:scale-95">
                   Next Step <ArrowRight className="h-5 w-5" />
                 </button>
               ) : (
-                <button disabled={isLoading} className="flex w-full items-center justify-center gap-2 rounded-sm bg-gray-900 py-4 text-xs font-black uppercase tracking-widest text-white shadow-xl shadow-gray-100 transition-all hover:bg-black disabled:opacity-70">
+                <button disabled={isLoading} className="flex w-full items-center justify-center gap-2 rounded-md bg-[#212121] py-3 text-xs font-black uppercase tracking-widest text-white shadow-[0_0_3px_rgba(0,0,0,0.084),0_2px_3px_rgba(0,0,0,0.168)] transition-all hover:bg-[#313131] active:scale-95 disabled:opacity-70">
                   {isLoading ? <div className="h-6 w-6 animate-spin rounded-full border-3 border-white/30 border-t-white" /> : <>Create Account <UserPlus className="h-5 w-5" /></>}
                 </button>
               )}
             </div>
           </form>
-
-          <div className="mt-8 border-t border-[#e5e8ed] pt-6 text-center">
-            <p className="text-sm text-gray-500">
-              Already have an account?{' '}
-              <Link to="/login" className="font-bold text-[#0069ff] hover:underline">
-                Sign In
-              </Link>
-            </p>
-          </div>
-        </div>
-      </div>
-    </div>
+      </AuthCard>
+    </AuthShell>
   );
 }

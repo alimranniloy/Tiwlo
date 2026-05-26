@@ -8,6 +8,7 @@ import {
   sendMailboxEmailWithApi,
   updateMailboxMessageWithApi
 } from '../lib/tiwloApi';
+import AuthCard, { AuthShell, authInputClass } from '../components/AuthCard';
 
 const MAILBOX_TOKEN_KEY = 'tiwlo_mailbox_token';
 
@@ -218,46 +219,57 @@ export default function EmailPortal() {
 
   if (!token || !account) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[#f3f5f9] p-6">
-        <form onSubmit={authMode === 'signin' ? login : register} className="w-full max-w-md rounded-md border border-gray-100 bg-white p-8 shadow-2xl shadow-gray-100">
-          <TmailLogo className="mx-auto mb-8 h-14 w-40" />
-          <h1 className="text-center text-xl font-black text-[#111827]">TMail</h1>
-          <div className="mt-6 grid grid-cols-2 rounded-full bg-[#EEF2F7] p-1 text-sm font-black">
-            <button type="button" onClick={() => setAuthMode('signin')} className={`rounded-full px-4 py-2 ${authMode === 'signin' ? 'bg-white text-blue-700 shadow-sm' : 'text-[#64748B]'}`}>Sign in</button>
-            <button type="button" onClick={() => setAuthMode('create')} className={`rounded-full px-4 py-2 ${authMode === 'create' ? 'bg-white text-blue-700 shadow-sm' : 'text-[#64748B]'}`}>Create inbox</button>
+      <AuthShell>
+        <AuthCard
+          wide={authMode === 'create'}
+          title={authMode === 'signin' ? 'Welcome Back!' : 'Create TMail'}
+          socialLabel={authMode === 'signin' ? 'Sign in with' : 'Sign up with'}
+          logo={<TmailLogo className="h-14 w-40" />}
+        >
+        <form onSubmit={authMode === 'signin' ? login : register} className="flex flex-col gap-4">
+          <div className="grid grid-cols-2 rounded-full bg-[#EEF2F7] p-1 text-sm font-black">
+            <button type="button" onClick={() => setAuthMode('signin')} className={`rounded-full px-4 py-2 ${authMode === 'signin' ? 'bg-white text-[#1778f2] shadow-sm' : 'text-[#64748B]'}`}>Sign in</button>
+            <button type="button" onClick={() => setAuthMode('create')} className={`rounded-full px-4 py-2 ${authMode === 'create' ? 'bg-white text-[#1778f2] shadow-sm' : 'text-[#64748B]'}`}>Create inbox</button>
           </div>
-          <div className="mt-6 space-y-3">
+          <div className="space-y-3">
             {authMode === 'signin' ? (
               <>
-                <input type="email" required value={loginForm.email} onChange={(event) => setLoginForm((current) => ({ ...current, email: event.target.value }))} className="w-full rounded border border-[#DDE3EA] px-4 py-3 text-sm outline-none focus:border-blue-600" placeholder="email@tiwlo.com" />
-                <input type="password" required value={loginForm.password} onChange={(event) => setLoginForm((current) => ({ ...current, password: event.target.value }))} className="w-full rounded border border-[#DDE3EA] px-4 py-3 text-sm outline-none focus:border-blue-600" placeholder="Password" />
+                <label className="flex flex-col gap-0.5">
+                  <span className="mb-1 block">Email</span>
+                  <input type="email" required value={loginForm.email} onChange={(event) => setLoginForm((current) => ({ ...current, email: event.target.value }))} className={authInputClass()} placeholder="Enter your email" />
+                </label>
+                <label className="flex flex-col gap-0.5">
+                  <span className="mb-1 block">Password</span>
+                  <input type="password" required value={loginForm.password} onChange={(event) => setLoginForm((current) => ({ ...current, password: event.target.value }))} className={authInputClass()} placeholder="Enter your password" />
+                </label>
               </>
             ) : (
               <>
-                <input value={registerForm.displayName} onChange={(event) => setRegisterForm((current) => ({ ...current, displayName: event.target.value }))} className="w-full rounded border border-[#DDE3EA] px-4 py-3 text-sm outline-none focus:border-blue-600" placeholder="Full name" />
-                <div className="grid grid-cols-[1fr_auto] overflow-hidden rounded border border-[#DDE3EA] focus-within:border-blue-600">
-                  <input required value={registerForm.username} onChange={(event) => setRegisterForm((current) => ({ ...current, username: event.target.value.toLowerCase().replace(/[^a-z0-9._-]/g, '') }))} className="min-w-0 px-4 py-3 text-sm outline-none" placeholder="choose-name" />
-                  <span className="border-l border-[#DDE3EA] bg-[#F8FAFC] px-3 py-3 text-sm font-bold text-[#64748B]">@{registerForm.domain}</span>
+                <input value={registerForm.displayName} onChange={(event) => setRegisterForm((current) => ({ ...current, displayName: event.target.value }))} className={authInputClass()} placeholder="Full name" />
+                <div className="grid grid-cols-[1fr_auto] overflow-hidden rounded-md border border-[#cccccc] focus-within:border-[#1778f2]">
+                  <input required value={registerForm.username} onChange={(event) => setRegisterForm((current) => ({ ...current, username: event.target.value.toLowerCase().replace(/[^a-z0-9._-]/g, '') }))} className="min-w-0 px-4 py-3 text-sm outline-none placeholder:opacity-50" placeholder="choose-name" />
+                  <span className="border-l border-[#cccccc] bg-[#F8FAFC] px-3 py-3 text-sm font-bold text-[#64748B]">@{registerForm.domain}</span>
                 </div>
-                <div className="grid grid-cols-[1fr_auto] overflow-hidden rounded border border-[#DDE3EA] focus-within:border-blue-600">
-                  <input type="email" required value={registerForm.recoveryEmail} onChange={(event) => setRegisterForm((current) => ({ ...current, recoveryEmail: event.target.value }))} className="min-w-0 px-4 py-3 text-sm outline-none" placeholder="Recovery email" />
-                  <button type="button" onClick={requestRecoveryOtp} disabled={otpSending} className="border-l border-[#DDE3EA] bg-[#F8FAFC] px-3 py-3 text-xs font-black text-blue-700 disabled:opacity-60">
+                <div className="grid grid-cols-[1fr_auto] overflow-hidden rounded-md border border-[#cccccc] focus-within:border-[#1778f2]">
+                  <input type="email" required value={registerForm.recoveryEmail} onChange={(event) => setRegisterForm((current) => ({ ...current, recoveryEmail: event.target.value }))} className="min-w-0 px-4 py-3 text-sm outline-none placeholder:opacity-50" placeholder="Recovery email" />
+                  <button type="button" onClick={requestRecoveryOtp} disabled={otpSending} className="border-l border-[#cccccc] bg-[#F8FAFC] px-3 py-3 text-xs font-black text-[#1778f2] disabled:opacity-60">
                     {otpSending ? 'Sending' : 'Send OTP'}
                   </button>
                 </div>
-                <input inputMode="numeric" required value={registerForm.recoveryOtp} onChange={(event) => setRegisterForm((current) => ({ ...current, recoveryOtp: event.target.value.replace(/\D/g, '').slice(0, 6) }))} className="w-full rounded border border-[#DDE3EA] px-4 py-3 text-sm outline-none focus:border-blue-600" placeholder="6 digit OTP" />
-                <input type="password" required value={registerForm.password} onChange={(event) => setRegisterForm((current) => ({ ...current, password: event.target.value }))} className="w-full rounded border border-[#DDE3EA] px-4 py-3 text-sm outline-none focus:border-blue-600" placeholder="Create password" />
-                <input type="password" required value={registerForm.confirmPassword} onChange={(event) => setRegisterForm((current) => ({ ...current, confirmPassword: event.target.value }))} className="w-full rounded border border-[#DDE3EA] px-4 py-3 text-sm outline-none focus:border-blue-600" placeholder="Confirm password" />
+                <input inputMode="numeric" required value={registerForm.recoveryOtp} onChange={(event) => setRegisterForm((current) => ({ ...current, recoveryOtp: event.target.value.replace(/\D/g, '').slice(0, 6) }))} className={authInputClass()} placeholder="6 digit OTP" />
+                <input type="password" required value={registerForm.password} onChange={(event) => setRegisterForm((current) => ({ ...current, password: event.target.value }))} className={authInputClass()} placeholder="Create password" />
+                <input type="password" required value={registerForm.confirmPassword} onChange={(event) => setRegisterForm((current) => ({ ...current, confirmPassword: event.target.value }))} className={authInputClass()} placeholder="Confirm password" />
               </>
             )}
           </div>
           {error && <div className="mt-4 flex items-start gap-2 rounded border border-red-100 bg-red-50 px-3 py-2 text-[12px] font-bold text-red-600"><AlertCircle className="mt-0.5 h-4 w-4" /> {error}</div>}
           {notice && <div className="mt-4 flex items-start gap-2 rounded border border-emerald-100 bg-emerald-50 px-3 py-2 text-[12px] font-bold text-emerald-700"><ShieldCheck className="mt-0.5 h-4 w-4" /> {notice}</div>}
-          <button disabled={loading} className="mt-5 flex w-full items-center justify-center gap-2 rounded bg-[#111827] px-4 py-3 text-sm font-black text-white hover:bg-black disabled:opacity-60">
+          <button disabled={loading} className="my-1 flex w-full items-center justify-center gap-2 rounded-md bg-[#212121] px-4 py-3 text-sm text-white shadow-[0_0_3px_rgba(0,0,0,0.084),0_2px_3px_rgba(0,0,0,0.168)] hover:bg-[#313131] active:scale-95 disabled:opacity-60">
             {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : authMode === 'signin' ? <Mail className="h-4 w-4" /> : <UserPlus className="h-4 w-4" />} {authMode === 'signin' ? 'Sign In' : 'Create TMail'}
           </button>
         </form>
-      </div>
+        </AuthCard>
+      </AuthShell>
     );
   }
 
