@@ -4,20 +4,35 @@ import { Link } from 'react-router-dom';
 import { useStorefrontRuntime } from '../../../shared/storefrontRuntime';
 import { eplazaBanners, eplazaHeroSlides } from '../themeData';
 
+function imageList(value: unknown, fallback?: unknown) {
+  if (Array.isArray(value)) return value.map(String).filter(Boolean);
+  const text = String(value || '').trim();
+  if (text.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(text);
+      if (Array.isArray(parsed)) return parsed.map(String).filter(Boolean);
+    } catch {
+      return fallback ? [String(fallback)] : [];
+    }
+  }
+  const rows = text ? text.split(/\n|,/).map((item) => item.trim()).filter(Boolean) : [];
+  return rows.length ? rows : (fallback ? [String(fallback)] : []);
+}
+
 export const HeroSection = () => {
   const { allowFallbackData, getRecords, store, themePath } = useStorefrontRuntime();
   const sliderRecords = getRecords('homepage-sliders');
   const bannerRecords = getRecords('homepage-banners');
   const slides = (sliderRecords.length
-    ? sliderRecords.map((record, index) => ({
-      id: record.data?.slot || record.id,
+    ? sliderRecords.flatMap((record, index) => imageList(record.data?.images, record.data?.image).map((image, imageIndex) => ({
+      id: `${record.data?.slot || record.id}-${imageIndex}`,
       title: record.data?.headline || record.title,
       subtitle: record.data?.text || '',
       cta: record.data?.actionText || 'Shop Now',
-      image: record.data?.image || '',
+      image,
       actionLink: record.data?.actionLink || '/search',
       color: eplazaHeroSlides[index % eplazaHeroSlides.length]?.color || 'bg-primary'
-    }))
+    })))
     : (allowFallbackData ? eplazaHeroSlides.map((fallback, index) => {
     const record = sliderRecords.find((item) => item.data?.slot === fallback.slot) || sliderRecords[index];
     return {

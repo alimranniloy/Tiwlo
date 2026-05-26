@@ -28,6 +28,13 @@ const AppleIcon = () => (
 );
 
 export function AuthShell({ children, className = '' }: AuthShellProps) {
+  React.useEffect(() => {
+    const meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]') || document.createElement('meta');
+    meta.name = 'theme-color';
+    if (!meta.parentNode) document.head.appendChild(meta);
+    meta.setAttribute('content', '#f3f5f9');
+  }, []);
+
   return (
     <div className={`flex min-h-screen items-center justify-center bg-[#f3f5f9] px-4 py-8 font-sans text-[#212121] sm:px-6 ${className}`}>
       {children}

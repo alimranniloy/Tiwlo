@@ -80,7 +80,6 @@ const EmailPortal = lazy(() => import('./pages/EmailPortal'));
 const LandingPage = lazy(() => import('./pages/LandingPage'));
 const BannedAccount = lazy(() => import('./pages/BannedAccount'));
 const CompleteProfile = lazy(() => import('./pages/CompleteProfile'));
-const GlobalLoader = lazy(() => import('./components/GlobalLoader'));
 const FloatingAIWidget = lazy(() => import('./components/FloatingAIWidget'));
 const ISPStorefront = lazy(() => import('./pages/isp/ISPStorefront'));
 const ISPAddRouter = lazy(() => import('./pages/isp/ISPAddRouter'));
@@ -93,20 +92,32 @@ import { SERVICE_MODULE_GROUP, SERVICE_MODULE_KEYS, serviceEnabled } from './lib
 // Components
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
-import CubeLoader from './components/CubeLoader';
 
 const restrictedStatuses = new Set(['banned', 'blocked', 'suspended', 'disabled']);
 
 function RouteLoader() {
-  const pathname = typeof window !== 'undefined' ? window.location.pathname : '';
-  if (/^\/(?:login|signup|themes)(?:\/|$)/.test(pathname)) return null;
-  return (
-    <CubeLoader className="bg-transparent" />
-  );
+  return null;
 }
 
 function isRestrictedUser(user?: User | null) {
   return restrictedStatuses.has(String(user?.status || '').toLowerCase());
+}
+
+function WelcomeScreen({ user }: { user: User }) {
+  return (
+    <div className="grid min-h-screen place-items-center bg-[#f3f5f9] px-6 font-sans text-[#212121]">
+      <div className="w-full max-w-sm rounded-[10px] bg-white px-6 py-8 text-center shadow-[0_0_3px_rgba(0,0,0,0.084),0_2px_3px_rgba(0,0,0,0.168)]">
+        <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-[#212121] text-lg font-black uppercase text-white">
+          {(user.name || user.email || 'T').charAt(0)}
+        </div>
+        <h1 className="mt-5 text-xl font-bold">Welcome Back!</h1>
+        <p className="mt-1 text-sm font-medium text-gray-500">{user.name || user.email}</p>
+        <div className="mt-6 h-1.5 overflow-hidden rounded-full bg-gray-100">
+          <div className="h-full w-2/3 animate-pulse rounded-full bg-[#1778f2]" />
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function AppContent({ 
@@ -306,9 +317,9 @@ function AppContent({
 }
 
 export default function App() {
-  const [appInitializing, setAppInitializing] = useState(false);
   const storefrontHost = getStorefrontHostContext();
   const isEmailHost = typeof window !== 'undefined' && /^(?:tmail|email)\./.test(window.location.hostname.toLowerCase());
+  const [showWelcome, setShowWelcome] = useState(false);
 
   const [user, setUser] = useState<User | null>(() => {
     const saved = localStorage.getItem('tiwlo_user');
@@ -371,23 +382,27 @@ export default function App() {
     };
   }, [user?.id]);
 
+  useEffect(() => {
+    if (!showWelcome) return undefined;
+    const timer = window.setTimeout(() => setShowWelcome(false), 1150);
+    return () => window.clearTimeout(timer);
+  }, [showWelcome]);
+
   const handleLogin = (authenticatedUser: User) => {
     setUser(authenticatedUser);
     localStorage.setItem('tiwlo_user', JSON.stringify(authenticatedUser));
+    setShowWelcome(true);
   };
 
   const handleLogout = () => {
     setUser(null);
+    setShowWelcome(false);
     clearAuthToken();
     localStorage.removeItem('tiwlo_user');
   };
 
-  if (appInitializing) {
-    return (
-      <Suspense fallback={<RouteLoader />}>
-        <GlobalLoader onComplete={() => setAppInitializing(false)} />
-      </Suspense>
-    );
+  if (showWelcome && user && !isRestrictedUser(user)) {
+    return <WelcomeScreen user={user} />;
   }
 
   if (isEmailHost) {

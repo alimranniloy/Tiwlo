@@ -232,7 +232,6 @@ export function EplazaStorefront({
 export default function EplazaPreview() {
   const location = useLocation();
   const [runtime, setRuntime] = React.useState<StoreThemeRuntime | null>(null);
-  const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState('');
 
   React.useEffect(() => {
@@ -242,7 +241,6 @@ export default function EplazaPreview() {
     const slug = params.get('slug') || undefined;
 
     async function loadRuntime() {
-      setLoading(true);
       setError('');
       try {
         const primaryStore = storeId || slug ? null : await fetchPrimaryStore();
@@ -272,8 +270,6 @@ export default function EplazaPreview() {
           const message = err instanceof Error ? err.message : 'Unable to load Eplaza store data';
           setError(message.toLowerCase().includes('theme not found') ? '' : message);
         }
-      } finally {
-        if (mounted) setLoading(false);
       }
     }
 
@@ -282,14 +278,6 @@ export default function EplazaPreview() {
       mounted = false;
     };
   }, [location.search]);
-
-  if (loading) {
-    return (
-      <div className="grid min-h-screen place-items-center bg-page-bg text-[#101010]">
-        <div className="h-10 w-10 animate-spin rounded-full border-2 border-gray-200 border-t-[#2463d1]" aria-label="Loading" />
-      </div>
-    );
-  }
 
   return <EplazaStorefront runtime={runtime} error={error} />;
 }

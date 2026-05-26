@@ -7,6 +7,21 @@ import { formatCurrency } from "../lib/utils";
 import { useStorefrontRuntime } from "../../../shared/storefrontRuntime";
 import { auraBannerSlots, auraBrandImages, auraCategoryImages, auraFallbackCategories, auraHeroImages } from "../themeData";
 
+function imageList(value: unknown, fallback?: unknown) {
+  if (Array.isArray(value)) return value.map(String).filter(Boolean);
+  const text = String(value || "").trim();
+  if (text.startsWith("[")) {
+    try {
+      const parsed = JSON.parse(text);
+      if (Array.isArray(parsed)) return parsed.map(String).filter(Boolean);
+    } catch {
+      return fallback ? [String(fallback)] : [];
+    }
+  }
+  const rows = text ? text.split(/\n|,/).map((item) => item.trim()).filter(Boolean) : [];
+  return rows.length ? rows : (fallback ? [String(fallback)] : []);
+}
+
 export default function Home() {
   const { allowFallbackData, products, categories: runtimeCategories, getRecords, store, themePath } = useStorefrontRuntime();
   const loading = false;
@@ -35,14 +50,19 @@ export default function Home() {
     };
   }, [loading]);
 
+  const categoryRecords = getRecords("categories");
+  const categoryImage = (name: string, index: number) => {
+    const record = categoryRecords.find((item) => String(item.data?.name || item.title || "").toLowerCase() === name.toLowerCase());
+    return record?.data?.image || (allowFallbackData ? auraCategoryImages[index % auraCategoryImages.length] : emptyImage);
+  };
   const visibleCategories = runtimeCategories.length ? runtimeCategories : (allowFallbackData ? auraFallbackCategories : []);
   const categories = visibleCategories.map((name, index) => ({
     name,
-    image: allowFallbackData ? auraCategoryImages[index % auraCategoryImages.length] : emptyImage,
+    image: categoryImage(name, index),
     active: name === "Beauty" || index === 0
   }));
 
-  const sliderImages = getRecords("homepage-sliders").map((record) => record.data?.image).filter(Boolean);
+  const sliderImages = getRecords("homepage-sliders").flatMap((record) => imageList(record.data?.images, record.data?.image)).filter(Boolean);
   const heroImages = sliderImages.length ? sliderImages : (allowFallbackData ? auraHeroImages : [emptyImage]);
   const bannerRecords = getRecords("homepage-banners");
   const bannerBySlot = (slot: string, fallback: string) => bannerRecords.find((record) => record.data?.slot === slot)?.data?.image || (allowFallbackData ? fallback : emptyImage);

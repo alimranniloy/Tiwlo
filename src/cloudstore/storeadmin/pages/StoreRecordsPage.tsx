@@ -10,7 +10,7 @@ import { useActionConfirmation } from '../../../components/ActionConfirmation';
 export type StoreRecordField = {
   key: string;
   label: string;
-  type?: 'text' | 'number' | 'select' | 'textarea' | 'file';
+  type?: 'text' | 'number' | 'select' | 'textarea' | 'file' | 'files';
   options?: string[];
   placeholder?: string;
 };
@@ -48,6 +48,44 @@ const readSafeImage = (file: File) => new Promise<string>((resolve, reject) => {
   reader.onerror = () => reject(new Error('Unable to read image file.'));
   reader.readAsDataURL(file);
 });
+
+function imageListFromValue(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map(String).filter(Boolean);
+  const text = String(value || '').trim();
+  if (!text) return [];
+  if (text.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(text);
+      if (Array.isArray(parsed)) return parsed.map(String).filter(Boolean);
+    } catch {
+      return [];
+    }
+  }
+  return text
+    .split(/\n|,/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function serializeImageList(images: string[]) {
+  return JSON.stringify(images.filter(Boolean));
+}
+
+function displayFormValue(value: unknown) {
+  return Array.isArray(value) ? serializeImageList(value.map(String)) : String(value ?? '');
+}
+
+function previewImageFor(record: any, fields: StoreRecordField[]) {
+  const data = record.data || {};
+  const direct = data.url || data.image || data.logo || data.banner;
+  if (direct) return String(direct);
+  for (const field of fields) {
+    if (field.type !== 'file' && field.type !== 'files') continue;
+    const images = imageListFromValue(data[field.key]);
+    if (images[0]) return images[0];
+  }
+  return '';
+}
 
 export default function StoreRecordsPage({
   store,
@@ -106,7 +144,7 @@ export default function StoreRecordsPage({
     setEditing(record);
     setStatus(record.status || statuses[0] || 'active');
     setForm(fields.reduce<Record<string, string>>((acc, field) => {
-      acc[field.key] = record.data?.[field.key] ?? '';
+      acc[field.key] = displayFormValue(record.data?.[field.key]);
       return acc;
     }, {}));
   };
@@ -124,6 +162,12 @@ export default function StoreRecordsPage({
     setError('');
     const key = primaryField || fields[0]?.key;
     const recordTitle = String(form[key] || editing?.title || title).trim();
+    const data = fields.reduce<Record<string, unknown>>((acc, field) => {
+      acc[field.key] = field.type === 'files' ? imageListFromValue(form[field.key]) : form[field.key];
+      return acc;
+    }, {});
+    const images = imageListFromValue(data.images);
+    if (images.length && !data.image) data.image = images[0];
     try {
       await upsertStoreAdminRecordWithApi({
         storeId: store.id,
@@ -131,7 +175,7 @@ export default function StoreRecordsPage({
         id: editing?.id,
         title: recordTitle,
         status,
-        data: form
+        data
       });
       closeForm();
       await loadRecords();
@@ -155,6 +199,21 @@ export default function StoreRecordsPage({
       }));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to load file');
+    }
+  };
+
+  const handleFiles = async (field: StoreRecordField, fileList?: FileList | null) => {
+    const files = Array.from(fileList || []).slice(0, 10);
+    if (!files.length) return;
+    setError('');
+    try {
+      const nextImages = await Promise.all(files.map(readSafeImage));
+      setForm((prev) => ({
+        ...prev,
+        [field.key]: serializeImageList([...imageListFromValue(prev[field.key]), ...nextImages])
+      }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to load images');
     }
   };
 
@@ -220,7 +279,7 @@ export default function StoreRecordsPage({
           </div>
           <div className="grid gap-4 p-4 md:grid-cols-2">
             {fields.map((field) => (
-              <label key={field.key} className={field.type === 'textarea' ? 'md:col-span-2' : ''}>
+              <label key={field.key} className={field.type === 'textarea' || field.type === 'files' ? 'md:col-span-2' : ''}>
                 <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-gray-500">{field.label}</span>
                 {field.type === 'select' ? (
                   <select
@@ -256,6 +315,44 @@ export default function StoreRecordsPage({
                         className="w-full rounded-sm border border-gray-200 px-3 py-2 text-xs outline-none focus:border-blue-500"
                       />
                       <p className="text-[10px] font-medium leading-4 text-gray-400">Images only, max 2MB. Executable files and scripts are not accepted.</p>
+                    </div>
+                  </div>
+                ) : field.type === 'files' ? (
+                  <div className="overflow-hidden rounded-sm border border-gray-200 bg-gray-50">
+                    <div className="grid min-h-44 grid-cols-2 gap-2 bg-white p-3 sm:grid-cols-3">
+                      {imageListFromValue(form[field.key]).length ? imageListFromValue(form[field.key]).map((image, index) => (
+                        <div key={`${image}-${index}`} className="relative aspect-video overflow-hidden rounded-sm border border-gray-100 bg-gray-50">
+                          <img src={image} alt={`${field.label} ${index + 1}`} className="h-full w-full object-cover" />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const next = imageListFromValue(form[field.key]).filter((_, itemIndex) => itemIndex !== index);
+                              setForm((prev) => ({ ...prev, [field.key]: serializeImageList(next) }));
+                            }}
+                            className="absolute right-1 top-1 rounded-sm bg-black/60 p-1 text-white hover:bg-black"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        </div>
+                      )) : (
+                        <div className="col-span-full flex min-h-36 items-center justify-center">
+                          <ImagePlus className="h-12 w-12 text-gray-300" />
+                        </div>
+                      )}
+                    </div>
+                    <div className="space-y-2 border-t border-gray-200 p-3">
+                      <label className="flex cursor-pointer items-center justify-center gap-2 rounded-sm border border-dashed border-blue-200 bg-blue-50 px-3 py-2 text-xs font-black text-blue-700 hover:bg-blue-100">
+                        <Upload className="h-3.5 w-3.5" />
+                        Upload slider images
+                        <input type="file" accept="image/*" multiple className="hidden" onChange={(event) => handleFiles(field, event.target.files)} />
+                      </label>
+                      <textarea
+                        value={form[field.key] || ''}
+                        onChange={(event) => setForm((prev) => ({ ...prev, [field.key]: event.target.value }))}
+                        placeholder={field.placeholder || 'Paste image URLs, one per line'}
+                        className="min-h-20 w-full rounded-sm border border-gray-200 px-3 py-2 text-xs outline-none focus:border-blue-500"
+                      />
+                      <p className="text-[10px] font-medium leading-4 text-gray-400">One image renders static. Two or more images rotate as a slider in supported theme slots.</p>
                     </div>
                   </div>
                 ) : (
@@ -307,7 +404,7 @@ export default function StoreRecordsPage({
             <thead className="border-b border-gray-200 bg-gray-50 text-[10px] uppercase tracking-wider text-gray-500">
               <tr>
                 <th className="px-4 py-3 font-bold">Name</th>
-                {fields.some((field) => field.type === 'file') && <th className="px-4 py-3 font-bold">Preview</th>}
+                {fields.some((field) => field.type === 'file' || field.type === 'files') && <th className="px-4 py-3 font-bold">Preview</th>}
                 {fields.slice(1, 4).map((field) => <th key={field.key} className="px-4 py-3 font-bold">{field.label}</th>)}
                 <th className="px-4 py-3 font-bold">Status</th>
                 <th className="px-4 py-3 font-bold">Updated</th>
@@ -316,16 +413,16 @@ export default function StoreRecordsPage({
             </thead>
             <tbody className="divide-y divide-gray-100">
               {loading ? (
-                <tr><td colSpan={fields.slice(1, 4).length + 4 + (fields.some((field) => field.type === 'file') ? 1 : 0)} className="px-4 py-12 text-center text-sm font-bold text-gray-400">Loading from store API...</td></tr>
+                <tr><td colSpan={fields.slice(1, 4).length + 4 + (fields.some((field) => field.type === 'file' || field.type === 'files') ? 1 : 0)} className="px-4 py-12 text-center text-sm font-bold text-gray-400">Loading from store API...</td></tr>
               ) : filtered.length === 0 ? (
-                <tr><td colSpan={fields.slice(1, 4).length + 4 + (fields.some((field) => field.type === 'file') ? 1 : 0)} className="px-4 py-12 text-center text-sm font-bold text-gray-400">No database records found for this section.</td></tr>
+                <tr><td colSpan={fields.slice(1, 4).length + 4 + (fields.some((field) => field.type === 'file' || field.type === 'files') ? 1 : 0)} className="px-4 py-12 text-center text-sm font-bold text-gray-400">No database records found for this section.</td></tr>
               ) : filtered.map((record) => (
                 <tr key={record.id} className="hover:bg-gray-50">
                   <td className="px-4 py-3 font-bold text-gray-900">{record.title}</td>
-                  {fields.some((field) => field.type === 'file') && (
+                  {fields.some((field) => field.type === 'file' || field.type === 'files') && (
                     <td className="px-4 py-3">
                       <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-sm border border-gray-200 bg-gray-50">
-                        {record.data?.url ? <img src={record.data.url} alt={record.title} className="h-full w-full object-cover" /> : <ImagePlus className="h-4 w-4 text-gray-300" />}
+                        {previewImageFor(record, fields) ? <img src={previewImageFor(record, fields)} alt={record.title} className="h-full w-full object-cover" /> : <ImagePlus className="h-4 w-4 text-gray-300" />}
                       </div>
                     </td>
                   )}

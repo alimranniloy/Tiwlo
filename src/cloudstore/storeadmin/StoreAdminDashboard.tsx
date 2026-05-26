@@ -14,7 +14,6 @@ import StoreRecordsPage, { StoreRecordField } from './pages/StoreRecordsPage';
 import AnalyticsPage from './pages/AnalyticsPage';
 import InventoryPage from './pages/InventoryPage';
 import CurrenciesPage from './pages/CurrenciesPage';
-import AdminLoader from '../shared/AdminLoader';
 import { fetchPrimaryStore, fetchStoreByIdWithApi } from '../../lib/tiwloApi';
 
 type SectionConfig = {
@@ -26,15 +25,61 @@ type SectionConfig = {
   statuses?: string[];
 };
 
+const themeOptions = ['Aura', 'Eplaza', 'All themes'];
+const sliderSlotOptions = ['hero-1', 'hero-2', 'hero-3'];
+const bannerSlotOptions = [
+  'daily-wide',
+  'daily-small-1',
+  'daily-small-2',
+  'featured',
+  'bottom',
+  'brand-1',
+  'brand-2',
+  'brand-3',
+  'brand-4',
+  'brand-5',
+  'brand-6',
+  'aurora-headset',
+  'dual-sense',
+  'instant-cameras',
+  'apple-event',
+  'bottom-xiaomi',
+  'bottom-hp',
+  'bottom-joycons',
+  'flash-sale'
+];
+
 const sectionConfigs: Record<string, SectionConfig> = {
   Categories: {
     title: 'Categories',
     section: 'categories',
-    description: 'Manage product categories saved for this store only.',
+    description: 'Manage main and sub categories, storefront images, and category SEO saved for this store only.',
     primaryField: 'name',
+    statuses: ['active', 'draft', 'hidden'],
     fields: [
       { key: 'name', label: 'Category name' },
-      { key: 'parent', label: 'Parent category' },
+      { key: 'slug', label: 'Slug' },
+      { key: 'type', label: 'Category type', type: 'select', options: ['main', 'sub-category'] },
+      { key: 'parent', label: 'Parent category', placeholder: 'Leave empty for main category' },
+      { key: 'image', label: 'Category image', type: 'file' },
+      { key: 'placeholderColor', label: 'Placeholder color', placeholder: '#f3f4f6' },
+      { key: 'sortOrder', label: 'Sort order', type: 'number' },
+      { key: 'description', label: 'Description', type: 'textarea' },
+      { key: 'seoTitle', label: 'SEO title' }
+    ]
+  },
+  Brands: {
+    title: 'Brands',
+    section: 'brands',
+    description: 'Brand records used by product upload, storefront filters, and brand banners.',
+    primaryField: 'name',
+    statuses: ['active', 'draft', 'hidden'],
+    fields: [
+      { key: 'name', label: 'Brand name' },
+      { key: 'slug', label: 'Slug' },
+      { key: 'logo', label: 'Brand logo', type: 'file' },
+      { key: 'banner', label: 'Brand banner', type: 'file' },
+      { key: 'website', label: 'Website' },
       { key: 'sortOrder', label: 'Sort order', type: 'number' },
       { key: 'description', label: 'Description', type: 'textarea' }
     ]
@@ -197,32 +242,38 @@ const sectionConfigs: Record<string, SectionConfig> = {
   Sliders: {
     title: 'Sliders',
     section: 'homepage-sliders',
-    description: 'Hero slides, carousel copy, images, and action links for the storefront.',
+    description: 'Hero slides for Aura and Eplaza. One image stays as a single banner; multiple images rotate as a slider.',
     primaryField: 'headline',
     statuses: ['active', 'scheduled', 'disabled'],
     fields: [
-      { key: 'slot', label: 'Slot' },
+      { key: 'theme', label: 'Theme', type: 'select', options: themeOptions },
+      { key: 'slot', label: 'Slot', type: 'select', options: sliderSlotOptions },
       { key: 'headline', label: 'Headline' },
       { key: 'eyebrow', label: 'Eyebrow' },
       { key: 'text', label: 'Text', type: 'textarea' },
-      { key: 'image', label: 'Image URL' },
+      { key: 'image', label: 'Single image', type: 'file' },
+      { key: 'images', label: 'Slider images', type: 'files' },
       { key: 'actionText', label: 'Action text' },
-      { key: 'actionLink', label: 'Action link' }
+      { key: 'actionLink', label: 'Action link' },
+      { key: 'sortOrder', label: 'Sort order', type: 'number' }
     ]
   },
   Banners: {
     title: 'Banners',
     section: 'homepage-banners',
-    description: 'Promotional banner blocks used across homepage templates.',
+    description: 'All Aura and Eplaza promotional banner blocks. Upload one image for a static banner or multiple images for a rotating banner.',
     primaryField: 'headline',
     statuses: ['active', 'scheduled', 'disabled'],
     fields: [
-      { key: 'slot', label: 'Slot' },
+      { key: 'theme', label: 'Theme', type: 'select', options: themeOptions },
+      { key: 'slot', label: 'Banner slot', type: 'select', options: bannerSlotOptions },
       { key: 'headline', label: 'Headline' },
       { key: 'text', label: 'Text', type: 'textarea' },
-      { key: 'image', label: 'Image URL' },
+      { key: 'image', label: 'Single image', type: 'file' },
+      { key: 'images', label: 'Rotating images', type: 'files' },
       { key: 'actionText', label: 'Action text' },
-      { key: 'actionLink', label: 'Action link' }
+      { key: 'actionLink', label: 'Action link' },
+      { key: 'sortOrder', label: 'Sort order', type: 'number' }
     ]
   },
   Navigation: {
@@ -483,6 +534,13 @@ export default function StoreAdminDashboard() {
   const [activeNav, setActiveNav] = useState(() => navFromPath(location.pathname));
 
   useEffect(() => {
+    const meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]') || document.createElement('meta');
+    meta.name = 'theme-color';
+    if (!meta.parentNode) document.head.appendChild(meta);
+    meta.setAttribute('content', '#f6f6f7');
+  }, []);
+
+  useEffect(() => {
     const params = new URLSearchParams(location.search);
     const storeId = params.get('storeId');
     setLoading(true);
@@ -507,7 +565,7 @@ export default function StoreAdminDashboard() {
   };
 
   if (loading) {
-    return <AdminLoader />;
+    return <div className="min-h-screen bg-[#f6f6f7]" />;
   }
 
   if (!store) {

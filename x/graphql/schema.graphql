@@ -1845,6 +1845,7 @@ input CreateStoreProductInput {
 
 input UpdateStoreProductInput {
   id: ID!
+  sku: String
   name: String
   description: String
   category: String

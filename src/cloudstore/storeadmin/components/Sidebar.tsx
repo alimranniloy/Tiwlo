@@ -119,6 +119,7 @@ export default function Sidebar({ activeNav, setActiveNav, store }: { activeNav:
         {openMenus.includes('Products') && (
           <div className="space-y-0.5 mb-1">
             <SidebarItem icon={FolderTree} label="Categories" active={activeNav === 'Categories'} onClick={() => setActiveNav('Categories')} isSubItem />
+            <SidebarItem icon={Building} label="Brands" active={activeNav === 'Brands'} onClick={() => setActiveNav('Brands')} isSubItem />
             <SidebarItem icon={Tags} label="Tags" active={activeNav === 'Tags'} onClick={() => setActiveNav('Tags')} isSubItem />
             <SidebarItem icon={Warehouse} label="Inventory" active={activeNav === 'Inventory'} onClick={() => setActiveNav('Inventory')} isSubItem />
           </div>

@@ -5,12 +5,14 @@ import { eplazaCategoryImages } from '../themeData';
 import type { Category } from '../types';
 
 export const PopularCategories = () => {
-  const { categories, products, themePath } = useStorefrontRuntime();
+  const { categories, getRecords, products, themePath } = useStorefrontRuntime();
+  const categoryRecords = getRecords('categories');
   const categoryRows: Category[] = categories.slice(0, 7).map((name, index) => ({
     id: name.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
     name,
     itemCount: products.filter((product) => product.category === name).length || 8,
-    image: eplazaCategoryImages[index % eplazaCategoryImages.length]
+    image: categoryRecords.find((record) => String(record.data?.name || record.title || '').toLowerCase() === name.toLowerCase())?.data?.image ||
+      eplazaCategoryImages[index % eplazaCategoryImages.length]
   }));
 
   return (

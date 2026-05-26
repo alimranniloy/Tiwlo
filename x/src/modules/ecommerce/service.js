@@ -1197,6 +1197,8 @@ export const getStoreThemeRuntime = async (ctx, args = {}) => {
     take: 60
   });
   const recordGroups = await readStoreRecordGroups(ctx, store.id, [
+    'categories',
+    'brands',
     'header',
     'homepage-sections',
     'homepage-sliders',
@@ -1234,6 +1236,22 @@ export const getStoreThemeRuntime = async (ctx, args = {}) => {
     name,
     count: runtimeProducts.filter((product) => product.category === name).length
   }));
+  const managedCategories = (recordGroups.categories || [])
+    .filter((record) => !['disabled', 'deleted', 'hidden'].includes(String(record.status || '').toLowerCase()))
+    .map((record) => {
+      const name = record.data?.name || record.title;
+      return {
+        id: record.data?.slug || slugify(name),
+        name,
+        count: runtimeProducts.filter((product) => product.category === name).length,
+        image: record.data?.image || '',
+        parent: record.data?.parent || '',
+        type: record.data?.type || 'main'
+      };
+    })
+    .filter((category) => category.name);
+  const categoryRows = [...managedCategories, ...(runtimeCategories.length ? runtimeCategories : categories)];
+  const categoryMap = new Map(categoryRows.map((category) => [String(category.name).toLowerCase(), category]));
   const runtimeRecords = isDemoStorefront(store)
     ? runtimeRecordGroupsForTheme(store.id, activeTheme.key, recordGroups, template)
     : {
@@ -1252,7 +1270,7 @@ export const getStoreThemeRuntime = async (ctx, args = {}) => {
     }),
     preview: Boolean(args.preview),
     products: runtimeProducts,
-    categories: runtimeCategories.length ? runtimeCategories : categories,
+    categories: Array.from(categoryMap.values()),
     records: runtimeRecords,
     modules: catalogTheme.modules || [],
     adminControls: catalogTheme.controls

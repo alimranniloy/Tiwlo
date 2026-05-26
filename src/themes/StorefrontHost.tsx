@@ -84,11 +84,7 @@ export default function StorefrontHost() {
   if (!hostContext) return null;
 
   if (loading) {
-    return (
-      <div className="grid min-h-screen place-items-center bg-[#f7f8fa] text-[#212121]">
-        <div className="h-10 w-10 animate-spin rounded-full border-2 border-gray-200 border-t-[#0069ff]" aria-label="Loading" />
-      </div>
-    );
+    return null;
   }
 
   if (!runtime && error) {
