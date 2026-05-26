@@ -50,6 +50,22 @@ install_system_email_stack() {
   run_sudo ufw allow 995/tcp >/dev/null 2>&1 || true
 }
 
+install_system_ssl_stack() {
+  echo "Preparing Tiwlo SSL packages..."
+  if command -v apt-get >/dev/null 2>&1; then
+    run_sudo env DEBIAN_FRONTEND=noninteractive apt-get update >/dev/null 2>&1 || true
+    run_sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y \
+      certbot python3-certbot-nginx ca-certificates openssl cron >/dev/null 2>&1 || true
+  elif command -v dnf >/dev/null 2>&1; then
+    run_sudo dnf install -y certbot python3-certbot-nginx ca-certificates openssl cronie >/dev/null 2>&1 || true
+  elif command -v yum >/dev/null 2>&1; then
+    run_sudo yum install -y certbot python3-certbot-nginx ca-certificates openssl cronie >/dev/null 2>&1 || true
+  fi
+  run_sudo ufw allow 80/tcp >/dev/null 2>&1 || true
+  run_sudo ufw allow 443/tcp >/dev/null 2>&1 || true
+  run_sudo systemctl enable --now certbot.timer >/dev/null 2>&1 || true
+}
+
 set_env_value() {
   local file="$1"
   local key="$2"
@@ -74,6 +90,7 @@ echo "Updating Tiwlo code..."
 git pull --ff-only
 
 install_system_email_stack
+install_system_ssl_stack
 
 echo "Preparing production GraphQL routing..."
 set_env_value "$ROOT/.env" VITE_GRAPHQL_URL "${FRONTEND_GRAPHQL_URL:-/graphql}"

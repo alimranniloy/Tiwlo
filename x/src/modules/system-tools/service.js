@@ -8,6 +8,9 @@ import { constants as fsConstants } from 'node:fs';
 import { access, cp, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { execFile, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { resolve4, resolve6 } from 'node:dns/promises';
+import net from 'node:net';
+import tls from 'node:tls';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -18,10 +21,14 @@ const backupJobs = new Map();
 const sslJobs = new Map();
 let autoTimer = null;
 let autoRunning = false;
+let sslAutoTimer = null;
+let sslAutoRunning = false;
 let restartScheduled = false;
 
 const BACKUP_KEY = 'backupAutomation';
 const LAST_AUTO_BACKUP_KEY = 'backupAutomationState';
+const SSL_KEY = 'sslAutomation';
+const LAST_SSL_KEY = 'sslAutomationState';
 const DEFAULT_BACKUP_CONFIG = {
   autoEnabled: false,
   intervalMinutes: 360,
@@ -33,6 +40,33 @@ const DEFAULT_BACKUP_CONFIG = {
   driveRetention: 1,
   uploadManualToDrive: false
 };
+const DEFAULT_SSL_CONFIG = {
+  autoEnabled: false,
+  primaryDomain: 'tiwlo.com',
+  email: 'admin@tiwlo.com',
+  domainsText: 'tiwlo.com\nwww.tiwlo.com\nmail.tiwlo.com\nemail.tiwlo.com',
+  includeKnownDomains: true,
+  includeWildcard: false,
+  staging: false,
+  forceRenewal: false
+};
+const CLOUDFLARE_IPV4_CIDRS = [
+  '173.245.48.0/20',
+  '103.21.244.0/22',
+  '103.22.200.0/22',
+  '103.31.4.0/22',
+  '141.101.64.0/18',
+  '108.162.192.0/18',
+  '190.93.240.0/20',
+  '188.114.96.0/20',
+  '197.234.240.0/22',
+  '198.41.128.0/17',
+  '162.158.0.0/15',
+  '104.16.0.0/13',
+  '104.24.0.0/14',
+  '172.64.0.0/13',
+  '131.0.72.0/22'
+];
 
 const ADMIN_ROLES = new Set(['admin', 'super_admin']);
 
@@ -124,6 +158,92 @@ const writeSetting = async (prisma, key, value) => prisma.systemSetting.upsert({
   create: { scope: 'platform', scopeId: '', key, value },
   update: { value }
 });
+
+const hostFromOrigin = (value = '') => {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  try {
+    return cleanHost(new URL(raw.includes('://') ? raw : `https://${raw}`).hostname);
+  } catch {
+    return cleanHost(raw);
+  }
+};
+
+const defaultPrimaryDomain = () => {
+  const candidates = [
+    process.env.TIWLO_SSL_DOMAIN,
+    process.env.TIWLO_MAIL_DOMAIN,
+    process.env.APP_DOMAIN,
+    process.env.FRONTEND_ORIGIN,
+    process.env.API_BASE_URL,
+    'tiwlo.com'
+  ];
+  return candidates.map(hostFromOrigin).find(isValidHost) || 'tiwlo.com';
+};
+
+const defaultSslConfig = () => {
+  const primaryDomain = defaultPrimaryDomain();
+  return {
+    ...DEFAULT_SSL_CONFIG,
+    primaryDomain,
+    email: process.env.SSL_EMAIL || process.env.TIWLO_EMAIL || `admin@${primaryDomain}`,
+    domainsText: [
+      primaryDomain,
+      `www.${primaryDomain}`,
+      `mail.${primaryDomain}`,
+      `email.${primaryDomain}`
+    ].filter(isValidHost).join('\n')
+  };
+};
+
+const normalizeDomainListText = (value = '') => Array.from(new Set(String(value || '')
+  .split(/[\s,]+/)
+  .map(cleanHost)
+  .filter(isValidHost))).join('\n');
+
+const sanitizeSslConfig = (input = {}) => {
+  const base = defaultSslConfig();
+  const primaryDomain = cleanHost(input.primaryDomain || base.primaryDomain);
+  const safePrimary = isValidHost(primaryDomain) ? primaryDomain : base.primaryDomain;
+  const domainsText = normalizeDomainListText(input.domainsText || input.domains || base.domainsText);
+  return {
+    autoEnabled: Boolean(input.autoEnabled),
+    primaryDomain: safePrimary,
+    email: String(input.email || base.email).trim(),
+    domainsText,
+    includeKnownDomains: input.includeKnownDomains !== false,
+    includeWildcard: Boolean(input.includeWildcard),
+    staging: Boolean(input.staging),
+    forceRenewal: Boolean(input.forceRenewal)
+  };
+};
+
+const sslConfig = async (prisma) => sanitizeSslConfig({
+  ...defaultSslConfig(),
+  ...(await readSetting(prisma, SSL_KEY, {}))
+});
+
+const parseSslDomains = async (prisma, config, mode = 'all', explicitDomain = '') => {
+  const primary = cleanHost(config.primaryDomain || defaultPrimaryDomain());
+  const typedDomains = normalizeDomainListText(config.domainsText)
+    .split('\n')
+    .map(cleanHost)
+    .filter(isValidHost);
+  const baseDomains = [
+    primary,
+    `www.${primary}`,
+    `mail.${primary}`,
+    `email.${primary}`,
+    ...typedDomains
+  ];
+  const discovered = config.includeKnownDomains ? await knownDomains(prisma).catch(() => []) : [];
+  const allDomains = Array.from(new Set([...baseDomains, ...discovered].map(cleanHost).filter(isValidHost)));
+  const httpDomains = mode === 'main'
+    ? [cleanHost(explicitDomain || primary)].filter(isValidHost)
+    : allDomains;
+  const wildcardDomains = config.includeWildcard && primary ? [`*.${primary}`] : [];
+  return { httpDomains, wildcardDomains };
+};
 
 const backupConfig = async (prisma) => ({
   ...DEFAULT_BACKUP_CONFIG,
@@ -588,6 +708,153 @@ const sendJobStatus = (map, req, res) => {
   return job;
 };
 
+const ipv4ToNumber = (ip = '') => ip.split('.').reduce((acc, part) => ((acc << 8) + Number(part || 0)) >>> 0, 0);
+
+const ipv4InCidr = (ip, cidr) => {
+  if (!net.isIP(ip) || net.isIP(ip) !== 4) return false;
+  const [base, prefixText] = cidr.split('/');
+  const prefix = Number(prefixText);
+  const mask = prefix === 0 ? 0 : (0xffffffff << (32 - prefix)) >>> 0;
+  return (ipv4ToNumber(ip) & mask) === (ipv4ToNumber(base) & mask);
+};
+
+const isCloudflareAddress = (ip) => CLOUDFLARE_IPV4_CIDRS.some((cidr) => ipv4InCidr(ip, cidr));
+
+const configuredServerIps = () => {
+  const configured = [
+    process.env.SSL_SERVER_IP,
+    process.env.PUBLIC_IP,
+    process.env.SERVER_IP
+  ].flatMap((value) => String(value || '').split(','));
+  return Array.from(new Set(configured.map((value) => String(value).trim()).filter((value) => net.isIP(value))));
+};
+
+const tcpCheck = (host, port, timeoutMs = 4500) => new Promise((resolveCheck) => {
+  const socket = net.createConnection({ host, port });
+  let settled = false;
+  const done = (result) => {
+    if (settled) return;
+    settled = true;
+    socket.destroy();
+    resolveCheck({ port, ...result });
+  };
+  socket.setTimeout(timeoutMs);
+  socket.on('connect', () => done({ ok: true }));
+  socket.on('timeout', () => done({ ok: false, error: `timeout after ${timeoutMs}ms` }));
+  socket.on('error', (error) => done({ ok: false, error: error.code || error.message || 'connection failed' }));
+});
+
+const tlsHostCheck = (host, timeoutMs = 5500) => new Promise((resolveCheck) => {
+  const socket = tls.connect({
+    host,
+    servername: host,
+    port: 443,
+    rejectUnauthorized: true
+  });
+  let settled = false;
+  const done = (result) => {
+    if (settled) return;
+    settled = true;
+    socket.destroy();
+    resolveCheck(result);
+  };
+  socket.setTimeout(timeoutMs);
+  socket.on('secureConnect', () => done({ ok: socket.authorized, error: socket.authorizationError || '' }));
+  socket.on('timeout', () => done({ ok: false, error: `TLS timeout after ${timeoutMs}ms` }));
+  socket.on('error', (error) => done({ ok: false, error: error.code || error.message || 'TLS check failed' }));
+});
+
+const resolveDomainAddresses = async (domain) => {
+  const [a, aaaa] = await Promise.all([
+    resolve4(domain).catch(() => []),
+    resolve6(domain).catch(() => [])
+  ]);
+  return { a, aaaa, all: [...a, ...aaaa] };
+};
+
+const diagnoseSslDomain = async (domain) => {
+  const issues = [];
+  const warnings = [];
+  const addresses = await resolveDomainAddresses(domain);
+  if (!addresses.all.length) {
+    issues.push(`${domain} DNS A/AAAA record was not found.`);
+  }
+
+  const serverIps = configuredServerIps();
+  const comparableServerIps = serverIps.filter((ip) => !ip.startsWith('127.') && ip !== '::1');
+  if (comparableServerIps.length && addresses.all.length && !addresses.all.some((ip) => comparableServerIps.includes(ip))) {
+    warnings.push(`${domain} resolves to ${addresses.all.join(', ')}, not the configured server IP (${comparableServerIps.join(', ')}).`);
+  }
+
+  if (addresses.a.some(isCloudflareAddress)) {
+    warnings.push(`${domain} resolves to Cloudflare proxy IPs. HTTP-01 can work only when Cloudflare forwards port 80 to this server; mail hosts should stay DNS only.`);
+  }
+
+  const [http, https] = addresses.all.length
+    ? await Promise.all([tcpCheck(domain, 80), tcpCheck(domain, 443)])
+    : [{ port: 80, ok: false, error: 'DNS failed' }, { port: 443, ok: false, error: 'DNS failed' }];
+
+  if (!http.ok) {
+    issues.push(`Port 80 is not reachable for ${domain}. Let's Encrypt HTTP-01 needs public HTTP access.`);
+  }
+  if (!https.ok) {
+    warnings.push(`Port 443 is not reachable yet for ${domain}. It should open after SSL is installed.`);
+  }
+  const tlsResult = https.ok ? await tlsHostCheck(domain) : { ok: false, error: https.error || 'port 443 blocked' };
+  if (https.ok && !tlsResult.ok) {
+    warnings.push(`HTTPS certificate check failed for ${domain}: ${tlsResult.error}. Install SSL for this hostname or fix the Nginx certificate mapping.`);
+  }
+
+  return {
+    domain,
+    status: issues.length ? 'error' : warnings.length ? 'warning' : 'ok',
+    addresses: addresses.all,
+    ports: { http, https, tls: tlsResult },
+    issues,
+    warnings
+  };
+};
+
+const wildcardSslDiagnostic = (wildcardDomains = []) => {
+  if (!wildcardDomains.length) {
+    return {
+      requested: false,
+      status: 'not_requested',
+      domains: [],
+      message: 'Wildcard SSL is off.'
+    };
+  }
+  return {
+    requested: true,
+    status: 'blocked_without_dns_automation',
+    domains: wildcardDomains,
+    message: "Wildcard Let's Encrypt certificates require DNS-01 TXT validation. Fully automatic renewal needs DNS API automation or a delegated ACME DNS zone; this server is configured to avoid Cloudflare/API tokens, so Tiwlo will not fake wildcard auto-renew."
+  };
+};
+
+const explainCertbotError = (error, domain) => {
+  const raw = `${error?.stderr || ''}\n${error?.stdout || ''}\n${error?.message || ''}`.trim();
+  if (/could not automatically find a matching server block|no names were found in your configuration files/i.test(raw)) {
+    return `${domain}: Nginx has no matching server_name. Add this domain to the Tiwlo Nginx site, reload Nginx, then retry.`;
+  }
+  if (/unauthorized|invalid response|404|not found/i.test(raw)) {
+    return `${domain}: Let's Encrypt could not read the HTTP challenge. Check DNS, Cloudflare proxy/redirect rules, and port 80 to this server.`;
+  }
+  if (/timeout|connection refused|connection reset|no route to host/i.test(raw)) {
+    return `${domain}: HTTP validation timed out. Open port 80/443 in VPS firewall, provider firewall, and Nginx.`;
+  }
+  if (/dns problem|nxdomain|no valid a records|no valid aaaa records/i.test(raw)) {
+    return `${domain}: DNS does not resolve correctly. Point A/AAAA records to this server before issuing SSL.`;
+  }
+  if (/rate limit|too many certificates/i.test(raw)) {
+    return `${domain}: Let's Encrypt rate limit hit. Wait before retrying or test with staging mode.`;
+  }
+  if (/wildcard|dns-01/i.test(raw)) {
+    return `${domain}: Wildcard certificates need DNS-01 validation; HTTP-01/Nginx cannot issue wildcard certs.`;
+  }
+  return raw || `${domain}: Certbot failed.`;
+};
+
 const knownDomains = async (prisma) => {
   const [domains, stores] = await Promise.all([
     prisma.domain.findMany({ select: { name: true } }),
@@ -599,47 +866,103 @@ const knownDomains = async (prisma) => {
   ].map(cleanHost).filter(isValidHost)));
 };
 
-const installCertbotArgs = () => {
+const privilegedBashArgs = (body) => {
   if (process.platform !== 'linux') throw new Error('Automatic SSL installation is supported on Linux servers only.');
-  return ['-lc', 'if ! command -v certbot >/dev/null 2>&1; then if command -v apt-get >/dev/null 2>&1; then apt-get update && apt-get install -y certbot python3-certbot-nginx; elif command -v dnf >/dev/null 2>&1; then dnf install -y certbot python3-certbot-nginx; elif command -v yum >/dev/null 2>&1; then yum install -y certbot python3-certbot-nginx; else echo "No supported package manager found for certbot" >&2; exit 1; fi; fi'];
+  return ['-lc', `
+set -e
+if [ "$(id -u)" -eq 0 ]; then
+  SUDO=""
+elif command -v sudo >/dev/null 2>&1; then
+  SUDO="sudo -n"
+else
+  echo "Root or passwordless sudo is required for SSL package and Nginx changes." >&2
+  exit 1
+fi
+${body}
+`];
 };
+
+const installCertbotArgs = () => privilegedBashArgs(`
+if ! command -v certbot >/dev/null 2>&1; then
+  if command -v apt-get >/dev/null 2>&1; then
+    $SUDO env DEBIAN_FRONTEND=noninteractive apt-get update
+    $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y certbot python3-certbot-nginx ca-certificates openssl cron
+  elif command -v dnf >/dev/null 2>&1; then
+    $SUDO dnf install -y certbot python3-certbot-nginx ca-certificates openssl cronie
+  elif command -v yum >/dev/null 2>&1; then
+    $SUDO yum install -y certbot python3-certbot-nginx ca-certificates openssl cronie
+  else
+    echo "No supported package manager found for certbot." >&2
+    exit 1
+  fi
+fi
+$SUDO ufw allow 80/tcp >/dev/null 2>&1 || true
+$SUDO ufw allow 443/tcp >/dev/null 2>&1 || true
+if command -v systemctl >/dev/null 2>&1; then
+  $SUDO systemctl enable --now certbot.timer >/dev/null 2>&1 || true
+fi
+`);
+
+const reloadNginxArgs = () => privilegedBashArgs(`
+if command -v nginx >/dev/null 2>&1; then
+  $SUDO nginx -t
+  if command -v systemctl >/dev/null 2>&1; then
+    $SUDO systemctl reload nginx
+  else
+    $SUDO nginx -s reload
+  fi
+fi
+`);
 
 const runSsl = async ({ prisma, rootDir, job, actor, input }) => {
   try {
     updateJob(job, { status: 'running', progress: 8, message: 'Preparing SSL request' });
-    const email = String(input.email || process.env.SSL_EMAIL || '').trim();
+    const current = await sslConfig(prisma);
+    const config = sanitizeSslConfig({ ...current, ...(input || {}) });
+    const email = String(config.email || process.env.SSL_EMAIL || '').trim();
     if (!email || !email.includes('@')) throw new Error('A valid SSL email is required.');
-    const mode = input.mode === 'all' ? 'all' : 'main';
-    const domains = mode === 'all'
-      ? await knownDomains(prisma)
-      : [cleanHost(input.domain || process.env.APP_DOMAIN || process.env.FRONTEND_ORIGIN || '')].filter(Boolean);
-    const filtered = Array.from(new Set(domains.filter(isValidHost)));
+    const mode = input.mode === 'main' ? 'main' : 'all';
+    const { httpDomains, wildcardDomains } = await parseSslDomains(prisma, config, mode, input.domain);
+    const filtered = Array.from(new Set(httpDomains.filter(isValidHost)));
     if (!filtered.length) throw new Error('No valid domain found for SSL.');
 
-    updateJob(job, { progress: 20, message: 'Installing certbot if needed', domains: filtered });
+    updateJob(job, { progress: 15, message: 'Checking DNS and HTTP reachability', domains: filtered });
+    const diagnostics = await Promise.all(filtered.slice(0, 60).map(diagnoseSslDomain));
+    const failed = diagnostics
+      .filter((item) => item.status === 'error')
+      .map((item) => ({ domain: item.domain, error: item.issues.join(' ') }));
+    const readyDomains = filtered.filter((domain) => !failed.some((item) => item.domain === domain));
+    const wildcard = wildcardSslDiagnostic(wildcardDomains);
+    if (wildcard.requested) {
+      failed.push(...wildcard.domains.map((domain) => ({ domain, error: wildcard.message })));
+    }
+    if (!readyDomains.length) throw new Error(failed[0]?.error || 'No SSL-ready domain found.');
+    if (mode === 'main' && failed.length) throw new Error(failed[0].error);
+
+    updateJob(job, { progress: 25, message: 'Installing certbot and enabling renew timer', diagnostics, wildcard });
     await runCommand('/bin/bash', installCertbotArgs(), { cwd: rootDir }, (text) => {
       if (text.trim()) updateJob(job, { message: text.trim().slice(-240) });
     });
 
     const certbot = await findExecutable(rootDir, 'certbot');
     const successful = [];
-    const failed = [];
-    for (const [index, domain] of filtered.entries()) {
+    for (const [index, domain] of readyDomains.entries()) {
       const args = [
-        'certonly',
         '--nginx',
         '--non-interactive',
         '--agree-tos',
+        '--no-eff-email',
+        '--redirect',
         '--email',
         email,
         '-d',
         domain
       ];
-      if (input.staging) args.push('--staging');
-      if (input.forceRenewal) args.push('--force-renewal');
+      if (config.staging) args.push('--staging');
+      if (config.forceRenewal || input.forceRenewal) args.push('--force-renewal');
 
       updateJob(job, {
-        progress: 45 + Math.round((index / Math.max(1, filtered.length)) * 40),
+        progress: 42 + Math.round((index / Math.max(1, readyDomains.length)) * 42),
         message: `Requesting SSL for ${domain}`
       });
       try {
@@ -649,47 +972,141 @@ const runSsl = async ({ prisma, rootDir, job, actor, input }) => {
         });
         successful.push(domain);
       } catch (error) {
-        failed.push({ domain, error: error.stderr || error.message || String(error) });
-        if (mode === 'main') throw error;
+        failed.push({ domain, error: explainCertbotError(error, domain) });
+        if (mode === 'main') throw new Error(explainCertbotError(error, domain));
       }
     }
     if (!successful.length) throw new Error(failed[0]?.error || 'No SSL certificate could be issued.');
 
-    await runCommand('/bin/bash', ['-lc', 'if command -v nginx >/dev/null 2>&1; then nginx -t && systemctl reload nginx || true; fi'], { cwd: rootDir }, (text) => {
+    await runCommand('/bin/bash', reloadNginxArgs(), { cwd: rootDir }, (text) => {
       const clean = text.trim();
       if (clean) updateJob(job, { message: clean.slice(-260) });
+    }).catch((error) => {
+      failed.push({ domain: 'nginx', error: error.stderr || error.message || String(error) });
     });
 
+    const state = {
+      lastRunAt: nowIso(),
+      lastJobId: job.id,
+      status: failed.length ? 'warning' : 'ok',
+      successful,
+      failed
+    };
+    await writeSetting(prisma, LAST_SSL_KEY, state).catch(() => {});
     await prisma.auditLog.create({
       data: {
         actorId: actor?.id || null,
         action: 'ssl_certificate_requested',
         resource: 'ssl',
         resourceId: filtered.join(','),
-        metadata: { domains: filtered, successful, failed, mode, staging: Boolean(input.staging) }
+        metadata: { domains: filtered, successful, failed, mode, staging: Boolean(config.staging), wildcard }
       }
     }).catch(() => {});
 
     updateJob(job, {
       status: 'completed',
       progress: 100,
-      message: failed.length ? `SSL completed with ${failed.length} failed domain(s)` : 'SSL job completed',
+      message: failed.length ? `SSL completed with ${failed.length} warning/error item(s)` : 'SSL installed and auto-renew timer is active',
       domains: successful,
-      failedDomains: failed
+      failedDomains: failed,
+      diagnostics,
+      wildcard
     });
   } catch (error) {
+    await writeSetting(prisma, LAST_SSL_KEY, {
+      lastRunAt: nowIso(),
+      lastJobId: job.id,
+      status: 'failed',
+      error: error.message || String(error)
+    }).catch(() => {});
     updateJob(job, { status: 'failed', progress: Math.max(job.progress, 1), message: error.message || 'SSL failed', error: error.message || String(error) });
   }
 };
 
-const certbotStatus = async (rootDir) => {
+const runSslRenew = async ({ prisma, rootDir, job, actor, input = {} }) => {
+  try {
+    updateJob(job, { status: 'running', progress: 12, message: 'Preparing certificate renewal' });
+    await runCommand('/bin/bash', installCertbotArgs(), { cwd: rootDir }, (text) => {
+      if (text.trim()) updateJob(job, { message: text.trim().slice(-240) });
+    });
+    const certbot = await findExecutable(rootDir, 'certbot');
+    const args = ['renew', '--non-interactive'];
+    if (input.dryRun) args.push('--dry-run');
+    if (input.forceRenewal) args.push('--force-renewal');
+    updateJob(job, { progress: 45, message: 'Running certbot renew' });
+    const { stdout, stderr } = await runCommand(certbot, args, { cwd: rootDir }, (text) => {
+      const clean = text.trim();
+      if (clean) updateJob(job, { message: clean.slice(-260) });
+    });
+    await runCommand('/bin/bash', reloadNginxArgs(), { cwd: rootDir }).catch(() => {});
+    await writeSetting(prisma, LAST_SSL_KEY, {
+      lastRenewAt: nowIso(),
+      lastJobId: job.id,
+      status: 'ok',
+      output: `${stdout || ''}\n${stderr || ''}`.trim()
+    }).catch(() => {});
+    await prisma.auditLog.create({
+      data: {
+        actorId: actor?.id || null,
+        action: 'ssl_certificate_renewed',
+        resource: 'ssl',
+        resourceId: 'certbot-renew',
+        metadata: { dryRun: Boolean(input.dryRun), forceRenewal: Boolean(input.forceRenewal) }
+      }
+    }).catch(() => {});
+    updateJob(job, { status: 'completed', progress: 100, message: 'SSL renewal completed' });
+  } catch (error) {
+    await writeSetting(prisma, LAST_SSL_KEY, {
+      lastRenewAt: nowIso(),
+      lastJobId: job.id,
+      status: 'failed',
+      error: error.stderr || error.message || String(error)
+    }).catch(() => {});
+    updateJob(job, { status: 'failed', progress: Math.max(job.progress, 1), message: error.stderr || error.message || 'SSL renewal failed', error: error.stderr || error.message || String(error) });
+  }
+};
+
+const certbotStatus = async (rootDir, prisma) => {
+  const config = await sslConfig(prisma);
+  const { httpDomains, wildcardDomains } = await parseSslDomains(prisma, config, 'all');
+  const domains = httpDomains.slice(0, 60);
+  const [diagnostics, state] = await Promise.all([
+    Promise.all(domains.map(diagnoseSslDomain)).catch(() => []),
+    readSetting(prisma, LAST_SSL_KEY, {}).catch(() => ({}))
+  ]);
+  const wildcard = wildcardSslDiagnostic(wildcardDomains);
+  let installed = false;
+  let output = 'certbot is not available';
   try {
     const certbot = await findExecutable(rootDir, 'certbot');
-    const { stdout } = await runExecFile(certbot, ['certificates'], { cwd: rootDir });
-    return { installed: true, output: stdout };
+    const result = await runExecFile(certbot, ['certificates'], { cwd: rootDir });
+    installed = true;
+    output = result.stdout || 'Certbot is installed, but no certificates were listed yet.';
   } catch (error) {
-    return { installed: false, output: error.stderr || error.message || 'certbot is not available' };
+    output = error.stderr || error.message || output;
   }
+  let timerStatus = 'unknown';
+  try {
+    const { stdout } = await runExecFile('systemctl', ['is-active', 'certbot.timer']);
+    timerStatus = stdout.trim() || 'unknown';
+  } catch (error) {
+    timerStatus = error.stdout?.trim?.() || 'inactive';
+  }
+  return {
+    installed,
+    output,
+    config,
+    domains,
+    diagnostics,
+    wildcard,
+    autoRenew: {
+      enabled: Boolean(config.autoEnabled),
+      timerStatus,
+      active: timerStatus === 'active'
+    },
+    jobs: Array.from(sslJobs.values()).slice(-8).reverse().map(publicJob),
+    state
+  };
 };
 
 export const startBackupAutomation = ({ prisma, rootDir = fallbackRootDir }) => {
@@ -708,6 +1125,24 @@ export const startBackupAutomation = ({ prisma, rootDir = fallbackRootDir }) => 
     await writeSetting(prisma, LAST_AUTO_BACKUP_KEY, { lastBackupAt: nowIso(), lastJobId: job.id, status: job.status }).catch(() => {});
     autoRunning = false;
   }, 60 * 1000);
+};
+
+export const startSslAutomation = ({ prisma, rootDir = fallbackRootDir }) => {
+  if (sslAutoTimer) clearInterval(sslAutoTimer);
+  sslAutoTimer = setInterval(async () => {
+    if (sslAutoRunning) return;
+    const config = await sslConfig(prisma).catch(() => null);
+    if (!config?.autoEnabled) return;
+    const state = await readSetting(prisma, LAST_SSL_KEY, {}).catch(() => ({}));
+    const lastAt = state.lastRenewAt || state.lastRunAt;
+    const lastTime = lastAt ? new Date(lastAt).getTime() : 0;
+    const dueAt = lastTime + 24 * 60 * 60 * 1000;
+    if (Date.now() < dueAt) return;
+    sslAutoRunning = true;
+    const job = createJob(sslJobs, 'ssl-renew', { source: 'auto' });
+    await runSslRenew({ prisma, rootDir, job, actor: null });
+    sslAutoRunning = false;
+  }, 60 * 60 * 1000);
 };
 
 export const registerSystemToolRoutes = (app, { prisma, userFromRequest, rootDir = fallbackRootDir }) => {
@@ -794,12 +1229,38 @@ export const registerSystemToolRoutes = (app, { prisma, userFromRequest, rootDir
   });
 
   router.get('/ssl/status', async (_req, res) => {
-    res.json(await certbotStatus(rootDir));
+    res.json(await certbotStatus(rootDir, prisma));
+  });
+
+  router.put('/ssl/config', async (req, res) => {
+    const current = await sslConfig(prisma);
+    const next = sanitizeSslConfig({ ...current, ...(req.body || {}) });
+    await writeSetting(prisma, SSL_KEY, next);
+    await prisma.auditLog.create({
+      data: {
+        actorId: req.tiwloUser?.id || null,
+        action: 'ssl_config_updated',
+        resource: 'ssl',
+        resourceId: next.primaryDomain,
+        metadata: { autoEnabled: next.autoEnabled, includeWildcard: next.includeWildcard }
+      }
+    }).catch(() => {});
+    res.json({ ok: true, config: next });
   });
 
   router.post('/ssl/apply', async (req, res) => {
-    const job = createJob(sslJobs, 'ssl', { mode: req.body?.mode || 'main' });
-    runSsl({ prisma, rootDir, job, actor: req.tiwloUser, input: req.body || {} });
+    const current = await sslConfig(prisma);
+    const input = { ...current, ...(req.body || {}) };
+    const next = sanitizeSslConfig(input);
+    if (req.body?.saveConfig !== false) await writeSetting(prisma, SSL_KEY, next);
+    const job = createJob(sslJobs, 'ssl', { mode: req.body?.mode || 'all' });
+    runSsl({ prisma, rootDir, job, actor: req.tiwloUser, input: { ...next, mode: req.body?.mode || 'all', domain: req.body?.domain } });
+    res.status(202).json({ job: publicJob(job) });
+  });
+
+  router.post('/ssl/renew', async (req, res) => {
+    const job = createJob(sslJobs, 'ssl-renew', { source: 'manual' });
+    runSslRenew({ prisma, rootDir, job, actor: req.tiwloUser, input: req.body || {} });
     res.status(202).json({ job: publicJob(job) });
   });
 

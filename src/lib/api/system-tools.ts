@@ -14,6 +14,9 @@ export type SystemJob = {
   fileSize?: number;
   downloadUrl?: string;
   domains?: string[];
+  failedDomains?: Array<{ domain: string; error: string }>;
+  diagnostics?: SslDomainDiagnostic[];
+  wildcard?: SslWildcardStatus;
   log?: Array<{ at: string; message: string }>;
   createdAt: string;
   updatedAt: string;
@@ -36,6 +39,53 @@ export type BackupFile = {
   size: number;
   createdAt: string;
   updatedAt: string;
+};
+
+export type SslConfig = {
+  autoEnabled: boolean;
+  primaryDomain: string;
+  email: string;
+  domainsText: string;
+  includeKnownDomains: boolean;
+  includeWildcard: boolean;
+  staging: boolean;
+  forceRenewal: boolean;
+};
+
+export type SslDomainDiagnostic = {
+  domain: string;
+  status: 'ok' | 'warning' | 'error';
+  addresses: string[];
+  ports: {
+    http: { port: number; ok: boolean; error?: string };
+    https: { port: number; ok: boolean; error?: string };
+    tls?: { ok: boolean; error?: string };
+  };
+  issues: string[];
+  warnings: string[];
+};
+
+export type SslWildcardStatus = {
+  requested: boolean;
+  status: string;
+  domains: string[];
+  message: string;
+};
+
+export type SslStatus = {
+  installed: boolean;
+  output: string;
+  config: SslConfig;
+  domains: string[];
+  diagnostics: SslDomainDiagnostic[];
+  wildcard: SslWildcardStatus;
+  autoRenew: {
+    enabled: boolean;
+    timerStatus: string;
+    active: boolean;
+  };
+  jobs: SystemJob[];
+  state: Record<string, unknown>;
 };
 
 async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -144,7 +194,7 @@ export async function importBackup(file: File, onProgress?: (progress: number) =
   });
 }
 
-export async function fetchSslStatus(): Promise<{ installed: boolean; output: string }> {
+export async function fetchSslStatus(): Promise<SslStatus> {
   return apiFetch('/admin/ssl/status');
 }
 
@@ -152,10 +202,31 @@ export async function startSslJob(input: {
   mode: 'main' | 'all';
   domain?: string;
   email: string;
+  primaryDomain?: string;
+  domainsText?: string;
+  autoEnabled?: boolean;
+  includeKnownDomains?: boolean;
+  includeWildcard?: boolean;
   staging?: boolean;
   forceRenewal?: boolean;
+  saveConfig?: boolean;
 }): Promise<SystemJob> {
   const result = await apiFetch<{ job: SystemJob }>('/admin/ssl/apply', {
+    method: 'POST',
+    body: JSON.stringify(input)
+  });
+  return result.job;
+}
+
+export async function saveSslConfig(config: SslConfig): Promise<{ ok: boolean; config: SslConfig }> {
+  return apiFetch('/admin/ssl/config', {
+    method: 'PUT',
+    body: JSON.stringify(config)
+  });
+}
+
+export async function startSslRenew(input: { dryRun?: boolean; forceRenewal?: boolean } = {}): Promise<SystemJob> {
+  const result = await apiFetch<{ job: SystemJob }>('/admin/ssl/renew', {
     method: 'POST',
     body: JSON.stringify(input)
   });

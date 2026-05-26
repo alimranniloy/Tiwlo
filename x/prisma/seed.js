@@ -717,6 +717,7 @@ async function main() {
     ['admin.service-statistics', 'main-admin', 'Service Statistics', '/activity', 'Usage statistics across cloud services and products.'],
     ['admin.notifications', 'main-admin', 'Live Notifications', '/alerts', 'Operational alerts, customer notifications, and incident feed.'],
     ['admin.email', 'main-admin', 'Email', '/management/email', 'Mailbox accounts, system SMTP sender, SSL, and webmail setup.'],
+    ['admin.ssl', 'main-admin', 'SSL', '/management/ssl', 'Let\'s Encrypt certificates, renewal timer, DNS checks, and HTTPS automation.'],
     ['admin.clients', 'main-admin', 'Client List', '/management/users', 'Search, verify, suspend, and support user accounts.'],
     ['admin.identity', 'main-admin', 'User Identities', '/management/identity', 'KYC, MFA, roles, and account identity controls.'],
     ['admin.support', 'main-admin', 'Support Tickets', '/management/support', 'Central support inbox with SLA and escalation.'],

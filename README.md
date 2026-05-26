@@ -261,7 +261,60 @@ Update this Tiwlo server without removing PostgreSQL data:
 cd /var/www/Tiwlo && bash ./scripts/update-tiwlo.sh
 ```
 
-The update command runs `git pull`, installs dependencies, runs Prisma `db:push`, rebuilds the frontend, and restarts systemd services if they exist. It does not run `prisma migrate reset`, `DROP DATABASE`, or delete `.data/postgres`.
+The update command runs `git pull`, installs mail and SSL packages, enables the Certbot renewal timer, installs dependencies, runs Prisma `db:push`, rebuilds the frontend, and restarts systemd services if they exist. It does not run `prisma migrate reset`, `DROP DATABASE`, or delete `.data/postgres`.
+
+## Tiwlo SSL And Let's Encrypt Troubleshooting
+
+The admin SSL page is available at **Management -> SSL**. It uses the server's real Certbot/Nginx installation; it does not mark SSL as successful unless Certbot succeeds or the renew command completes.
+
+Recommended DNS for the main Tiwlo server:
+
+```text
+tiwlo.com       A     153.75.245.4
+www.tiwlo.com   A     153.75.245.4
+email.tiwlo.com A     153.75.245.4
+mail.tiwlo.com  A     153.75.245.4
+*.tiwlo.com     A     153.75.245.4
+```
+
+Install and enable the SSL stack:
+
+```bash
+sudo apt update
+sudo apt install -y certbot python3-certbot-nginx ca-certificates openssl cron
+sudo ufw allow 80/tcp
+sudo ufw allow 443/tcp
+sudo systemctl enable --now certbot.timer
+```
+
+For normal domains and known subdomains, Tiwlo uses Certbot HTTP-01 through Nginx:
+
+```bash
+sudo certbot --nginx -d tiwlo.com -d www.tiwlo.com -d email.tiwlo.com -d mail.tiwlo.com --redirect
+```
+
+Wildcard SSL for `*.tiwlo.com` is different. Let's Encrypt wildcard certificates require DNS-01 TXT validation. Fully automatic wildcard renewals need a DNS provider API token or a delegated ACME DNS zone. If you do not want to use Cloudflare/API credentials, Tiwlo can automatically issue real SSL for explicit subdomains such as `email.tiwlo.com`, `mail.tiwlo.com`, and mapped store domains, but it cannot safely auto-renew a wildcard certificate. The SSL page shows this as a wildcard warning instead of pretending it worked.
+
+If the SSL page reports an error:
+
+- DNS error: point the A record to the VPS public IP and wait for propagation.
+- Port 80 blocked: open `80/tcp` in UFW, provider firewall, and any upstream firewall.
+- Nginx server name error: add the domain to the Tiwlo Nginx `server_name`, run `sudo nginx -t`, then `sudo systemctl reload nginx`.
+- HTTPS certificate mismatch: port `443` is open, but Nginx is serving a certificate that does not include that hostname. Reissue SSL for that hostname from Management -> SSL or run the Certbot command with every hostname.
+- Cloudflare proxy warning: HTTP-01 can work only if Cloudflare forwards port 80 to the origin. Keep mail hosts DNS only.
+- Rate limit: enable test mode first, or wait before retrying production issuance.
+
+Quick checks:
+
+```bash
+dig +short tiwlo.com
+dig +short email.tiwlo.com
+nc -vz tiwlo.com 80
+nc -vz tiwlo.com 443
+sudo certbot certificates
+sudo systemctl status certbot.timer --no-pager
+sudo journalctl -u nginx -n 80 --no-pager
+```
 
 ## Tiwlo Mail And SMTP Troubleshooting
 

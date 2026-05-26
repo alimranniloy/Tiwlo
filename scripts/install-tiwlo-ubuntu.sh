@@ -71,8 +71,8 @@ apt-get install -y \
   sudo git curl wget ca-certificates xz-utils build-essential python3 make g++ \
   postgresql postgresql-contrib nginx ufw certbot python3-certbot-nginx \
   postfix dovecot-imapd dovecot-pop3d roundcube roundcube-core roundcube-pgsql \
-  opendkim opendkim-tools mailutils
-systemctl enable --now postgresql nginx postfix dovecot opendkim >/dev/null 2>&1 || true
+  opendkim opendkim-tools mailutils cron openssl
+systemctl enable --now postgresql nginx postfix dovecot opendkim certbot.timer >/dev/null 2>&1 || true
 ensure_system_postgres_database
 
 step "Configuring system email services"
@@ -144,7 +144,7 @@ step "Configuring Nginx reverse proxy"
 NGINX_SITE="/etc/nginx/sites-available/tiwlo"
 SERVER_NAME="_"
 if [ -n "$DOMAIN" ]; then
-  SERVER_NAME="${DOMAIN} www.${DOMAIN}"
+  SERVER_NAME="${DOMAIN} www.${DOMAIN} email.${DOMAIN} mail.${DOMAIN}"
 fi
 
 cat >"$NGINX_SITE" <<NGINX
@@ -210,6 +210,8 @@ systemctl reload nginx
 step "Configuring firewall"
 ufw allow OpenSSH >/dev/null 2>&1 || true
 ufw allow 'Nginx Full' >/dev/null 2>&1 || true
+ufw allow 80/tcp >/dev/null 2>&1 || true
+ufw allow 443/tcp >/dev/null 2>&1 || true
 ufw allow 25/tcp >/dev/null 2>&1 || true
 ufw allow 465/tcp >/dev/null 2>&1 || true
 ufw allow 587/tcp >/dev/null 2>&1 || true
@@ -221,6 +223,12 @@ if [ -n "$DOMAIN" ] && ! is_ip_address "$DOMAIN"; then
   CERTBOT_DOMAINS=(-d "$DOMAIN")
   if getent hosts "www.${DOMAIN}" >/dev/null 2>&1; then
     CERTBOT_DOMAINS+=(-d "www.${DOMAIN}")
+  fi
+  if getent hosts "email.${DOMAIN}" >/dev/null 2>&1; then
+    CERTBOT_DOMAINS+=(-d "email.${DOMAIN}")
+  fi
+  if getent hosts "mail.${DOMAIN}" >/dev/null 2>&1; then
+    CERTBOT_DOMAINS+=(-d "mail.${DOMAIN}")
   fi
   if certbot --nginx "${CERTBOT_DOMAINS[@]}" --non-interactive --agree-tos -m "$EMAIL" --redirect; then
     systemctl reload nginx
@@ -238,6 +246,6 @@ systemctl is-enabled tiwlo-backend tiwlo-frontend >/dev/null
 echo
 echo "Tiwlo install complete."
 echo "Website: ${PUBLIC_ORIGIN}"
-echo "Webmail: ${PUBLIC_ORIGIN}/webmail (Roundcube package installed; point mail.${MAIL_DOMAIN} DNS to this server)"
+echo "Tiwlo Mail: https://email.${MAIL_DOMAIN} (point email.${MAIL_DOMAIN} and mail.${MAIL_DOMAIN} DNS to this server)"
 echo "Backend: http://127.0.0.1:${BACKEND_PORT}/graphql"
 echo "Auto-start: systemd services tiwlo-backend and tiwlo-frontend are enabled."
