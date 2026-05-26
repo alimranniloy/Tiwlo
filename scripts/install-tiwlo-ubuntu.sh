@@ -155,10 +155,19 @@ configure_system_email_services() {
   postconf -P "smtps/inet/smtpd_recipient_restrictions=permit_sasl_authenticated,reject" || true
 
   mkdir -p /etc/dovecot/conf.d
-  cat >/etc/dovecot/conf.d/99-tiwlo-mail-auth.conf <<'DOVECOT'
-disable_plaintext_auth = yes
+
+  write_dovecot_auth_config() {
+    local mode="$1"
+    local cleartext_setting="disable_plaintext_auth = yes"
+    local username_format="auth_username_format = %n"
+    if [ "$mode" = "modern" ]; then
+      cleartext_setting="auth_allow_cleartext = no"
+      username_format="auth_username_format = %{user | username}"
+    fi
+    cat >/etc/dovecot/conf.d/99-tiwlo-mail-auth.conf <<DOVECOT
+${cleartext_setting}
 auth_mechanisms = plain login
-auth_username_format = %n
+${username_format}
 protocols = imap pop3
 mail_location = maildir:~/Maildir
 
@@ -170,8 +179,40 @@ service auth {
   }
 }
 DOVECOT
+  }
 
-  cat >/etc/dovecot/conf.d/99-tiwlo-mail-ssl.conf <<DOVECOTSSL
+  write_dovecot_ssl_config() {
+    local mode="$1"
+    if [ "$mode" = "modern" ]; then
+      cat >/etc/dovecot/conf.d/99-tiwlo-mail-ssl.conf <<DOVECOTSSL
+ssl = required
+ssl_server_cert_file = ${CERT_FILE}
+ssl_server_key_file = ${KEY_FILE}
+
+service imap-login {
+  inet_listener imap {
+    port = 0
+  }
+
+  inet_listener imaps {
+    port = 993
+    ssl = yes
+  }
+}
+
+service pop3-login {
+  inet_listener pop3 {
+    port = 0
+  }
+
+  inet_listener pop3s {
+    port = 995
+    ssl = yes
+  }
+}
+DOVECOTSSL
+    else
+      cat >/etc/dovecot/conf.d/99-tiwlo-mail-ssl.conf <<DOVECOTSSL
 ssl = required
 ssl_cert = <${CERT_FILE}
 ssl_key = <${KEY_FILE}
@@ -198,6 +239,24 @@ service pop3-login {
   }
 }
 DOVECOTSSL
+    fi
+  }
+
+  validate_dovecot_config() {
+    if have doveconf; then
+      doveconf -n >/dev/null 2>&1
+    else
+      return 0
+    fi
+  }
+
+  write_dovecot_auth_config modern
+  write_dovecot_ssl_config modern
+  if ! validate_dovecot_config; then
+    echo "Dovecot modern config was not accepted; falling back to legacy Dovecot settings."
+    write_dovecot_auth_config legacy
+    write_dovecot_ssl_config legacy
+  fi
 
   systemctl enable --now postfix dovecot >/dev/null 2>&1 || true
   if have doveconf; then
