@@ -93,13 +93,30 @@ configure_postfix_delivery_safety() {
   run_sudo postconf -e "milter_connect_timeout = 3s" || true
   run_sudo postconf -e "milter_command_timeout = 10s" || true
   run_sudo postconf -e "milter_content_timeout = 30s" || true
-  run_sudo postconf -e "smtpd_client_restrictions = permit_mynetworks" || true
+  run_sudo postconf -e "smtpd_milters =" || true
+  run_sudo postconf -e "non_smtpd_milters =" || true
+  run_sudo postconf -e "content_filter =" || true
+  run_sudo postconf -e "smtpd_proxy_filter =" || true
+  run_sudo postconf -e "smtpd_client_restrictions = permit_mynetworks,permit_sasl_authenticated" || true
+  run_sudo postconf -e "smtpd_helo_restrictions =" || true
   run_sudo postconf -e "smtpd_sender_restrictions =" || true
   run_sudo postconf -e "smtpd_data_restrictions =" || true
   run_sudo postconf -e "smtpd_end_of_data_restrictions =" || true
   run_sudo postconf -e "smtpd_recipient_restrictions = permit_sasl_authenticated,permit_mynetworks,reject_unauth_destination" || true
   run_sudo postconf -e "smtpd_relay_restrictions = permit_sasl_authenticated,permit_mynetworks,reject_unauth_destination" || true
+  run_sudo postconf -P "submission/inet/smtpd_client_restrictions=permit_sasl_authenticated" || true
+  run_sudo postconf -P "submission/inet/smtpd_sender_restrictions=" || true
+  run_sudo postconf -P "submission/inet/smtpd_data_restrictions=" || true
+  run_sudo postconf -P "submission/inet/smtpd_end_of_data_restrictions=" || true
+  run_sudo postconf -P "submission/inet/smtpd_milters=" || true
+  run_sudo postconf -P "submission/inet/content_filter=" || true
   run_sudo postconf -P "submission/inet/smtpd_relay_restrictions=permit_sasl_authenticated,reject" || true
+  run_sudo postconf -P "smtps/inet/smtpd_client_restrictions=permit_sasl_authenticated" || true
+  run_sudo postconf -P "smtps/inet/smtpd_sender_restrictions=" || true
+  run_sudo postconf -P "smtps/inet/smtpd_data_restrictions=" || true
+  run_sudo postconf -P "smtps/inet/smtpd_end_of_data_restrictions=" || true
+  run_sudo postconf -P "smtps/inet/smtpd_milters=" || true
+  run_sudo postconf -P "smtps/inet/content_filter=" || true
   run_sudo postconf -P "smtps/inet/smtpd_relay_restrictions=permit_sasl_authenticated,reject" || true
 }
 
@@ -431,11 +448,11 @@ CONF
       sleep 1
     done
   fi
-  if [ "$milter_ready" -eq 1 ]; then
+  if [ "${TIWLO_ENABLE_POSTFIX_DKIM_MILTER:-false}" = "true" ] && [ "$milter_ready" -eq 1 ]; then
     run_sudo postconf -e "smtpd_milters = inet:127.0.0.1:8891" || true
     run_sudo postconf -e "non_smtpd_milters = inet:127.0.0.1:8891" || true
   else
-    echo "OpenDKIM milter is not ready; disabling Postfix milter to avoid SMTP 451 tempfail."
+    echo "OpenDKIM key is available for app-side signing; Postfix milter disabled to avoid SMTP 451 tempfail."
     run_sudo postconf -e "smtpd_milters =" || true
     run_sudo postconf -e "non_smtpd_milters =" || true
   fi
@@ -719,11 +736,19 @@ set_env_value "$ROOT/x/.env" SMTP_TLS_SERVERNAME "mail.${MAIL_DOMAIN}"
 set_env_value "$ROOT/x/.env" SMTP_USER "$SYSTEM_SMTP_USER"
 set_env_value "$ROOT/x/.env" SMTP_PASS "$SYSTEM_SMTP_PASS"
 set_env_value "$ROOT/x/.env" MAIL_FROM "${SYSTEM_SMTP_USER}@${MAIL_DOMAIN}"
+set_env_value "$ROOT/x/.env" MAIL_INLINE_LOGO "false"
 set_env_value_if_missing "$ROOT/x/.env" MAIL_FROM_NAME "Tiwlo"
 set_env_value_if_missing "$ROOT/x/.env" MAIL_REPLY_TO "support@${MAIL_DOMAIN}"
 provision_system_mailbox "$MAIL_DOMAIN" "$SYSTEM_SMTP_USER" "$SYSTEM_SMTP_PASS"
+DKIM_SELECTOR="${TIWLO_DKIM_SELECTOR:-tiwlo}"
+DKIM_KEY_PATH="/etc/opendkim/keys/${MAIL_DOMAIN}/${DKIM_SELECTOR}.private"
+if run_sudo test -f "$DKIM_KEY_PATH"; then
+  set_env_value "$ROOT/x/.env" TIWLO_DKIM_PRIVATE_KEY_PATH "$DKIM_KEY_PATH"
+  set_env_value "$ROOT/x/.env" TIWLO_DKIM_DOMAIN "$MAIL_DOMAIN"
+  set_env_value "$ROOT/x/.env" TIWLO_DKIM_SELECTOR "$DKIM_SELECTOR"
+fi
 if [ -n "$DKIM_PUBLIC_KEY" ]; then
-  set_env_value "$ROOT/x/.env" TIWLO_DKIM_SELECTOR "${TIWLO_DKIM_SELECTOR:-tiwlo}"
+  set_env_value "$ROOT/x/.env" TIWLO_DKIM_SELECTOR "$DKIM_SELECTOR"
   set_env_value "$ROOT/x/.env" TIWLO_DKIM_PUBLIC_KEY "$DKIM_PUBLIC_KEY"
 fi
 if [ -n "${FRONTEND_ORIGIN:-}" ]; then

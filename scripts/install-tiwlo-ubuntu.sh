@@ -82,13 +82,30 @@ configure_postfix_delivery_safety() {
   postconf -e "milter_connect_timeout = 3s" || true
   postconf -e "milter_command_timeout = 10s" || true
   postconf -e "milter_content_timeout = 30s" || true
-  postconf -e "smtpd_client_restrictions = permit_mynetworks" || true
+  postconf -e "smtpd_milters =" || true
+  postconf -e "non_smtpd_milters =" || true
+  postconf -e "content_filter =" || true
+  postconf -e "smtpd_proxy_filter =" || true
+  postconf -e "smtpd_client_restrictions = permit_mynetworks,permit_sasl_authenticated" || true
+  postconf -e "smtpd_helo_restrictions =" || true
   postconf -e "smtpd_sender_restrictions =" || true
   postconf -e "smtpd_data_restrictions =" || true
   postconf -e "smtpd_end_of_data_restrictions =" || true
   postconf -e "smtpd_recipient_restrictions = permit_sasl_authenticated,permit_mynetworks,reject_unauth_destination" || true
   postconf -e "smtpd_relay_restrictions = permit_sasl_authenticated,permit_mynetworks,reject_unauth_destination" || true
+  postconf -P "submission/inet/smtpd_client_restrictions=permit_sasl_authenticated" || true
+  postconf -P "submission/inet/smtpd_sender_restrictions=" || true
+  postconf -P "submission/inet/smtpd_data_restrictions=" || true
+  postconf -P "submission/inet/smtpd_end_of_data_restrictions=" || true
+  postconf -P "submission/inet/smtpd_milters=" || true
+  postconf -P "submission/inet/content_filter=" || true
   postconf -P "submission/inet/smtpd_relay_restrictions=permit_sasl_authenticated,reject" || true
+  postconf -P "smtps/inet/smtpd_client_restrictions=permit_sasl_authenticated" || true
+  postconf -P "smtps/inet/smtpd_sender_restrictions=" || true
+  postconf -P "smtps/inet/smtpd_data_restrictions=" || true
+  postconf -P "smtps/inet/smtpd_end_of_data_restrictions=" || true
+  postconf -P "smtps/inet/smtpd_milters=" || true
+  postconf -P "smtps/inet/content_filter=" || true
   postconf -P "smtps/inet/smtpd_relay_restrictions=permit_sasl_authenticated,reject" || true
 }
 
@@ -440,11 +457,11 @@ CONF
       sleep 1
     done
   fi
-  if [ "$milter_ready" -eq 1 ]; then
+  if [ "${TIWLO_ENABLE_POSTFIX_DKIM_MILTER:-false}" = "true" ] && [ "$milter_ready" -eq 1 ]; then
     postconf -e "smtpd_milters = inet:127.0.0.1:8891" || true
     postconf -e "non_smtpd_milters = inet:127.0.0.1:8891" || true
   else
-    echo "OpenDKIM milter is not ready; disabling Postfix milter to avoid SMTP 451 tempfail."
+    echo "OpenDKIM key is available for app-side signing; Postfix milter disabled to avoid SMTP 451 tempfail."
     postconf -e "smtpd_milters =" || true
     postconf -e "non_smtpd_milters =" || true
   fi
@@ -539,9 +556,12 @@ mkdir -p x
   echo "SMTP_USER=\"noreply\""
   echo "SMTP_PASS=\"${SMTP_PASSWORD}\""
   echo "MAIL_FROM=\"noreply@${MAIL_DOMAIN}\""
+  echo "MAIL_INLINE_LOGO=\"false\""
   echo "MAIL_FROM_NAME=\"Tiwlo\""
   echo "MAIL_REPLY_TO=\"${EMAIL:-support@${MAIL_DOMAIN}}\""
   echo "TIWLO_DKIM_SELECTOR=\"${TIWLO_DKIM_SELECTOR:-tiwlo}\""
+  echo "TIWLO_DKIM_DOMAIN=\"${MAIL_DOMAIN}\""
+  echo "TIWLO_DKIM_PRIVATE_KEY_PATH=\"/etc/opendkim/keys/${MAIL_DOMAIN}/${TIWLO_DKIM_SELECTOR:-tiwlo}.private\""
   if [ -n "$DKIM_PUBLIC_KEY" ]; then
     echo "TIWLO_DKIM_PUBLIC_KEY=\"${DKIM_PUBLIC_KEY}\""
   fi

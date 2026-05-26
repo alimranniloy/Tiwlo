@@ -1,7 +1,7 @@
 import nodemailer from 'nodemailer';
 import dns from 'node:dns/promises';
 import net from 'node:net';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -294,8 +294,56 @@ function createTransporter(config) {
     },
     connectionTimeout: SMTP_TIMEOUT_MS,
     greetingTimeout: SMTP_TIMEOUT_MS,
-    socketTimeout: SMTP_TIMEOUT_MS
+    socketTimeout: SMTP_TIMEOUT_MS,
+    ...dkimTransportOptions(config)
   });
+}
+
+function dkimPrivateKeyFromEnv() {
+  const rawKey = process.env.TIWLO_DKIM_PRIVATE_KEY || process.env.DKIM_PRIVATE_KEY || '';
+  if (rawKey) {
+    if (/-----BEGIN [A-Z ]+PRIVATE KEY-----/.test(rawKey)) return rawKey.replace(/\\n/g, '\n');
+    try {
+      const decoded = Buffer.from(rawKey, 'base64').toString('utf8');
+      if (/-----BEGIN [A-Z ]+PRIVATE KEY-----/.test(decoded)) return decoded;
+    } catch {
+      // Fall through to path-based key lookup.
+    }
+  }
+
+  const rawBase64 = process.env.TIWLO_DKIM_PRIVATE_KEY_BASE64 || process.env.DKIM_PRIVATE_KEY_BASE64 || '';
+  if (rawBase64) {
+    try {
+      const decoded = Buffer.from(rawBase64, 'base64').toString('utf8');
+      if (/-----BEGIN [A-Z ]+PRIVATE KEY-----/.test(decoded)) return decoded;
+    } catch {
+      // Fall through to path-based key lookup.
+    }
+  }
+
+  const keyPath = process.env.TIWLO_DKIM_PRIVATE_KEY_PATH || process.env.DKIM_PRIVATE_KEY_PATH || '';
+  if (keyPath && existsSync(keyPath)) {
+    try {
+      return readFileSync(keyPath, 'utf8');
+    } catch {
+      return '';
+    }
+  }
+  return '';
+}
+
+function dkimTransportOptions(config = {}) {
+  const privateKey = dkimPrivateKeyFromEnv();
+  const keySelector = process.env.TIWLO_DKIM_SELECTOR || process.env.DKIM_SELECTOR || '';
+  const domainName = cleanMailBaseDomain(process.env.TIWLO_DKIM_DOMAIN || process.env.DKIM_DOMAIN || domainFromMailConfig(config));
+  if (!privateKey || !keySelector || !domainName) return {};
+  return {
+    dkim: {
+      domainName,
+      keySelector,
+      privateKey
+    }
+  };
 }
 
 function smtpEnvelopeFrom(config = {}) {
@@ -331,6 +379,7 @@ function deliveryMessage(config, message, { forceSafeFrom = false } = {}) {
 }
 
 function emailLogoAttachment() {
+  if (!booleanValue(process.env.MAIL_INLINE_LOGO, false)) return null;
   const candidates = [
     process.env.MAIL_LOGO_PATH,
     resolve(repoRoot, 'public', 'brand', 'icon.png'),
@@ -343,6 +392,35 @@ function emailLogoAttachment() {
     path: logoPath,
     cid: EMAIL_LOGO_CID,
     contentDisposition: 'inline'
+  };
+}
+
+function emailLogoSrc(origin = appOrigin()) {
+  const configured = String(process.env.MAIL_LOGO_URL || '').trim();
+  if (configured) return configured;
+  if (booleanValue(process.env.MAIL_INLINE_LOGO, false) && emailLogoAttachment()) return `cid:${EMAIL_LOGO_CID}`;
+  return `${String(origin || appOrigin()).replace(/\/$/, '')}/favicon.ico`;
+}
+
+function stripHtml(value = '') {
+  return String(value || '')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function policySafeMessage(message, headers = {}) {
+  const text = message.text || stripHtml(message.html) || message.subject || 'Tiwlo notification';
+  return {
+    to: message.to,
+    subject: message.subject,
+    text,
+    headers: {
+      ...headers,
+      'X-Tiwlo-Safe-Retry': 'plain-message'
+    }
   };
 }
 
@@ -539,14 +617,32 @@ async function deliverEmail(config, message) {
     } catch (error) {
       const envelopeFrom = smtpEnvelopeFrom(config);
       const requestedFrom = extractEmailAddress(message.from || config.fromEmail || '');
+      if (!isMessagePolicyFailure(error)) {
+        throw error;
+      }
+      if (!isTemporaryMessagePolicyFailure(error) && (!requestedFrom || requestedFrom === envelopeFrom)) {
+        throw error;
+      }
+      let lastError = error;
+      const retryMessages = [
+        preparedMessage,
+        ...(logo ? [{ ...message, headers: { ...headers, 'X-Tiwlo-Safe-Retry': 'no-inline-logo' }, attachments: Array.isArray(message.attachments) ? message.attachments : [] }] : []),
+        policySafeMessage(message, headers)
+      ];
       if (isTemporaryMessagePolicyFailure(error)) {
         await delay(1200);
-        await transporter.sendMail(deliveryMessage(config, preparedMessage, { forceSafeFrom: true }));
-      } else if (!isMessagePolicyFailure(error) || !requestedFrom || requestedFrom === envelopeFrom) {
-        throw error;
-      } else {
-        await transporter.sendMail(deliveryMessage(config, preparedMessage, { forceSafeFrom: true }));
       }
+      for (const retryMessage of retryMessages) {
+        try {
+          await transporter.sendMail(deliveryMessage(config, retryMessage, { forceSafeFrom: true }));
+          return { sent: true, advice: emailServerAdvice(config) };
+        } catch (retryError) {
+          lastError = retryError;
+          if (!isMessagePolicyFailure(retryError)) throw retryError;
+          if (isTemporaryMessagePolicyFailure(retryError)) await delay(800);
+        }
+      }
+      throw lastError;
     }
   } finally {
     transporter.close();
@@ -759,6 +855,7 @@ export async function testTiwloEmail(ctxOrPrisma, input = {}) {
 
 function brandedHtml({ title, preview, bodyHtml }) {
   const origin = appOrigin().replace(/\/$/, '');
+  const logoSrc = emailLogoSrc(origin);
   return `
     <div style="margin:0;padding:0;background:#eef3fb;font-family:Arial,Helvetica,sans-serif;color:#111827;">
       <div style="display:none;max-height:0;overflow:hidden;opacity:0;">${escapeHtml(preview || title)}</div>
@@ -771,7 +868,7 @@ function brandedHtml({ title, preview, bodyHtml }) {
                   <table role="presentation" cellspacing="0" cellpadding="0">
                     <tr>
                       <td width="44" height="44" style="width:44px;height:44px;border-radius:10px;background:#ffffff;text-align:center;vertical-align:middle;">
-                        <img src="cid:${EMAIL_LOGO_CID}" width="28" height="28" alt="Tiwlo" style="display:inline-block;border:0;outline:none;text-decoration:none;vertical-align:middle;">
+                        <img src="${escapeHtml(logoSrc)}" width="28" height="28" alt="Tiwlo" style="display:inline-block;border:0;outline:none;text-decoration:none;vertical-align:middle;">
                       </td>
                       <td style="padding-left:12px;">
                         <div style="font-size:18px;line-height:1.2;font-weight:800;color:#ffffff;">Tiwlo</div>
