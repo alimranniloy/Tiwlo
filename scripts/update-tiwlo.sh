@@ -66,6 +66,36 @@ install_system_ssl_stack() {
   run_sudo systemctl enable --now certbot.timer >/dev/null 2>&1 || true
 }
 
+install_system_powerdns_stack() {
+  echo "Preparing Tiwlo PowerDNS packages..."
+  if command -v apt-get >/dev/null 2>&1; then
+    run_sudo env DEBIAN_FRONTEND=noninteractive apt-get update >/dev/null 2>&1 || true
+    run_sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y \
+      pdns-server pdns-backend-pgsql dnsutils >/dev/null 2>&1 || true
+    run_sudo mkdir -p /etc/powerdns/pdns.d
+    cat <<PDNS | run_sudo tee /etc/powerdns/pdns.d/tiwlo-pgsql.conf >/dev/null
+launch=gpgsql
+gpgsql-host=127.0.0.1
+gpgsql-port=5432
+gpgsql-dbname=tiwlo
+gpgsql-user=postgres
+gpgsql-password=postgres
+gpgsql-dnssec=yes
+local-address=0.0.0.0,::
+local-port=53
+webserver=no
+PDNS
+    run_sudo chmod 640 /etc/powerdns/pdns.d/tiwlo-pgsql.conf >/dev/null 2>&1 || true
+  elif command -v dnf >/dev/null 2>&1; then
+    run_sudo dnf install -y pdns pdns-backend-postgresql bind-utils >/dev/null 2>&1 || true
+  elif command -v yum >/dev/null 2>&1; then
+    run_sudo yum install -y pdns pdns-backend-postgresql bind-utils >/dev/null 2>&1 || true
+  fi
+  run_sudo ufw allow 53/tcp >/dev/null 2>&1 || true
+  run_sudo ufw allow 53/udp >/dev/null 2>&1 || true
+  run_sudo systemctl enable --now pdns >/dev/null 2>&1 || true
+}
+
 set_env_value() {
   local file="$1"
   local key="$2"
@@ -91,9 +121,11 @@ git pull --ff-only
 
 install_system_email_stack
 install_system_ssl_stack
+install_system_powerdns_stack
 
 echo "Preparing production GraphQL routing..."
 set_env_value "$ROOT/.env" VITE_GRAPHQL_URL "${FRONTEND_GRAPHQL_URL:-/graphql}"
+set_env_value "$ROOT/x/.env" POWERDNS_MODE "pgsql"
 if [ -n "${FRONTEND_ORIGIN:-}" ]; then
   set_env_value "$ROOT/.env" APP_URL "$FRONTEND_ORIGIN"
   set_env_value "$ROOT/x/.env" FRONTEND_ORIGIN "$FRONTEND_ORIGIN"

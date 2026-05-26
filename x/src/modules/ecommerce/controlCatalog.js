@@ -227,7 +227,7 @@ export const ECOMMERCE_CONTROL_SECTIONS = [
   {
     key: 'ecommerce.domains',
     group: 'INFRASTRUCTURE',
-    label: 'Domain Reseller',
+    label: 'Store Domains',
     path: '/management/ecommerce/domains',
     description: 'Store domain mapping, registrar automation, DNS readiness, and renewal state.',
     source: 'domains',

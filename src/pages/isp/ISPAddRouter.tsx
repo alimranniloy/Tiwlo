@@ -437,7 +437,7 @@ export default function ISPAddRouter() {
                             <span className="text-gray-600 font-bold">Waiting...</span>
                           </div>
                           <div className="flex items-center justify-between text-xs pt-2">
-                             <span className="text-gray-500 italic text-[10px]">Cloudflare Edge detected...</span>
+                             <span className="text-gray-500 italic text-[10px]">PowerDNS route queued...</span>
                           </div>
                         </div>
                       </div>

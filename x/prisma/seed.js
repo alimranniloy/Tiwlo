@@ -726,7 +726,9 @@ async function main() {
     ['admin.pricing', 'main-admin', 'Pricing/Plans', '/billing', 'Plan catalog for cloud, ecommerce, and ISP products.'],
     ['admin.tax', 'main-admin', 'Tax Configuration', '/management/core', 'VAT, sales tax, invoice numbering, and region rules.'],
     ['admin.store-products', 'main-admin', 'Store Products', '/apps', 'Marketplace products, apps, and extensions.'],
-    ['admin.domain-reseller', 'main-admin', 'Domain Reseller', '/management/domains', 'Domain availability, registrar settings, DNS, SSL.'],
+    ['admin.powerdns-zones', 'main-admin', 'PowerDNS Zones', '/management/dns', 'Authoritative DNS zones, records, sync state, and SSL automation.'],
+    ['admin.powerdns-hostnames', 'main-admin', 'Hostnames', '/management/dns/hostnames', 'Glue-style hostnames and service records pointing to managed servers.'],
+    ['admin.powerdns-nameservers', 'main-admin', 'Nameservers', '/management/dns/nameservers', 'Primary domain, nameservers, SOA, and server IP settings.'],
     ['admin.cloud-templates', 'main-admin', 'Cloud Templates', '/marketplace', 'Server images, templates, app blueprints.'],
     ['admin.addons', 'main-admin', 'System Addons', '/management/plugins', 'Plugin catalog, install state, and compatibility.'],
     ['admin.compute-nodes', 'main-admin', 'Compute Nodes', '/management/servers', 'Physical/virtual node onboarding, region, health.'],
@@ -753,7 +755,7 @@ async function main() {
     ['ecommerce.campaigns', 'ecommerce-admin', 'Campaign Manager', '/management/ecommerce/campaigns', 'Email, coupon, retargeting campaign controls.'],
     ['ecommerce.seo', 'ecommerce-admin', 'SEO Platform', '/management/ecommerce/seo', 'Sitemap, meta, redirects, search indexing.'],
     ['ecommerce.cdn', 'ecommerce-admin', 'Asset CDN', '/management/ecommerce/cdn', 'Media CDN, image transforms, cache purge.'],
-    ['ecommerce.domains', 'ecommerce-admin', 'Domain Reseller', '/management/ecommerce/domains', 'Store domain mapping and SSL automation.'],
+    ['ecommerce.domains', 'ecommerce-admin', 'Store Domains', '/management/ecommerce/domains', 'Store domain mapping and SSL automation.'],
     ['ecommerce.themes', 'ecommerce-admin', 'Theme Directory', '/management/ecommerce/themes', 'Theme catalog, install, preview, publish.'],
     ['ecommerce.apps', 'ecommerce-admin', 'Extension Hub', '/management/ecommerce/apps', 'Store app/plugin marketplace.'],
     ['ecommerce.support', 'ecommerce-admin', 'Merchant Support', '/management/ecommerce/support', 'Merchant support tickets and SLA.'],
@@ -947,7 +949,7 @@ async function main() {
   }
 
   const integrations = [
-    { key: 'cloudflare-dns', group: 'domain', name: 'Cloudflare DNS', status: 'active', config: { zones: true, ssl: true }, health: { state: 'ok' } },
+    { key: 'powerdns-authoritative', group: 'domain', name: 'PowerDNS Authoritative DNS', status: 'active', config: { zones: true, ssl: true, provider: 'powerdns' }, health: { state: 'ok' } },
     { key: 'registrar-reseller', group: 'domain', name: 'Domain Registrar Reseller', status: 'active', config: { tlds: ['com', 'net', 'org', 'io', 'app'] }, health: { state: 'ok' } },
     { key: 'smtp-mail', group: 'notification', name: 'Transactional Email', status: 'active', config: { provider: 'smtp' }, health: { state: 'ok' } },
     { key: 'sms-gateway', group: 'notification', name: 'SMS Gateway', status: 'inactive', config: { provider: 'generic' }, health: { state: 'pending' } },

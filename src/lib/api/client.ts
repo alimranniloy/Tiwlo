@@ -54,8 +54,15 @@ export const resourceFields = `
 
 export const domainFields = `
   id
+  ownerId
   name
   dns
+  status
+  records
+  autoRenew
+  expiresAt
+  createdAt
+  updatedAt
 `;
 
 export const moduleFields = `

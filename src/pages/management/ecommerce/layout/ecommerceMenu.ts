@@ -84,7 +84,7 @@ export const ecommerceMenuSections: EcommerceMenuSection[] = [
       { name: 'DB Clusters', icon: Database, path: '/management/ecommerce/databases' },
       { name: 'Storage Pools', icon: HardDrive, path: '/management/ecommerce/storage' },
       { name: 'Asset CDN', icon: Network, path: '/management/ecommerce/cdn' },
-      { name: 'Domain Reseller', icon: Globe, path: '/management/ecommerce/domains' },
+      { name: 'Store Domains', icon: Globe, path: '/management/ecommerce/domains' },
       { name: 'Edge Nodes', icon: Network, path: '/management/ecommerce/nodes' },
       { name: 'SSL Manager', icon: Lock, path: '/management/ecommerce/ssl' }
     ]

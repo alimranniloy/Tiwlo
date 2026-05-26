@@ -102,10 +102,17 @@ export default function Sidebar({ user, isOpen, setIsOpen, onLogout }: SidebarPr
         label: 'SERVICES & PRODUCTS',
         items: [
           { name: 'Store Products', icon: ShoppingBag, path: '/management/store-products' },
-          { name: 'Domain Reseller', icon: Globe, path: '/management/domains' },
           { name: 'tPanel', icon: Server, path: '/management/tpanel' },
           { name: 'Cloud Templates', icon: LayoutGrid, path: '/management/cloud-templates' },
           { name: 'System Addons', icon: Puzzle, path: '/management/plugins' },
+        ]
+      },
+      {
+        label: 'DNS',
+        items: [
+          { name: 'PowerDNS Zones', icon: Globe, path: '/management/dns' },
+          { name: 'Hostnames', icon: Server, path: '/management/dns/hostnames' },
+          { name: 'Nameservers', icon: Network, path: '/management/dns/nameservers' },
         ]
       },
       {
@@ -149,7 +156,7 @@ export default function Sidebar({ user, isOpen, setIsOpen, onLogout }: SidebarPr
         label: 'NETWORKING',
         items: [
           { name: 'Networking', icon: Network, path: '/networking' },
-          { name: 'Domains', icon: Globe, path: '/domains' },
+          { name: 'DNS', icon: Globe, path: '/dns' },
           { name: 'Firewalls', icon: ShieldCheck, path: '/firewalls' },
         ]
       },

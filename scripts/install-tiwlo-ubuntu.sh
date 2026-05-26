@@ -41,6 +41,25 @@ ensure_system_postgres_database() {
   fi
 }
 
+configure_powerdns() {
+  step "Configuring PowerDNS authoritative service"
+  mkdir -p /etc/powerdns/pdns.d
+  cat >/etc/powerdns/pdns.d/tiwlo-pgsql.conf <<PDNS
+launch=gpgsql
+gpgsql-host=127.0.0.1
+gpgsql-port=5432
+gpgsql-dbname=tiwlo
+gpgsql-user=postgres
+gpgsql-password=postgres
+gpgsql-dnssec=yes
+local-address=0.0.0.0,::
+local-port=53
+webserver=no
+PDNS
+  chmod 640 /etc/powerdns/pdns.d/tiwlo-pgsql.conf || true
+  systemctl enable --now pdns >/dev/null 2>&1 || true
+}
+
 server_ip() {
   if have curl; then
     curl -fsS --max-time 5 https://api.ipify.org 2>/dev/null && return 0
@@ -70,10 +89,12 @@ apt-get update
 apt-get install -y \
   sudo git curl wget ca-certificates xz-utils build-essential python3 make g++ \
   postgresql postgresql-contrib nginx ufw certbot python3-certbot-nginx \
+  pdns-server pdns-backend-pgsql dnsutils \
   postfix dovecot-imapd dovecot-pop3d roundcube roundcube-core roundcube-pgsql \
   opendkim opendkim-tools mailutils cron openssl
-systemctl enable --now postgresql nginx postfix dovecot opendkim certbot.timer >/dev/null 2>&1 || true
+systemctl enable --now postgresql nginx postfix dovecot opendkim certbot.timer pdns >/dev/null 2>&1 || true
 ensure_system_postgres_database
+configure_powerdns
 
 step "Configuring system email services"
 MAIL_DOMAIN="${DOMAIN:-tiwlo.local}"
@@ -127,6 +148,9 @@ mkdir -p x
   echo "MAIL_FROM=\"noreply@${MAIL_DOMAIN}\""
   echo "MAIL_FROM_NAME=\"Tiwlo\""
   echo "MAIL_REPLY_TO=\"${EMAIL:-support@${MAIL_DOMAIN}}\""
+  echo "POWERDNS_MODE=\"pgsql\""
+  echo "POWERDNS_SERVER_IP=\"${PUBLIC_IP:-}\""
+  echo "APP_DOMAIN=\"${DOMAIN:-tiwlo.com}\""
 } >> x/.env
 bash ./scripts/start-tiwlo.sh
 
@@ -216,6 +240,8 @@ ufw allow 25/tcp >/dev/null 2>&1 || true
 ufw allow 465/tcp >/dev/null 2>&1 || true
 ufw allow 587/tcp >/dev/null 2>&1 || true
 ufw allow 993/tcp >/dev/null 2>&1 || true
+ufw allow 53/tcp >/dev/null 2>&1 || true
+ufw allow 53/udp >/dev/null 2>&1 || true
 ufw --force enable >/dev/null 2>&1 || true
 
 if [ -n "$DOMAIN" ] && ! is_ip_address "$DOMAIN"; then
@@ -246,6 +272,7 @@ systemctl is-enabled tiwlo-backend tiwlo-frontend >/dev/null
 echo
 echo "Tiwlo install complete."
 echo "Website: ${PUBLIC_ORIGIN}"
+echo "Nameservers: ns1.${MAIL_DOMAIN} / ns2.${MAIL_DOMAIN} (point registrar glue to ${PUBLIC_IP:-this server})"
 echo "Tiwlo Mail: https://email.${MAIL_DOMAIN} (point email.${MAIL_DOMAIN} and mail.${MAIL_DOMAIN} DNS to this server)"
 echo "Backend: http://127.0.0.1:${BACKEND_PORT}/graphql"
 echo "Auto-start: systemd services tiwlo-backend and tiwlo-frontend are enabled."

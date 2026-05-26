@@ -22,6 +22,7 @@ import { initializeAiModelRuntime, streamAiModelChat } from './modules/ai-model/
 import { streamSupportAiReply } from './modules/support/service.js';
 import { registerSystemToolRoutes, startBackupAutomation, startSslAutomation } from './modules/system-tools/service.js';
 import { registerTPanelRoutes } from './modules/tpanel/service.js';
+import { startPowerDnsAutomation } from './modules/powerdns/service.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -294,6 +295,7 @@ app.listen(port, () => {
   console.log(`Tiwlo X GraphQL API ready at http://localhost:${port}/graphql`);
   startBackupAutomation({ prisma, rootDir: join(__dirname, '../..') });
   startSslAutomation({ prisma, rootDir: join(__dirname, '../..') });
+  startPowerDnsAutomation({ prisma });
   initializeAiModelRuntime({ prisma }).catch((error) => {
     console.error('AI model auto-start failed:', error.message || error);
   });

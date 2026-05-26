@@ -148,11 +148,11 @@ step "Installing runtime packages"
 if have apt-get; then
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -y
-  apt-get install -y git curl wget ca-certificates openssl xz-utils nginx ufw certbot python3 python3-certbot-nginx build-essential php-fpm php-cli php-mysql php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache mariadb-server bind9 dnsutils postfix dovecot-core dovecot-imapd dovecot-pop3d opendkim opendkim-tools rspamd mailutils libsasl2-modules unzip tar rsync logrotate cron acl || true
+  apt-get install -y git curl wget ca-certificates openssl xz-utils nginx ufw certbot python3 python3-certbot-nginx build-essential php-fpm php-cli php-mysql php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache mariadb-server pdns-server pdns-backend-mysql dnsutils postfix dovecot-core dovecot-imapd dovecot-pop3d opendkim opendkim-tools rspamd mailutils libsasl2-modules unzip tar rsync logrotate cron acl || true
 elif have dnf; then
-  dnf install -y git curl wget ca-certificates openssl xz nginx firewalld certbot python3 python3-certbot-nginx gcc gcc-c++ make php-fpm php-cli php-mysqlnd php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache mariadb-server bind bind-utils postfix dovecot opendkim opendkim-tools rspamd mailx cyrus-sasl cyrus-sasl-plain unzip tar rsync logrotate cronie acl || true
+  dnf install -y git curl wget ca-certificates openssl xz nginx firewalld certbot python3 python3-certbot-nginx gcc gcc-c++ make php-fpm php-cli php-mysqlnd php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache mariadb-server pdns pdns-backend-mysql bind-utils postfix dovecot opendkim opendkim-tools rspamd mailx cyrus-sasl cyrus-sasl-plain unzip tar rsync logrotate cronie acl || true
 elif have yum; then
-  yum install -y git curl wget ca-certificates openssl xz nginx firewalld certbot python3 python3-certbot-nginx gcc gcc-c++ make php-fpm php-cli php-mysqlnd php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache mariadb-server bind bind-utils postfix dovecot opendkim opendkim-tools rspamd mailx cyrus-sasl cyrus-sasl-plain unzip tar rsync logrotate cronie acl || true
+  yum install -y git curl wget ca-certificates openssl xz nginx firewalld certbot python3 python3-certbot-nginx gcc gcc-c++ make php-fpm php-cli php-mysqlnd php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache mariadb-server pdns pdns-backend-mysql bind-utils postfix dovecot opendkim opendkim-tools rspamd mailx cyrus-sasl cyrus-sasl-plain unzip tar rsync logrotate cronie acl || true
 else
   echo "Unsupported Linux package manager. Install git, curl, xz, and nginx, then rerun."
   exit 1
@@ -530,7 +530,7 @@ ln -sf /usr/local/sbin/tpanel-license-renew /usr/local/sbin/tpanel-license-statu
 systemctl daemon-reload
 systemctl enable --now nginx >/dev/null 2>&1 || true
 systemctl enable --now mariadb >/dev/null 2>&1 || systemctl enable --now mysql >/dev/null 2>&1 || true
-systemctl enable --now bind9 >/dev/null 2>&1 || systemctl enable --now named >/dev/null 2>&1 || true
+systemctl enable --now pdns >/dev/null 2>&1 || true
 systemctl enable --now postfix >/dev/null 2>&1 || true
 systemctl enable --now dovecot >/dev/null 2>&1 || true
 systemctl enable --now opendkim >/dev/null 2>&1 || true

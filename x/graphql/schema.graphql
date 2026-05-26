@@ -135,6 +135,38 @@ type DnsRecord {
   updatedAt: String
 }
 
+type PowerDnsConfig {
+  primaryDomain: String!
+  serverIp: String!
+  nameservers: JSON!
+  soaEmail: String!
+  automationEnabled: Boolean!
+  dnssecEnabled: Boolean!
+  installPackage: Boolean!
+  provider: String!
+  updatedAt: String
+}
+
+type PowerDnsHostname {
+  id: ID!
+  hostname: String!
+  target: String
+  ipAddress: String
+  recordType: String!
+  ttl: Int!
+  status: String!
+  notes: String
+  createdAt: String
+  updatedAt: String
+}
+
+type PowerDnsSyncResult {
+  ok: Boolean!
+  zones: Int!
+  records: Int!
+  message: String!
+}
+
 type Plan {
   id: ID!
   code: String!
@@ -1564,6 +1596,46 @@ input DnsRecordInput {
   metadata: JSON
 }
 
+input UpdateDomainInput {
+  id: ID!
+  name: String
+  dns: JSON
+  status: String
+  records: JSON
+  autoRenew: Boolean
+}
+
+input UpdateDnsRecordInput {
+  id: ID!
+  type: String
+  name: String
+  value: String
+  ttl: Int
+  priority: Int
+  status: String
+  metadata: JSON
+}
+
+input PowerDnsConfigInput {
+  primaryDomain: String
+  serverIp: String
+  nameservers: JSON
+  soaEmail: String
+  automationEnabled: Boolean
+  dnssecEnabled: Boolean
+}
+
+input PowerDnsHostnameInput {
+  id: ID
+  hostname: String!
+  target: String
+  ipAddress: String
+  recordType: String
+  ttl: Int
+  status: String
+  notes: String
+}
+
 input CreateSupportTicketInput {
   subject: String!
   category: String!
@@ -2367,6 +2439,9 @@ type Query {
   notifications(scope: String, status: String, type: String): [Notification!]!
   systemServers: [CloudResource!]!
   dnsRecords(domainId: ID!): [DnsRecord!]!
+  powerDnsConfig: PowerDnsConfig!
+  powerDnsHostnames(search: String): [PowerDnsHostname!]!
+  powerDnsStatus: PowerDnsSyncResult!
 
   stores(status: String, search: String, page: Int, limit: Int): [Store!]!
   store(id: ID, slug: String): Store
@@ -2438,9 +2513,15 @@ type Mutation {
   upsertPlan(input: UpsertPlanInput!): Plan!
   deletePlan(id: ID!): Boolean!
   registerDomain(input: RegisterDomainInput!): Domain!
+  updateDomain(input: UpdateDomainInput!): Domain!
   addDnsRecord(input: DnsRecordInput!): Domain!
+  updateDnsRecord(input: UpdateDnsRecordInput!): DnsRecord!
   deleteDnsRecord(id: ID!): Boolean!
   deleteDomain(id: ID!): Boolean!
+  updatePowerDnsConfig(input: PowerDnsConfigInput!): PowerDnsConfig!
+  upsertPowerDnsHostname(input: PowerDnsHostnameInput!): PowerDnsHostname!
+  deletePowerDnsHostname(id: ID!): Boolean!
+  syncPowerDns: PowerDnsSyncResult!
   createSupportTicket(input: CreateSupportTicketInput!): SupportTicket!
   replySupportTicket(id: ID!, input: SupportTicketReplyInput!): SupportTicketMessage!
   assignSupportTicket(id: ID!, assigneeId: ID): SupportTicket!

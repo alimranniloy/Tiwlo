@@ -1,6 +1,6 @@
 import React from 'react';
-import { Settings, Cpu, HardDrive, Database, LifeBuoy, Save, AlertCircle } from 'lucide-react';
-import { fetchSettingsWithApi, upsertSettingWithApi } from '../../lib/tiwloApi';
+import { Settings, Cpu, HardDrive, Database, LifeBuoy, Save, AlertCircle, Globe2 } from 'lucide-react';
+import { fetchPowerDnsConfigWithApi, fetchSettingsWithApi, updatePowerDnsConfigWithApi, upsertSettingWithApi } from '../../lib/tiwloApi';
 import DdosProtectionPanel from './DdosProtectionPanel';
 
 export default function AdminCore() {
@@ -10,6 +10,9 @@ export default function AdminCore() {
   const [maintenanceMode, setMaintenanceMode] = React.useState(false);
   const [supportAppId, setSupportAppId] = React.useState('');
   const [chatWidget, setChatWidget] = React.useState(false);
+  const [primaryDomain, setPrimaryDomain] = React.useState('');
+  const [serverIp, setServerIp] = React.useState('');
+  const [nameserversText, setNameserversText] = React.useState('');
   const [error, setError] = React.useState('');
   const [saved, setSaved] = React.useState(false);
 
@@ -25,6 +28,13 @@ export default function AdminCore() {
         setChatWidget(Boolean((byKey.supportIntegration as any)?.chatWidget));
       })
       .catch((err) => setError(err instanceof Error ? err.message : 'Unable to load settings'));
+    fetchPowerDnsConfigWithApi()
+      .then((config) => {
+        setPrimaryDomain(config.primaryDomain || '');
+        setServerIp(config.serverIp || '');
+        setNameserversText((config.nameservers || []).join('\n'));
+      })
+      .catch(() => {});
   }, []);
 
   const saveSettings = async () => {
@@ -33,6 +43,11 @@ export default function AdminCore() {
     try {
       await Promise.all([
         upsertSettingWithApi({ scope: 'platform', key: 'resourceLimits', value: { maxDroplets, maxVolumes } }),
+        updatePowerDnsConfigWithApi({
+          primaryDomain,
+          serverIp,
+          nameservers: nameserversText.split(/\s+/).map((item) => item.trim()).filter(Boolean)
+        }),
         upsertSettingWithApi({
           scope: 'platform',
           key: 'accountCreditPolicy',
@@ -85,6 +100,31 @@ export default function AdminCore() {
                        <label className="text-[12px] font-bold text-[#4a4a4a] uppercase tracking-wider">Max Volumes / User</label>
                        <input type="number" value={maxVolumes} onChange={(event) => setMaxVolumes(Number(event.target.value || 0))} className="w-full bg-[#f8f9fa] border border-[#e5e8ed] rounded px-4 py-2 text-[14px] focus:outline-none focus:border-[#0069ff]" />
                     </div>
+                 </div>
+              </div>
+           </div>
+
+           <div className="h-px bg-[#f3f5f9]"></div>
+
+           <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+              <div>
+                <h3 className="text-[15px] font-bold text-[#2e3d49] mb-1 flex items-center gap-2"><Globe2 className="h-4 w-4 text-blue-600" /> Domain Name</h3>
+                <p className="text-[12px] text-gray-400">Changing this updates platform URLs, PowerDNS nameservers, generated store domains, ISP hostnames, and SSL automation.</p>
+              </div>
+              <div className="md:col-span-2 space-y-4">
+                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                    <div className="space-y-2">
+                       <label className="text-[12px] font-bold text-[#4a4a4a] uppercase tracking-wider">Primary Domain</label>
+                       <input value={primaryDomain} onChange={(event) => setPrimaryDomain(event.target.value)} placeholder="example.com" className="w-full bg-[#f8f9fa] border border-[#e5e8ed] rounded px-4 py-2 text-[14px] focus:outline-none focus:border-[#0069ff]" />
+                    </div>
+                    <div className="space-y-2">
+                       <label className="text-[12px] font-bold text-[#4a4a4a] uppercase tracking-wider">Server IP</label>
+                       <input value={serverIp} onChange={(event) => setServerIp(event.target.value)} placeholder="203.0.113.10" className="w-full bg-[#f8f9fa] border border-[#e5e8ed] rounded px-4 py-2 text-[14px] focus:outline-none focus:border-[#0069ff]" />
+                    </div>
+                 </div>
+                 <div className="space-y-2">
+                    <label className="text-[12px] font-bold text-[#4a4a4a] uppercase tracking-wider">Nameservers</label>
+                    <textarea value={nameserversText} onChange={(event) => setNameserversText(event.target.value)} rows={3} className="w-full bg-[#f8f9fa] border border-[#e5e8ed] rounded px-4 py-2 font-mono text-[12px] focus:outline-none focus:border-[#0069ff]" />
                  </div>
               </div>
            </div>

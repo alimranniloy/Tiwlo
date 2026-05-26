@@ -281,19 +281,22 @@ Install and enable the SSL stack:
 
 ```bash
 sudo apt update
-sudo apt install -y certbot python3-certbot-nginx ca-certificates openssl cron
+sudo apt install -y certbot python3-certbot-nginx ca-certificates openssl cron pdns-server pdns-backend-pgsql dnsutils
 sudo ufw allow 80/tcp
 sudo ufw allow 443/tcp
+sudo ufw allow 53/tcp
+sudo ufw allow 53/udp
 sudo systemctl enable --now certbot.timer
+sudo systemctl enable --now pdns
 ```
 
-For normal domains and known subdomains, Tiwlo uses Certbot HTTP-01 through Nginx:
+For normal domains and known subdomains, Tiwlo writes authoritative A/AAAA/CNAME/MX/TXT records into PowerDNS, then uses Certbot HTTP-01 through Nginx:
 
 ```bash
 sudo certbot --nginx -d tiwlo.com -d www.tiwlo.com -d email.tiwlo.com -d mail.tiwlo.com --redirect
 ```
 
-Wildcard SSL for `*.tiwlo.com` is different. Let's Encrypt wildcard certificates require DNS-01 TXT validation. Fully automatic wildcard renewals need a DNS provider API token or a delegated ACME DNS zone. If you do not want to use Cloudflare/API credentials, Tiwlo can automatically issue real SSL for explicit subdomains such as `email.tiwlo.com`, `mail.tiwlo.com`, and mapped store domains, but it cannot safely auto-renew a wildcard certificate. The SSL page shows this as a wildcard warning instead of pretending it worked.
+Wildcard SSL for `*.tiwlo.com` is different. Let's Encrypt wildcard certificates require DNS-01 TXT validation. Tiwlo now manages explicit subdomain certificates automatically through PowerDNS; keep wildcard mode off unless a PowerDNS ACME hook is configured for DNS-01 TXT validation.
 
 If the SSL page reports an error:
 
@@ -301,7 +304,7 @@ If the SSL page reports an error:
 - Port 80 blocked: open `80/tcp` in UFW, provider firewall, and any upstream firewall.
 - Nginx server name error: add the domain to the Tiwlo Nginx `server_name`, run `sudo nginx -t`, then `sudo systemctl reload nginx`.
 - HTTPS certificate mismatch: port `443` is open, but Nginx is serving a certificate that does not include that hostname. Reissue SSL for that hostname from Management -> SSL or run the Certbot command with every hostname.
-- Cloudflare proxy warning: HTTP-01 can work only if Cloudflare forwards port 80 to the origin. Keep mail hosts DNS only.
+- Proxy warning: HTTP-01 works best when PowerDNS A/AAAA records point directly to this server.
 - Rate limit: enable test mode first, or wait before retrying production issuance.
 
 Quick checks:
@@ -331,7 +334,7 @@ tiwlo.com       MX    10 mail.tiwlo.com
 tiwlo.com       TXT   "v=spf1 ip4:153.75.245.4 -all"
 ```
 
-Keep mail records as **DNS only** in Cloudflare. Do not proxy SMTP/IMAP through the orange cloud; Cloudflare only proxies web ports. `email.tiwlo.com` can be the Tiwlo Mail web login, while `mail.tiwlo.com` should be the SMTP/IMAP host. If both MX records point to the same server it can still work, but `mail.tiwlo.com` as the single MX is cleaner.
+Keep mail records authoritative in PowerDNS and point them directly to the mail server. `email.tiwlo.com` can be the Tiwlo Mail web login, while `mail.tiwlo.com` should be the SMTP/IMAP host. If both MX records point to the same server it can still work, but `mail.tiwlo.com` as the single MX is cleaner.
 
 Required mail ports on the VPS firewall and provider firewall:
 

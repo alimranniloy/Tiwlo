@@ -19,6 +19,7 @@ import { aiModelResolvers } from './modules/ai-model/resolvers.js';
 import { tiwloPayResolvers } from './modules/tiwlo-pay/resolvers.js';
 import { tPanelResolvers } from './modules/tpanel/resolvers.js';
 import { emailResolvers } from './modules/email/resolvers.js';
+import { powerDnsResolvers } from './modules/powerdns/resolvers.js';
 
 export const resolvers = mergeResolvers(
   authResolvers,
@@ -39,6 +40,7 @@ export const resolvers = mergeResolvers(
   tiwloPayResolvers,
   tPanelResolvers,
   emailResolvers,
+  powerDnsResolvers,
   rbacResolvers,
   notificationResolvers
 );

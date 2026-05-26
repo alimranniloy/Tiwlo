@@ -28,7 +28,7 @@ import {
 } from '../../lib/tiwloApi';
 
 const fallbackConfig: SslConfig = {
-  autoEnabled: false,
+  autoEnabled: true,
   primaryDomain: 'tiwlo.com',
   email: 'admin@tiwlo.com',
   domainsText: 'tiwlo.com\nwww.tiwlo.com\nmail.tiwlo.com\nemail.tiwlo.com',
@@ -347,7 +347,7 @@ export default function AdminSsl() {
           <Server className="h-5 w-5 text-blue-600" />
           <div>
             <h2 className="text-[14px] font-black uppercase text-[#111827]">Domain Diagnostics</h2>
-            <p className="text-[12px] font-medium text-[#6B7280]">DNS address, HTTP challenge port, HTTPS port, and Cloudflare warnings.</p>
+            <p className="text-[12px] font-medium text-[#6B7280]">PowerDNS address, HTTP challenge port, HTTPS port, and proxy warnings.</p>
           </div>
         </div>
         <div className="grid grid-cols-1 gap-3 p-5 lg:grid-cols-2">

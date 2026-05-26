@@ -41,7 +41,7 @@ const DEFAULT_BACKUP_CONFIG = {
   uploadManualToDrive: false
 };
 const DEFAULT_SSL_CONFIG = {
-  autoEnabled: false,
+  autoEnabled: true,
   primaryDomain: 'tiwlo.com',
   email: 'admin@tiwlo.com',
   domainsText: 'tiwlo.com\nwww.tiwlo.com\nmail.tiwlo.com\nemail.tiwlo.com',
@@ -50,7 +50,7 @@ const DEFAULT_SSL_CONFIG = {
   staging: false,
   forceRenewal: false
 };
-const CLOUDFLARE_IPV4_CIDRS = [
+const KNOWN_EDGE_PROXY_IPV4_CIDRS = [
   '173.245.48.0/20',
   '103.21.244.0/22',
   '103.22.200.0/22',
@@ -718,7 +718,7 @@ const ipv4InCidr = (ip, cidr) => {
   return (ipv4ToNumber(ip) & mask) === (ipv4ToNumber(base) & mask);
 };
 
-const isCloudflareAddress = (ip) => CLOUDFLARE_IPV4_CIDRS.some((cidr) => ipv4InCidr(ip, cidr));
+const isKnownEdgeProxyAddress = (ip) => KNOWN_EDGE_PROXY_IPV4_CIDRS.some((cidr) => ipv4InCidr(ip, cidr));
 
 const configuredServerIps = () => {
   const configured = [
@@ -786,8 +786,8 @@ const diagnoseSslDomain = async (domain) => {
     warnings.push(`${domain} resolves to ${addresses.all.join(', ')}, not the configured server IP (${comparableServerIps.join(', ')}).`);
   }
 
-  if (addresses.a.some(isCloudflareAddress)) {
-    warnings.push(`${domain} resolves to Cloudflare proxy IPs. HTTP-01 can work only when Cloudflare forwards port 80 to this server; mail hosts should stay DNS only.`);
+  if (addresses.a.some(isKnownEdgeProxyAddress)) {
+    warnings.push(`${domain} resolves through a third-party proxy range. HTTP-01 works best when PowerDNS A/AAAA records point directly to this server.`);
   }
 
   const [http, https] = addresses.all.length
@@ -826,9 +826,9 @@ const wildcardSslDiagnostic = (wildcardDomains = []) => {
   }
   return {
     requested: true,
-    status: 'blocked_without_dns_automation',
+    status: 'powerdns_dns01_required',
     domains: wildcardDomains,
-    message: "Wildcard Let's Encrypt certificates require DNS-01 TXT validation. Fully automatic renewal needs DNS API automation or a delegated ACME DNS zone; this server is configured to avoid Cloudflare/API tokens, so Tiwlo will not fake wildcard auto-renew."
+    message: "Wildcard Let's Encrypt certificates require DNS-01 TXT validation. Tiwlo now manages explicit subdomain certificates automatically through PowerDNS; wildcard issuance should use the PowerDNS ACME hook before enabling wildcard mode."
   };
 };
 
@@ -838,7 +838,7 @@ const explainCertbotError = (error, domain) => {
     return `${domain}: Nginx has no matching server_name. Add this domain to the Tiwlo Nginx site, reload Nginx, then retry.`;
   }
   if (/unauthorized|invalid response|404|not found/i.test(raw)) {
-    return `${domain}: Let's Encrypt could not read the HTTP challenge. Check DNS, Cloudflare proxy/redirect rules, and port 80 to this server.`;
+    return `${domain}: Let's Encrypt could not read the HTTP challenge. Check PowerDNS A/AAAA records, redirects, and port 80 to this server.`;
   }
   if (/timeout|connection refused|connection reset|no route to host/i.test(raw)) {
     return `${domain}: HTTP validation timed out. Open port 80/443 in VPS firewall, provider firewall, and Nginx.`;
@@ -1109,6 +1109,27 @@ const certbotStatus = async (rootDir, prisma) => {
   };
 };
 
+export const queueSslInstallForDomains = async ({ prisma, domains = [], actor = null, rootDir = fallbackRootDir } = {}) => {
+  const validDomains = Array.from(new Set(domains.map(cleanHost).filter(isValidHost)));
+  if (!validDomains.length || process.platform !== 'linux') return null;
+  const current = await sslConfig(prisma);
+  const domainsText = normalizeDomainListText([
+    current.domainsText,
+    validDomains.join('\n')
+  ].filter(Boolean).join('\n'));
+  const next = sanitizeSslConfig({
+    ...current,
+    autoEnabled: true,
+    includeKnownDomains: true,
+    includeWildcard: false,
+    domainsText
+  });
+  await writeSetting(prisma, SSL_KEY, next).catch(() => {});
+  const job = createJob(sslJobs, 'ssl-auto-domain', { source: 'powerdns', domains: validDomains });
+  runSsl({ prisma, rootDir, job, actor, input: { ...next, mode: 'all' } });
+  return publicJob(job);
+};
+
 export const startBackupAutomation = ({ prisma, rootDir = fallbackRootDir }) => {
   if (autoTimer) clearInterval(autoTimer);
   autoTimer = setInterval(async () => {
@@ -1139,8 +1160,8 @@ export const startSslAutomation = ({ prisma, rootDir = fallbackRootDir }) => {
     const dueAt = lastTime + 24 * 60 * 60 * 1000;
     if (Date.now() < dueAt) return;
     sslAutoRunning = true;
-    const job = createJob(sslJobs, 'ssl-renew', { source: 'auto' });
-    await runSslRenew({ prisma, rootDir, job, actor: null });
+    const job = createJob(sslJobs, 'ssl-auto-apply', { source: 'auto' });
+    await runSsl({ prisma, rootDir, job, actor: null, input: { ...config, mode: 'all' } });
     sslAutoRunning = false;
   }, 60 * 60 * 1000);
 };

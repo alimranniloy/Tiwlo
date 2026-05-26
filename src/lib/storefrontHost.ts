@@ -20,11 +20,8 @@ const RESERVED_ROOT_SUBDOMAINS = new Set([
 ]);
 
 const IGNORED_HOST_SUFFIXES = [
-  '.trycloudflare.com',
   '.localhost',
-  '.local',
-  '.pages.dev',
-  '.workers.dev'
+  '.local'
 ];
 
 function cleanHostname(hostname: string) {

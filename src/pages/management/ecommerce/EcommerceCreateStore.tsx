@@ -415,7 +415,7 @@ export default function EcommerceCreateStore() {
                   </div>
                   <div className="p-4 bg-blue-50 border border-blue-100 rounded-sm">
                     <p className="text-[11px] text-blue-600 leading-relaxed font-medium">
-                      Store identifiers are checked in real time and published under tiwlo.com with Cloudflare SSL.
+                      Store identifiers are checked in real time and published under the configured PowerDNS root with automatic SSL.
                     </p>
                   </div>
                 </div>
@@ -556,7 +556,7 @@ export default function EcommerceCreateStore() {
                           <span className="text-gray-600 font-bold">Waiting...</span>
                         </div>
                         <div className="flex items-center justify-between text-xs pt-2">
-                           <span className="text-gray-500 italic text-[10px]">Cloudflare Edge detected...</span>
+                           <span className="text-gray-500 italic text-[10px]">PowerDNS route queued...</span>
                         </div>
                       </div>
                     </div>

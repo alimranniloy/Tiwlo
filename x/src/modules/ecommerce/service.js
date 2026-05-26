@@ -8,6 +8,8 @@ import { AppError } from '../../core/errors.js';
 import { pagination, searchWhere } from '../../core/validation.js';
 import { paragraph, sendTiwloEmail } from '../../core/email.js';
 import { ensureOwnerHasCredit } from '../billing/creditAutomation.js';
+import { defaultNameserversFor, primaryDomainFor, serverIpFor, syncPowerDnsDomain } from '../powerdns/service.js';
+import { queueSslInstallForDomains } from '../system-tools/service.js';
 import { ECOMMERCE_CONTROL_SECTIONS, findEcommerceControlSection } from './controlCatalog.js';
 import {
   AURA_THEME_CATALOG,
@@ -23,7 +25,6 @@ import {
 } from './themeCatalog.js';
 
 const STOREFRONT_ROOT_DOMAIN = (process.env.STOREFRONT_ROOT_DOMAIN || 'tiwlo.com').toLowerCase();
-const STOREFRONT_WILDCARD_TARGET = (process.env.STOREFRONT_WILDCARD_TARGET || `*.${STOREFRONT_ROOT_DOMAIN}`).toLowerCase();
 const RESERVED_STOREFRONT_SUBDOMAINS = new Set([
   'admin',
   'api',
@@ -78,26 +79,26 @@ const normalizeHostname = (value) => String(value || '')
   .replace(/:\d+$/, '')
   .replace(/^\.+|\.+$/g, '');
 
-const domainForSubdomain = (subdomain) => `${subdomain}.${STOREFRONT_ROOT_DOMAIN}`;
+const domainForSubdomain = (subdomain, rootDomain = STOREFRONT_ROOT_DOMAIN) => `${subdomain}.${rootDomain}`;
 
-const storefrontRouteRecord = (subdomain) => ({
-  type: 'CNAME',
+const storefrontRouteRecord = (subdomain, serverIp) => ({
+  type: 'A',
   name: subdomain,
-  value: STOREFRONT_WILDCARD_TARGET,
+  value: serverIp,
   ttl: 300,
-  proxied: true,
-  ssl: 'edge',
-  routeMode: 'cloudflare_tunnel_wildcard'
+  proxied: false,
+  ssl: 'queued',
+  routeMode: 'powerdns_authoritative'
 });
 
-const customDomainRecord = (customDomain) => ({
-  type: 'CNAME',
+const customDomainRecord = (serverIp) => ({
+  type: 'A',
   name: '@',
-  value: STOREFRONT_ROOT_DOMAIN,
+  value: serverIp,
   ttl: 300,
-  proxied: true,
-  ssl: 'pending_custom_hostname',
-  routeMode: 'cloudflare_custom_hostname'
+  proxied: false,
+  ssl: 'queued',
+  routeMode: 'powerdns_authoritative'
 });
 
 const subdomainValidationError = (subdomain) => {
@@ -113,7 +114,8 @@ const subdomainValidationError = (subdomain) => {
 
 export const checkStoreSubdomainAvailability = async (ctx, rawSubdomain) => {
   const subdomain = normalizeStoreSubdomain(rawSubdomain);
-  const domain = subdomain ? domainForSubdomain(subdomain) : '';
+  const rootDomain = await primaryDomainFor(ctx).catch(() => STOREFRONT_ROOT_DOMAIN);
+  const domain = subdomain ? domainForSubdomain(subdomain, rootDomain) : '';
   const validation = subdomainValidationError(subdomain);
   if (validation) {
     return {
@@ -566,6 +568,11 @@ export const createStore = async (ctx, actor, input) => {
     await ensureOwnerHasCredit(ctx, actor.id, 'Credit balance is empty. Add credit now before opening an ecommerce store.');
   }
 
+  const [rootDomain, nameservers, serverIp] = await Promise.all([
+    primaryDomainFor(ctx),
+    defaultNameserversFor(ctx),
+    serverIpFor(ctx)
+  ]);
   const { subdomain: cleanSlug, domain: storeDomain } = await assertStoreSubdomainAvailable(ctx, input.slug || input.name);
   const customDomain = normalizeHostname(input.customDomain);
   if (customDomain) {
@@ -599,42 +606,45 @@ export const createStore = async (ctx, actor, input) => {
       settings: mergeSettings(input.settings, {
         theme: DEFAULT_STOREFRONT_THEME_KEY,
         homepageTemplate: DEFAULT_STOREFRONT_THEME_KEY,
-        rootDomain: STOREFRONT_ROOT_DOMAIN,
-        routeMode: 'cloudflare_tunnel_wildcard'
+        rootDomain,
+        routeMode: 'powerdns_authoritative',
+        ssl: 'queued'
       })
     }
   });
 
   const domain = await ctx.prisma.domain.upsert({
-    where: { name: store.domain },
+    where: { name: rootDomain },
     create: {
       ownerId: actor.id,
-      name: store.domain,
-      dns: ['cloudflare-managed'],
+      name: rootDomain,
+      dns: nameservers,
       status: 'active',
-      records: [storefrontRouteRecord(cleanSlug)]
+      records: [storefrontRouteRecord(cleanSlug, serverIp)]
     },
     update: {
       ownerId: actor.id,
       status: 'active',
-      dns: ['cloudflare-managed'],
-      records: [storefrontRouteRecord(cleanSlug)]
+      dns: nameservers,
+      records: [storefrontRouteRecord(cleanSlug, serverIp)]
     }
   });
 
   await ctx.prisma.dnsRecord.upsert({
-    where: { id: `store_${store.id}_subdomain_cname` },
+    where: { id: `store_${store.id}_subdomain_a` },
     create: {
-      id: `store_${store.id}_subdomain_cname`,
+      id: `store_${store.id}_subdomain_a`,
       domainId: domain.id,
-      type: 'CNAME',
+      type: 'A',
       name: cleanSlug,
-      value: STOREFRONT_WILDCARD_TARGET,
+      value: serverIp,
       ttl: 300,
-      metadata: { storeId: store.id, autoProvisioned: true, routeMode: 'cloudflare_tunnel_wildcard', ssl: 'edge' }
+      metadata: { storeId: store.id, autoProvisioned: true, routeMode: 'powerdns_authoritative', ssl: 'queued', provider: 'powerdns' }
     },
-    update: { name: cleanSlug, value: STOREFRONT_WILDCARD_TARGET, status: 'active', metadata: { storeId: store.id, autoProvisioned: true, routeMode: 'cloudflare_tunnel_wildcard', ssl: 'edge' } }
+    update: { type: 'A', name: cleanSlug, value: serverIp, status: 'active', metadata: { storeId: store.id, autoProvisioned: true, routeMode: 'powerdns_authoritative', ssl: 'queued', provider: 'powerdns' } }
   });
+  await syncPowerDnsDomain(ctx, domain.id).catch(() => {});
+  await queueSslInstallForDomains({ prisma: ctx.prisma, domains: [store.domain], actor }).catch(() => {});
 
   let customDomainId = null;
   if (customDomain) {
@@ -643,15 +653,15 @@ export const createStore = async (ctx, actor, input) => {
       create: {
         ownerId: actor.id,
         name: customDomain,
-        dns: ['verify-with-cloudflare'],
-        status: 'pending_dns',
-        records: [customDomainRecord(customDomain)]
+        dns: nameservers,
+        status: 'active',
+        records: [customDomainRecord(serverIp)]
       },
       update: {
         ownerId: actor.id,
-        status: 'pending_dns',
-        dns: ['verify-with-cloudflare'],
-        records: [customDomainRecord(customDomain)]
+        status: 'active',
+        dns: nameservers,
+        records: [customDomainRecord(serverIp)]
       }
     });
     customDomainId = custom.id;
@@ -661,14 +671,16 @@ export const createStore = async (ctx, actor, input) => {
       create: {
         id: `store_${store.id}_custom_domain_cname`,
         domainId: custom.id,
-        type: 'CNAME',
+        type: 'A',
         name: '@',
-        value: STOREFRONT_ROOT_DOMAIN,
+        value: serverIp,
         ttl: 300,
-        metadata: { storeId: store.id, autoProvisioned: false, routeMode: 'cloudflare_custom_hostname', ssl: 'pending' }
+        metadata: { storeId: store.id, autoProvisioned: true, routeMode: 'powerdns_authoritative', ssl: 'queued', provider: 'powerdns' }
       },
-      update: { value: STOREFRONT_ROOT_DOMAIN, status: 'pending_dns', metadata: { storeId: store.id, autoProvisioned: false, routeMode: 'cloudflare_custom_hostname', ssl: 'pending' } }
+      update: { type: 'A', value: serverIp, status: 'active', metadata: { storeId: store.id, autoProvisioned: true, routeMode: 'powerdns_authoritative', ssl: 'queued', provider: 'powerdns' } }
     });
+    await syncPowerDnsDomain(ctx, custom.id).catch(() => {});
+    await queueSslInstallForDomains({ prisma: ctx.prisma, domains: [customDomain], actor }).catch(() => {});
   }
 
   await ensureAuraThemeForStore(ctx, store.id);
@@ -681,27 +693,27 @@ export const createStore = async (ctx, actor, input) => {
       key: 'provisioning',
       value: {
         publicUrl: `https://${store.domain}`,
-        wildcardUrl: `https://*.${STOREFRONT_ROOT_DOMAIN}`,
+        wildcardUrl: `https://*.${rootDomain}`,
         customUrl: customDomain ? `https://${customDomain}` : null,
-        ssl: 'active',
-        customDomainSsl: customDomain ? 'pending_cloudflare_custom_hostname' : null,
+        ssl: 'queued',
+        customDomainSsl: customDomain ? 'queued_powerdns_auto_ssl' : null,
         domainId: domain.id,
         customDomainId,
         theme: DEFAULT_STOREFRONT_THEME_KEY,
-        journey: ['plan_selected', 'identity_created', 'subdomain_checked', 'domain_mapped', 'ssl_ready', 'theme_installed', 'plugins_seeded']
+        journey: ['plan_selected', 'identity_created', 'subdomain_checked', 'powerdns_record_synced', 'ssl_queued', 'theme_installed', 'plugins_seeded']
       }
     },
     update: {
       value: {
         publicUrl: `https://${store.domain}`,
-        wildcardUrl: `https://*.${STOREFRONT_ROOT_DOMAIN}`,
+        wildcardUrl: `https://*.${rootDomain}`,
         customUrl: customDomain ? `https://${customDomain}` : null,
-        ssl: 'active',
-        customDomainSsl: customDomain ? 'pending_cloudflare_custom_hostname' : null,
+        ssl: 'queued',
+        customDomainSsl: customDomain ? 'queued_powerdns_auto_ssl' : null,
         domainId: domain.id,
         customDomainId,
         theme: DEFAULT_STOREFRONT_THEME_KEY,
-        journey: ['plan_selected', 'identity_created', 'subdomain_checked', 'domain_mapped', 'ssl_ready', 'theme_installed', 'plugins_seeded']
+        journey: ['plan_selected', 'identity_created', 'subdomain_checked', 'powerdns_record_synced', 'ssl_queued', 'theme_installed', 'plugins_seeded']
       }
     }
   });

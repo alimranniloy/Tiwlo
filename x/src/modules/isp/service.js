@@ -6,9 +6,10 @@ import { AppError } from '../../core/errors.js';
 import { pagination, searchWhere } from '../../core/validation.js';
 import { ensureOwnerHasCredit } from '../billing/creditAutomation.js';
 import { planByCode } from '../ecommerce/service.js';
+import { defaultNameserversFor, primaryDomainFor, serverIpFor, syncPowerDnsDomain } from '../powerdns/service.js';
+import { queueSslInstallForDomains } from '../system-tools/service.js';
 
 const ISP_ROOT_DOMAIN = (process.env.ISP_ROOT_DOMAIN || 'tiwlo.com').toLowerCase();
-const ISP_WILDCARD_TARGET = (process.env.ISP_WILDCARD_TARGET || `*.${ISP_ROOT_DOMAIN}`).toLowerCase();
 
 export const listSites = async (ctx) => {
   const scoped = await ownerWhere(ctx);
@@ -94,6 +95,11 @@ export const createSite = async (ctx, actor, input) => {
 
   const cleanCode = slugify(input.code || input.name);
   if (!cleanCode) throw new AppError('ISP site code is required', 'BAD_USER_INPUT');
+  const [rootDomain, nameservers, serverIp] = await Promise.all([
+    primaryDomainFor(ctx).catch(() => ISP_ROOT_DOMAIN),
+    defaultNameserversFor(ctx),
+    serverIpFor(ctx)
+  ]);
 
   const plan = await planByCode(ctx, 'isp', input.planCode || 'enterprise');
   const site = await ctx.prisma.ispSite.create({
@@ -110,37 +116,39 @@ export const createSite = async (ctx, actor, input) => {
     }
   });
 
-  const siteDomainName = `isp-${cleanCode}.${ISP_ROOT_DOMAIN}`;
+  const siteDomainName = `isp-${cleanCode}.${rootDomain}`;
   const domain = await ctx.prisma.domain.upsert({
-    where: { name: siteDomainName },
+    where: { name: rootDomain },
     create: {
       ownerId: actor.id,
-      name: siteDomainName,
-      dns: ['cloudflare-managed'],
+      name: rootDomain,
+      dns: nameservers,
       status: 'active',
-      records: [{ type: 'CNAME', name: `isp-${cleanCode}`, value: ISP_WILDCARD_TARGET, ttl: 300, proxied: true, ssl: 'edge', routeMode: 'cloudflare_tunnel_wildcard' }]
+      records: [{ type: 'A', name: `isp-${cleanCode}`, value: serverIp, ttl: 300, proxied: false, ssl: 'queued', routeMode: 'powerdns_authoritative' }]
     },
     update: {
       ownerId: actor.id,
       status: 'active',
-      dns: ['cloudflare-managed'],
-      records: [{ type: 'CNAME', name: `isp-${cleanCode}`, value: ISP_WILDCARD_TARGET, ttl: 300, proxied: true, ssl: 'edge', routeMode: 'cloudflare_tunnel_wildcard' }]
+      dns: nameservers,
+      records: [{ type: 'A', name: `isp-${cleanCode}`, value: serverIp, ttl: 300, proxied: false, ssl: 'queued', routeMode: 'powerdns_authoritative' }]
     }
   });
 
   await ctx.prisma.dnsRecord.upsert({
-    where: { id: `isp_${site.id}_root_cname` },
+    where: { id: `isp_${site.id}_root_a` },
     create: {
-      id: `isp_${site.id}_root_cname`,
+      id: `isp_${site.id}_root_a`,
       domainId: domain.id,
-      type: 'CNAME',
+      type: 'A',
       name: `isp-${cleanCode}`,
-      value: ISP_WILDCARD_TARGET,
+      value: serverIp,
       ttl: 300,
-      metadata: { siteId: site.id, autoProvisioned: true, routeMode: 'cloudflare_tunnel_wildcard', ssl: 'edge' }
+      metadata: { siteId: site.id, autoProvisioned: true, routeMode: 'powerdns_authoritative', ssl: 'queued', provider: 'powerdns' }
     },
-    update: { name: `isp-${cleanCode}`, value: ISP_WILDCARD_TARGET, status: 'active', metadata: { siteId: site.id, autoProvisioned: true, routeMode: 'cloudflare_tunnel_wildcard', ssl: 'edge' } }
+    update: { type: 'A', name: `isp-${cleanCode}`, value: serverIp, status: 'active', metadata: { siteId: site.id, autoProvisioned: true, routeMode: 'powerdns_authoritative', ssl: 'queued', provider: 'powerdns' } }
   });
+  await syncPowerDnsDomain(ctx, domain.id).catch(() => {});
+  await queueSslInstallForDomains({ prisma: ctx.prisma, domains: [siteDomainName], actor }).catch(() => {});
 
   await ctx.prisma.systemSetting.upsert({
     where: { scope_scopeId_key: { scope: 'isp', scopeId: site.id, key: 'provisioning' } },
@@ -151,18 +159,20 @@ export const createSite = async (ctx, actor, input) => {
       value: {
         publicUrl: `https://${siteDomainName}`,
         radius: 'queued',
-        ssl: 'active',
+        ssl: 'queued',
         domainId: domain.id,
-        journey: ['plan_selected', 'site_identity_created', 'radius_cluster_queued', 'domain_mapped', 'router_ready']
+        routeMode: 'powerdns_authoritative',
+        journey: ['plan_selected', 'site_identity_created', 'radius_cluster_queued', 'powerdns_record_synced', 'ssl_queued', 'router_ready']
       }
     },
     update: {
       value: {
         publicUrl: `https://${siteDomainName}`,
         radius: 'queued',
-        ssl: 'active',
+        ssl: 'queued',
         domainId: domain.id,
-        journey: ['plan_selected', 'site_identity_created', 'radius_cluster_queued', 'domain_mapped', 'router_ready']
+        routeMode: 'powerdns_authoritative',
+        journey: ['plan_selected', 'site_identity_created', 'radius_cluster_queued', 'powerdns_record_synced', 'ssl_queued', 'router_ready']
       }
     }
   });

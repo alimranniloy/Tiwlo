@@ -345,7 +345,7 @@ export const MODULE_WORKSPACES: Record<string, ModuleWorkspaceConfig> = {
     zone('automation', 'Purge Workbench', 'Purge, prewarm, image transform, and invalidation tasks.', 'side'),
     zone('ledger', 'CDN Operation Ledger', 'CDN records and edits.', 'full')
   )),
-  'ecommerce.domains': workspace('Domain Reseller Console', 'domains', 'Domain', [
+  'ecommerce.domains': workspace('Store Domain Console', 'domains', 'Domain', [
     ...commonOps('Domain'),
     sectionOp('sync_feed', 'Sync Registrar', 'neutral', 'Record registrar sync.'),
     sectionOp('renew_ssl', 'Queue SSL Renewal', 'success', 'Record certificate renewal for mapped domains.')

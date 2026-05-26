@@ -8,7 +8,9 @@ export const domainResolvers = {
   },
   Mutation: {
     registerDomain: async (_, { input }, ctx) => service.registerDomain(ctx, await requireAuth(ctx), input),
+    updateDomain: (_, { input }, ctx) => service.updateDomain(ctx, input),
     addDnsRecord: (_, { input }, ctx) => service.addDnsRecord(ctx, input),
+    updateDnsRecord: (_, { input }, ctx) => service.updateDnsRecord(ctx, input),
     deleteDnsRecord: (_, { id }, ctx) => service.deleteDnsRecord(ctx, id),
     deleteDomain: (_, { id }, ctx) => service.deleteDomain(ctx, id)
   }

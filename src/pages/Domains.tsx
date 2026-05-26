@@ -14,10 +14,12 @@ import {
   Info, 
   CreditCard, 
   Loader2,
-  AlertCircle
+  AlertCircle,
+  Edit3,
+  Save
 } from 'lucide-react';
 import { Domain } from '../types';
-import { deleteDomainWithApi, registerDomainWithApi } from '../lib/tiwloApi';
+import { addDnsRecordWithApi, deleteDnsRecordWithApi, deleteDomainWithApi, fetchDnsRecordsWithApi, registerDomainWithApi, updateDnsRecordWithApi } from '../lib/tiwloApi';
 import { useActionConfirmation } from '../components/ActionConfirmation';
 
 interface DomainsProps {
@@ -33,6 +35,10 @@ export default function DomainsPage({ domains, setDomains }: DomainsProps) {
   const [selectedYears, setSelectedYears] = useState(1);
   const [isRegistering, setIsRegistering] = useState(false);
   const [error, setError] = useState('');
+  const [selectedDomain, setSelectedDomain] = useState<Domain | null>(null);
+  const [dnsRecords, setDnsRecords] = useState<any[]>([]);
+  const [dnsRecordForm, setDnsRecordForm] = useState<any>({ id: '', type: 'A', name: '@', value: '', ttl: 300, priority: '' });
+  const [savingRecord, setSavingRecord] = useState(false);
   const { confirmDelete } = useActionConfirmation();
 
   const handleSearch = (e: React.FormEvent) => {
@@ -48,6 +54,55 @@ export default function DomainsPage({ domains, setDomains }: DomainsProps) {
       });
       setIsSearching(false);
     }, 200);
+  };
+
+  const openDns = async (domain: Domain) => {
+    setSelectedDomain(domain);
+    setError('');
+    try {
+      setDnsRecords(await fetchDnsRecordsWithApi(domain.id));
+    } catch (err) {
+      setDnsRecords([]);
+      setError(err instanceof Error ? err.message : 'Unable to load DNS records.');
+    }
+  };
+
+  const saveDnsRecord = async () => {
+    if (!selectedDomain || !dnsRecordForm.value.trim()) return;
+    setSavingRecord(true);
+    setError('');
+    try {
+      const input = {
+        type: dnsRecordForm.type,
+        name: dnsRecordForm.name || '@',
+        value: dnsRecordForm.value,
+        ttl: Number(dnsRecordForm.ttl || 300),
+        priority: dnsRecordForm.priority === '' ? null : Number(dnsRecordForm.priority)
+      };
+      if (dnsRecordForm.id) {
+        await updateDnsRecordWithApi({ id: dnsRecordForm.id, ...input });
+      } else {
+        await addDnsRecordWithApi({ domainId: selectedDomain.id, ...input, metadata: { provider: 'powerdns', userManaged: true } });
+      }
+      setDnsRecords(await fetchDnsRecordsWithApi(selectedDomain.id));
+      setDnsRecordForm({ id: '', type: 'A', name: '@', value: '', ttl: 300, priority: '' });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to save DNS record.');
+    } finally {
+      setSavingRecord(false);
+    }
+  };
+
+  const removeDnsRecord = async (record: any) => {
+    const confirmed = await confirmDelete({
+      title: 'Delete DNS record?',
+      message: 'This removes the record from your PowerDNS zone.',
+      resourceName: `${record.type} ${record.name}`,
+      confirmLabel: 'Delete record'
+    });
+    if (!confirmed) return;
+    await deleteDnsRecordWithApi(record.id);
+    setDnsRecords(dnsRecords.filter((item) => item.id !== record.id));
   };
 
   const handleRegister = () => {
@@ -165,7 +220,7 @@ export default function DomainsPage({ domains, setDomains }: DomainsProps) {
                        <span className="text-[13px] text-[#4B5563] font-medium">DNS records from API</span>
                     </td>
                     <td className="px-6 py-5 text-right space-x-1">
-                       <button className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-all" title="Manage DNS">
+                       <button onClick={() => openDns(domain)} className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-all" title="Manage DNS">
                          <Search className="h-4.5 w-4.5" />
                        </button>
                        <button className="p-2 text-gray-400 hover:text-[#111827] hover:bg-gray-100 rounded-md transition-all" title="Open Site">
@@ -403,6 +458,75 @@ export default function DomainsPage({ domains, setDomains }: DomainsProps) {
                <p className="text-[10px] text-center text-gray-400">
                   By clicking checkout, you agree to our Domain Name Terms of Service.
                </p>
+            </div>
+          </div>
+        </>
+      )}
+
+      {selectedDomain && (
+        <>
+          <div onClick={() => setSelectedDomain(null)} className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[100]" />
+          <div className="fixed top-0 right-0 z-[101] flex h-full w-full max-w-[720px] flex-col bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-gray-100 bg-[#f8f9fa] px-6 py-5">
+              <div className="min-w-0">
+                <h2 className="truncate text-lg font-bold text-[#111827]">{selectedDomain.name}</h2>
+                <p className="text-[12px] text-gray-500">PowerDNS records for this domain.</p>
+              </div>
+              <button onClick={() => setSelectedDomain(null)} className="rounded p-2 text-gray-400 hover:bg-gray-200">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-6">
+              <div className="grid grid-cols-1 gap-3 border-b border-gray-100 pb-5 lg:grid-cols-[100px_1fr_1.4fr_100px_100px_auto]">
+                <select value={dnsRecordForm.type} onChange={(event) => setDnsRecordForm({ ...dnsRecordForm, type: event.target.value })} className="rounded border border-gray-200 px-3 py-2 text-sm font-bold outline-none focus:border-blue-500">
+                  {['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS', 'SRV', 'CAA'].map((type) => <option key={type}>{type}</option>)}
+                </select>
+                <input value={dnsRecordForm.name} onChange={(event) => setDnsRecordForm({ ...dnsRecordForm, name: event.target.value })} placeholder="@" className="rounded border border-gray-200 px-3 py-2 text-sm font-bold outline-none focus:border-blue-500" />
+                <input value={dnsRecordForm.value} onChange={(event) => setDnsRecordForm({ ...dnsRecordForm, value: event.target.value })} placeholder="Value" className="rounded border border-gray-200 px-3 py-2 text-sm font-bold outline-none focus:border-blue-500" />
+                <input type="number" value={dnsRecordForm.ttl} onChange={(event) => setDnsRecordForm({ ...dnsRecordForm, ttl: Number(event.target.value || 300) })} className="rounded border border-gray-200 px-3 py-2 text-sm font-bold outline-none focus:border-blue-500" />
+                <input value={dnsRecordForm.priority} onChange={(event) => setDnsRecordForm({ ...dnsRecordForm, priority: event.target.value })} placeholder="prio" className="rounded border border-gray-200 px-3 py-2 text-sm font-bold outline-none focus:border-blue-500" />
+                <button disabled={savingRecord} onClick={saveDnsRecord} className="inline-flex items-center justify-center gap-2 rounded bg-[#0069ff] px-4 py-2 text-[12px] font-black text-white disabled:opacity-60">
+                  <Save className="h-4 w-4" /> Save
+                </button>
+              </div>
+
+              <div className="mt-5 overflow-x-auto">
+                <table className="w-full min-w-[640px] border-collapse">
+                  <thead className="bg-[#f8f9fa] text-left">
+                    <tr>
+                      {['Type', 'Name', 'Value', 'TTL', 'Priority', 'Actions'].map((head) => (
+                        <th key={head} className="px-4 py-3 text-[11px] font-black uppercase text-gray-500">{head}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {dnsRecords.length ? dnsRecords.map((record) => (
+                      <tr key={record.id}>
+                        <td className="px-4 py-3 text-[12px] font-black text-blue-700">{record.type}</td>
+                        <td className="px-4 py-3 font-mono text-[12px]">{record.name}</td>
+                        <td className="max-w-[280px] truncate px-4 py-3 font-mono text-[12px] text-gray-600">{record.value}</td>
+                        <td className="px-4 py-3 text-[12px] font-bold text-gray-600">{record.ttl}</td>
+                        <td className="px-4 py-3 text-[12px] font-bold text-gray-600">{record.priority ?? '-'}</td>
+                        <td className="px-4 py-3">
+                          <div className="flex gap-1">
+                            <button onClick={() => setDnsRecordForm({ ...record, priority: record.priority ?? '' })} className="rounded p-1.5 text-gray-500 hover:bg-blue-50 hover:text-blue-600" title="Edit record">
+                              <Edit3 className="h-4 w-4" />
+                            </button>
+                            <button onClick={() => removeDnsRecord(record)} className="rounded p-1.5 text-gray-500 hover:bg-red-50 hover:text-red-600" title="Delete record">
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    )) : (
+                      <tr>
+                        <td colSpan={6} className="px-4 py-12 text-center text-[13px] font-bold text-gray-400">No DNS records yet.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
         </>

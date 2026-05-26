@@ -80,19 +80,19 @@ const REQUIRED_PORTS = [
 const HOSTING_STACK_PACKAGES = {
   apt: [
     "nginx", "certbot", "python3-certbot-nginx", "php-fpm", "php-cli", "php-mysql", "php-curl", "php-zip", "php-mbstring",
-    "php-xml", "php-gd", "php-intl", "php-bcmath", "php-soap", "php-opcache", "mariadb-server", "bind9", "dnsutils",
+    "php-xml", "php-gd", "php-intl", "php-bcmath", "php-soap", "php-opcache", "mariadb-server", "pdns-server", "pdns-backend-mysql", "dnsutils",
     "postfix", "dovecot-core", "dovecot-imapd", "dovecot-pop3d", "opendkim", "opendkim-tools", "rspamd", "mailutils", "libsasl2-modules",
     "unzip", "tar", "rsync", "logrotate", "cron", "acl"
   ],
   dnf: [
     "nginx", "certbot", "python3-certbot-nginx", "php-fpm", "php-cli", "php-mysqlnd", "php-curl", "php-zip", "php-mbstring",
-    "php-xml", "php-gd", "php-intl", "php-bcmath", "php-soap", "php-opcache", "mariadb-server", "bind", "bind-utils",
+    "php-xml", "php-gd", "php-intl", "php-bcmath", "php-soap", "php-opcache", "mariadb-server", "pdns", "pdns-backend-mysql", "bind-utils",
     "postfix", "dovecot", "opendkim", "opendkim-tools", "rspamd", "mailx", "cyrus-sasl", "cyrus-sasl-plain",
     "unzip", "tar", "rsync", "logrotate", "cronie", "acl"
   ],
   yum: [
     "nginx", "certbot", "python3-certbot-nginx", "php-fpm", "php-cli", "php-mysqlnd", "php-curl", "php-zip", "php-mbstring",
-    "php-xml", "php-gd", "php-intl", "php-bcmath", "php-soap", "php-opcache", "mariadb-server", "bind", "bind-utils",
+    "php-xml", "php-gd", "php-intl", "php-bcmath", "php-soap", "php-opcache", "mariadb-server", "pdns", "pdns-backend-mysql", "bind-utils",
     "postfix", "dovecot", "opendkim", "opendkim-tools", "rspamd", "mailx", "cyrus-sasl", "cyrus-sasl-plain",
     "unzip", "tar", "rsync", "logrotate", "cronie", "acl"
   ]
@@ -103,7 +103,7 @@ const HOSTING_STACK_CHECKS = [
   { id: "certbot", label: "Auto SSL Certbot", command: "certbot", services: [], packageNames: { apt: "certbot", dnf: "certbot", yum: "certbot" } },
   { id: "php", label: "PHP Runtime", command: "php", services: ["php*-fpm"], packageNames: { apt: "php-fpm", dnf: "php-fpm", yum: "php-fpm" } },
   { id: "mysql", label: "MariaDB/MySQL", command: "mysql", services: ["mariadb", "mysql"], packageNames: { apt: "mariadb-server", dnf: "mariadb-server", yum: "mariadb-server" } },
-  { id: "dns", label: "DNS Tools", command: "dig", services: ["bind9", "named"], packageNames: { apt: "dnsutils", dnf: "bind-utils", yum: "bind-utils" } },
+  { id: "dns", label: "PowerDNS Authoritative", command: "pdns_server", services: ["pdns"], packageNames: { apt: "pdns-server", dnf: "pdns", yum: "pdns" } },
   { id: "mail", label: "Mail Stack", command: "postfix", services: ["postfix", "dovecot"], packageNames: { apt: "postfix", dnf: "postfix", yum: "postfix" } },
   { id: "node", label: "Node.js Runtime", command: "node", services: [], packageNames: { apt: "nodejs", dnf: "nodejs", yum: "nodejs" } }
 ];

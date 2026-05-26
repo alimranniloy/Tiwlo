@@ -65,7 +65,7 @@ export default function AdminDomains() {
     <div className="space-y-6 pb-12">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-[#2e3d49]">Domain Reseller Settings</h1>
+          <h1 className="text-2xl font-bold tracking-tight text-[#2e3d49]">Domain Registry Settings</h1>
           <p className="text-[13px] text-[#4a4a4a] mt-1">Domains are loaded from the database-backed API.</p>
         </div>
         <div className="flex items-center gap-2">
