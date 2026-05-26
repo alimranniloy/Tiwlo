@@ -68,6 +68,48 @@ verify_listener() {
   fi
 }
 
+detect_public_ipv4() {
+  if have ip; then
+    ip -4 route get 1.1.1.1 2>/dev/null | awk '{ for (i = 1; i <= NF; i++) if ($i == "src") { print $(i + 1); exit } }' && return 0
+  fi
+  hostname -I 2>/dev/null | awk '{ for (i = 1; i <= NF; i++) if ($i ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/) { print $i; exit } }'
+}
+
+detect_public_ipv6() {
+  if have ip; then
+    ip -6 route get 2606:4700:4700::1111 2>/dev/null | awk '{ for (i = 1; i <= NF; i++) if ($i == "src") { print $(i + 1); exit } }'
+  fi
+}
+
+powerdns_local_addresses() {
+  local configured="${POWERDNS_LOCAL_ADDRESSES:-${PDNS_LOCAL_ADDRESSES:-}}"
+  local ipv4="${POWERDNS_LISTEN_IP:-${PUBLIC_IP:-${SERVER_IP:-}}}"
+  local ipv6="${POWERDNS_LISTEN_IPV6:-${PUBLIC_IPV6:-}}"
+  if [ -n "$configured" ]; then
+    printf '%s' "$configured"
+    return 0
+  fi
+  ipv4="${ipv4:-$(detect_public_ipv4 || true)}"
+  ipv6="${ipv6:-$(detect_public_ipv6 || true)}"
+  if [ -n "$ipv4" ] && [ -n "$ipv6" ]; then
+    printf '%s,%s' "$ipv4" "$ipv6"
+  elif [ -n "$ipv4" ]; then
+    printf '%s' "$ipv4"
+  else
+    printf '0.0.0.0'
+  fi
+}
+
+verify_powerdns_listener() {
+  if have ss; then
+    if ss -ltnup 2>/dev/null | awk 'tolower($0) ~ /pdns/ && $0 ~ /[:.]53[[:space:]]/ { found = 1 } END { exit(found ? 0 : 1) }'; then
+      echo "PowerDNS authoritative: listening on 53"
+    else
+      echo "PowerDNS authoritative: not listening on 53. Check pdns status, PostgreSQL backend config, and provider firewall."
+    fi
+  fi
+}
+
 ensure_system_postgres_database() {
   step "Preparing system PostgreSQL"
   systemctl enable --now postgresql >/dev/null 2>&1 || true
@@ -86,6 +128,8 @@ ensure_system_postgres_database() {
 
 configure_powerdns() {
   step "Configuring PowerDNS authoritative service"
+  local bind_addresses
+  bind_addresses="$(powerdns_local_addresses)"
   mkdir -p /etc/powerdns/pdns.d
   cat >/etc/powerdns/pdns.d/tiwlo-pgsql.conf <<PDNS
 launch=gpgsql
@@ -95,14 +139,14 @@ gpgsql-dbname=tiwlo
 gpgsql-user=postgres
 gpgsql-password=postgres
 gpgsql-dnssec=yes
-local-address=0.0.0.0,::
+local-address=${bind_addresses}
 local-port=53
 webserver=no
 PDNS
   chmod 640 /etc/powerdns/pdns.d/tiwlo-pgsql.conf || true
   systemctl enable --now pdns >/dev/null 2>&1 || true
   systemctl restart pdns >/dev/null 2>&1 || true
-  verify_listener 53 "PowerDNS authoritative"
+  verify_powerdns_listener
 }
 
 configure_system_email_services() {
