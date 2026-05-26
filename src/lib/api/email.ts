@@ -67,6 +67,20 @@ export async function mailboxLoginWithApi(email: string, password: string) {
   return data.mailboxLogin;
 }
 
+export async function mailboxRegisterWithApi(input: { username: string; domain?: string; password: string; displayName?: string; recoveryEmail?: string }) {
+  const data = await graphQL<{ mailboxRegister: any }>(
+    `mutation MailboxRegister($input: MailboxRegisterInput!) {
+      mailboxRegister(input: $input) {
+        token
+        account { ${mailboxAccountFields} }
+      }
+    }`,
+    { input }
+  );
+
+  return data.mailboxRegister;
+}
+
 export async function fetchMailboxOverviewWithApi(token: string) {
   const data = await graphQL<{ mailboxOverview: any }>(
     `query MailboxOverview($token: String!) {

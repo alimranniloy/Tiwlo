@@ -1,12 +1,18 @@
 import nodemailer from 'nodemailer';
 import dns from 'node:dns/promises';
 import net from 'node:net';
+import { existsSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const DEFAULT_FROM = 'noreply@tiwlo.com';
 const SMTP_TIMEOUT_MS = Number(process.env.SMTP_TIMEOUT_MS || 8000);
 export const REQUIRED_EMAIL_PORTS = [25, 465, 587, 993, 995];
 const FALSE_VALUES = new Set(['0', 'false', 'no', 'off', 'unchecked']);
 const LOCAL_SMTP_HOSTS = new Set(['127.0.0.1', 'localhost', '::1']);
+const EMAIL_LOGO_CID = 'tiwlo-favicon@tiwlo';
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const repoRoot = resolve(__dirname, '../../..');
 
 function booleanValue(value, fallback = false) {
   if (value === undefined || value === null || value === '') return fallback;
@@ -267,6 +273,22 @@ function createTransporter(config) {
   });
 }
 
+function emailLogoAttachment() {
+  const candidates = [
+    process.env.MAIL_LOGO_PATH,
+    resolve(repoRoot, 'public', 'brand', 'icon.png'),
+    resolve(repoRoot, 'public', 'favicon.ico')
+  ].filter(Boolean);
+  const logoPath = candidates.find((item) => existsSync(item));
+  if (!logoPath) return null;
+  return {
+    filename: 'tiwlo-favicon.png',
+    path: logoPath,
+    cid: EMAIL_LOGO_CID,
+    contentDisposition: 'inline'
+  };
+}
+
 async function checkTcpPort(host, port) {
   return new Promise((resolve) => {
     const socket = net.createConnection({ host, port, timeout: SMTP_TIMEOUT_MS });
@@ -436,8 +458,19 @@ async function deliverEmail(config, message) {
     return { sent: false, reason: 'not-configured', advice: emailServerAdvice(config) };
   }
   const transporter = createTransporter(config);
+  const logo = emailLogoAttachment();
+  const attachments = [
+    ...(Array.isArray(message.attachments) ? message.attachments : []),
+    ...(logo ? [logo] : [])
+  ];
+  const headers = {
+    'Auto-Submitted': 'auto-generated',
+    'X-Auto-Response-Suppress': 'All',
+    'X-Tiwlo-Transactional': 'yes',
+    ...(message.headers || {})
+  };
   try {
-    await transporter.sendMail(message);
+    await transporter.sendMail({ ...message, headers, attachments });
   } finally {
     transporter.close();
   }
@@ -650,26 +683,36 @@ export async function testTiwloEmail(ctxOrPrisma, input = {}) {
 function brandedHtml({ title, preview, bodyHtml }) {
   const origin = appOrigin().replace(/\/$/, '');
   return `
-    <div style="margin:0;padding:0;background:#f3f5f9;font-family:Arial,Helvetica,sans-serif;color:#111827;">
+    <div style="margin:0;padding:0;background:#eef3fb;font-family:Arial,Helvetica,sans-serif;color:#111827;">
       <div style="display:none;max-height:0;overflow:hidden;opacity:0;">${escapeHtml(preview || title)}</div>
-      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f3f5f9;padding:24px 12px;">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#eef3fb;padding:28px 12px;">
         <tr>
           <td align="center">
-            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:640px;background:#ffffff;border:1px solid #e5e8ed;border-radius:8px;overflow:hidden;">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:640px;background:#ffffff;border:1px solid #dfe7f3;border-radius:12px;overflow:hidden;box-shadow:0 14px 36px rgba(15,23,42,0.08);">
               <tr>
-                <td style="padding:22px 24px;border-bottom:1px solid #eef2f7;">
-                  <img src="${origin}/brand/logo.png" width="118" alt="Tiwlo" style="display:block;border:0;outline:none;text-decoration:none;">
+                <td style="padding:22px 24px;background:#0f172a;border-bottom:1px solid #17233d;">
+                  <table role="presentation" cellspacing="0" cellpadding="0">
+                    <tr>
+                      <td width="44" height="44" style="width:44px;height:44px;border-radius:10px;background:#ffffff;text-align:center;vertical-align:middle;">
+                        <img src="cid:${EMAIL_LOGO_CID}" width="28" height="28" alt="Tiwlo" style="display:inline-block;border:0;outline:none;text-decoration:none;vertical-align:middle;">
+                      </td>
+                      <td style="padding-left:12px;">
+                        <div style="font-size:18px;line-height:1.2;font-weight:800;color:#ffffff;">Tiwlo</div>
+                        <div style="font-size:12px;line-height:1.4;color:#b7c4d8;">Secure notification</div>
+                      </td>
+                    </tr>
+                  </table>
                 </td>
               </tr>
               <tr>
-                <td style="padding:28px 24px;">
-                  <h1 style="margin:0 0 14px;font-size:22px;line-height:1.25;color:#111827;">${escapeHtml(title)}</h1>
-                  <div style="font-size:14px;line-height:1.7;color:#374151;">${bodyHtml}</div>
+                <td style="padding:30px 26px;">
+                  <h1 style="margin:0 0 14px;font-size:22px;line-height:1.3;color:#0f172a;">${escapeHtml(title)}</h1>
+                  <div style="font-size:14px;line-height:1.75;color:#334155;">${bodyHtml}</div>
                 </td>
               </tr>
               <tr>
-                <td style="padding:16px 24px;background:#f8f9fa;border-top:1px solid #eef2f7;font-size:12px;line-height:1.6;color:#6b7280;">
-                  This email was sent by Tiwlo. If you did not request this, please contact support.
+                <td style="padding:18px 24px;background:#f8fafc;border-top:1px solid #e2e8f0;font-size:12px;line-height:1.6;color:#64748b;">
+                  This transactional email was sent by Tiwlo. If you did not request this, please contact support at ${escapeHtml(origin)}.
                 </td>
               </tr>
             </table>

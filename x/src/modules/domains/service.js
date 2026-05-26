@@ -24,6 +24,14 @@ const hostnameForRecord = (recordName, domainName) => {
 };
 
 const addressTypeFor = (ipAddress = '') => String(ipAddress).includes(':') ? 'AAAA' : 'A';
+const cleanDkimValue = () => String(process.env.TIWLO_DKIM_PUBLIC_KEY || process.env.DKIM_PUBLIC_KEY || '').trim().replace(/^"|"$/g, '').replace(/\s+/g, '');
+const cleanDkimSelector = () => String(process.env.TIWLO_DKIM_SELECTOR || process.env.DKIM_SELECTOR || 'tiwlo').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '') || 'tiwlo';
+const bimiRecordValue = () => {
+  const logo = String(process.env.TIWLO_BIMI_LOGO_URL || process.env.BIMI_LOGO_URL || '').trim();
+  const authority = String(process.env.TIWLO_BIMI_CERT_URL || process.env.BIMI_CERT_URL || '').trim();
+  if (!logo) return '';
+  return `v=BIMI1; l=${logo}${authority ? `; a=${authority}` : ''}`;
+};
 
 const defaultDnsRecordsForDomain = (domainName, config) => {
   const serverIp = String(config.serverIp || '').trim();
@@ -34,6 +42,7 @@ const defaultDnsRecordsForDomain = (domainName, config) => {
     { type: addressType, name: '@', value: serverIp },
     { type: addressType, name: 'www', value: serverIp },
     { type: addressType, name: 'mail', value: serverIp },
+    { type: addressType, name: 'tmail', value: serverIp },
     { type: addressType, name: 'email', value: serverIp },
     { type: addressType, name: 'smtp', value: serverIp },
     { type: addressType, name: 'imap', value: serverIp },
@@ -42,10 +51,12 @@ const defaultDnsRecordsForDomain = (domainName, config) => {
     { type: 'MX', name: '@', value: `mail.${domainName}`, priority: 10 },
     { type: 'TXT', name: '@', value: `v=spf1 mx a ${spfIp} ~all` },
     { type: 'TXT', name: '_dmarc', value: `v=DMARC1; p=quarantine; rua=mailto:postmaster@${domainName}; ruf=mailto:postmaster@${domainName}; fo=1` },
+    { type: 'TXT', name: `${cleanDkimSelector()}._domainkey`, value: cleanDkimValue() ? `v=DKIM1; h=sha256; k=rsa; p=${cleanDkimValue()}` : '' },
+    { type: 'TXT', name: 'default._bimi', value: bimiRecordValue() },
     { type: 'CNAME', name: 'autodiscover', value: `mail.${domainName}` },
     { type: 'CNAME', name: 'autoconfig', value: `mail.${domainName}` },
     { type: 'CAA', name: '@', value: '0 issue "letsencrypt.org"' }
-  ];
+  ].filter((record) => record.value);
 };
 
 const ensureDefaultDnsRecords = async (ctx, domain) => {

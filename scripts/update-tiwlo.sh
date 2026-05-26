@@ -331,6 +331,55 @@ MAILENV
   run_sudo chmod 600 /etc/tiwlo-mail/system-smtp.env >/dev/null 2>&1 || true
 }
 
+configure_opendkim() {
+  local mail_domain="$1"
+  local selector="${TIWLO_DKIM_SELECTOR:-tiwlo}"
+  local key_dir="/etc/opendkim/keys/${mail_domain}"
+  local key_file="${key_dir}/${selector}.private"
+  local txt_file="${key_dir}/${selector}.txt"
+  local public_key
+
+  if ! command -v opendkim-genkey >/dev/null 2>&1; then
+    return 0
+  fi
+
+  run_sudo mkdir -p "$key_dir" /etc/opendkim
+  if [ ! -f "$key_file" ]; then
+    run_sudo opendkim-genkey -b 2048 -s "$selector" -d "$mail_domain" -D "$key_dir" >/dev/null 2>&1 || true
+  fi
+  run_sudo chown -R opendkim:opendkim "$key_dir" >/dev/null 2>&1 || true
+  run_sudo chmod 600 "$key_file" >/dev/null 2>&1 || true
+
+  cat <<CONF | run_sudo tee /etc/opendkim.conf >/dev/null
+Syslog                  yes
+UMask                   002
+Canonicalization        relaxed/simple
+Mode                    sv
+SubDomains              yes
+Socket                  inet:8891@127.0.0.1
+PidFile                 /run/opendkim/opendkim.pid
+KeyTable                refile:/etc/opendkim/key.table
+SigningTable            refile:/etc/opendkim/signing.table
+ExternalIgnoreList      /etc/opendkim/trusted.hosts
+InternalHosts           /etc/opendkim/trusted.hosts
+CONF
+  printf '%s\n' "${selector}._domainkey.${mail_domain} ${mail_domain}:${selector}:${key_file}" | run_sudo tee /etc/opendkim/key.table >/dev/null
+  printf '%s\n' "*@${mail_domain} ${selector}._domainkey.${mail_domain}" | run_sudo tee /etc/opendkim/signing.table >/dev/null
+  printf '%s\n' "127.0.0.1" "localhost" "$mail_domain" ".${mail_domain}" | run_sudo tee /etc/opendkim/trusted.hosts >/dev/null
+
+  run_sudo postconf -e "milter_default_action = accept" || true
+  run_sudo postconf -e "milter_protocol = 6" || true
+  run_sudo postconf -e "smtpd_milters = inet:127.0.0.1:8891" || true
+  run_sudo postconf -e "non_smtpd_milters = inet:127.0.0.1:8891" || true
+  run_sudo systemctl enable --now opendkim >/dev/null 2>&1 || true
+  run_sudo systemctl restart opendkim postfix >/dev/null 2>&1 || true
+
+  if [ -f "$txt_file" ]; then
+    public_key="$(run_sudo cat "$txt_file" 2>/dev/null | awk -F'"' '/"/ { for (i = 2; i <= NF; i += 2) printf "%s", $i } END { print "" }' | sed -E 's/^.*p=//; s/[;[:space:]]+$//')"
+    printf '%s' "$public_key"
+  fi
+}
+
 ensure_mail_tls_certificate() {
   local mail_domain
   local mail_hostname
@@ -488,6 +537,7 @@ SYSTEM_SMTP_USER="${SYSTEM_SMTP_USER:-noreply@${MAIL_DOMAIN}}"
 SYSTEM_SMTP_USER="${SYSTEM_SMTP_USER%@*}"
 SYSTEM_SMTP_PASS="$(get_env_value "$ROOT/x/.env" SMTP_PASS)"
 SYSTEM_SMTP_PASS="${SYSTEM_SMTP_PASS:-$(random_secret)}"
+DKIM_PUBLIC_KEY="$(configure_opendkim "$MAIL_DOMAIN" || true)"
 set_env_value "$ROOT/x/.env" SMTP_HOST "127.0.0.1"
 set_env_value "$ROOT/x/.env" SMTP_PUBLIC_HOST "mail.${MAIL_DOMAIN}"
 set_env_value "$ROOT/x/.env" SMTP_TLS_SERVERNAME "mail.${MAIL_DOMAIN}"
@@ -497,6 +547,10 @@ set_env_value "$ROOT/x/.env" MAIL_FROM "${SYSTEM_SMTP_USER}@${MAIL_DOMAIN}"
 set_env_value_if_missing "$ROOT/x/.env" MAIL_FROM_NAME "Tiwlo"
 set_env_value_if_missing "$ROOT/x/.env" MAIL_REPLY_TO "support@${MAIL_DOMAIN}"
 provision_system_mailbox "$MAIL_DOMAIN" "$SYSTEM_SMTP_USER" "$SYSTEM_SMTP_PASS"
+if [ -n "$DKIM_PUBLIC_KEY" ]; then
+  set_env_value "$ROOT/x/.env" TIWLO_DKIM_SELECTOR "${TIWLO_DKIM_SELECTOR:-tiwlo}"
+  set_env_value "$ROOT/x/.env" TIWLO_DKIM_PUBLIC_KEY "$DKIM_PUBLIC_KEY"
+fi
 if [ -n "${FRONTEND_ORIGIN:-}" ]; then
   set_env_value "$ROOT/.env" APP_URL "$FRONTEND_ORIGIN"
   set_env_value "$ROOT/x/.env" FRONTEND_ORIGIN "$FRONTEND_ORIGIN"

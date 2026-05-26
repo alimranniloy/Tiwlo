@@ -1485,6 +1485,14 @@ input MailboxLoginInput {
   password: String!
 }
 
+input MailboxRegisterInput {
+  username: String!
+  domain: String
+  password: String!
+  displayName: String
+  recoveryEmail: String
+}
+
 input SendMailboxEmailInput {
   token: String!
   to: String!
@@ -2503,6 +2511,7 @@ type Mutation {
   verifyEmail(token: String!): AuthPayload!
   verifyPassword(password: String!): Boolean!
   mailboxLogin(input: MailboxLoginInput!): MailboxLoginPayload!
+  mailboxRegister(input: MailboxRegisterInput!): MailboxLoginPayload!
   sendMailboxEmail(input: SendMailboxEmailInput!): MailboxMessage!
   updateMailboxMessage(input: UpdateMailboxMessageInput!): MailboxMessage!
   updateUserRole(id: ID!, role: String!): User!

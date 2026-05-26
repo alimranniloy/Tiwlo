@@ -367,6 +367,55 @@ MAILENV
   chmod 600 /etc/tiwlo-mail/system-smtp.env >/dev/null 2>&1 || true
 }
 
+configure_opendkim() {
+  local mail_domain="$1"
+  local selector="${TIWLO_DKIM_SELECTOR:-tiwlo}"
+  local key_dir="/etc/opendkim/keys/${mail_domain}"
+  local key_file="${key_dir}/${selector}.private"
+  local txt_file="${key_dir}/${selector}.txt"
+  local public_key
+
+  if ! have opendkim-genkey; then
+    return 0
+  fi
+
+  mkdir -p "$key_dir" /etc/opendkim
+  if [ ! -f "$key_file" ]; then
+    opendkim-genkey -b 2048 -s "$selector" -d "$mail_domain" -D "$key_dir" >/dev/null 2>&1 || true
+  fi
+  chown -R opendkim:opendkim "$key_dir" >/dev/null 2>&1 || true
+  chmod 600 "$key_file" >/dev/null 2>&1 || true
+
+  cat >/etc/opendkim.conf <<CONF
+Syslog                  yes
+UMask                   002
+Canonicalization        relaxed/simple
+Mode                    sv
+SubDomains              yes
+Socket                  inet:8891@127.0.0.1
+PidFile                 /run/opendkim/opendkim.pid
+KeyTable                refile:/etc/opendkim/key.table
+SigningTable            refile:/etc/opendkim/signing.table
+ExternalIgnoreList      /etc/opendkim/trusted.hosts
+InternalHosts           /etc/opendkim/trusted.hosts
+CONF
+  printf '%s\n' "${selector}._domainkey.${mail_domain} ${mail_domain}:${selector}:${key_file}" >/etc/opendkim/key.table
+  printf '%s\n' "*@${mail_domain} ${selector}._domainkey.${mail_domain}" >/etc/opendkim/signing.table
+  printf '%s\n' "127.0.0.1" "localhost" "$mail_domain" ".${mail_domain}" >/etc/opendkim/trusted.hosts
+
+  postconf -e "milter_default_action = accept" || true
+  postconf -e "milter_protocol = 6" || true
+  postconf -e "smtpd_milters = inet:127.0.0.1:8891" || true
+  postconf -e "non_smtpd_milters = inet:127.0.0.1:8891" || true
+  systemctl enable --now opendkim >/dev/null 2>&1 || true
+  systemctl restart opendkim postfix >/dev/null 2>&1 || true
+
+  if [ -f "$txt_file" ]; then
+    public_key="$(cat "$txt_file" 2>/dev/null | awk -F'"' '/"/ { for (i = 2; i <= NF; i += 2) printf "%s", $i } END { print "" }' | sed -E 's/^.*p=//; s/[;[:space:]]+$//')"
+    printf '%s' "$public_key"
+  fi
+}
+
 server_ip() {
   if have curl; then
     curl -fsS --max-time 5 https://api.ipify.org 2>/dev/null && return 0
@@ -438,6 +487,7 @@ export BACKEND_PORT
 export FRONTEND_PORT
 SMTP_PASSWORD="${SMTP_PASS:-$(random_secret)}"
 provision_system_mailbox "noreply" "$SMTP_PASSWORD"
+DKIM_PUBLIC_KEY="$(configure_opendkim "$MAIL_DOMAIN" || true)"
 mkdir -p x
 {
   echo "SMTP_HOST=\"127.0.0.1\""
@@ -451,6 +501,10 @@ mkdir -p x
   echo "MAIL_FROM=\"noreply@${MAIL_DOMAIN}\""
   echo "MAIL_FROM_NAME=\"Tiwlo\""
   echo "MAIL_REPLY_TO=\"${EMAIL:-support@${MAIL_DOMAIN}}\""
+  echo "TIWLO_DKIM_SELECTOR=\"${TIWLO_DKIM_SELECTOR:-tiwlo}\""
+  if [ -n "$DKIM_PUBLIC_KEY" ]; then
+    echo "TIWLO_DKIM_PUBLIC_KEY=\"${DKIM_PUBLIC_KEY}\""
+  fi
   echo "POWERDNS_MODE=\"pgsql\""
   echo "POWERDNS_SERVER_IP=\"${PUBLIC_IP:-}\""
   echo "APP_DOMAIN=\"${DOMAIN:-tiwlo.com}\""

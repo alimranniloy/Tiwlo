@@ -1,6 +1,8 @@
 import jwt from 'jsonwebtoken';
+import { randomUUID } from 'node:crypto';
 import { AppError } from '../../core/errors.js';
 import { sendTiwloEmail, emailServerAdvice, systemEmailConfig } from '../../core/email.js';
+import { getPowerDnsConfig } from '../powerdns/service.js';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret';
 const MAILBOX_SCOPE = 'admin';
@@ -9,6 +11,8 @@ const MAILBOX_KEY = 'mainAdmin:emailaccounts';
 
 const normalizeAddress = (value = '') => String(value || '').trim().toLowerCase();
 const now = () => new Date().toISOString();
+const cleanMailboxDomain = (value = '') => normalizeAddress(value || 'tiwlo.com').replace(/^((mail|email|tmail|www)\.)+/, '').replace(/[^a-z0-9.-]/g, '').replace(/^\.+|\.+$/g, '') || 'tiwlo.com';
+const cleanMailboxUser = (value = '') => normalizeAddress(value).split('@')[0].replace(/[^a-z0-9._-]/g, '').slice(0, 48);
 
 function settingRecords(setting) {
   return Array.isArray(setting?.value?.records) ? setting.value.records : [];
@@ -129,6 +133,66 @@ function requireMailboxPassword(record, password) {
     throw new AppError('Invalid mailbox email or password.', 'UNAUTHENTICATED');
   }
 }
+
+async function allowedMailboxDomains(ctx) {
+  const config = await getPowerDnsConfig(ctx).catch(() => null);
+  const domains = await ctx.prisma.domain.findMany({
+    where: { status: { not: 'deleted' } },
+    select: { name: true }
+  }).catch(() => []);
+  return Array.from(new Set([
+    cleanMailboxDomain(config?.primaryDomain || process.env.TIWLO_MAIL_DOMAIN || process.env.APP_DOMAIN || 'tiwlo.com'),
+    ...domains.map((item) => cleanMailboxDomain(item.name))
+  ].filter(Boolean)));
+}
+
+export const registerMailbox = async (ctx, input = {}) => {
+  const username = cleanMailboxUser(input.username || input.email);
+  const requestedDomain = cleanMailboxDomain(input.domain || String(input.email || '').split('@').pop() || '');
+  const domains = await allowedMailboxDomains(ctx);
+  const domain = domains.includes(requestedDomain) ? requestedDomain : domains[0] || requestedDomain;
+  const address = normalizeAddress(`${username}@${domain}`);
+  const password = String(input.password || '').trim();
+  if (!username || username.length < 3) throw new AppError('Choose an email name with at least 3 characters.', 'BAD_USER_INPUT');
+  if (!/^[a-z0-9](?:[a-z0-9._-]{1,46}[a-z0-9])$/.test(username)) throw new AppError('Email name can use letters, numbers, dots, dashes, and underscores.', 'BAD_USER_INPUT');
+  if (!password || password.length < 8) throw new AppError('Use a mailbox password with at least 8 characters.', 'BAD_USER_INPUT');
+  if (!domains.includes(domain)) throw new AppError('This mail domain is not available for self signup.', 'BAD_USER_INPUT');
+
+  const records = await readMailboxRecords(ctx.prisma);
+  if (records.some((item) => recordAddress(item) === address)) {
+    throw new AppError('That TMail address is already taken.', 'BAD_USER_INPUT');
+  }
+
+  const hostName = mailboxHost(domain);
+  const nextRecord = {
+    id: `mailbox-${randomUUID()}`,
+    title: address,
+    status: 'active',
+    createdAt: now(),
+    updatedAt: now(),
+    data: {
+      username,
+      domain,
+      address,
+      password,
+      displayName: String(input.displayName || username).trim().slice(0, 80),
+      recoveryEmail: normalizeAddress(input.recoveryEmail || ''),
+      hostName,
+      portalHost: portalHost(domain),
+      quotaMB: Number(input.quotaMB || 1024),
+      ssl: true,
+      incoming: { host: hostName, protocol: 'IMAP', port: 993, ssl: true },
+      outgoing: { host: hostName, protocol: 'SMTP', port: 465, ssl: true },
+      messages: []
+    }
+  };
+  nextRecord.data.messages = [welcomeMessage(nextRecord)];
+  await saveMailboxRecords(ctx.prisma, [...records, nextRecord]);
+  return {
+    token: mailboxToken(nextRecord),
+    account: publicAccount(nextRecord)
+  };
+};
 
 export const loginMailbox = async (ctx, input) => {
   const address = normalizeAddress(input?.email || input?.address);

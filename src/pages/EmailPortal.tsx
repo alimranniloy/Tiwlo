@@ -1,8 +1,9 @@
 import React from 'react';
-import { AlertCircle, Archive, Inbox, Loader2, LogOut, Mail, Plus, RefreshCw, Search, Send, ShieldCheck, Star, Trash2, X } from 'lucide-react';
+import { AlertCircle, Archive, Inbox, Loader2, LogOut, Mail, Plus, RefreshCw, Search, Send, ShieldCheck, Star, Trash2, UserPlus, X } from 'lucide-react';
 import {
   fetchMailboxOverviewWithApi,
   mailboxLoginWithApi,
+  mailboxRegisterWithApi,
   sendMailboxEmailWithApi,
   updateMailboxMessageWithApi
 } from '../lib/tiwloApi';
@@ -46,6 +47,12 @@ function dateLabel(value: string) {
   return date.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
+function defaultMailDomain() {
+  if (typeof window === 'undefined') return 'tiwlo.com';
+  const host = window.location.hostname.toLowerCase().replace(/^((tmail|email|mail)\.)+/, '');
+  return host && host.includes('.') ? host : 'tiwlo.com';
+}
+
 export default function EmailPortal() {
   const [token, setToken] = React.useState(() => localStorage.getItem(MAILBOX_TOKEN_KEY) || '');
   const [account, setAccount] = React.useState<MailboxAccount | null>(null);
@@ -57,7 +64,9 @@ export default function EmailPortal() {
   const [sending, setSending] = React.useState(false);
   const [error, setError] = React.useState('');
   const [notice, setNotice] = React.useState('');
+  const [authMode, setAuthMode] = React.useState<'signin' | 'create'>('signin');
   const [loginForm, setLoginForm] = React.useState({ email: '', password: '' });
+  const [registerForm, setRegisterForm] = React.useState({ username: '', domain: defaultMailDomain(), password: '', confirmPassword: '', displayName: '', recoveryEmail: '' });
   const [composeOpen, setComposeOpen] = React.useState(false);
   const [compose, setCompose] = React.useState({ to: '', subject: '', body: '' });
 
@@ -97,6 +106,33 @@ export default function EmailPortal() {
       await loadMailbox(result.token);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to sign in');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const register = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setLoading(true);
+    setError('');
+    setNotice('');
+    try {
+      if (registerForm.password !== registerForm.confirmPassword) throw new Error('Passwords do not match.');
+      const result = await mailboxRegisterWithApi({
+        username: registerForm.username,
+        domain: registerForm.domain,
+        password: registerForm.password,
+        displayName: registerForm.displayName,
+        recoveryEmail: registerForm.recoveryEmail
+      });
+      localStorage.setItem(MAILBOX_TOKEN_KEY, result.token);
+      setToken(result.token);
+      setAccount(result.account);
+      setRegisterForm({ username: '', domain: defaultMailDomain(), password: '', confirmPassword: '', displayName: '', recoveryEmail: '' });
+      setNotice('Your TMail inbox is ready.');
+      await loadMailbox(result.token);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to create TMail account');
     } finally {
       setLoading(false);
     }
@@ -158,16 +194,36 @@ export default function EmailPortal() {
   if (!token || !account) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[#f3f5f9] p-6">
-        <form onSubmit={login} className="w-full max-w-sm rounded-md border border-gray-100 bg-white p-8 shadow-2xl shadow-gray-100">
+        <form onSubmit={authMode === 'signin' ? login : register} className="w-full max-w-md rounded-md border border-gray-100 bg-white p-8 shadow-2xl shadow-gray-100">
           <TmailLogo className="mx-auto mb-8 h-14 w-40" />
           <h1 className="text-center text-xl font-black text-[#111827]">TMail</h1>
+          <div className="mt-6 grid grid-cols-2 rounded-full bg-[#EEF2F7] p-1 text-sm font-black">
+            <button type="button" onClick={() => setAuthMode('signin')} className={`rounded-full px-4 py-2 ${authMode === 'signin' ? 'bg-white text-blue-700 shadow-sm' : 'text-[#64748B]'}`}>Sign in</button>
+            <button type="button" onClick={() => setAuthMode('create')} className={`rounded-full px-4 py-2 ${authMode === 'create' ? 'bg-white text-blue-700 shadow-sm' : 'text-[#64748B]'}`}>Create inbox</button>
+          </div>
           <div className="mt-6 space-y-3">
-            <input type="email" required value={loginForm.email} onChange={(event) => setLoginForm((current) => ({ ...current, email: event.target.value }))} className="w-full rounded border border-[#DDE3EA] px-4 py-3 text-sm outline-none focus:border-blue-600" placeholder="email@tiwlo.com" />
-            <input type="password" required value={loginForm.password} onChange={(event) => setLoginForm((current) => ({ ...current, password: event.target.value }))} className="w-full rounded border border-[#DDE3EA] px-4 py-3 text-sm outline-none focus:border-blue-600" placeholder="Password" />
+            {authMode === 'signin' ? (
+              <>
+                <input type="email" required value={loginForm.email} onChange={(event) => setLoginForm((current) => ({ ...current, email: event.target.value }))} className="w-full rounded border border-[#DDE3EA] px-4 py-3 text-sm outline-none focus:border-blue-600" placeholder="email@tiwlo.com" />
+                <input type="password" required value={loginForm.password} onChange={(event) => setLoginForm((current) => ({ ...current, password: event.target.value }))} className="w-full rounded border border-[#DDE3EA] px-4 py-3 text-sm outline-none focus:border-blue-600" placeholder="Password" />
+              </>
+            ) : (
+              <>
+                <input value={registerForm.displayName} onChange={(event) => setRegisterForm((current) => ({ ...current, displayName: event.target.value }))} className="w-full rounded border border-[#DDE3EA] px-4 py-3 text-sm outline-none focus:border-blue-600" placeholder="Full name" />
+                <div className="grid grid-cols-[1fr_auto] overflow-hidden rounded border border-[#DDE3EA] focus-within:border-blue-600">
+                  <input required value={registerForm.username} onChange={(event) => setRegisterForm((current) => ({ ...current, username: event.target.value.toLowerCase().replace(/[^a-z0-9._-]/g, '') }))} className="min-w-0 px-4 py-3 text-sm outline-none" placeholder="choose-name" />
+                  <span className="border-l border-[#DDE3EA] bg-[#F8FAFC] px-3 py-3 text-sm font-bold text-[#64748B]">@{registerForm.domain}</span>
+                </div>
+                <input value={registerForm.recoveryEmail} onChange={(event) => setRegisterForm((current) => ({ ...current, recoveryEmail: event.target.value }))} className="w-full rounded border border-[#DDE3EA] px-4 py-3 text-sm outline-none focus:border-blue-600" placeholder="Recovery email (optional)" />
+                <input type="password" required value={registerForm.password} onChange={(event) => setRegisterForm((current) => ({ ...current, password: event.target.value }))} className="w-full rounded border border-[#DDE3EA] px-4 py-3 text-sm outline-none focus:border-blue-600" placeholder="Create password" />
+                <input type="password" required value={registerForm.confirmPassword} onChange={(event) => setRegisterForm((current) => ({ ...current, confirmPassword: event.target.value }))} className="w-full rounded border border-[#DDE3EA] px-4 py-3 text-sm outline-none focus:border-blue-600" placeholder="Confirm password" />
+              </>
+            )}
           </div>
           {error && <div className="mt-4 flex items-start gap-2 rounded border border-red-100 bg-red-50 px-3 py-2 text-[12px] font-bold text-red-600"><AlertCircle className="mt-0.5 h-4 w-4" /> {error}</div>}
+          {notice && <div className="mt-4 flex items-start gap-2 rounded border border-emerald-100 bg-emerald-50 px-3 py-2 text-[12px] font-bold text-emerald-700"><ShieldCheck className="mt-0.5 h-4 w-4" /> {notice}</div>}
           <button disabled={loading} className="mt-5 flex w-full items-center justify-center gap-2 rounded bg-[#111827] px-4 py-3 text-sm font-black text-white hover:bg-black disabled:opacity-60">
-            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />} Sign In
+            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : authMode === 'signin' ? <Mail className="h-4 w-4" /> : <UserPlus className="h-4 w-4" />} {authMode === 'signin' ? 'Sign In' : 'Create TMail'}
           </button>
         </form>
       </div>
