@@ -33,6 +33,18 @@ const cleanDomain = (value: string) => value.trim().toLowerCase().replace(/^@/, 
 const cleanUsername = (value: string) => value.trim().toLowerCase().replace(/[^a-z0-9._-]/g, '');
 const hostForDomain = (domain: string) => `mail.${cleanDomain(domain)}`;
 const portalForDomain = (domain: string) => `email.${cleanDomain(domain)}`;
+const falseValues = new Set(['0', 'false', 'no', 'off', 'unchecked']);
+const booleanValue = (value: any, fallback = false) => {
+  if (value === undefined || value === null || value === '') return fallback;
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value !== 0;
+  return !falseValues.has(String(value).trim().toLowerCase());
+};
+const secureForPort = (port: number, value: any) => {
+  if (port === 465) return true;
+  if (port === 587) return false;
+  return booleanValue(value, false);
+};
 
 export default function AdminEmail() {
   const [accounts, setAccounts] = React.useState<any[]>([]);
@@ -58,7 +70,15 @@ export default function AdminEmail() {
       ]);
       setAccounts(nextAccounts);
       const systemEmail = settings.find((setting) => setting.key === 'systemEmail')?.value;
-      if (systemEmail) setSystemForm({ ...emptySystemEmail, ...systemEmail, port: String(systemEmail.port || 465) });
+      if (systemEmail) {
+        const port = Number(systemEmail.port || 465);
+        setSystemForm({
+          ...emptySystemEmail,
+          ...systemEmail,
+          port: String(port),
+          secureSSL: secureForPort(port, systemEmail.secureSSL ?? systemEmail.secure)
+        });
+      }
     } catch (err) {
       setAccounts([]);
       setError(err instanceof Error ? err.message : 'Unable to load email settings');
@@ -74,6 +94,27 @@ export default function AdminEmail() {
   const normalizedUsername = cleanUsername(accountForm.username);
   const normalizedDomain = cleanDomain(accountForm.domain);
   const fullAddress = `${normalizedUsername}@${normalizedDomain}`;
+  const normalizedSystemEmail = React.useCallback(() => {
+    const port = Number(systemForm.port || 465);
+    return {
+      ...systemForm,
+      host: String(systemForm.host || '').trim(),
+      username: String(systemForm.username || '').trim(),
+      fromEmail: String(systemForm.fromEmail || '').trim(),
+      replyTo: String(systemForm.replyTo || '').trim(),
+      port,
+      secureSSL: secureForPort(port, systemForm.secureSSL)
+    };
+  }, [systemForm]);
+
+  const updateSystemPort = (value: string) => {
+    const port = Number(value);
+    setSystemForm({
+      ...systemForm,
+      port: value,
+      secureSSL: secureForPort(port, systemForm.secureSSL)
+    });
+  };
 
   const saveAccount = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -159,7 +200,7 @@ export default function AdminEmail() {
         scope: 'platform',
         scopeId: '',
         key: 'systemEmail',
-        value: { ...systemForm, port: Number(systemForm.port || 465) }
+        value: normalizedSystemEmail()
       });
       setNotice('System email configuration saved.');
       await loadEmail();
@@ -179,11 +220,7 @@ export default function AdminEmail() {
       if (!testRecipient.trim()) throw new Error('Enter the email address where the test email should be sent.');
       const result = await testSystemEmailWithApi({
         to: testRecipient.trim(),
-        config: {
-          ...systemForm,
-          port: Number(systemForm.port || 465),
-          secureSSL: Boolean(systemForm.secureSSL)
-        }
+        config: normalizedSystemEmail()
       });
       setTestResult(result);
       if (result.ok) {
@@ -289,15 +326,15 @@ export default function AdminEmail() {
           </div>
           <form onSubmit={saveSystemEmail} className="grid grid-cols-1 gap-3 md:grid-cols-2">
             <input value={systemForm.host} onChange={(event) => setSystemForm({ ...systemForm, host: event.target.value })} placeholder="SMTP host" className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" />
-            <input value={systemForm.port} onChange={(event) => setSystemForm({ ...systemForm, port: event.target.value })} placeholder="Port" className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" />
+            <input value={systemForm.port} onChange={(event) => updateSystemPort(event.target.value)} placeholder="Port" className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" />
             <input value={systemForm.username} onChange={(event) => setSystemForm({ ...systemForm, username: event.target.value })} placeholder="SMTP username" className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" />
             <input type="password" value={systemForm.password} onChange={(event) => setSystemForm({ ...systemForm, password: event.target.value })} placeholder="SMTP password" className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" />
             <input value={systemForm.fromEmail} onChange={(event) => setSystemForm({ ...systemForm, fromEmail: event.target.value })} placeholder="From email" className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" />
             <input value={systemForm.fromName} onChange={(event) => setSystemForm({ ...systemForm, fromName: event.target.value })} placeholder="From name" className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" />
             <input value={systemForm.replyTo} onChange={(event) => setSystemForm({ ...systemForm, replyTo: event.target.value })} placeholder="Reply-to email" className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500 md:col-span-2" />
             <label className="flex items-center gap-2 rounded border border-[#DDE3EA] px-3 py-2 text-sm font-bold text-[#374151] md:col-span-2">
-              <input type="checkbox" checked={systemForm.secureSSL} onChange={(event) => setSystemForm({ ...systemForm, secureSSL: event.target.checked })} />
-              Use SSL/TLS
+              <input type="checkbox" checked={booleanValue(systemForm.secureSSL)} onChange={(event) => setSystemForm({ ...systemForm, secureSSL: event.target.checked })} disabled={Number(systemForm.port || 465) === 465 || Number(systemForm.port || 465) === 587} />
+              Use SSL/TLS {Number(systemForm.port || 465) === 587 ? '(STARTTLS)' : ''}
             </label>
             <div className="grid grid-cols-1 gap-2 rounded border border-[#E5E7EB] bg-[#F9FAFB] p-3 md:col-span-2">
               <label className="text-[10px] font-black uppercase tracking-widest text-[#6B7280]">Send test to</label>
@@ -315,6 +352,7 @@ export default function AdminEmail() {
                     <span>stage: {testResult.stage || '-'}</span>
                     <span>code: {testResult.code || '-'}</span>
                     <span>host: {testResult.host || systemForm.host}:{testResult.port || systemForm.port}</span>
+                    <span>mode: {testResult.smtpMode || (testResult.diagnostic?.requireTLS ? '587 STARTTLS' : testResult.diagnostic?.secure ? '465 SSL' : '-')}</span>
                     <span>tcp: {testResult.diagnostic?.tcpOk ? 'reachable' : testResult.diagnostic?.tcpError || '-'}</span>
                     <span className="sm:col-span-2">dns: {(testResult.diagnostic?.resolvedAddresses || []).join(', ') || '-'}</span>
                   </div>

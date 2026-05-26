@@ -693,7 +693,7 @@ async function main() {
 
   const settings = [
     { scope: 'platform', scopeId: '', key: 'branding', value: { name: 'Tiwlo Cloud', supportEmail: 'support@tiwlo.app' } },
-    { scope: 'platform', scopeId: '', key: 'systemEmail', value: { host: 'mail.tiwlo.app', port: 465, username: 'noreply@tiwlo.app', fromEmail: 'noreply@tiwlo.app', fromName: 'Tiwlo', replyTo: 'support@tiwlo.app', secureSSL: true } },
+    { scope: 'platform', scopeId: '', key: 'systemEmail', value: { host: 'mail.tiwlo.com', port: 465, username: 'noreply@tiwlo.com', fromEmail: 'noreply@tiwlo.com', fromName: 'Tiwlo', replyTo: 'support@tiwlo.com', secureSSL: true, tlsRejectUnauthorized: false } },
     { scope: 'platform', scopeId: '', key: 'paymentGateways', value: { stripe: true, paypal: false, manualBank: true } },
     { scope: 'store', scopeId: store.id, key: 'checkout', value: { provider: 'stripe', taxIncluded: false, currency: 'USD' } },
     { scope: 'isp', scopeId: ispSite.id, key: 'radius', value: { authPort: 1812, accountingPort: 1813, nasSync: true } }

@@ -60,6 +60,71 @@ PDNS
   systemctl enable --now pdns >/dev/null 2>&1 || true
 }
 
+configure_system_email_services() {
+  step "Configuring system email services"
+  MAIL_DOMAIN="${DOMAIN:-tiwlo.local}"
+  MAIL_HOSTNAME="mail.${MAIL_DOMAIN}"
+  CERT_FILE="/etc/letsencrypt/live/${MAIL_HOSTNAME}/fullchain.pem"
+  KEY_FILE="/etc/letsencrypt/live/${MAIL_HOSTNAME}/privkey.pem"
+  DOMAIN_CERT_FILE="/etc/letsencrypt/live/${MAIL_DOMAIN}/fullchain.pem"
+  DOMAIN_KEY_FILE="/etc/letsencrypt/live/${MAIL_DOMAIN}/privkey.pem"
+
+  if [ ! -f "$CERT_FILE" ] || [ ! -f "$KEY_FILE" ]; then
+    CERT_FILE="$DOMAIN_CERT_FILE"
+    KEY_FILE="$DOMAIN_KEY_FILE"
+  fi
+
+  if [ ! -f "$CERT_FILE" ] || [ ! -f "$KEY_FILE" ]; then
+    CERT_FILE="/etc/ssl/certs/ssl-cert-snakeoil.pem"
+    KEY_FILE="/etc/ssl/private/ssl-cert-snakeoil.key"
+  fi
+
+  printf '%s\n' "${MAIL_DOMAIN}" >/etc/mailname
+  postconf -e "myhostname = ${MAIL_HOSTNAME}" || true
+  postconf -e "mydomain = ${MAIL_DOMAIN}" || true
+  postconf -e "myorigin = /etc/mailname" || true
+  postconf -e "inet_interfaces = all" || true
+  postconf -e "home_mailbox = Maildir/" || true
+  postconf -e "smtpd_tls_cert_file = ${CERT_FILE}" || true
+  postconf -e "smtpd_tls_key_file = ${KEY_FILE}" || true
+  postconf -e "smtpd_tls_security_level = may" || true
+  postconf -e "smtp_tls_security_level = may" || true
+  postconf -e "smtpd_tls_auth_only = yes" || true
+  postconf -e "smtpd_sasl_type = dovecot" || true
+  postconf -e "smtpd_sasl_path = private/auth" || true
+  postconf -e "smtpd_sasl_auth_enable = yes" || true
+  postconf -e "smtpd_sasl_security_options = noanonymous" || true
+  postconf -e "smtpd_recipient_restrictions = permit_sasl_authenticated,permit_mynetworks,reject_unauth_destination" || true
+  postconf -e "smtpd_relay_restrictions = permit_sasl_authenticated,permit_mynetworks,reject_unauth_destination" || true
+  postconf -M "submission/inet=submission inet n - y - - smtpd" || true
+  postconf -P "submission/inet/syslog_name=postfix/submission" || true
+  postconf -P "submission/inet/smtpd_tls_security_level=encrypt" || true
+  postconf -P "submission/inet/smtpd_sasl_auth_enable=yes" || true
+  postconf -P "submission/inet/smtpd_recipient_restrictions=permit_sasl_authenticated,reject" || true
+  postconf -M "smtps/inet=smtps inet n - y - - smtpd" || true
+  postconf -P "smtps/inet/syslog_name=postfix/smtps" || true
+  postconf -P "smtps/inet/smtpd_tls_wrappermode=yes" || true
+  postconf -P "smtps/inet/smtpd_sasl_auth_enable=yes" || true
+  postconf -P "smtps/inet/smtpd_recipient_restrictions=permit_sasl_authenticated,reject" || true
+
+  mkdir -p /etc/dovecot/conf.d
+  cat >/etc/dovecot/conf.d/99-tiwlo-mail-auth.conf <<'DOVECOT'
+disable_plaintext_auth = yes
+auth_mechanisms = plain login
+
+service auth {
+  unix_listener /var/spool/postfix/private/auth {
+    mode = 0660
+    user = postfix
+    group = postfix
+  }
+}
+DOVECOT
+
+  systemctl enable --now postfix dovecot >/dev/null 2>&1 || true
+  systemctl restart postfix dovecot >/dev/null 2>&1 || true
+}
+
 server_ip() {
   if have curl; then
     curl -fsS --max-time 5 https://api.ipify.org 2>/dev/null && return 0
@@ -91,22 +156,11 @@ apt-get install -y \
   postgresql postgresql-contrib nginx ufw certbot python3-certbot-nginx \
   pdns-server pdns-backend-pgsql dnsutils \
   postfix dovecot-imapd dovecot-pop3d roundcube roundcube-core roundcube-pgsql \
-  opendkim opendkim-tools mailutils cron openssl
+  opendkim opendkim-tools rspamd mailutils libsasl2-modules cron openssl ssl-cert
 systemctl enable --now postgresql nginx postfix dovecot opendkim certbot.timer pdns >/dev/null 2>&1 || true
 ensure_system_postgres_database
 configure_powerdns
-
-step "Configuring system email services"
-MAIL_DOMAIN="${DOMAIN:-tiwlo.local}"
-MAIL_HOSTNAME="mail.${MAIL_DOMAIN}"
-postconf -e "myhostname = ${MAIL_HOSTNAME}" || true
-postconf -e "myorigin = /etc/mailname" || true
-postconf -e "inet_interfaces = all" || true
-postconf -e "home_mailbox = Maildir/" || true
-postconf -e "smtpd_tls_security_level = may" || true
-postconf -e "smtp_tls_security_level = may" || true
-printf '%s\n' "${MAIL_DOMAIN}" >/etc/mailname
-systemctl restart postfix dovecot >/dev/null 2>&1 || true
+configure_system_email_services
 
 step "Preparing Tiwlo source at ${INSTALL_DIR}"
 mkdir -p "$(dirname "$INSTALL_DIR")"
@@ -144,6 +198,7 @@ mkdir -p x
   echo "SMTP_HOST=\"${MAIL_HOSTNAME}\""
   echo "SMTP_PORT=\"465\""
   echo "SMTP_SECURE=\"true\""
+  echo "SMTP_TLS_REJECT_UNAUTHORIZED=\"false\""
   echo "SMTP_USER=\"noreply@${MAIL_DOMAIN}\""
   echo "MAIL_FROM=\"noreply@${MAIL_DOMAIN}\""
   echo "MAIL_FROM_NAME=\"Tiwlo\""
@@ -240,6 +295,7 @@ ufw allow 25/tcp >/dev/null 2>&1 || true
 ufw allow 465/tcp >/dev/null 2>&1 || true
 ufw allow 587/tcp >/dev/null 2>&1 || true
 ufw allow 993/tcp >/dev/null 2>&1 || true
+ufw allow 995/tcp >/dev/null 2>&1 || true
 ufw allow 53/tcp >/dev/null 2>&1 || true
 ufw allow 53/udp >/dev/null 2>&1 || true
 ufw --force enable >/dev/null 2>&1 || true
@@ -258,6 +314,7 @@ if [ -n "$DOMAIN" ] && ! is_ip_address "$DOMAIN"; then
   fi
   if certbot --nginx "${CERTBOT_DOMAINS[@]}" --non-interactive --agree-tos -m "$EMAIL" --redirect; then
     systemctl reload nginx
+    configure_system_email_services
   else
     echo "SSL setup failed. Check that DNS A record for ${DOMAIN} points to ${PUBLIC_IP:-this server}, then run:"
     echo "sudo certbot --nginx -d ${DOMAIN}"

@@ -29,18 +29,121 @@ run_sudo() {
   fi
 }
 
+clean_domain() {
+  printf '%s' "$1" | sed -E 's#^https?://##; s#/.*$##; s#:[0-9]+$##; s#^mail\.##; s#^email\.##; s#^www\.##'
+}
+
+configure_postfix_dovecot() {
+  local mail_domain="$1"
+  local mail_hostname="$2"
+  local cert_file="/etc/letsencrypt/live/${mail_hostname}/fullchain.pem"
+  local key_file="/etc/letsencrypt/live/${mail_hostname}/privkey.pem"
+  local domain_cert_file="/etc/letsencrypt/live/${mail_domain}/fullchain.pem"
+  local domain_key_file="/etc/letsencrypt/live/${mail_domain}/privkey.pem"
+
+  if ! command -v postconf >/dev/null 2>&1; then
+    return 0
+  fi
+
+  if [ ! -f "$cert_file" ] || [ ! -f "$key_file" ]; then
+    cert_file="$domain_cert_file"
+    key_file="$domain_key_file"
+  fi
+
+  if [ ! -f "$cert_file" ] || [ ! -f "$key_file" ]; then
+    cert_file="/etc/ssl/certs/ssl-cert-snakeoil.pem"
+    key_file="/etc/ssl/private/ssl-cert-snakeoil.key"
+  fi
+
+  printf '%s\n' "$mail_domain" | run_sudo tee /etc/mailname >/dev/null || true
+  run_sudo postconf -e "myhostname = ${mail_hostname}" || true
+  run_sudo postconf -e "mydomain = ${mail_domain}" || true
+  run_sudo postconf -e "myorigin = /etc/mailname" || true
+  run_sudo postconf -e "inet_interfaces = all" || true
+  run_sudo postconf -e "home_mailbox = Maildir/" || true
+  run_sudo postconf -e "smtpd_tls_cert_file = ${cert_file}" || true
+  run_sudo postconf -e "smtpd_tls_key_file = ${key_file}" || true
+  run_sudo postconf -e "smtpd_tls_security_level = may" || true
+  run_sudo postconf -e "smtp_tls_security_level = may" || true
+  run_sudo postconf -e "smtpd_tls_auth_only = yes" || true
+  run_sudo postconf -e "smtpd_sasl_type = dovecot" || true
+  run_sudo postconf -e "smtpd_sasl_path = private/auth" || true
+  run_sudo postconf -e "smtpd_sasl_auth_enable = yes" || true
+  run_sudo postconf -e "smtpd_sasl_security_options = noanonymous" || true
+  run_sudo postconf -e "smtpd_recipient_restrictions = permit_sasl_authenticated,permit_mynetworks,reject_unauth_destination" || true
+  run_sudo postconf -e "smtpd_relay_restrictions = permit_sasl_authenticated,permit_mynetworks,reject_unauth_destination" || true
+  run_sudo postconf -M "submission/inet=submission inet n - y - - smtpd" || true
+  run_sudo postconf -P "submission/inet/syslog_name=postfix/submission" || true
+  run_sudo postconf -P "submission/inet/smtpd_tls_security_level=encrypt" || true
+  run_sudo postconf -P "submission/inet/smtpd_sasl_auth_enable=yes" || true
+  run_sudo postconf -P "submission/inet/smtpd_recipient_restrictions=permit_sasl_authenticated,reject" || true
+  run_sudo postconf -M "smtps/inet=smtps inet n - y - - smtpd" || true
+  run_sudo postconf -P "smtps/inet/syslog_name=postfix/smtps" || true
+  run_sudo postconf -P "smtps/inet/smtpd_tls_wrappermode=yes" || true
+  run_sudo postconf -P "smtps/inet/smtpd_sasl_auth_enable=yes" || true
+  run_sudo postconf -P "smtps/inet/smtpd_recipient_restrictions=permit_sasl_authenticated,reject" || true
+
+  run_sudo mkdir -p /etc/dovecot/conf.d
+  cat <<'DOVECOT' | run_sudo tee /etc/dovecot/conf.d/99-tiwlo-mail-auth.conf >/dev/null
+disable_plaintext_auth = yes
+auth_mechanisms = plain login
+
+service auth {
+  unix_listener /var/spool/postfix/private/auth {
+    mode = 0660
+    user = postfix
+    group = postfix
+  }
+}
+DOVECOT
+
+  run_sudo systemctl enable --now postfix dovecot >/dev/null 2>&1 || true
+  run_sudo systemctl restart postfix dovecot >/dev/null 2>&1 || true
+}
+
+ensure_mail_tls_certificate() {
+  local mail_domain
+  local mail_hostname
+  local cert_email
+  mail_domain="$(clean_domain "${TIWLO_MAIL_DOMAIN:-${APP_DOMAIN:-${TIWLO_DOMAIN:-tiwlo.com}}}")"
+  mail_domain="${mail_domain:-tiwlo.com}"
+  mail_hostname="${TIWLO_MAIL_HOSTNAME:-mail.${mail_domain}}"
+  cert_email="${TIWLO_EMAIL:-admin@${mail_domain}}"
+
+  if ! command -v certbot >/dev/null 2>&1; then
+    return 0
+  fi
+
+  if [ -f "/etc/letsencrypt/live/${mail_hostname}/fullchain.pem" ]; then
+    configure_postfix_dovecot "$mail_domain" "$mail_hostname"
+    return 0
+  fi
+
+  if getent hosts "$mail_hostname" >/dev/null 2>&1; then
+    run_sudo certbot certonly --nginx -d "$mail_hostname" --non-interactive --agree-tos -m "$cert_email" --keep-until-expiring >/dev/null 2>&1 || true
+  fi
+
+  configure_postfix_dovecot "$mail_domain" "$mail_hostname"
+}
+
 install_system_email_stack() {
   if ! command -v apt-get >/dev/null 2>&1; then
     return 0
   fi
+  local mail_domain
+  local mail_hostname
+  mail_domain="$(clean_domain "${TIWLO_MAIL_DOMAIN:-${APP_DOMAIN:-${TIWLO_DOMAIN:-tiwlo.com}}}")"
+  mail_domain="${mail_domain:-tiwlo.com}"
+  mail_hostname="${TIWLO_MAIL_HOSTNAME:-mail.${mail_domain}}"
   echo "Preparing Tiwlo Mail packages..."
-  echo "postfix postfix/mailname string ${TIWLO_MAIL_DOMAIN:-tiwlo.local}" | run_sudo debconf-set-selections >/dev/null 2>&1 || true
+  echo "postfix postfix/mailname string ${mail_domain}" | run_sudo debconf-set-selections >/dev/null 2>&1 || true
   echo "postfix postfix/main_mailer_type select Internet Site" | run_sudo debconf-set-selections >/dev/null 2>&1 || true
   run_sudo env DEBIAN_FRONTEND=noninteractive apt-get update >/dev/null 2>&1 || true
   run_sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y \
     postfix dovecot-core dovecot-imapd dovecot-pop3d opendkim opendkim-tools \
-    rspamd mailutils libsasl2-modules >/dev/null 2>&1 || true
+    rspamd mailutils libsasl2-modules ssl-cert >/dev/null 2>&1 || true
   run_sudo systemctl enable --now postfix dovecot opendkim rspamd >/dev/null 2>&1 || true
+  configure_postfix_dovecot "$mail_domain" "$mail_hostname"
   run_sudo ufw allow 25/tcp >/dev/null 2>&1 || true
   run_sudo ufw allow 110/tcp >/dev/null 2>&1 || true
   run_sudo ufw allow 143/tcp >/dev/null 2>&1 || true
@@ -121,11 +224,15 @@ git pull --ff-only
 
 install_system_email_stack
 install_system_ssl_stack
+ensure_mail_tls_certificate
 install_system_powerdns_stack
 
 echo "Preparing production GraphQL routing..."
 set_env_value "$ROOT/.env" VITE_GRAPHQL_URL "${FRONTEND_GRAPHQL_URL:-/graphql}"
 set_env_value "$ROOT/x/.env" POWERDNS_MODE "pgsql"
+set_env_value "$ROOT/x/.env" SMTP_PORT "465"
+set_env_value "$ROOT/x/.env" SMTP_SECURE "true"
+set_env_value "$ROOT/x/.env" SMTP_TLS_REJECT_UNAUTHORIZED "false"
 if [ -n "${FRONTEND_ORIGIN:-}" ]; then
   set_env_value "$ROOT/.env" APP_URL "$FRONTEND_ORIGIN"
   set_env_value "$ROOT/x/.env" FRONTEND_ORIGIN "$FRONTEND_ORIGIN"

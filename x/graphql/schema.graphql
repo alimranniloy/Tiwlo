@@ -356,6 +356,8 @@ type EmailTestResult {
   host: String
   port: Int
   secure: Boolean
+  requireTLS: Boolean
+  smtpMode: String
   requiredPorts: [Int!]!
   allowlist: [String!]!
   diagnostic: JSON

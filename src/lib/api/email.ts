@@ -40,6 +40,8 @@ export async function testSystemEmailWithApi(input: Record<string, unknown>) {
         host
         port
         secure
+        requireTLS
+        smtpMode
         requiredPorts
         allowlist
         diagnostic
