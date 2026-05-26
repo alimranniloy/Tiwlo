@@ -47,6 +47,13 @@ function hasEmailAddress(value = '') {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(extractEmailAddress(value));
 }
 
+function isLegacySupportReplyTo(replyTo = '', fromEmail = '') {
+  const replyAddress = extractEmailAddress(replyTo);
+  const fromAddress = extractEmailAddress(fromEmail);
+  if (!replyAddress || !fromAddress || replyAddress === fromAddress) return false;
+  return /^support@/i.test(replyAddress);
+}
+
 function smtpAuthUsernameForHost(username = '', host = '') {
   const raw = String(username || '').trim();
   if (!raw) return raw;
@@ -95,7 +102,9 @@ function envAuthFallbackConfig(config = {}) {
   const host = cleanHost(process.env.SMTP_HOST || config.host);
   const username = smtpAuthUsernameForHost(process.env.SMTP_USER || config.username, host);
   const envFromEmail = process.env.MAIL_FROM || (String(process.env.SMTP_USER || '').includes('@') ? process.env.SMTP_USER : config.fromEmail);
-  if (envPassword === config.password && username === config.username && host === cleanHost(config.host) && envFromEmail === config.fromEmail) return null;
+  const fromEmail = config.fromEmail || envFromEmail;
+  const replyTo = config.replyTo || fromEmail || process.env.MAIL_REPLY_TO;
+  if (envPassword === config.password && username === config.username && host === cleanHost(config.host) && fromEmail === config.fromEmail) return null;
   return {
     ...config,
     host,
@@ -104,8 +113,8 @@ function envAuthFallbackConfig(config = {}) {
     password: envPassword,
     secureSSL: process.env.SMTP_SECURE !== undefined ? process.env.SMTP_SECURE : config.secureSSL ?? config.secure,
     tlsRejectUnauthorized: config.tlsRejectUnauthorized,
-    fromEmail: envFromEmail || config.fromEmail,
-    replyTo: process.env.MAIL_REPLY_TO || config.replyTo || envFromEmail || config.fromEmail,
+    fromEmail,
+    replyTo,
     authSource: 'env'
   };
 }
@@ -248,6 +257,10 @@ export async function systemEmailConfig(prisma, override = {}) {
   const mode = smtpModeForPort(port, secureFromInput ?? process.env.SMTP_SECURE);
   const tlsServername = cleanHost(source.tlsServername || process.env.SMTP_TLS_SERVERNAME || process.env.SMTP_PUBLIC_HOST || host);
   const username = smtpAuthUsernameForHost(source.username || process.env.SMTP_USER, host);
+  const fromEmail = source.fromEmail || process.env.MAIL_FROM || (String(source.username || '').includes('@') ? source.username : DEFAULT_FROM);
+  const sourceReplyTo = hasEmailAddress(source.replyTo) && !isLegacySupportReplyTo(source.replyTo, fromEmail)
+    ? source.replyTo
+    : '';
   return {
     host,
     port: mode.port,
@@ -259,9 +272,9 @@ export async function systemEmailConfig(prisma, override = {}) {
     tlsRejectUnauthorized: booleanValue(source.tlsRejectUnauthorized ?? process.env.SMTP_TLS_REJECT_UNAUTHORIZED, false),
     username,
     password: source.password || process.env.SMTP_PASS,
-    fromEmail: source.fromEmail || process.env.MAIL_FROM || (String(source.username || '').includes('@') ? source.username : DEFAULT_FROM),
+    fromEmail,
     fromName: source.fromName || process.env.MAIL_FROM_NAME || 'Tiwlo.com',
-    replyTo: source.replyTo || process.env.MAIL_REPLY_TO || source.fromEmail || process.env.MAIL_FROM || DEFAULT_FROM
+    replyTo: sourceReplyTo || fromEmail || process.env.MAIL_REPLY_TO || DEFAULT_FROM
   };
 }
 
@@ -347,10 +360,10 @@ function dkimTransportOptions(config = {}) {
 }
 
 function smtpEnvelopeFrom(config = {}) {
-  const envFrom = process.env.MAIL_FROM;
-  if (hasEmailAddress(envFrom)) return extractEmailAddress(envFrom);
   if (hasEmailAddress(config.fromEmail)) return extractEmailAddress(config.fromEmail);
   if (hasEmailAddress(config.username)) return extractEmailAddress(config.username);
+  const envFrom = process.env.MAIL_FROM;
+  if (hasEmailAddress(envFrom)) return extractEmailAddress(envFrom);
   const user = localSmtpUsername(config.username || process.env.SMTP_USER || 'noreply');
   return `${user}@${domainFromMailConfig(config)}`;
 }

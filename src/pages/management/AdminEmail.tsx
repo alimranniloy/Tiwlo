@@ -30,7 +30,7 @@ const emptySystemEmail = {
   smtpMode: '465',
   password: '',
   fromName: 'Tiwlo',
-  replyTo: 'support@tiwlo.com',
+  replyTo: '',
   bimiLogoUrl: '',
   bimiCertificateUrl: ''
 };
@@ -53,6 +53,13 @@ const bimiTxtForDomain = (domain: string, logoUrl = '', certificateUrl = '') => 
 const localPart = (value: string) => cleanUsername(String(value || '').split('@')[0] || 'noreply') || 'noreply';
 const domainFromEmail = (value: string, fallback = 'tiwlo.com') => mailBaseDomain(String(value || '').includes('@') ? String(value).split('@').pop() || fallback : fallback);
 const blueBadgeEnabled = (record: any) => Boolean(record?.data?.blueBadgeEnabled || record?.data?.bimi?.enabled);
+const cleanEmail = (value: string) => String(value || '').trim().toLowerCase();
+const isEmailAddress = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail(value));
+const isLegacySupportReplyTo = (replyTo: string, fromEmail: string) => cleanEmail(replyTo).startsWith('support@') && cleanEmail(replyTo) !== cleanEmail(fromEmail);
+const nextReplyTo = (currentReplyTo: string, previousFrom: string, nextFrom: string) => {
+  const current = cleanEmail(currentReplyTo);
+  return !current || current === cleanEmail(previousFrom) || isLegacySupportReplyTo(current, previousFrom) ? nextFrom : current;
+};
 
 export default function AdminEmail() {
   const [accounts, setAccounts] = React.useState<any[]>([]);
@@ -84,20 +91,23 @@ export default function AdminEmail() {
         const domainSource = String(systemEmail.username || '').includes('@') ? systemEmail.username : systemEmail.fromEmail;
         const domain = domainFromEmail(domainSource, powerDnsConfig?.primaryDomain || 'tiwlo.com');
         const smtpMode = Number(systemEmail.port || 465) === 587 ? '587' : '465';
+        const sender = localPart(systemEmail.username || systemEmail.fromEmail || 'noreply');
+        const fromEmail = `${sender}@${domain}`;
+        const replyTo = isEmailAddress(systemEmail.replyTo) && !isLegacySupportReplyTo(systemEmail.replyTo, fromEmail) ? cleanEmail(systemEmail.replyTo) : fromEmail;
         setSystemForm({
           ...emptySystemEmail,
           domain,
-          sender: localPart(systemEmail.username || systemEmail.fromEmail || 'noreply'),
+          sender,
           smtpMode,
           password: systemEmail.password || '',
           fromName: systemEmail.fromName || 'Tiwlo',
-          replyTo: systemEmail.replyTo || `support@${domain}`,
+          replyTo,
           bimiLogoUrl: systemEmail.bimi?.logoUrl || '',
           bimiCertificateUrl: systemEmail.bimi?.certificateUrl || ''
         });
       } else if (powerDnsConfig?.primaryDomain) {
         const domain = cleanDomain(powerDnsConfig.primaryDomain);
-        setSystemForm((current) => ({ ...current, domain, replyTo: `support@${domain}` }));
+        setSystemForm((current) => ({ ...current, domain, replyTo: `${localPart(current.sender)}@${domain}` }));
       }
     } catch (err) {
       setAccounts([]);
@@ -126,6 +136,8 @@ export default function AdminEmail() {
   const selectedSmtpMode = selectedSmtpPort === 587 ? '587 STARTTLS' : '465 SSL';
   const normalizedSystemEmail = React.useCallback(() => {
     const port = systemForm.smtpMode === '587' ? 587 : 465;
+    const fromEmail = `${localPart(systemForm.sender)}@${mailBaseDomain(systemForm.domain)}`;
+    const replyTo = isEmailAddress(systemForm.replyTo) && !isLegacySupportReplyTo(systemForm.replyTo, fromEmail) ? cleanEmail(systemForm.replyTo) : fromEmail;
     return {
       host: '127.0.0.1',
       publicHost: hostForDomain(mailBaseDomain(systemForm.domain)),
@@ -136,9 +148,9 @@ export default function AdminEmail() {
       tlsRejectUnauthorized: false,
       username: localPart(systemForm.sender),
       password: String(systemForm.password || '').trim(),
-      fromEmail: `${localPart(systemForm.sender)}@${mailBaseDomain(systemForm.domain)}`,
+      fromEmail,
       fromName: String(systemForm.fromName || 'Tiwlo').trim(),
-      replyTo: String(systemForm.replyTo || '').trim(),
+      replyTo,
       domain: mailBaseDomain(systemForm.domain),
       bimi: {
         logoUrl: systemForm.bimiLogoUrl.trim(),
@@ -478,12 +490,20 @@ export default function AdminEmail() {
           <form onSubmit={saveSystemEmail} className="grid grid-cols-1 gap-3 md:grid-cols-2">
             <label className="space-y-1">
               <span className="text-[10px] font-black uppercase text-[#6B7280]">Mail Domain</span>
-              <input value={systemForm.domain} onChange={(event) => setSystemForm({ ...systemForm, domain: mailBaseDomain(event.target.value), replyTo: `support@${mailBaseDomain(event.target.value)}` })} placeholder="tiwlo.com" className="w-full rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" />
+              <input value={systemForm.domain} onChange={(event) => {
+                const nextDomain = mailBaseDomain(event.target.value);
+                const nextFrom = `${systemSender}@${nextDomain}`;
+                setSystemForm({ ...systemForm, domain: nextDomain, replyTo: nextReplyTo(systemForm.replyTo, systemAddress, nextFrom) });
+              }} placeholder="tiwlo.com" className="w-full rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" />
             </label>
             <label className="space-y-1">
               <span className="text-[10px] font-black uppercase text-[#6B7280]">Sender</span>
               <div className="grid grid-cols-[1fr_auto] overflow-hidden rounded border border-[#DDE3EA] bg-white focus-within:border-blue-500">
-                <input value={systemForm.sender} onChange={(event) => setSystemForm({ ...systemForm, sender: event.target.value })} placeholder="noreply" className="min-w-0 px-3 py-2 text-sm outline-none" />
+                <input value={systemForm.sender} onChange={(event) => {
+                  const nextSender = localPart(event.target.value);
+                  const nextFrom = `${nextSender}@${systemDomain}`;
+                  setSystemForm({ ...systemForm, sender: event.target.value, replyTo: nextReplyTo(systemForm.replyTo, systemAddress, nextFrom) });
+                }} placeholder="noreply" className="min-w-0 px-3 py-2 text-sm outline-none" />
                 <span className="border-l border-[#DDE3EA] bg-[#F9FAFB] px-3 py-2 text-sm font-bold text-[#6B7280]">@{systemDomain}</span>
               </div>
             </label>
@@ -504,7 +524,7 @@ export default function AdminEmail() {
             </label>
             <label className="space-y-1 md:col-span-2">
               <span className="text-[10px] font-black uppercase text-[#6B7280]">Reply To</span>
-              <input value={systemForm.replyTo} onChange={(event) => setSystemForm({ ...systemForm, replyTo: event.target.value })} placeholder={`support@${systemDomain}`} className="w-full rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" />
+              <input value={systemForm.replyTo} onChange={(event) => setSystemForm({ ...systemForm, replyTo: event.target.value })} placeholder={systemAddress} className="w-full rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" />
             </label>
             <label className="space-y-1">
               <span className="text-[10px] font-black uppercase text-[#6B7280]">BIMI SVG URL Optional</span>

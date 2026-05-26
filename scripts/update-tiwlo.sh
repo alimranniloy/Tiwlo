@@ -392,7 +392,7 @@ SMTP_SECURE=true
 SMTP_USER=${local_user}
 SMTP_PASS=${smtp_pass}
 MAIL_FROM=${local_user}@${mail_domain}
-MAIL_REPLY_TO=support@${mail_domain}
+MAIL_REPLY_TO=${local_user}@${mail_domain}
 MAILENV
   run_sudo chmod 600 /etc/tiwlo-mail/system-smtp.env >/dev/null 2>&1 || true
 }
@@ -738,7 +738,7 @@ set_env_value "$ROOT/x/.env" SMTP_PASS "$SYSTEM_SMTP_PASS"
 set_env_value "$ROOT/x/.env" MAIL_FROM "${SYSTEM_SMTP_USER}@${MAIL_DOMAIN}"
 set_env_value "$ROOT/x/.env" MAIL_INLINE_LOGO "false"
 set_env_value_if_missing "$ROOT/x/.env" MAIL_FROM_NAME "Tiwlo"
-set_env_value_if_missing "$ROOT/x/.env" MAIL_REPLY_TO "support@${MAIL_DOMAIN}"
+set_env_value_if_missing "$ROOT/x/.env" MAIL_REPLY_TO "${SYSTEM_SMTP_USER}@${MAIL_DOMAIN}"
 provision_system_mailbox "$MAIL_DOMAIN" "$SYSTEM_SMTP_USER" "$SYSTEM_SMTP_PASS"
 DKIM_SELECTOR="${TIWLO_DKIM_SELECTOR:-tiwlo}"
 DKIM_KEY_PATH="/etc/opendkim/keys/${MAIL_DOMAIN}/${DKIM_SELECTOR}.private"
