@@ -19,6 +19,9 @@ fi
 
 cd "$ROOT"
 
+BACKEND_PORT="${BACKEND_PORT:-4000}"
+FRONTEND_PORT="${FRONTEND_PORT:-3000}"
+
 run_sudo() {
   if [ "$(id -u)" -eq 0 ]; then
     "$@"
@@ -119,6 +122,30 @@ verify_powerdns_listener() {
     else
       echo "PowerDNS authoritative: not listening on 53. Check pdns status, PostgreSQL backend config, and provider firewall."
     fi
+  fi
+}
+
+wait_http() {
+  local url="$1"
+  local label="$2"
+  local tries="${3:-45}"
+  local attempt
+  for attempt in $(seq 1 "$tries"); do
+    if command -v curl >/dev/null 2>&1 && curl -fsS "$url" >/dev/null 2>&1; then
+      echo "${label}: healthy at ${url}"
+      return 0
+    fi
+    sleep 1
+  done
+  echo "${label}: not responding at ${url}"
+  return 1
+}
+
+show_service_diagnostics() {
+  local service="$1"
+  if command -v systemctl >/dev/null 2>&1; then
+    run_sudo systemctl --no-pager --full status "$service" || true
+    run_sudo journalctl -u "$service" -n 80 --no-pager || true
   fi
 }
 
@@ -515,6 +542,112 @@ set_env_value_if_missing() {
   fi
 }
 
+current_env_or_default() {
+  local file="$1"
+  local key="$2"
+  local fallback="$3"
+  local value
+  value="$(get_env_value "$file" "$key" || true)"
+  printf '%s' "${value:-$fallback}"
+}
+
+ensure_systemd_services() {
+  if ! command -v systemctl >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local npm_bin
+  npm_bin="$(command -v npm || true)"
+  if [ -z "$npm_bin" ]; then
+    npm_bin="$(find "$ROOT/.tools/node" -path '*/bin/npm' -type f 2>/dev/null | sort | tail -n 1 || true)"
+  fi
+  if [ -z "$npm_bin" ]; then
+    echo "npm was not found; cannot repair systemd services."
+    return 1
+  fi
+
+  local node_bin_dir
+  local service_path
+  local frontend_origin
+  local api_base_url
+  node_bin_dir="$(dirname "$npm_bin")"
+  service_path="${node_bin_dir}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+  frontend_origin="$(current_env_or_default "$ROOT/x/.env" FRONTEND_ORIGIN "http://127.0.0.1:${FRONTEND_PORT}")"
+  api_base_url="$(current_env_or_default "$ROOT/x/.env" API_BASE_URL "$frontend_origin")"
+
+  set_env_value "$ROOT/x/.env" PORT "$BACKEND_PORT"
+  set_env_value "$ROOT/x/.env" FRONTEND_ORIGIN "$frontend_origin"
+  set_env_value "$ROOT/x/.env" API_BASE_URL "$api_base_url"
+  set_env_value "$ROOT/.env" VITE_GRAPHQL_URL "${FRONTEND_GRAPHQL_URL:-/graphql}"
+
+  cat <<SERVICE | run_sudo tee /etc/systemd/system/tiwlo-backend.service >/dev/null
+[Unit]
+Description=Tiwlo GraphQL Backend
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=${ROOT}/x
+EnvironmentFile=${ROOT}/x/.env
+Environment=NODE_ENV=production
+Environment=PATH=${service_path}
+Environment=PORT=${BACKEND_PORT}
+ExecStart=${npm_bin} run start
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+SERVICE
+
+  cat <<SERVICE | run_sudo tee /etc/systemd/system/tiwlo-frontend.service >/dev/null
+[Unit]
+Description=Tiwlo Frontend
+After=network-online.target tiwlo-backend.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=${ROOT}
+EnvironmentFile=${ROOT}/.env
+Environment=NODE_ENV=production
+Environment=PATH=${service_path}
+Environment=FRONTEND_PORT=${FRONTEND_PORT}
+Environment=BACKEND_URL=http://127.0.0.1:${BACKEND_PORT}
+ExecStart=${npm_bin} run start -- --port ${FRONTEND_PORT}
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+SERVICE
+
+  run_sudo systemctl daemon-reload
+  run_sudo systemctl enable tiwlo-backend tiwlo-frontend >/dev/null 2>&1 || true
+  run_sudo systemctl restart tiwlo-backend || true
+  run_sudo systemctl restart tiwlo-frontend || true
+}
+
+verify_web_stack() {
+  local failed=0
+  if ! wait_http "http://127.0.0.1:${BACKEND_PORT}/health" "Tiwlo backend" 45; then
+    failed=1
+    show_service_diagnostics tiwlo-backend
+  fi
+  if ! wait_http "http://127.0.0.1:${FRONTEND_PORT}" "Tiwlo frontend" 45; then
+    failed=1
+    show_service_diagnostics tiwlo-frontend
+  fi
+  if [ "$failed" -ne 0 ]; then
+    echo "Tiwlo web stack is not healthy; refusing to finish with a silent nginx 502."
+    exit 1
+  fi
+  if command -v nginx >/dev/null 2>&1; then
+    run_sudo nginx -t >/dev/null 2>&1 && run_sudo systemctl reload nginx >/dev/null 2>&1 || true
+  fi
+}
+
 echo "Updating Tiwlo code..."
 git pull --ff-only
 
@@ -574,9 +707,8 @@ if [ -d "$ROOT/src/tPanel" ]; then
   npm --prefix src/tPanel run build
 fi
 
-if command -v systemctl >/dev/null 2>&1; then
-  sudo systemctl restart tiwlo-backend 2>/dev/null || true
-  sudo systemctl restart tiwlo-frontend 2>/dev/null || true
-fi
+echo "Repairing and restarting Tiwlo web services..."
+ensure_systemd_services
+verify_web_stack
 
 echo "Tiwlo update complete. Existing PostgreSQL data was preserved."
