@@ -308,7 +308,7 @@ function AppContent({
 export default function App() {
   const [appInitializing, setAppInitializing] = useState(false);
   const storefrontHost = getStorefrontHostContext();
-  const isEmailHost = typeof window !== 'undefined' && window.location.hostname.toLowerCase().startsWith('email.');
+  const isEmailHost = typeof window !== 'undefined' && /^(?:tmail|email)\./.test(window.location.hostname.toLowerCase());
 
   const [user, setUser] = useState<User | null>(() => {
     const saved = localStorage.getItem('tiwlo_user');

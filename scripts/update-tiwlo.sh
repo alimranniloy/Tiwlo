@@ -30,7 +30,7 @@ run_sudo() {
 }
 
 clean_domain() {
-  printf '%s' "$1" | sed -E 's#^https?://##; s#/.*$##; s#:[0-9]+$##; s#^mail\.##; s#^email\.##; s#^www\.##'
+  printf '%s' "$1" | sed -E 's#^https?://##; s#/.*$##; s#:[0-9]+$##; s#^((mail|email|tmail|www)\.)+##'
 }
 
 random_secret() {
@@ -177,8 +177,16 @@ configure_postfix_dovecot() {
   run_sudo mkdir -p /etc/dovecot/conf.d
 
   write_dovecot_auth_config() {
+    local mode="${1:-modern}"
+    local username_format="auth_username_format = %{user | username}"
+    if [ "$mode" = "legacy" ]; then
+      username_format="auth_username_format = %n"
+    elif [ "$mode" = "minimal" ]; then
+      username_format=""
+    fi
     cat <<DOVECOT | run_sudo tee /etc/dovecot/conf.d/99-tiwlo-mail-auth.conf >/dev/null
 auth_mechanisms = plain login
+${username_format}
 protocols = imap pop3
 
 service auth {
@@ -260,11 +268,19 @@ DOVECOTSSL
     fi
   }
 
-  write_dovecot_auth_config
+  write_dovecot_auth_config modern
   write_dovecot_ssl_config modern
   if ! validate_dovecot_config; then
     echo "Dovecot modern SSL settings were not accepted; falling back to legacy Dovecot SSL settings."
     write_dovecot_ssl_config legacy
+  fi
+  if ! validate_dovecot_config; then
+    echo "Dovecot modern auth username format was not accepted; falling back to legacy Dovecot username format."
+    write_dovecot_auth_config legacy
+  fi
+  if ! validate_dovecot_config; then
+    echo "Dovecot username format override was not accepted; using minimal auth settings."
+    write_dovecot_auth_config minimal
   fi
 
   run_sudo systemctl enable --now postfix dovecot >/dev/null 2>&1 || true
@@ -307,9 +323,9 @@ SMTP_PUBLIC_HOST=mail.${mail_domain}
 SMTP_TLS_SERVERNAME=mail.${mail_domain}
 SMTP_PORT=465
 SMTP_SECURE=true
-SMTP_USER=${smtp_user}
+SMTP_USER=${local_user}
 SMTP_PASS=${smtp_pass}
-MAIL_FROM=${smtp_user}
+MAIL_FROM=${local_user}@${mail_domain}
 MAIL_REPLY_TO=support@${mail_domain}
 MAILENV
   run_sudo chmod 600 /etc/tiwlo-mail/system-smtp.env >/dev/null 2>&1 || true
@@ -469,6 +485,7 @@ MAIL_DOMAIN="$(clean_domain "${TIWLO_MAIL_DOMAIN:-${APP_DOMAIN:-${TIWLO_DOMAIN:-
 MAIL_DOMAIN="${MAIL_DOMAIN:-tiwlo.com}"
 SYSTEM_SMTP_USER="$(get_env_value "$ROOT/x/.env" SMTP_USER)"
 SYSTEM_SMTP_USER="${SYSTEM_SMTP_USER:-noreply@${MAIL_DOMAIN}}"
+SYSTEM_SMTP_USER="${SYSTEM_SMTP_USER%@*}"
 SYSTEM_SMTP_PASS="$(get_env_value "$ROOT/x/.env" SMTP_PASS)"
 SYSTEM_SMTP_PASS="${SYSTEM_SMTP_PASS:-$(random_secret)}"
 set_env_value "$ROOT/x/.env" SMTP_HOST "127.0.0.1"
@@ -476,7 +493,7 @@ set_env_value "$ROOT/x/.env" SMTP_PUBLIC_HOST "mail.${MAIL_DOMAIN}"
 set_env_value "$ROOT/x/.env" SMTP_TLS_SERVERNAME "mail.${MAIL_DOMAIN}"
 set_env_value "$ROOT/x/.env" SMTP_USER "$SYSTEM_SMTP_USER"
 set_env_value "$ROOT/x/.env" SMTP_PASS "$SYSTEM_SMTP_PASS"
-set_env_value_if_missing "$ROOT/x/.env" MAIL_FROM "$SYSTEM_SMTP_USER"
+set_env_value "$ROOT/x/.env" MAIL_FROM "${SYSTEM_SMTP_USER}@${MAIL_DOMAIN}"
 set_env_value_if_missing "$ROOT/x/.env" MAIL_FROM_NAME "Tiwlo"
 set_env_value_if_missing "$ROOT/x/.env" MAIL_REPLY_TO "support@${MAIL_DOMAIN}"
 provision_system_mailbox "$MAIL_DOMAIN" "$SYSTEM_SMTP_USER" "$SYSTEM_SMTP_PASS"

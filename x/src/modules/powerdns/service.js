@@ -64,6 +64,7 @@ const mailDnsDefaultsFor = (domainName, config) => {
   const postmaster = `postmaster@${domain}`;
   const records = [
     { id: 'mail_a', type: addressType, name: 'mail', value: serverIp },
+    { id: 'tmail_a', type: addressType, name: 'tmail', value: serverIp },
     { id: 'email_a', type: addressType, name: 'email', value: serverIp },
     { id: 'smtp_a', type: addressType, name: 'smtp', value: serverIp },
     { id: 'imap_a', type: addressType, name: 'imap', value: serverIp },
@@ -528,6 +529,7 @@ const updateSslConfigForDomain = async (ctx, config) => {
     config.primaryDomain,
     `www.${config.primaryDomain}`,
     `mail.${config.primaryDomain}`,
+    `tmail.${config.primaryDomain}`,
     `email.${config.primaryDomain}`,
     ...config.nameservers
   ].filter(isValidHost).join('\n');

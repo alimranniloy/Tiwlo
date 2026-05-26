@@ -46,7 +46,7 @@ const DEFAULT_SSL_CONFIG = {
   autoEnabled: true,
   primaryDomain: 'tiwlo.com',
   email: 'admin@tiwlo.com',
-  domainsText: 'tiwlo.com\nwww.tiwlo.com\nmail.tiwlo.com\nemail.tiwlo.com',
+  domainsText: 'tiwlo.com\nwww.tiwlo.com\nmail.tiwlo.com\ntmail.tiwlo.com\nemail.tiwlo.com',
   includeKnownDomains: true,
   includeWildcard: false,
   staging: false,
@@ -193,6 +193,7 @@ const defaultSslConfig = () => {
       primaryDomain,
       `www.${primaryDomain}`,
       `mail.${primaryDomain}`,
+      `tmail.${primaryDomain}`,
       `email.${primaryDomain}`
     ].filter(isValidHost).join('\n')
   };
@@ -235,6 +236,7 @@ const parseSslDomains = async (prisma, config, mode = 'all', explicitDomain = ''
     primary,
     `www.${primary}`,
     `mail.${primary}`,
+    `tmail.${primary}`,
     `email.${primary}`,
     ...typedDomains
   ];
@@ -271,7 +273,7 @@ const expandSslDomainsForMode = (domains, config, mode, explicitDomain = '') => 
   const selectedApex = apexForHost(selected, primary);
   const matching = all.filter((domain) => apexForHost(domain, primary) === selectedApex);
   const defaults = selectedApex === primary
-    ? [primary, `www.${primary}`, `mail.${primary}`, `email.${primary}`, selected]
+    ? [primary, `www.${primary}`, `mail.${primary}`, `tmail.${primary}`, `email.${primary}`, selected]
     : [selected];
   return Array.from(new Set([...defaults, ...matching].map(cleanHost).filter(isValidHost)));
 };

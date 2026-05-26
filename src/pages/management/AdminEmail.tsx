@@ -29,11 +29,12 @@ const emptySystemEmail = {
 };
 
 const cleanDomain = (value: string) => value.trim().toLowerCase().replace(/^@/, '').replace(/^https?:\/\//, '').replace(/\/.*$/, '') || 'tiwlo.com';
+const mailBaseDomain = (value: string) => cleanDomain(value).replace(/^((mail|email|tmail)\.)+/, '') || 'tiwlo.com';
 const cleanUsername = (value: string) => value.trim().toLowerCase().replace(/[^a-z0-9._-]/g, '');
-const hostForDomain = (domain: string) => `mail.${cleanDomain(domain)}`;
-const portalForDomain = (domain: string) => `email.${cleanDomain(domain)}`;
+const hostForDomain = (domain: string) => `mail.${mailBaseDomain(domain)}`;
+const portalForDomain = (domain: string) => `tmail.${mailBaseDomain(domain)}`;
 const localPart = (value: string) => cleanUsername(String(value || '').split('@')[0] || 'noreply') || 'noreply';
-const domainFromEmail = (value: string, fallback = 'tiwlo.com') => cleanDomain(String(value || '').includes('@') ? String(value).split('@').pop() || fallback : fallback);
+const domainFromEmail = (value: string, fallback = 'tiwlo.com') => mailBaseDomain(String(value || '').includes('@') ? String(value).split('@').pop() || fallback : fallback);
 
 export default function AdminEmail() {
   const [accounts, setAccounts] = React.useState<any[]>([]);
@@ -61,7 +62,8 @@ export default function AdminEmail() {
       setAccounts(nextAccounts);
       const systemEmail = settings.find((setting) => setting.key === 'systemEmail')?.value;
       if (systemEmail) {
-        const domain = domainFromEmail(systemEmail.username || systemEmail.fromEmail, powerDnsConfig?.primaryDomain || 'tiwlo.com');
+        const domainSource = String(systemEmail.username || '').includes('@') ? systemEmail.username : systemEmail.fromEmail;
+        const domain = domainFromEmail(domainSource, powerDnsConfig?.primaryDomain || 'tiwlo.com');
         const smtpMode = Number(systemEmail.port || 465) === 587 ? '587' : '465';
         setSystemForm({
           ...emptySystemEmail,
@@ -89,9 +91,9 @@ export default function AdminEmail() {
   }, [loadEmail]);
 
   const normalizedUsername = cleanUsername(accountForm.username);
-  const normalizedDomain = cleanDomain(accountForm.domain);
+  const normalizedDomain = mailBaseDomain(accountForm.domain);
   const fullAddress = `${normalizedUsername}@${normalizedDomain}`;
-  const systemDomain = cleanDomain(systemForm.domain);
+  const systemDomain = mailBaseDomain(systemForm.domain);
   const systemSender = localPart(systemForm.sender);
   const systemAddress = `${systemSender}@${systemDomain}`;
   const publicMailHost = hostForDomain(systemDomain);
@@ -102,18 +104,18 @@ export default function AdminEmail() {
     const port = systemForm.smtpMode === '587' ? 587 : 465;
     return {
       host: '127.0.0.1',
-      publicHost: hostForDomain(cleanDomain(systemForm.domain)),
-      tlsServername: hostForDomain(cleanDomain(systemForm.domain)),
+      publicHost: hostForDomain(mailBaseDomain(systemForm.domain)),
+      tlsServername: hostForDomain(mailBaseDomain(systemForm.domain)),
       port,
       secureSSL: port === 465,
       requireTLS: port === 587,
       tlsRejectUnauthorized: false,
-      username: `${localPart(systemForm.sender)}@${cleanDomain(systemForm.domain)}`,
+      username: localPart(systemForm.sender),
       password: String(systemForm.password || '').trim(),
-      fromEmail: `${localPart(systemForm.sender)}@${cleanDomain(systemForm.domain)}`,
+      fromEmail: `${localPart(systemForm.sender)}@${mailBaseDomain(systemForm.domain)}`,
       fromName: String(systemForm.fromName || 'Tiwlo').trim(),
       replyTo: String(systemForm.replyTo || '').trim(),
-      domain: cleanDomain(systemForm.domain)
+      domain: mailBaseDomain(systemForm.domain)
     };
   }, [systemForm]);
 
@@ -254,7 +256,7 @@ export default function AdminEmail() {
           </div>
           <div>
             <h1 className="text-2xl font-bold text-[#111827]">Tiwlo.com Email</h1>
-            <p className="text-[13px] text-[#6B7280]">Create mailboxes, test SMTP delivery, and publish the login details for email.tiwlo.com.</p>
+            <p className="text-[13px] text-[#6B7280]">Create mailboxes, test SMTP delivery, and publish the login details for tmail.tiwlo.com.</p>
           </div>
         </div>
       </div>
@@ -267,7 +269,7 @@ export default function AdminEmail() {
           <div className="mb-5 flex items-center justify-between">
             <div>
               <h2 className="text-sm font-black uppercase text-[#111827]">Create Mailbox</h2>
-              <p className="mt-1 text-[12px] text-[#6B7280]">The mailbox can sign in at email.tiwlo.com after it is saved.</p>
+              <p className="mt-1 text-[12px] text-[#6B7280]">The mailbox can sign in at tmail.tiwlo.com after it is saved.</p>
             </div>
             <Plus className="h-4 w-4 text-blue-600" />
           </div>
@@ -328,7 +330,7 @@ export default function AdminEmail() {
           <form onSubmit={saveSystemEmail} className="grid grid-cols-1 gap-3 md:grid-cols-2">
             <label className="space-y-1">
               <span className="text-[10px] font-black uppercase text-[#6B7280]">Mail Domain</span>
-              <input value={systemForm.domain} onChange={(event) => setSystemForm({ ...systemForm, domain: cleanDomain(event.target.value), replyTo: `support@${cleanDomain(event.target.value)}` })} placeholder="tiwlo.com" className="w-full rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" />
+              <input value={systemForm.domain} onChange={(event) => setSystemForm({ ...systemForm, domain: mailBaseDomain(event.target.value), replyTo: `support@${mailBaseDomain(event.target.value)}` })} placeholder="tiwlo.com" className="w-full rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" />
             </label>
             <label className="space-y-1">
               <span className="text-[10px] font-black uppercase text-[#6B7280]">Sender</span>

@@ -42,11 +42,13 @@ function recordAddress(record) {
 }
 
 function mailboxHost(domain) {
-  return `mail.${domain || 'tiwlo.com'}`;
+  const baseDomain = normalizeAddress(domain || 'tiwlo.com').replace(/^((mail|email|tmail)\.)+/, '');
+  return `mail.${baseDomain || 'tiwlo.com'}`;
 }
 
 function portalHost(domain) {
-  return `email.${domain || 'tiwlo.com'}`;
+  const baseDomain = normalizeAddress(domain || 'tiwlo.com').replace(/^((mail|email|tmail)\.)+/, '');
+  return `tmail.${baseDomain || 'tiwlo.com'}`;
 }
 
 function welcomeMessage(record) {

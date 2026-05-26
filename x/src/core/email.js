@@ -23,6 +23,20 @@ function cleanHost(value = '') {
     .replace(/:\d+$/, '');
 }
 
+function cleanMailBaseDomain(value = '') {
+  return cleanHost(value).toLowerCase().replace(/^((mail|email|tmail)\.)+/, '') || 'tiwlo.com';
+}
+
+function localSmtpUsername(value = '') {
+  return String(value || '').trim().split('@')[0].replace(/[^a-zA-Z0-9._-]/g, '') || 'noreply';
+}
+
+function smtpAuthUsernameForHost(username = '', host = '') {
+  const raw = String(username || '').trim();
+  if (!raw) return raw;
+  return LOCAL_SMTP_HOSTS.has(cleanHost(host)) && raw.includes('@') ? localSmtpUsername(raw) : raw;
+}
+
 function smtpModeForPort(port, secureInput) {
   const numericPort = Number(port || 465);
   if (numericPort === 465) {
@@ -49,12 +63,15 @@ const isConnectionOrHandshakeFailure = (errorOrResult = {}) => {
 
 function envAuthFallbackConfig(config = {}) {
   const envPassword = process.env.SMTP_PASS;
-  if (!envPassword || envPassword === config.password) return null;
+  if (!envPassword) return null;
+  const host = cleanHost(process.env.SMTP_HOST || config.host);
+  const username = smtpAuthUsernameForHost(process.env.SMTP_USER || config.username, host);
+  if (envPassword === config.password && username === config.username && host === cleanHost(config.host)) return null;
   return {
     ...config,
-    host: cleanHost(process.env.SMTP_HOST || config.host),
+    host,
     port: Number(process.env.SMTP_PORT || config.port || 465),
-    username: process.env.SMTP_USER || config.username,
+    username,
     password: envPassword,
     secureSSL: process.env.SMTP_SECURE !== undefined ? process.env.SMTP_SECURE : config.secureSSL ?? config.secure,
     tlsRejectUnauthorized: config.tlsRejectUnauthorized,
@@ -64,9 +81,9 @@ function envAuthFallbackConfig(config = {}) {
 
 function domainFromMailConfig(config = {}) {
   const email = String(config.username || config.fromEmail || process.env.SMTP_USER || process.env.MAIL_FROM || '').trim();
-  if (email.includes('@')) return cleanHost(email.split('@').pop());
+  if (email.includes('@')) return cleanMailBaseDomain(email.split('@').pop());
   const host = cleanHost(config.tlsServername || config.host || process.env.SMTP_PUBLIC_HOST || process.env.SMTP_HOST || '');
-  return cleanHost(host.replace(/^mail\./, '')) || 'tiwlo.com';
+  return cleanMailBaseDomain(host);
 }
 
 function localMailFallbackConfig(config = {}) {
@@ -81,10 +98,12 @@ function localMailFallbackConfigs(config = {}) {
   const localHost = cleanHost(process.env.SMTP_LOCAL_HOST || '127.0.0.1');
   const currentPort = Number(config.port || process.env.SMTP_PORT || 465);
   const currentMode = smtpModeForPort(currentPort, config.secureSSL ?? config.secure ?? process.env.SMTP_SECURE);
+  const localUsername = smtpAuthUsernameForHost(config.username, localHost);
   const candidates = [
     {
       ...config,
       host: localHost,
+      username: localUsername,
       port: currentMode.port,
       secureSSL: currentMode.secure,
       secure: currentMode.secure,
@@ -96,6 +115,7 @@ function localMailFallbackConfigs(config = {}) {
     {
       ...config,
       host: localHost,
+      username: localUsername,
       port: 587,
       secureSSL: false,
       secure: false,
@@ -107,6 +127,7 @@ function localMailFallbackConfigs(config = {}) {
     {
       ...config,
       host: localHost,
+      username: localUsername,
       port: 465,
       secureSSL: true,
       secure: true,
@@ -195,6 +216,7 @@ export async function systemEmailConfig(prisma, override = {}) {
   const secureFromInput = source.secureSSL ?? source.secure;
   const mode = smtpModeForPort(port, secureFromInput ?? process.env.SMTP_SECURE);
   const tlsServername = cleanHost(source.tlsServername || process.env.SMTP_TLS_SERVERNAME || process.env.SMTP_PUBLIC_HOST || host);
+  const username = smtpAuthUsernameForHost(source.username || process.env.SMTP_USER, host);
   return {
     host,
     port: mode.port,
@@ -204,9 +226,9 @@ export async function systemEmailConfig(prisma, override = {}) {
     smtpMode: mode.label,
     tlsServername,
     tlsRejectUnauthorized: booleanValue(source.tlsRejectUnauthorized ?? process.env.SMTP_TLS_REJECT_UNAUTHORIZED, false),
-    username: source.username || process.env.SMTP_USER,
+    username,
     password: source.password || process.env.SMTP_PASS,
-    fromEmail: source.fromEmail || process.env.MAIL_FROM || DEFAULT_FROM,
+    fromEmail: source.fromEmail || process.env.MAIL_FROM || (String(source.username || '').includes('@') ? source.username : DEFAULT_FROM),
     fromName: source.fromName || process.env.MAIL_FROM_NAME || 'Tiwlo.com',
     replyTo: source.replyTo || process.env.MAIL_REPLY_TO || source.fromEmail || process.env.MAIL_FROM || DEFAULT_FROM
   };
@@ -234,7 +256,7 @@ function createTransporter(config) {
     port: mode.port,
     secure: mode.secure,
     requireTLS: mode.requireTLS,
-    auth: { user: config.username, pass: config.password },
+    auth: { user: smtpAuthUsernameForHost(config.username, config.host), pass: config.password },
     tls: {
       ...(tlsServername ? { servername: tlsServername } : {}),
       rejectUnauthorized: booleanValue(config.tlsRejectUnauthorized, false)
@@ -467,6 +489,9 @@ export async function testTiwloEmail(ctxOrPrisma, input = {}) {
           fallback: {
             stage: fallbackDiagnostic.stage,
             code: fallbackDiagnostic.code,
+            host: fallbackDiagnostic.host,
+            port: fallbackDiagnostic.port,
+            smtpMode: fallbackDiagnostic.smtpMode,
             message: fallbackDiagnostic.message
           }
         };

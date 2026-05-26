@@ -8,7 +8,11 @@ fi
 
 export DEBIAN_FRONTEND=noninteractive
 
-DOMAIN="${TIWLO_DOMAIN:-${1:-}}"
+clean_domain() {
+  printf '%s' "$1" | sed -E 's#^https?://##; s#/.*$##; s#:[0-9]+$##; s#^((mail|email|tmail|www)\.)+##'
+}
+
+DOMAIN="$(clean_domain "${TIWLO_DOMAIN:-${1:-}}")"
 EMAIL="${TIWLO_EMAIL:-${2:-}}"
 REPO_URL="${TIWLO_REPO_URL:-https://github.com/alimranniloy/Tiwlo.git}"
 BRANCH="${TIWLO_BRANCH:-main}"
@@ -206,8 +210,16 @@ configure_system_email_services() {
   mkdir -p /etc/dovecot/conf.d
 
   write_dovecot_auth_config() {
+    local mode="${1:-modern}"
+    local username_format="auth_username_format = %{user | username}"
+    if [ "$mode" = "legacy" ]; then
+      username_format="auth_username_format = %n"
+    elif [ "$mode" = "minimal" ]; then
+      username_format=""
+    fi
     cat >/etc/dovecot/conf.d/99-tiwlo-mail-auth.conf <<DOVECOT
 auth_mechanisms = plain login
+${username_format}
 protocols = imap pop3
 
 service auth {
@@ -289,11 +301,19 @@ DOVECOTSSL
     fi
   }
 
-  write_dovecot_auth_config
+  write_dovecot_auth_config modern
   write_dovecot_ssl_config modern
   if ! validate_dovecot_config; then
     echo "Dovecot modern SSL settings were not accepted; falling back to legacy Dovecot SSL settings."
     write_dovecot_ssl_config legacy
+  fi
+  if ! validate_dovecot_config; then
+    echo "Dovecot modern auth username format was not accepted; falling back to legacy Dovecot username format."
+    write_dovecot_auth_config legacy
+  fi
+  if ! validate_dovecot_config; then
+    echo "Dovecot username format override was not accepted; using minimal auth settings."
+    write_dovecot_auth_config minimal
   fi
 
   systemctl enable --now postfix dovecot >/dev/null 2>&1 || true
@@ -339,9 +359,9 @@ SMTP_PUBLIC_HOST=${MAIL_HOSTNAME}
 SMTP_TLS_SERVERNAME=${MAIL_HOSTNAME}
 SMTP_PORT=465
 SMTP_SECURE=true
-SMTP_USER=${smtp_user}
+SMTP_USER=${local_user}
 SMTP_PASS=${smtp_pass}
-MAIL_FROM=${smtp_user}
+MAIL_FROM=${local_user}@${MAIL_DOMAIN}
 MAIL_REPLY_TO=${EMAIL:-support@${MAIL_DOMAIN}}
 MAILENV
   chmod 600 /etc/tiwlo-mail/system-smtp.env >/dev/null 2>&1 || true
@@ -417,7 +437,7 @@ export DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:5432/tiwlo?schema=
 export BACKEND_PORT
 export FRONTEND_PORT
 SMTP_PASSWORD="${SMTP_PASS:-$(random_secret)}"
-provision_system_mailbox "noreply@${MAIL_DOMAIN}" "$SMTP_PASSWORD"
+provision_system_mailbox "noreply" "$SMTP_PASSWORD"
 mkdir -p x
 {
   echo "SMTP_HOST=\"127.0.0.1\""
@@ -426,7 +446,7 @@ mkdir -p x
   echo "SMTP_PORT=\"465\""
   echo "SMTP_SECURE=\"true\""
   echo "SMTP_TLS_REJECT_UNAUTHORIZED=\"false\""
-  echo "SMTP_USER=\"noreply@${MAIL_DOMAIN}\""
+  echo "SMTP_USER=\"noreply\""
   echo "SMTP_PASS=\"${SMTP_PASSWORD}\""
   echo "MAIL_FROM=\"noreply@${MAIL_DOMAIN}\""
   echo "MAIL_FROM_NAME=\"Tiwlo\""
@@ -451,7 +471,7 @@ step "Configuring Nginx reverse proxy"
 NGINX_SITE="/etc/nginx/sites-available/tiwlo"
 SERVER_NAME="_"
 if [ -n "$DOMAIN" ]; then
-  SERVER_NAME="${DOMAIN} www.${DOMAIN} email.${DOMAIN} mail.${DOMAIN}"
+  SERVER_NAME="${DOMAIN} www.${DOMAIN} tmail.${DOMAIN} mail.${DOMAIN} email.${DOMAIN}"
 fi
 
 cat >"$NGINX_SITE" <<NGINX
@@ -526,6 +546,9 @@ if [ -n "$DOMAIN" ] && ! is_ip_address "$DOMAIN"; then
   if getent hosts "www.${DOMAIN}" >/dev/null 2>&1; then
     CERTBOT_DOMAINS+=(-d "www.${DOMAIN}")
   fi
+  if getent hosts "tmail.${DOMAIN}" >/dev/null 2>&1; then
+    CERTBOT_DOMAINS+=(-d "tmail.${DOMAIN}")
+  fi
   if getent hosts "email.${DOMAIN}" >/dev/null 2>&1; then
     CERTBOT_DOMAINS+=(-d "email.${DOMAIN}")
   fi
@@ -550,6 +573,6 @@ echo
 echo "Tiwlo install complete."
 echo "Website: ${PUBLIC_ORIGIN}"
 echo "Nameservers: ns1.${MAIL_DOMAIN} / ns2.${MAIL_DOMAIN} (point registrar glue to ${PUBLIC_IP:-this server})"
-echo "Tiwlo Mail: https://email.${MAIL_DOMAIN} (point email.${MAIL_DOMAIN} and mail.${MAIL_DOMAIN} DNS to this server)"
+echo "Tiwlo Mail: https://tmail.${MAIL_DOMAIN} (point tmail.${MAIL_DOMAIN} and mail.${MAIL_DOMAIN} DNS to this server)"
 echo "Backend: http://127.0.0.1:${BACKEND_PORT}/graphql"
 echo "Auto-start: systemd services tiwlo-backend and tiwlo-frontend are enabled."

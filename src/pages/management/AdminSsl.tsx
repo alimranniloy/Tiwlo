@@ -31,7 +31,7 @@ const fallbackConfig: SslConfig = {
   autoEnabled: true,
   primaryDomain: 'tiwlo.com',
   email: 'admin@tiwlo.com',
-  domainsText: 'tiwlo.com\nwww.tiwlo.com\nmail.tiwlo.com\nemail.tiwlo.com',
+  domainsText: 'tiwlo.com\nwww.tiwlo.com\nmail.tiwlo.com\ntmail.tiwlo.com\nemail.tiwlo.com',
   includeKnownDomains: true,
   includeWildcard: false,
   staging: false,

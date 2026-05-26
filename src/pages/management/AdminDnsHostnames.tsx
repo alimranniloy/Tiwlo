@@ -185,6 +185,8 @@ export default function AdminDnsHostnames({ mode = 'hostnames' }: { mode?: 'host
   const generatedRecords = [
     ...activeNameservers.map((ns) => ({ type: 'NS', name: '@', value: ns, priority: '-' })),
     ...activeNameservers.map((ns) => ({ type: serverIpText.includes(':') ? 'AAAA' : 'A', name: ns.replace(`.${primaryDomain}`, ''), value: serverIpText, priority: '-' })),
+    { type: serverIpText.includes(':') ? 'AAAA' : 'A', name: 'mail', value: serverIpText, priority: '-' },
+    { type: serverIpText.includes(':') ? 'AAAA' : 'A', name: 'tmail', value: serverIpText, priority: '-' },
     { type: 'MX', name: '@', value: `mail.${primaryDomain}`, priority: '10' },
     { type: 'TXT', name: '@', value: `v=spf1 mx a ${spfAddress} ~all`, priority: '-' },
     { type: 'TXT', name: '_dmarc', value: `v=DMARC1; p=quarantine; rua=mailto:postmaster@${primaryDomain}`, priority: '-' },
@@ -342,7 +344,7 @@ export default function AdminDnsHostnames({ mode = 'hostnames' }: { mode?: 'host
             </div>
             <div className="space-y-4 p-5">
               <div className="grid grid-cols-2 gap-2">
-                {[`dns1.${primaryDomain}`, `dns2.${primaryDomain}`, `mail.${primaryDomain}`, `email.${primaryDomain}`].map((item) => (
+                {[`dns1.${primaryDomain}`, `dns2.${primaryDomain}`, `mail.${primaryDomain}`, `tmail.${primaryDomain}`, `email.${primaryDomain}`].map((item) => (
                   <button key={item} type="button" onClick={() => fillPreset(item)} className="rounded border border-[#d8dee9] px-3 py-2 text-left font-mono text-[11px] font-bold text-[#2e3d49] hover:border-[#0069ff] hover:bg-blue-50">
                     {item}
                   </button>

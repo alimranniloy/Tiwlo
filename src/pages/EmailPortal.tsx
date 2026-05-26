@@ -1,6 +1,5 @@
 import React from 'react';
 import { AlertCircle, Archive, Inbox, Loader2, LogOut, Mail, Plus, RefreshCw, Search, Send, ShieldCheck, Star, Trash2, X } from 'lucide-react';
-import BrandLogo from '../components/BrandLogo';
 import {
   fetchMailboxOverviewWithApi,
   mailboxLoginWithApi,
@@ -9,6 +8,16 @@ import {
 } from '../lib/tiwloApi';
 
 const MAILBOX_TOKEN_KEY = 'tiwlo_mailbox_token';
+
+function TmailLogo({ variant = 'light', className = '' }: { variant?: 'light' | 'dark'; className?: string }) {
+  return (
+    <img
+      src={variant === 'dark' ? '/brand/tmail-logo-white.png' : '/brand/tmail-logo.png'}
+      alt="TMail"
+      className={`block object-contain ${className}`}
+    />
+  );
+}
 
 type MailboxAccount = {
   address: string;
@@ -150,8 +159,8 @@ export default function EmailPortal() {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[#f3f5f9] p-6">
         <form onSubmit={login} className="w-full max-w-sm rounded-md border border-gray-100 bg-white p-8 shadow-2xl shadow-gray-100">
-          <BrandLogo className="mx-auto mb-8 h-14 w-40" />
-          <h1 className="text-center text-xl font-black text-[#111827]">Tiwlo Mail</h1>
+          <TmailLogo className="mx-auto mb-8 h-14 w-40" />
+          <h1 className="text-center text-xl font-black text-[#111827]">TMail</h1>
           <div className="mt-6 space-y-3">
             <input type="email" required value={loginForm.email} onChange={(event) => setLoginForm((current) => ({ ...current, email: event.target.value }))} className="w-full rounded border border-[#DDE3EA] px-4 py-3 text-sm outline-none focus:border-blue-600" placeholder="email@tiwlo.com" />
             <input type="password" required value={loginForm.password} onChange={(event) => setLoginForm((current) => ({ ...current, password: event.target.value }))} className="w-full rounded border border-[#DDE3EA] px-4 py-3 text-sm outline-none focus:border-blue-600" placeholder="Password" />
@@ -168,7 +177,7 @@ export default function EmailPortal() {
   return (
     <div className="min-h-screen bg-[#f6f8fc] text-[#111827]">
       <header className="flex h-16 items-center gap-4 border-b border-[#E5E7EB] bg-white px-4 md:px-6">
-        <BrandLogo className="h-10 w-28" />
+        <TmailLogo className="h-10 w-28" />
         <div className="relative max-w-3xl flex-1">
           <Search className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[#6B7280]" />
           <input value={search} onChange={(event) => setSearch(event.target.value)} className="w-full rounded-full border border-[#E5E7EB] bg-[#F3F5F9] px-11 py-2.5 text-sm outline-none focus:border-blue-500 focus:bg-white" placeholder="Search mail" />

@@ -130,6 +130,7 @@ export default function AdminDns() {
 
   const addMailDefaults = () => addRecordBatch([
     { type: serverIp.includes(':') ? 'AAAA' : 'A', name: 'mail', value: serverIp },
+    { type: serverIp.includes(':') ? 'AAAA' : 'A', name: 'tmail', value: serverIp },
     { type: serverIp.includes(':') ? 'AAAA' : 'A', name: 'email', value: serverIp },
     { type: serverIp.includes(':') ? 'AAAA' : 'A', name: 'smtp', value: serverIp },
     { type: serverIp.includes(':') ? 'AAAA' : 'A', name: 'imap', value: serverIp },

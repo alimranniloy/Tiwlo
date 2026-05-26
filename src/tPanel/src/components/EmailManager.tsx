@@ -33,6 +33,10 @@ interface EmailManagerProps {
   addActivity: (category: "file" | "domain" | "node" | "db" | "email" | "ssl", message: string) => void;
 }
 
+const mailBaseDomain = (value: string) => String(value || "tiwlo.com").trim().toLowerCase().replace(/^((mail|email|tmail)\.)+/, "") || "tiwlo.com";
+const mailHostForDomain = (domain: string) => `mail.${mailBaseDomain(domain)}`;
+const mailPortalForDomain = (domain: string) => `tmail.${mailBaseDomain(domain)}`;
+
 export default function EmailManager({ emails, setEmails, domains, addActivity }: EmailManagerProps) {
   const [activeAccountId, setActiveAccountId] = useState<string>(emails[0]?.id || "");
   const [isAddingEmail, setIsAddingEmail] = useState(false);
@@ -88,14 +92,15 @@ export default function EmailManager({ emails, setEmails, domains, addActivity }
     if (!emailPrefix.trim() || !emailDomain || !emailPassword.trim()) return;
 
     const sanitizedPrefix = emailPrefix.trim().toLowerCase().replace(/[^a-z0-9._-]/g, "");
-    const fullAddress = `${sanitizedPrefix}@${emailDomain}`;
+    const normalizedDomain = mailBaseDomain(emailDomain);
+    const fullAddress = `${sanitizedPrefix}@${normalizedDomain}`;
 
     if (emails.some(acc => acc.address === fullAddress)) {
       alert("Mailbox already exists.");
       return;
     }
-    const hostName = `mail.${emailDomain}`;
-    const portalHost = `email.${emailDomain}`;
+    const hostName = mailHostForDomain(normalizedDomain);
+    const portalHost = mailPortalForDomain(normalizedDomain);
 
     const newAccount: EmailAccount = {
       id: "email-" + Math.random().toString(36).substr(2, 9),

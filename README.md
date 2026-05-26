@@ -272,6 +272,7 @@ Recommended DNS for the main Tiwlo server:
 ```text
 tiwlo.com       A     153.75.245.4
 www.tiwlo.com   A     153.75.245.4
+tmail.tiwlo.com A     153.75.245.4
 email.tiwlo.com A     153.75.245.4
 mail.tiwlo.com  A     153.75.245.4
 *.tiwlo.com     A     153.75.245.4
@@ -293,7 +294,7 @@ sudo systemctl enable --now pdns
 For normal domains and known subdomains, Tiwlo writes authoritative A/AAAA/CNAME/MX/TXT records into PowerDNS, then uses Certbot HTTP-01 through Nginx:
 
 ```bash
-sudo certbot --nginx -d tiwlo.com -d www.tiwlo.com -d email.tiwlo.com -d mail.tiwlo.com --redirect
+sudo certbot --nginx -d tiwlo.com -d www.tiwlo.com -d tmail.tiwlo.com -d mail.tiwlo.com --redirect
 ```
 
 Wildcard SSL for `*.tiwlo.com` is different. Let's Encrypt wildcard certificates require DNS-01 TXT validation. Tiwlo now manages explicit subdomain certificates automatically through PowerDNS; keep wildcard mode off unless a PowerDNS ACME hook is configured for DNS-01 TXT validation.
@@ -311,7 +312,7 @@ Quick checks:
 
 ```bash
 dig +short tiwlo.com
-dig +short email.tiwlo.com
+dig +short tmail.tiwlo.com
 nc -vz tiwlo.com 80
 nc -vz tiwlo.com 443
 sudo certbot certificates
@@ -329,12 +330,12 @@ Recommended DNS for `tiwlo.com`:
 tiwlo.com       A     153.75.245.4
 www.tiwlo.com   A     153.75.245.4
 mail.tiwlo.com  A     153.75.245.4
-email.tiwlo.com A     153.75.245.4
+tmail.tiwlo.com A     153.75.245.4
 tiwlo.com       MX    10 mail.tiwlo.com
 tiwlo.com       TXT   "v=spf1 ip4:153.75.245.4 -all"
 ```
 
-Keep mail records authoritative in PowerDNS and point them directly to the mail server. `email.tiwlo.com` can be the Tiwlo Mail web login, while `mail.tiwlo.com` should be the SMTP/IMAP host. If both MX records point to the same server it can still work, but `mail.tiwlo.com` as the single MX is cleaner.
+Keep mail records authoritative in PowerDNS and point them directly to the mail server. `tmail.tiwlo.com` is the TMail web login, while `mail.tiwlo.com` should be the SMTP/IMAP host. If both MX records point to the same server it can still work, but `mail.tiwlo.com` as the single MX is cleaner.
 
 Required mail ports on the VPS firewall and provider firewall:
 
