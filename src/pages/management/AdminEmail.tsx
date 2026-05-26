@@ -1,11 +1,16 @@
 import React from 'react';
 import { AlertCircle, CheckCircle2, Copy, Mail, Plus, Save, Send, Server, Settings, ShieldCheck, Trash2 } from 'lucide-react';
 import {
+  addDnsRecordWithApi,
   deleteMainAdminRecordWithApi,
+  deleteDnsRecordWithApi,
+  fetchDnsRecordsWithApi,
+  fetchDomainsWithApi,
   fetchMainAdminRecordsWithApi,
   fetchPowerDnsConfigWithApi,
   fetchSettingsWithApi,
   testSystemEmailWithApi,
+  updateDnsRecordWithApi,
   upsertMainAdminRecordWithApi,
   upsertSettingWithApi
 } from '../../lib/tiwloApi';
@@ -25,7 +30,9 @@ const emptySystemEmail = {
   smtpMode: '465',
   password: '',
   fromName: 'Tiwlo',
-  replyTo: 'support@tiwlo.com'
+  replyTo: 'support@tiwlo.com',
+  bimiLogoUrl: '',
+  bimiCertificateUrl: ''
 };
 
 const cleanDomain = (value: string) => value.trim().toLowerCase().replace(/^@/, '').replace(/^https?:\/\//, '').replace(/\/.*$/, '') || 'tiwlo.com';
@@ -33,8 +40,16 @@ const mailBaseDomain = (value: string) => cleanDomain(value).replace(/^((mail|em
 const cleanUsername = (value: string) => value.trim().toLowerCase().replace(/[^a-z0-9._-]/g, '');
 const hostForDomain = (domain: string) => `mail.${mailBaseDomain(domain)}`;
 const portalForDomain = (domain: string) => `tmail.${mailBaseDomain(domain)}`;
+const bimiLogoForDomain = (domain: string) => `https://${mailBaseDomain(domain)}/brand/bimi.svg`;
+const dmarcForDomain = (domain: string) => `v=DMARC1; p=quarantine; pct=100; rua=mailto:postmaster@${mailBaseDomain(domain)}; ruf=mailto:postmaster@${mailBaseDomain(domain)}; fo=1`;
+const bimiTxtForDomain = (domain: string, logoUrl = '', certificateUrl = '') => {
+  const cert = certificateUrl.trim();
+  const logo = logoUrl.trim() || bimiLogoForDomain(domain);
+  return cert ? `v=BIMI1; l=; a=${cert}` : `v=BIMI1; l=${logo}`;
+};
 const localPart = (value: string) => cleanUsername(String(value || '').split('@')[0] || 'noreply') || 'noreply';
 const domainFromEmail = (value: string, fallback = 'tiwlo.com') => mailBaseDomain(String(value || '').includes('@') ? String(value).split('@').pop() || fallback : fallback);
+const blueBadgeEnabled = (record: any) => Boolean(record?.data?.blueBadgeEnabled || record?.data?.bimi?.enabled);
 
 export default function AdminEmail() {
   const [accounts, setAccounts] = React.useState<any[]>([]);
@@ -44,6 +59,7 @@ export default function AdminEmail() {
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
   const [testing, setTesting] = React.useState(false);
+  const [bimiWorkingId, setBimiWorkingId] = React.useState('');
   const [testRecipient, setTestRecipient] = React.useState('');
   const [testResult, setTestResult] = React.useState<any | null>(null);
   const [lastProvisioned, setLastProvisioned] = React.useState<any | null>(null);
@@ -72,7 +88,9 @@ export default function AdminEmail() {
           smtpMode,
           password: systemEmail.password || '',
           fromName: systemEmail.fromName || 'Tiwlo',
-          replyTo: systemEmail.replyTo || `support@${domain}`
+          replyTo: systemEmail.replyTo || `support@${domain}`,
+          bimiLogoUrl: systemEmail.bimi?.logoUrl || '',
+          bimiCertificateUrl: systemEmail.bimi?.certificateUrl || ''
         });
       } else if (powerDnsConfig?.primaryDomain) {
         const domain = cleanDomain(powerDnsConfig.primaryDomain);
@@ -98,6 +116,8 @@ export default function AdminEmail() {
   const systemAddress = `${systemSender}@${systemDomain}`;
   const publicMailHost = hostForDomain(systemDomain);
   const emailPortalHost = portalForDomain(systemDomain);
+  const activeBimiLogoUrl = systemForm.bimiLogoUrl.trim() || bimiLogoForDomain(systemDomain);
+  const activeBimiCertificateUrl = systemForm.bimiCertificateUrl.trim();
   const selectedSmtpPort = systemForm.smtpMode === '587' ? 587 : 465;
   const selectedSmtpMode = selectedSmtpPort === 587 ? '587 STARTTLS' : '465 SSL';
   const normalizedSystemEmail = React.useCallback(() => {
@@ -115,7 +135,11 @@ export default function AdminEmail() {
       fromEmail: `${localPart(systemForm.sender)}@${mailBaseDomain(systemForm.domain)}`,
       fromName: String(systemForm.fromName || 'Tiwlo').trim(),
       replyTo: String(systemForm.replyTo || '').trim(),
-      domain: mailBaseDomain(systemForm.domain)
+      domain: mailBaseDomain(systemForm.domain),
+      bimi: {
+        logoUrl: systemForm.bimiLogoUrl.trim() || bimiLogoForDomain(mailBaseDomain(systemForm.domain)),
+        certificateUrl: systemForm.bimiCertificateUrl.trim()
+      }
     };
   }, [systemForm]);
 
@@ -127,6 +151,7 @@ export default function AdminEmail() {
     try {
       if (!normalizedUsername || !normalizedDomain) throw new Error('Username and domain are required.');
       if (!accountForm.password.trim()) throw new Error('Mailbox password is required so the user can sign in at the mail portal.');
+      const existingRecord = editingId ? accounts.find((record) => record.id === editingId) : null;
       const hostName = hostForDomain(normalizedDomain);
       const portalHost = portalForDomain(normalizedDomain);
       await upsertMainAdminRecordWithApi({
@@ -135,6 +160,7 @@ export default function AdminEmail() {
         title: fullAddress,
         status: accountForm.status,
         data: {
+          ...(existingRecord?.data || {}),
           ...accountForm,
           username: normalizedUsername,
           domain: normalizedDomain,
@@ -193,6 +219,103 @@ export default function AdminEmail() {
     }
   };
 
+  const findManagedDomain = async (domainName: string) => {
+    const normalized = mailBaseDomain(domainName);
+    const domains = await fetchDomainsWithApi(normalized);
+    const domain = domains.find((item: any) => mailBaseDomain(item.name) === normalized);
+    if (!domain) throw new Error(`Add ${normalized} in DNS Zones first so Tiwlo can publish BIMI automatically.`);
+    return domain;
+  };
+
+  const upsertDnsTxt = async (domainId: string, name: string, value: string, metadata: Record<string, unknown>) => {
+    const records = await fetchDnsRecordsWithApi(domainId);
+    const existing = records.find((record: any) => record.type === 'TXT' && String(record.name || '').toLowerCase() === name.toLowerCase());
+    if (existing) {
+      if (existing.value !== value || existing.status === 'disabled') {
+        const currentMetadata = typeof existing.metadata === 'object' && existing.metadata ? existing.metadata : {};
+        await updateDnsRecordWithApi({ id: existing.id, value, ttl: 300, status: 'active', metadata: { ...currentMetadata, ...metadata } });
+      }
+      return existing;
+    }
+    await addDnsRecordWithApi({ domainId, type: 'TXT', name, value, ttl: 300, metadata });
+    return null;
+  };
+
+  const configureBimiDns = async (record: any, enabled: boolean) => {
+    const domainName = mailBaseDomain(record.data?.domain || String(record.title || '').split('@')[1] || systemDomain);
+    if (!enabled) {
+      const stillEnabled = accounts.some((item) => item.id !== record.id && mailBaseDomain(item.data?.domain || '') === domainName && blueBadgeEnabled(item));
+      const domain = await findManagedDomain(domainName).catch(() => null);
+      if (!stillEnabled) {
+        const records = domain ? await fetchDnsRecordsWithApi(domain.id) : [];
+        await Promise.all(records
+          .filter((item: any) => item.type === 'TXT' && String(item.name || '').toLowerCase() === 'default._bimi')
+          .map((item: any) => deleteDnsRecordWithApi(item.id)));
+      }
+      return {
+        domainName,
+        logoUrl: '',
+        certificateUrl: '',
+        dnsValue: '',
+        status: 'off',
+        steps: [
+          { label: 'Blue badge disabled', status: 'done', detail: stillEnabled ? 'BIMI kept because another mailbox on this domain is enabled.' : 'BIMI DNS record removed for this domain.' }
+        ]
+      };
+    }
+
+    const domain = await findManagedDomain(domainName);
+    const logoUrl = systemForm.bimiLogoUrl.trim() || bimiLogoForDomain(domainName);
+    const certificateUrl = systemForm.bimiCertificateUrl.trim();
+    const bimiValue = bimiTxtForDomain(domainName, logoUrl, certificateUrl);
+    await upsertDnsTxt(domain.id, '_dmarc', dmarcForDomain(domainName), { provider: 'powerdns', source: 'bimi_blue_badge', managed: true });
+    await upsertDnsTxt(domain.id, 'default._bimi', bimiValue, { provider: 'powerdns', source: 'bimi_blue_badge', managed: true });
+    return {
+      domainName,
+      logoUrl,
+      certificateUrl,
+      dnsValue: bimiValue,
+      status: certificateUrl ? 'gmail_blue_ready' : 'pending_vmc_or_cmc',
+      steps: [
+        { label: 'SVG Tiny PS hosted', status: 'done', detail: logoUrl },
+        { label: 'DMARC enforced', status: 'done', detail: `_dmarc.${domainName} uses p=quarantine and pct=100.` },
+        { label: 'BIMI DNS published', status: 'done', detail: `default._bimi.${domainName}` },
+        { label: 'Gmail blue check', status: certificateUrl ? 'done' : 'pending', detail: certificateUrl ? 'VMC/CMC PEM URL is attached.' : 'Add a VMC/CMC PEM URL to show Gmail verified checkmark.' }
+      ]
+    };
+  };
+
+  const toggleBlueBadge = async (record: any) => {
+    const enabled = !blueBadgeEnabled(record);
+    setBimiWorkingId(record.id);
+    setError('');
+    setNotice('');
+    try {
+      const bimi = await configureBimiDns(record, enabled);
+      await upsertMainAdminRecordWithApi({
+        section: 'emailAccounts',
+        id: record.id,
+        title: record.title,
+        status: record.status,
+        data: {
+          ...(record.data || {}),
+          blueBadgeEnabled: enabled,
+          bimi: {
+            enabled,
+            ...bimi,
+            updatedAt: new Date().toISOString()
+          }
+        }
+      });
+      setNotice(enabled ? `BIMI automation enabled for ${bimi.domainName}.` : `Blue badge disabled for ${record.data?.address || record.title}.`);
+      await loadEmail();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to update BIMI blue badge automation');
+    } finally {
+      setBimiWorkingId('');
+    }
+  };
+
   const saveSystemEmail = async (event: React.FormEvent) => {
     event.preventDefault();
     setSaving(true);
@@ -205,7 +328,26 @@ export default function AdminEmail() {
         key: 'systemEmail',
         value: normalizedSystemEmail()
       });
-      setNotice('System email configuration saved.');
+      const enabledBimiAccounts = accounts.filter((record) => blueBadgeEnabled(record));
+      for (const record of enabledBimiAccounts) {
+        const bimi = await configureBimiDns(record, true);
+        await upsertMainAdminRecordWithApi({
+          section: 'emailAccounts',
+          id: record.id,
+          title: record.title,
+          status: record.status,
+          data: {
+            ...(record.data || {}),
+            blueBadgeEnabled: true,
+            bimi: {
+              enabled: true,
+              ...bimi,
+              updatedAt: new Date().toISOString()
+            }
+          }
+        });
+      }
+      setNotice(enabledBimiAccounts.length ? 'System email saved and BIMI DNS refreshed.' : 'System email configuration saved.');
       await loadEmail();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to save system email');
@@ -358,6 +500,29 @@ export default function AdminEmail() {
               <span className="text-[10px] font-black uppercase text-[#6B7280]">Reply To</span>
               <input value={systemForm.replyTo} onChange={(event) => setSystemForm({ ...systemForm, replyTo: event.target.value })} placeholder={`support@${systemDomain}`} className="w-full rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" />
             </label>
+            <label className="space-y-1">
+              <span className="text-[10px] font-black uppercase text-[#6B7280]">BIMI SVG URL</span>
+              <input value={systemForm.bimiLogoUrl} onChange={(event) => setSystemForm({ ...systemForm, bimiLogoUrl: event.target.value })} placeholder={bimiLogoForDomain(systemDomain)} className="w-full rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" />
+            </label>
+            <label className="space-y-1">
+              <span className="text-[10px] font-black uppercase text-[#6B7280]">VMC/CMC PEM URL</span>
+              <input value={systemForm.bimiCertificateUrl} onChange={(event) => setSystemForm({ ...systemForm, bimiCertificateUrl: event.target.value })} placeholder="https://example.com/brand/certificate.pem" className="w-full rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" />
+            </label>
+            <div className="rounded border border-blue-100 bg-blue-50 p-3 md:col-span-2">
+              <div className="grid grid-cols-1 gap-2 text-[11px] font-bold text-blue-800 sm:grid-cols-4">
+                {[
+                  ['SVG Tiny PS', activeBimiLogoUrl],
+                  ['DMARC', `p=quarantine; pct=100`],
+                  ['BIMI TXT', activeBimiCertificateUrl ? 'PEM certificate mode' : 'SVG mode'],
+                  ['Gmail check', activeBimiCertificateUrl ? 'Ready after DNS propagation' : 'Needs VMC/CMC PEM']
+                ].map(([label, value]) => (
+                  <div key={label} className="rounded border border-blue-100 bg-white p-2">
+                    <p className="text-[9px] font-black uppercase text-blue-500">{label}</p>
+                    <p className="mt-1 break-all text-[#111827]">{value}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
             <div className="grid grid-cols-1 gap-3 md:col-span-2 sm:grid-cols-3">
               {[
                 ['Backend SMTP', `127.0.0.1 : ${selectedSmtpMode}`],
@@ -409,21 +574,48 @@ export default function AdminEmail() {
         </div>
         <div className="divide-y divide-[#EEF2F7]">
           {!loading && accounts.length === 0 && <div className="p-8 text-center text-[13px] font-bold text-gray-400">No email accounts created yet.</div>}
-          {accounts.map((record) => (
-            <div key={record.id} className="grid grid-cols-1 gap-4 px-5 py-4 md:grid-cols-[1fr_auto] md:items-center">
-              <div>
-                <p className="text-[14px] font-black text-[#111827]">{record.data?.address || record.title}</p>
-                <p className="mt-1 text-[12px] text-[#6B7280]">{record.data?.hostName || hostForDomain(record.data?.domain || 'tiwlo.com')} / IMAP {record.data?.incoming?.port || 993} SSL / SMTP {record.data?.outgoing?.port || 465} SSL / quota {record.data?.quotaMB || record.data?.quota || 0} MB</p>
-                <p className="mt-1 break-all text-[11px] font-bold text-[#9CA3AF]">Login: https://{record.data?.portalHost || portalForDomain(record.data?.domain || 'tiwlo.com')} / Username: {record.data?.address || record.title}</p>
+          {accounts.map((record) => {
+            const enabled = blueBadgeEnabled(record);
+            const bimi = record.data?.bimi || {};
+            const gmailReady = enabled && Boolean(bimi.certificateUrl);
+            const statusLabel = enabled ? (gmailReady ? 'Gmail blue ready' : 'VMC pending') : 'Off';
+            return (
+              <div key={record.id} className="grid grid-cols-1 gap-4 px-5 py-4 md:grid-cols-[1fr_auto] md:items-center">
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="text-[14px] font-black text-[#111827]">{record.data?.address || record.title}</p>
+                    <span className={`rounded-full border px-2 py-0.5 text-[10px] font-black uppercase ${enabled ? (gmailReady ? 'border-blue-100 bg-blue-50 text-blue-700' : 'border-amber-100 bg-amber-50 text-amber-700') : 'border-gray-200 bg-gray-50 text-gray-500'}`}>
+                      Blue badge {statusLabel}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-[12px] text-[#6B7280]">{record.data?.hostName || hostForDomain(record.data?.domain || 'tiwlo.com')} / IMAP {record.data?.incoming?.port || 993} SSL / SMTP {record.data?.outgoing?.port || 465} SSL / quota {record.data?.quotaMB || record.data?.quota || 0} MB</p>
+                  <p className="mt-1 break-all text-[11px] font-bold text-[#9CA3AF]">Login: https://{record.data?.portalHost || portalForDomain(record.data?.domain || 'tiwlo.com')} / Username: {record.data?.address || record.title}</p>
+                  {enabled && (
+                    <div className="mt-3 grid grid-cols-1 gap-2 text-[11px] sm:grid-cols-2">
+                      {(Array.isArray(bimi.steps) ? bimi.steps : [
+                        { label: 'BIMI DNS', status: 'done', detail: bimi.dnsValue || bimiTxtForDomain(record.data?.domain || systemDomain, bimi.logoUrl, bimi.certificateUrl) },
+                        { label: 'Gmail blue check', status: gmailReady ? 'done' : 'pending', detail: gmailReady ? 'VMC/CMC PEM is attached.' : 'Needs VMC/CMC PEM URL.' }
+                      ]).map((step: any) => (
+                        <div key={step.label} className={`rounded border p-2 ${step.status === 'pending' ? 'border-amber-100 bg-amber-50 text-amber-800' : 'border-emerald-100 bg-emerald-50 text-emerald-800'}`}>
+                          <p className="font-black">{step.label}</p>
+                          <p className="mt-1 break-all font-semibold opacity-80">{step.detail}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button onClick={() => toggleBlueBadge(record)} disabled={bimiWorkingId === record.id} className={`inline-flex items-center gap-2 rounded border px-3 py-2 text-[12px] font-bold disabled:opacity-60 ${enabled ? 'border-blue-100 bg-blue-50 text-blue-700 hover:bg-blue-100' : 'border-[#DDE3EA] text-[#374151] hover:bg-[#F9FAFB]'}`}>
+                    <ShieldCheck className="h-4 w-4" /> {bimiWorkingId === record.id ? 'Updating...' : enabled ? 'Turn Off Badge' : 'Turn On Badge'}
+                  </button>
+                  <button onClick={() => editAccount(record)} className="rounded border border-[#DDE3EA] px-3 py-2 text-[12px] font-bold text-[#374151] hover:bg-[#F9FAFB]">Edit</button>
+                  <button onClick={() => deleteAccount(record)} className="inline-flex items-center gap-2 rounded border border-red-100 bg-red-50 px-3 py-2 text-[12px] font-bold text-red-700 hover:bg-red-100">
+                    <Trash2 className="h-4 w-4" /> Delete
+                  </button>
+                </div>
               </div>
-              <div className="flex flex-wrap gap-2">
-                <button onClick={() => editAccount(record)} className="rounded border border-[#DDE3EA] px-3 py-2 text-[12px] font-bold text-[#374151] hover:bg-[#F9FAFB]">Edit</button>
-                <button onClick={() => deleteAccount(record)} className="inline-flex items-center gap-2 rounded border border-red-100 bg-red-50 px-3 py-2 text-[12px] font-bold text-red-700 hover:bg-red-100">
-                  <Trash2 className="h-4 w-4" /> Delete
-                </button>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </section>
 
@@ -432,12 +624,13 @@ export default function AdminEmail() {
           <Server className="h-4 w-4 text-blue-600" />
           <h2 className="text-sm font-black uppercase text-[#111827]">Connection Details</h2>
         </div>
-        <div className="grid grid-cols-1 gap-3 text-[13px] md:grid-cols-4">
+        <div className="grid grid-cols-1 gap-3 text-[13px] md:grid-cols-5">
           {[
             ['Mail login', `https://${emailPortalHost}`],
             ['Incoming IMAP', `${publicMailHost} : 993 SSL`],
             ['Outgoing SMTP', `${publicMailHost} : 465 SSL or 587 STARTTLS`],
-            ['MX Record', `MX 10 ${publicMailHost}`]
+            ['MX Record', `MX 10 ${publicMailHost}`],
+            ['BIMI TXT', bimiTxtForDomain(systemDomain, activeBimiLogoUrl, activeBimiCertificateUrl)]
           ].map(([label, value]) => (
             <div key={label} className="rounded border border-[#E5E7EB] bg-[#F9FAFB] p-4">
               <p className="text-[10px] font-black uppercase tracking-widest text-gray-400">{label}</p>

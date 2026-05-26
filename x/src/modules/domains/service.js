@@ -50,7 +50,7 @@ const defaultDnsRecordsForDomain = (domainName, config) => {
     { type: addressType, name: 'webmail', value: serverIp },
     { type: 'MX', name: '@', value: `mail.${domainName}`, priority: 10 },
     { type: 'TXT', name: '@', value: `v=spf1 mx a ${spfIp} ~all` },
-    { type: 'TXT', name: '_dmarc', value: `v=DMARC1; p=quarantine; rua=mailto:postmaster@${domainName}; ruf=mailto:postmaster@${domainName}; fo=1` },
+    { type: 'TXT', name: '_dmarc', value: `v=DMARC1; p=quarantine; pct=100; rua=mailto:postmaster@${domainName}; ruf=mailto:postmaster@${domainName}; fo=1` },
     { type: 'TXT', name: `${cleanDkimSelector()}._domainkey`, value: cleanDkimValue() ? `v=DKIM1; h=sha256; k=rsa; p=${cleanDkimValue()}` : '' },
     { type: 'TXT', name: 'default._bimi', value: bimiRecordValue() },
     { type: 'CNAME', name: 'autodiscover', value: `mail.${domainName}` },

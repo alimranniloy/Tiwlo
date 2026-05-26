@@ -80,7 +80,7 @@ const mailDnsDefaultsFor = (domainName, config) => {
     { id: 'webmail_a', type: addressType, name: 'webmail', value: serverIp },
     { id: 'root_mx', type: 'MX', name: '@', value: `mail.${domain}`, priority: 10 },
     { id: 'root_spf', type: 'TXT', name: '@', value: `v=spf1 mx a ${spfIp} ~all` },
-    { id: 'dmarc_txt', type: 'TXT', name: '_dmarc', value: `v=DMARC1; p=quarantine; rua=mailto:${postmaster}; ruf=mailto:${postmaster}; fo=1` },
+    { id: 'dmarc_txt', type: 'TXT', name: '_dmarc', value: `v=DMARC1; p=quarantine; pct=100; rua=mailto:${postmaster}; ruf=mailto:${postmaster}; fo=1` },
     { id: 'dkim_txt', type: 'TXT', name: `${dkimSelector()}._domainkey`, value: dkimPublicKey() ? `v=DKIM1; h=sha256; k=rsa; p=${dkimPublicKey()}` : '' },
     { id: 'bimi_txt', type: 'TXT', name: 'default._bimi', value: bimiRecordValue() },
     { id: 'autodiscover_cname', type: 'CNAME', name: 'autodiscover', value: `mail.${domain}` },

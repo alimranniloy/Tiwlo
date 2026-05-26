@@ -181,6 +181,8 @@ export const registerMailbox = async (ctx, input = {}) => {
       portalHost: portalHost(domain),
       quotaMB: Number(input.quotaMB || 1024),
       ssl: true,
+      blueBadgeEnabled: false,
+      bimi: { enabled: false, status: 'off' },
       incoming: { host: hostName, protocol: 'IMAP', port: 993, ssl: true },
       outgoing: { host: hostName, protocol: 'SMTP', port: 465, ssl: true },
       messages: []
