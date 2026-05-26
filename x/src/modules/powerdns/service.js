@@ -53,6 +53,31 @@ const fqdnRecordName = (recordName, zoneName) => {
   return `${name}.${zone}`;
 };
 
+const addressRecordTypeFor = (ipAddress) => (isIP(text(ipAddress)) === 6 ? 'AAAA' : 'A');
+
+const mailDnsDefaultsFor = (domainName, config) => {
+  const domain = cleanHost(domainName || config.primaryDomain);
+  const serverIp = text(config.serverIp);
+  const addressType = addressRecordTypeFor(serverIp);
+  const spfIp = isIP(serverIp) === 6 ? `ip6:${serverIp}` : `ip4:${serverIp}`;
+  const postmaster = `postmaster@${domain}`;
+  const records = [
+    { id: 'mail_a', type: addressType, name: 'mail', value: serverIp },
+    { id: 'email_a', type: addressType, name: 'email', value: serverIp },
+    { id: 'smtp_a', type: addressType, name: 'smtp', value: serverIp },
+    { id: 'imap_a', type: addressType, name: 'imap', value: serverIp },
+    { id: 'pop_a', type: addressType, name: 'pop', value: serverIp },
+    { id: 'webmail_a', type: addressType, name: 'webmail', value: serverIp },
+    { id: 'root_mx', type: 'MX', name: '@', value: `mail.${domain}`, priority: 10 },
+    { id: 'root_spf', type: 'TXT', name: '@', value: `v=spf1 mx a ${spfIp} ~all` },
+    { id: 'dmarc_txt', type: 'TXT', name: '_dmarc', value: `v=DMARC1; p=quarantine; rua=mailto:${postmaster}; ruf=mailto:${postmaster}; fo=1` },
+    { id: 'autodiscover_cname', type: 'CNAME', name: 'autodiscover', value: `mail.${domain}` },
+    { id: 'autoconfig_cname', type: 'CNAME', name: 'autoconfig', value: `mail.${domain}` },
+    { id: 'letsencrypt_caa', type: 'CAA', name: '@', value: '0 issue "letsencrypt.org"' }
+  ];
+  return records.filter((record) => record.value && record.value !== 'SERVER_IP');
+};
+
 const detectedServerIp = (ctx) => (
   text(process.env.POWERDNS_SERVER_IP) ||
   text(process.env.SERVER_IP) ||
@@ -445,12 +470,12 @@ const upsertCoreZoneRecords = async (ctx, actor, config) => {
       status: 'active'
     }
   });
+  const addressType = addressRecordTypeFor(config.serverIp);
   const baseRecords = [
-    { id: 'root_a', type: 'A', name: '@', value: config.serverIp },
-    { id: 'www_a', type: 'A', name: 'www', value: config.serverIp },
-    { id: 'mail_a', type: 'A', name: 'mail', value: config.serverIp },
-    { id: 'email_a', type: 'A', name: 'email', value: config.serverIp },
-    ...config.nameservers.map((ns, index) => ({ id: `ns${index + 1}_a`, type: 'A', name: relativeRecordName(ns, config.primaryDomain), value: config.serverIp }))
+    { id: 'root_a', type: addressType, name: '@', value: config.serverIp },
+    { id: 'www_a', type: addressType, name: 'www', value: config.serverIp },
+    ...mailDnsDefaultsFor(config.primaryDomain, config),
+    ...config.nameservers.map((ns, index) => ({ id: `ns${index + 1}_a`, type: addressType, name: relativeRecordName(ns, config.primaryDomain), value: config.serverIp }))
   ].filter((record) => record.value && record.value !== 'SERVER_IP');
 
   for (const record of baseRecords) {
@@ -463,6 +488,7 @@ const upsertCoreZoneRecords = async (ctx, actor, config) => {
         name: record.name,
         value: record.value,
         ttl: 300,
+        priority: record.priority == null ? null : Number(record.priority),
         metadata: { source: 'powerdns_core', provider: 'powerdns' }
       },
       update: {
@@ -471,6 +497,7 @@ const upsertCoreZoneRecords = async (ctx, actor, config) => {
         name: record.name,
         value: record.value,
         ttl: 300,
+        priority: record.priority == null ? null : Number(record.priority),
         status: 'active',
         metadata: { source: 'powerdns_core', provider: 'powerdns' }
       }

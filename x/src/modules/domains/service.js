@@ -3,7 +3,7 @@ import { toApi } from '../../core/format.js';
 import { writeAudit } from '../../core/audit.js';
 import { pagination, searchWhere } from '../../core/validation.js';
 import { ensureOwnerHasCredit } from '../billing/creditAutomation.js';
-import { defaultNameserversFor, syncPowerDnsDomain, requireZoneAccess } from '../powerdns/service.js';
+import { defaultNameserversFor, getPowerDnsConfig, syncPowerDnsDomain, requireZoneAccess } from '../powerdns/service.js';
 import { queueSslInstallForDomains } from '../system-tools/service.js';
 
 const serializeRecords = (records) => records.map((record) => ({
@@ -21,6 +21,53 @@ const hostnameForRecord = (recordName, domainName) => {
   if (!name || name === '@') return domainName;
   if (name.endsWith(`.${domainName}`) || name === domainName) return name;
   return `${name}.${domainName}`;
+};
+
+const addressTypeFor = (ipAddress = '') => String(ipAddress).includes(':') ? 'AAAA' : 'A';
+
+const defaultDnsRecordsForDomain = (domainName, config) => {
+  const serverIp = String(config.serverIp || '').trim();
+  if (!serverIp || serverIp === 'SERVER_IP') return [];
+  const addressType = addressTypeFor(serverIp);
+  const spfIp = addressType === 'AAAA' ? `ip6:${serverIp}` : `ip4:${serverIp}`;
+  return [
+    { type: addressType, name: '@', value: serverIp },
+    { type: addressType, name: 'www', value: serverIp },
+    { type: addressType, name: 'mail', value: serverIp },
+    { type: addressType, name: 'email', value: serverIp },
+    { type: addressType, name: 'smtp', value: serverIp },
+    { type: addressType, name: 'imap', value: serverIp },
+    { type: addressType, name: 'pop', value: serverIp },
+    { type: addressType, name: 'webmail', value: serverIp },
+    { type: 'MX', name: '@', value: `mail.${domainName}`, priority: 10 },
+    { type: 'TXT', name: '@', value: `v=spf1 mx a ${spfIp} ~all` },
+    { type: 'TXT', name: '_dmarc', value: `v=DMARC1; p=quarantine; rua=mailto:postmaster@${domainName}; ruf=mailto:postmaster@${domainName}; fo=1` },
+    { type: 'CNAME', name: 'autodiscover', value: `mail.${domainName}` },
+    { type: 'CNAME', name: 'autoconfig', value: `mail.${domainName}` },
+    { type: 'CAA', name: '@', value: '0 issue "letsencrypt.org"' }
+  ];
+};
+
+const ensureDefaultDnsRecords = async (ctx, domain) => {
+  const config = await getPowerDnsConfig(ctx);
+  const defaults = defaultDnsRecordsForDomain(domain.name, config);
+  if (!defaults.length) return;
+  const existing = await ctx.prisma.dnsRecord.findMany({ where: { domainId: domain.id } });
+  const existingKeys = new Set(existing.map((record) => `${record.type}:${record.name}`.toLowerCase()));
+  for (const record of defaults) {
+    if (existingKeys.has(`${record.type}:${record.name}`.toLowerCase())) continue;
+    await ctx.prisma.dnsRecord.create({
+      data: {
+        domainId: domain.id,
+        type: record.type,
+        name: record.name,
+        value: record.value,
+        ttl: 300,
+        priority: record.priority,
+        metadata: { provider: 'powerdns', source: 'auto_dns_defaults' }
+      }
+    });
+  }
 };
 
 export const listDomains = async (ctx, { status, search, page, limit } = {}) => {
@@ -53,6 +100,7 @@ export const registerDomain = async (ctx, actor, input) => {
       expiresAt
     }
   });
+  await ensureDefaultDnsRecords(ctx, domain).catch(() => {});
   await syncPowerDnsDomain(ctx, domain.id).catch(() => {});
   await queueSslInstallForDomains({ prisma: ctx.prisma, domains: [domain.name], actor }).catch(() => {});
   await writeAudit(ctx, 'register_domain', 'domain', domain.id, { name: input.name });
