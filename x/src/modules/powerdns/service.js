@@ -241,6 +241,22 @@ export const ensurePowerDnsTables = async (prisma) => {
       secret VARCHAR(255)
     )
   `);
+  await prisma.$executeRawUnsafe(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'tsigkeys'
+          AND column_name = 'id'
+      ) THEN
+        ALTER TABLE tsigkeys ADD COLUMN id SERIAL;
+        ALTER TABLE tsigkeys ADD PRIMARY KEY (id);
+      END IF;
+    END
+    $$;
+  `);
   await prisma.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS tsigkeys_namealgo_idx ON tsigkeys(name, algorithm)`);
 };
 

@@ -159,7 +159,7 @@ configure_system_email_services() {
 disable_plaintext_auth = yes
 auth_mechanisms = plain login
 auth_username_format = %n
-protocols = imap pop3 lmtp
+protocols = imap pop3
 mail_location = maildir:~/Maildir
 
 service auth {
@@ -177,6 +177,10 @@ ssl_cert = <${CERT_FILE}
 ssl_key = <${KEY_FILE}
 
 service imap-login {
+  inet_listener imap {
+    port = 0
+  }
+
   inet_listener imaps {
     port = 993
     ssl = yes
@@ -184,6 +188,10 @@ service imap-login {
 }
 
 service pop3-login {
+  inet_listener pop3 {
+    port = 0
+  }
+
   inet_listener pop3s {
     port = 995
     ssl = yes
@@ -192,10 +200,14 @@ service pop3-login {
 DOVECOTSSL
 
   systemctl enable --now postfix dovecot >/dev/null 2>&1 || true
+  if have doveconf; then
+    doveconf -n >/dev/null || echo "Dovecot config validation failed. Run: sudo journalctl -u dovecot -n 80 --no-pager"
+  fi
   systemctl restart postfix dovecot >/dev/null 2>&1 || true
   verify_listener 465 "Postfix SMTPS"
   verify_listener 587 "Postfix submission"
   verify_listener 993 "Dovecot IMAPS"
+  verify_listener 995 "Dovecot POP3S"
 }
 
 random_secret() {

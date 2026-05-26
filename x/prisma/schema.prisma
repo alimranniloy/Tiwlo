@@ -8,64 +8,64 @@ datasource db {
 }
 
 model User {
-  id            String          @id @default(cuid())
-  email         String          @unique
-  passwordHash  String?
-  name          String
-  avatar        String?
-  credits       Float           @default(0)
-  role          String          @default("user")
-  status        String          @default("active")
-  phone         String?
-  mobileCountryCode String?
-  primaryRegion String?
-  country       String?
-  addressLine1  String?
-  city          String?
-  state         String?
-  postalCode    String?
-  billingName   String?
-  profileCompletedAt DateTime?
-  emailVerifiedAt DateTime?
-  emailVerificationToken String?
+  id                       String    @id @default(cuid())
+  email                    String    @unique
+  passwordHash             String?
+  name                     String
+  avatar                   String?
+  credits                  Float     @default(0)
+  role                     String    @default("user")
+  status                   String    @default("active")
+  phone                    String?
+  mobileCountryCode        String?
+  primaryRegion            String?
+  country                  String?
+  addressLine1             String?
+  city                     String?
+  state                    String?
+  postalCode               String?
+  billingName              String?
+  profileCompletedAt       DateTime?
+  emailVerifiedAt          DateTime?
+  emailVerificationToken   String?
   emailVerificationExpires DateTime?
-  passwordResetTokenHash String?
-  passwordResetExpires DateTime?
-  createdAt     DateTime        @default(now())
-  updatedAt     DateTime        @updatedAt
+  passwordResetTokenHash   String?
+  passwordResetExpires     DateTime?
+  createdAt                DateTime  @default(now())
+  updatedAt                DateTime  @updatedAt
 
-  resources     CloudResource[]
-  domains       Domain[]
-  invoices      Invoice[]
-  supportTickets SupportTicket[]
-  assignedSupportTickets SupportTicket[] @relation("SupportTicketAssignee")
-  supportTicketMessages SupportTicketMessage[]
-  liveChatSessions LiveChatSession[]
-  assignedLiveChatSessions LiveChatSession[] @relation("LiveChatAssignee")
-  liveChatMessages LiveChatMessage[]
-  stores        Store[]
-  ispSites      IspSite[]
-  auditLogs     AuditLog[]
-  apiCredentials ApiCredential[]
-  roleLinks     UserRole[]
-  notifications Notification[]
-  tiwloPayProfile TiwloPayProfile?
-  tiwloPayLinks TiwloPayLink[]
-  tiwloPayTransactions TiwloPayTransaction[]
-  tiwloPayWithdrawals TiwloPayWithdrawal[]
+  resources                CloudResource[]
+  domains                  Domain[]
+  invoices                 Invoice[]
+  supportTickets           SupportTicket[]
+  assignedSupportTickets   SupportTicket[]        @relation("SupportTicketAssignee")
+  supportTicketMessages    SupportTicketMessage[]
+  liveChatSessions         LiveChatSession[]
+  assignedLiveChatSessions LiveChatSession[]      @relation("LiveChatAssignee")
+  liveChatMessages         LiveChatMessage[]
+  stores                   Store[]
+  ispSites                 IspSite[]
+  auditLogs                AuditLog[]
+  apiCredentials           ApiCredential[]
+  roleLinks                UserRole[]
+  notifications            Notification[]
+  tiwloPayProfile          TiwloPayProfile?
+  tiwloPayLinks            TiwloPayLink[]
+  tiwloPayTransactions     TiwloPayTransaction[]
+  tiwloPayWithdrawals      TiwloPayWithdrawal[]
 }
 
 model Role {
-  id          String     @id @default(cuid())
-  key         String     @unique
+  id          String   @id @default(cuid())
+  key         String   @unique
   name        String
   description String?
   permissions Json
-  isSystem    Boolean    @default(false)
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
+  isSystem    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
-  users       UserRole[]
+  users UserRole[]
 }
 
 model UserRole {
@@ -77,8 +77,8 @@ model UserRole {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  role      Role     @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
 
   @@unique([userId, roleId, scope, scopeId])
   @@index([scope, scopeId])
@@ -118,17 +118,17 @@ model CloudResource {
 }
 
 model Domain {
-  id        String   @id @default(cuid())
+  id        String    @id @default(cuid())
   ownerId   String
-  owner     User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  name      String   @unique
+  owner     User      @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  name      String    @unique
   dns       Json
-  status    String   @default("active")
+  status    String    @default("active")
   records   Json?
-  autoRenew Boolean  @default(true)
+  autoRenew Boolean   @default(true)
   expiresAt DateTime?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
 
   dnsRecords DnsRecord[]
 }
@@ -150,18 +150,107 @@ model DnsRecord {
   @@index([domainId, type])
 }
 
+model PowerDnsDomain {
+  id             Int                      @id @default(autoincrement())
+  name           String                   @unique(map: "domains_name_idx") @db.VarChar(255)
+  master         String?                  @db.VarChar(128)
+  lastCheck      Int?                     @map("last_check")
+  type           String                   @default("NATIVE") @db.VarChar(6)
+  notifiedSerial Int?                     @map("notified_serial")
+  account        String?                  @db.VarChar(40)
+  metadata       PowerDnsDomainMetadata[]
+  cryptoKeys     PowerDnsCryptoKey[]
+
+  @@map("domains")
+}
+
+model PowerDnsRecord {
+  id        BigInt   @id @default(autoincrement())
+  domainId  Int?     @map("domain_id")
+  name      String?  @db.VarChar(255)
+  type      String?  @db.VarChar(10)
+  content   String?  @db.VarChar(65535)
+  ttl       Int?
+  prio      Int?
+  disabled  Boolean? @default(false)
+  ordername String?  @db.VarChar(255)
+  auth      Boolean? @default(true)
+
+  @@index([domainId], map: "records_domain_id_idx")
+  @@index([name, type], map: "records_name_type_idx")
+  @@index([ordername], map: "records_ordername_idx")
+  @@map("records")
+}
+
+model PowerDnsSupermaster {
+  ip         String @db.VarChar(64)
+  nameserver String @db.VarChar(255)
+  account    String @db.VarChar(40)
+
+  @@id([ip, nameserver])
+  @@map("supermasters")
+}
+
+model PowerDnsComment {
+  id         Int     @id @default(autoincrement())
+  domainId   Int     @map("domain_id")
+  name       String  @db.VarChar(255)
+  type       String  @db.VarChar(10)
+  modifiedAt Int     @map("modified_at")
+  account    String? @db.VarChar(40)
+  comment    String  @db.VarChar(65535)
+
+  @@index([domainId], map: "comments_domain_id_idx")
+  @@index([name, type], map: "comments_name_type_idx")
+  @@map("comments")
+}
+
+model PowerDnsDomainMetadata {
+  id       Int             @id @default(autoincrement())
+  domainId Int?            @map("domain_id")
+  kind     String?         @db.VarChar(32)
+  content  String?         @db.Text
+  domain   PowerDnsDomain? @relation(fields: [domainId], references: [id], onDelete: Cascade)
+
+  @@index([domainId, kind], map: "domainmetadata_domain_id_kind_idx")
+  @@map("domainmetadata")
+}
+
+model PowerDnsCryptoKey {
+  id        Int             @id @default(autoincrement())
+  domainId  Int?            @map("domain_id")
+  flags     Int
+  active    Boolean?
+  published Boolean?        @default(true)
+  content   String?         @db.Text
+  domain    PowerDnsDomain? @relation(fields: [domainId], references: [id], onDelete: Cascade)
+
+  @@index([domainId], map: "cryptokeys_domain_id_idx")
+  @@map("cryptokeys")
+}
+
+model PowerDnsTsigKey {
+  id        Int     @id @default(autoincrement())
+  name      String? @db.VarChar(255)
+  algorithm String? @db.VarChar(50)
+  secret    String? @db.VarChar(255)
+
+  @@unique([name, algorithm], map: "tsigkeys_namealgo_idx")
+  @@map("tsigkeys")
+}
+
 model Plan {
-  id          String   @id @default(cuid())
-  code        String
-  product     String
-  name        String
-  price       Float
-  interval    String   @default("month")
-  features    Json
-  limits      Json?
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id        String   @id @default(cuid())
+  code      String
+  product   String
+  name      String
+  price     Float
+  interval  String   @default("month")
+  features  Json
+  limits    Json?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   subscriptions Subscription[]
   stores        Store[]
@@ -171,16 +260,16 @@ model Plan {
 }
 
 model Subscription {
-  id             String   @id @default(cuid())
-  ownerId         String
-  planId          String
-  plan            Plan     @relation(fields: [planId], references: [id])
-  scope           String
-  scopeId         String?
-  status          String   @default("active")
+  id               String    @id @default(cuid())
+  ownerId          String
+  planId           String
+  plan             Plan      @relation(fields: [planId], references: [id])
+  scope            String
+  scopeId          String?
+  status           String    @default("active")
   currentPeriodEnd DateTime?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 }
 
 model Invoice {
@@ -228,24 +317,24 @@ model SupportTicket {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  messages     SupportTicketMessage[]
+  messages SupportTicketMessage[]
 
   @@index([ownerId, status])
   @@index([assignedToId, status])
 }
 
 model SupportTicketMessage {
-  id          String   @id @default(cuid())
+  id          String        @id @default(cuid())
   ticketId    String
   ticket      SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
   authorId    String?
-  author      User?    @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  author      User?         @relation(fields: [authorId], references: [id], onDelete: SetNull)
   authorName  String
   authorRole  String
   body        String
-  visibility  String   @default("public")
+  visibility  String        @default("public")
   attachments Json?
-  createdAt   DateTime @default(now())
+  createdAt   DateTime      @default(now())
 
   @@index([ticketId, createdAt])
 }
@@ -265,7 +354,7 @@ model LiveChatSession {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  messages      LiveChatMessage[]
+  messages LiveChatMessage[]
 
   @@index([ownerId, status])
   @@index([assignedToId, status])
@@ -273,16 +362,16 @@ model LiveChatSession {
 }
 
 model LiveChatMessage {
-  id          String   @id @default(cuid())
+  id          String          @id @default(cuid())
   sessionId   String
   session     LiveChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   authorId    String?
-  author      User?    @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  author      User?           @relation(fields: [authorId], references: [id], onDelete: SetNull)
   authorName  String
   senderRole  String
   body        String
   attachments Json?
-  createdAt   DateTime @default(now())
+  createdAt   DateTime        @default(now())
 
   @@index([sessionId, createdAt])
 }
@@ -329,76 +418,76 @@ model PaymentGateway {
 }
 
 model TiwloPayProfile {
-  id                  String                 @id @default(cuid())
-  ownerId             String                 @unique
-  owner               User                   @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  id                  String   @id @default(cuid())
+  ownerId             String   @unique
+  owner               User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   displayName         String
   companyName         String?
   supportEmail        String?
   statementDescriptor String?
-  apiKey              String                 @unique
+  apiKey              String   @unique
   secretHash          String
   secretPreview       String
-  status              String                 @default("inactive")
+  status              String   @default("inactive")
   settings            Json?
-  createdAt           DateTime               @default(now())
-  updatedAt           DateTime               @updatedAt
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
 
-  links               TiwloPayLink[]
-  transactions        TiwloPayTransaction[]
-  withdrawals         TiwloPayWithdrawal[]
+  links        TiwloPayLink[]
+  transactions TiwloPayTransaction[]
+  withdrawals  TiwloPayWithdrawal[]
 
   @@index([status])
 }
 
 model TiwloPayLink {
-  id               String                 @id @default(cuid())
+  id               String          @id @default(cuid())
   profileId        String
-  profile          TiwloPayProfile        @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  profile          TiwloPayProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
   ownerId          String
-  owner            User                   @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  slug             String                 @unique
+  owner            User            @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  slug             String          @unique
   invoiceId        String
   title            String
   description      String?
   amount           Float
-  currency         String                 @default("USD")
+  currency         String          @default("USD")
   customerName     String?
   customerEmail    String?
-  status           String                 @default("unpaid")
+  status           String          @default("unpaid")
   expiresAt        DateTime?
   allowedProviders Json?
   metadata         Json?
   paidAt           DateTime?
-  createdAt        DateTime               @default(now())
-  updatedAt        DateTime               @updatedAt
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
 
-  transactions     TiwloPayTransaction[]
+  transactions TiwloPayTransaction[]
 
   @@index([ownerId, status])
   @@index([profileId, status])
 }
 
 model TiwloPayTransaction {
-  id            String           @id @default(cuid())
+  id            String          @id @default(cuid())
   profileId     String
-  profile       TiwloPayProfile  @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  profile       TiwloPayProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
   linkId        String?
-  link          TiwloPayLink?    @relation(fields: [linkId], references: [id], onDelete: SetNull)
+  link          TiwloPayLink?   @relation(fields: [linkId], references: [id], onDelete: SetNull)
   ownerId       String
-  owner         User             @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  owner         User            @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   amount        Float
-  fee           Float            @default(0)
-  netAmount     Float            @default(0)
-  currency      String           @default("USD")
+  fee           Float           @default(0)
+  netAmount     Float           @default(0)
+  currency      String          @default("USD")
   provider      String
-  status        String           @default("succeeded")
+  status        String          @default("succeeded")
   reference     String?
   customerName  String?
   customerEmail String?
   metadata      Json?
-  createdAt     DateTime         @default(now())
-  updatedAt     DateTime         @updatedAt
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
 
   @@index([ownerId, status])
   @@index([profileId, createdAt])
@@ -406,53 +495,53 @@ model TiwloPayTransaction {
 }
 
 model TiwloPayWithdrawal {
-  id          String           @id @default(cuid())
+  id          String          @id @default(cuid())
   profileId   String
-  profile     TiwloPayProfile  @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  profile     TiwloPayProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
   ownerId     String
-  owner       User             @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  owner       User            @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   amount      Float
-  currency    String           @default("USD")
+  currency    String          @default("USD")
   method      String
   destination Json
-  status      String           @default("pending")
-  requestedAt DateTime         @default(now())
+  status      String          @default("pending")
+  requestedAt DateTime        @default(now())
   processedAt DateTime?
   metadata    Json?
-  createdAt   DateTime         @default(now())
-  updatedAt   DateTime         @updatedAt
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
 
   @@index([ownerId, status])
   @@index([profileId, status])
 }
 
 model Integration {
-  id          String    @id @default(cuid())
-  key         String    @unique
-  group       String
-  name        String
-  status      String    @default("inactive")
-  config      Json?
-  health      Json?
-  lastSyncAt  DateTime?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  id         String    @id @default(cuid())
+  key        String    @unique
+  group      String
+  name       String
+  status     String    @default("inactive")
+  config     Json?
+  health     Json?
+  lastSyncAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
 
   @@index([group, status])
 }
 
 model ApiCredential {
-  id        String   @id @default(cuid())
-  ownerId   String?
-  owner     User?    @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  name      String
-  keyHash   String
-  scopes    Json
-  status    String   @default("active")
+  id         String    @id @default(cuid())
+  ownerId    String?
+  owner      User?     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  name       String
+  keyHash    String
+  scopes     Json
+  status     String    @default("active")
   lastUsedAt DateTime?
-  expiresAt DateTime?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  expiresAt  DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
 }
 
 model Notification {
@@ -475,44 +564,44 @@ model Notification {
 }
 
 model AuditLog {
-  id        String   @id @default(cuid())
-  actorId   String?
-  actor     User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
-  action    String
-  resource  String
+  id         String   @id @default(cuid())
+  actorId    String?
+  actor      User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  action     String
+  resource   String
   resourceId String?
-  metadata  Json?
-  createdAt DateTime @default(now())
+  metadata   Json?
+  createdAt  DateTime @default(now())
 
   @@index([resource, resourceId])
 }
 
 model Store {
-  id          String          @id @default(cuid())
-  ownerId     String
-  owner       User            @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  planId      String?
-  plan        Plan?           @relation(fields: [planId], references: [id])
-  name        String
-  slug        String          @unique
-  category    String
-  status      String          @default("active")
-  domain      String?
+  id           String   @id @default(cuid())
+  ownerId      String
+  owner        User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  planId       String?
+  plan         Plan?    @relation(fields: [planId], references: [id])
+  name         String
+  slug         String   @unique
+  category     String
+  status       String   @default("active")
+  domain       String?
   customDomain String?
   contactEmail String?
-  phone       String?
-  address     String?
-  currency    String          @default("USD")
-  region      String          @default("NYC-1")
-  settings    Json?
-  createdAt   DateTime        @default(now())
-  updatedAt   DateTime        @updatedAt
+  phone        String?
+  address      String?
+  currency     String   @default("USD")
+  region       String   @default("NYC-1")
+  settings     Json?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
-  products    StoreProduct[]
-  orders      StoreOrder[]
-  customers   StoreCustomer[]
-  themes      StoreTheme[]
-  plugins     StorePlugin[]
+  products  StoreProduct[]
+  orders    StoreOrder[]
+  customers StoreCustomer[]
+  themes    StoreTheme[]
+  plugins   StorePlugin[]
 }
 
 model StoreProduct {
@@ -535,22 +624,22 @@ model StoreProduct {
 }
 
 model StoreCustomer {
-  id        String   @id @default(cuid())
-  storeId   String
-  store     Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
-  name      String
-  email     String
+  id           String    @id @default(cuid())
+  storeId      String
+  store        Store     @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  name         String
+  email        String
   passwordHash String?
-  phone     String?
-  status    String   @default("active")
-  tier      String   @default("standard")
-  address   Json?
-  points    Int      @default(0)
-  lastLoginAt DateTime?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  phone        String?
+  status       String    @default("active")
+  tier         String    @default("standard")
+  address      Json?
+  points       Int       @default(0)
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
-  orders    StoreOrder[]
+  orders StoreOrder[]
 
   @@unique([storeId, email])
 }
@@ -603,59 +692,59 @@ model StorePlugin {
 }
 
 model IspSite {
-  id          String       @id @default(cuid())
+  id          String   @id @default(cuid())
   ownerId     String
-  owner       User         @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  owner       User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   planId      String?
-  plan        Plan?        @relation(fields: [planId], references: [id])
+  plan        Plan?    @relation(fields: [planId], references: [id])
   name        String
-  code        String       @unique
+  code        String   @unique
   region      String
-  status      String       @default("healthy")
+  status      String   @default("healthy")
   node        String
   bandwidth   String
-  subscribers Int          @default(0)
+  subscribers Int      @default(0)
   settings    Json?
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
-
-  clients     IspClient[]
-  routers     IspRouter[]
-  radiusServers RadiusServer[]
-  devices     NetworkDevice[]
-  invoices    IspInvoice[]
-}
-
-model IspPackage {
-  id          String   @id @default(cuid())
-  name        String   @unique
-  speed       String
-  price       Float
-  billingCycle String  @default("month")
-  features    Json?
-  status      String   @default("active")
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  clients     IspClient[]
+  clients       IspClient[]
+  routers       IspRouter[]
+  radiusServers RadiusServer[]
+  devices       NetworkDevice[]
+  invoices      IspInvoice[]
+}
+
+model IspPackage {
+  id           String   @id @default(cuid())
+  name         String   @unique
+  speed        String
+  price        Float
+  billingCycle String   @default("month")
+  features     Json?
+  status       String   @default("active")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  clients IspClient[]
 }
 
 model IspClient {
-  id        String     @id @default(cuid())
+  id        String      @id @default(cuid())
   siteId    String
-  site      IspSite    @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  site      IspSite     @relation(fields: [siteId], references: [id], onDelete: Cascade)
   packageId String?
   package   IspPackage? @relation(fields: [packageId], references: [id])
   name      String
-  username  String     @unique
+  username  String      @unique
   email     String?
   phone     String?
   address   String?
-  status    String     @default("active")
-  balance   Float      @default(0)
+  status    String      @default("active")
+  balance   Float       @default(0)
   metadata  Json?
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
 }
 
 model IspRouter {
@@ -698,17 +787,17 @@ model NetworkDevice {
 }
 
 model IspInvoice {
-  id        String   @id @default(cuid())
-  siteId    String
-  site      IspSite  @relation(fields: [siteId], references: [id], onDelete: Cascade)
-  number    String   @unique
+  id         String    @id @default(cuid())
+  siteId     String
+  site       IspSite   @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  number     String    @unique
   clientName String
-  amount    Float
-  status    String   @default("open")
-  dueDate   DateTime?
-  items     Json
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  amount     Float
+  status     String    @default("open")
+  dueDate    DateTime?
+  items      Json
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
 }
 
 model HostingComputeNode {
@@ -1027,21 +1116,21 @@ model DdosProtectionPolicy {
 }
 
 model DdosProtectedAsset {
-  id         String    @id @default(cuid())
-  resourceKey String  @unique
-  kind       String
-  resourceId String?
-  name       String
-  ip         String?
-  domain     String?
-  provider   String?
-  panel      String?
-  status     String    @default("active")
-  riskScore  Int       @default(0)
-  lastSyncAt DateTime?
-  metadata   Json?
-  createdAt  DateTime  @default(now())
-  updatedAt  DateTime  @updatedAt
+  id          String    @id @default(cuid())
+  resourceKey String    @unique
+  kind        String
+  resourceId  String?
+  name        String
+  ip          String?
+  domain      String?
+  provider    String?
+  panel       String?
+  status      String    @default("active")
+  riskScore   Int       @default(0)
+  lastSyncAt  DateTime?
+  metadata    Json?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   @@index([kind, status])
   @@index([ip])
