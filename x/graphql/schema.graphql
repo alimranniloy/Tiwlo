@@ -1504,7 +1504,7 @@ type MailboxRecoveryOtpPayload {
   ok: Boolean!
   message: String!
   recoveryEmail: String!
-  expiresAt: DateTime!
+  expiresAt: String!
 }
 
 input SendMailboxEmailInput {
