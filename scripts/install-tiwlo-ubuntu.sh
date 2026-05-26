@@ -143,7 +143,12 @@ local-address=${bind_addresses}
 local-port=53
 webserver=no
 PDNS
-  chmod 640 /etc/powerdns/pdns.d/tiwlo-pgsql.conf || true
+  if getent group pdns >/dev/null 2>&1; then
+    chown root:pdns /etc/powerdns/pdns.d/tiwlo-pgsql.conf || true
+    chmod 640 /etc/powerdns/pdns.d/tiwlo-pgsql.conf || true
+  else
+    chmod 644 /etc/powerdns/pdns.d/tiwlo-pgsql.conf || true
+  fi
   systemctl enable --now pdns >/dev/null 2>&1 || true
   systemctl restart pdns >/dev/null 2>&1 || true
   verify_powerdns_listener
@@ -201,19 +206,9 @@ configure_system_email_services() {
   mkdir -p /etc/dovecot/conf.d
 
   write_dovecot_auth_config() {
-    local mode="$1"
-    local cleartext_setting="disable_plaintext_auth = yes"
-    local username_format="auth_username_format = %n"
-    if [ "$mode" = "modern" ]; then
-      cleartext_setting="auth_allow_cleartext = no"
-      username_format="auth_username_format = %{user | username}"
-    fi
     cat >/etc/dovecot/conf.d/99-tiwlo-mail-auth.conf <<DOVECOT
-${cleartext_setting}
 auth_mechanisms = plain login
-${username_format}
 protocols = imap pop3
-mail_location = maildir:~/Maildir
 
 service auth {
   unix_listener /var/spool/postfix/private/auth {
@@ -294,11 +289,10 @@ DOVECOTSSL
     fi
   }
 
-  write_dovecot_auth_config modern
+  write_dovecot_auth_config
   write_dovecot_ssl_config modern
   if ! validate_dovecot_config; then
-    echo "Dovecot modern config was not accepted; falling back to legacy Dovecot settings."
-    write_dovecot_auth_config legacy
+    echo "Dovecot modern SSL settings were not accepted; falling back to legacy Dovecot SSL settings."
     write_dovecot_ssl_config legacy
   fi
 
