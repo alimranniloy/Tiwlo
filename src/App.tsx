@@ -93,14 +93,15 @@ import { SERVICE_MODULE_GROUP, SERVICE_MODULE_KEYS, serviceEnabled } from './lib
 // Components
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
+import CubeLoader from './components/CubeLoader';
 
 const restrictedStatuses = new Set(['banned', 'blocked', 'suspended', 'disabled']);
 
 function RouteLoader() {
+  const pathname = typeof window !== 'undefined' ? window.location.pathname : '';
+  if (/^\/(?:login|signup|themes)(?:\/|$)/.test(pathname)) return null;
   return (
-    <div className="flex min-h-[40vh] items-center justify-center text-[13px] font-bold text-[#6B7280]">
-      Loading...
-    </div>
+    <CubeLoader className="bg-transparent" />
   );
 }
 

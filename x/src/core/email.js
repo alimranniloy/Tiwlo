@@ -34,6 +34,26 @@ function smtpModeForPort(port, secureInput) {
   return { port: numericPort, secure, requireTLS: false, label: secure ? `${numericPort} SSL` : `${numericPort} plain/STARTTLS` };
 }
 
+const isAuthFailure = (errorOrResult = {}) => {
+  const responseCode = Number(errorOrResult.responseCode || 0);
+  return errorOrResult.code === 'EAUTH' || [454, 530, 534, 535, 538].includes(responseCode);
+};
+
+function envAuthFallbackConfig(config = {}) {
+  const envPassword = process.env.SMTP_PASS;
+  if (!envPassword || envPassword === config.password) return null;
+  return {
+    ...config,
+    host: cleanHost(process.env.SMTP_HOST || config.host),
+    port: Number(process.env.SMTP_PORT || config.port || 465),
+    username: process.env.SMTP_USER || config.username,
+    password: envPassword,
+    secureSSL: process.env.SMTP_SECURE !== undefined ? process.env.SMTP_SECURE : config.secureSSL ?? config.secure,
+    tlsRejectUnauthorized: config.tlsRejectUnauthorized,
+    authSource: 'env'
+  };
+}
+
 function getPrisma(ctxOrPrisma) {
   return ctxOrPrisma?.prisma || ctxOrPrisma;
 }
@@ -215,7 +235,7 @@ export async function diagnoseSmtpConfig(config = {}) {
   });
 
   if (!smtp.ok) {
-    const authFailure = smtp.code === 'EAUTH' || [454, 530, 534, 535, 538].includes(Number(smtp.responseCode || 0));
+    const authFailure = isAuthFailure(smtp);
     return {
       ...diagnostic,
       stage: authFailure ? 'smtp-auth' : 'smtp-handshake',
@@ -287,7 +307,7 @@ async function deliverEmail(config, message) {
 
 export async function testTiwloEmail(ctxOrPrisma, input = {}) {
   const prisma = getPrisma(ctxOrPrisma);
-  const config = await systemEmailConfig(prisma, input.config || input);
+  let config = await systemEmailConfig(prisma, input.config || input);
   const to = input.to || input.recipient;
   if (!to) return { ok: false, message: 'Test recipient email is required.', ...emailServerAdvice(config) };
   if (!config.host || !config.username || !config.password) {
@@ -303,7 +323,26 @@ export async function testTiwloEmail(ctxOrPrisma, input = {}) {
     };
   }
 
-  const diagnostic = await diagnoseSmtpConfig(config);
+  let diagnostic = await diagnoseSmtpConfig(config);
+  if (!diagnostic.ok && diagnostic.stage === 'smtp-auth') {
+    const fallbackConfig = envAuthFallbackConfig(config);
+    if (fallbackConfig) {
+      const fallbackDiagnostic = await diagnoseSmtpConfig(fallbackConfig);
+      if (fallbackDiagnostic.ok) {
+        config = fallbackConfig;
+        diagnostic = { ...fallbackDiagnostic, authSource: 'env-fallback' };
+      } else {
+        diagnostic = {
+          ...diagnostic,
+          fallback: {
+            stage: fallbackDiagnostic.stage,
+            code: fallbackDiagnostic.code,
+            message: fallbackDiagnostic.message
+          }
+        };
+      }
+    }
+  }
   if (!diagnostic.ok) {
     return {
       ok: false,
@@ -356,6 +395,45 @@ export async function testTiwloEmail(ctxOrPrisma, input = {}) {
       ...result.advice
     };
   } catch (error) {
+    if (isAuthFailure(error)) {
+      const fallbackConfig = envAuthFallbackConfig(config);
+      if (fallbackConfig) {
+        try {
+          const retryDiagnostic = await diagnoseSmtpConfig(fallbackConfig);
+          if (retryDiagnostic.ok) {
+            const retryResult = await deliverEmail(fallbackConfig, {
+              to,
+              from: `"${fallbackConfig.fromName}" <${fallbackConfig.fromEmail}>`,
+              replyTo: fallbackConfig.replyTo,
+              subject: input.subject || 'Tiwlo.com test email',
+              text: 'This is a live SMTP test from Tiwlo.com.',
+              html: brandedHtml({
+                title: 'Tiwlo.com email test',
+                preview: 'Your SMTP configuration can send email.',
+                bodyHtml: [
+                  paragraph('Success. Tiwlo.com connected to your SMTP server and sent this test email.'),
+                  paragraph(emailServerAdvice(fallbackConfig).message)
+                ].join('')
+              })
+            });
+            if (retryResult.sent) {
+              return {
+                ok: true,
+                stage: 'sent',
+                code: 'OK',
+                message: `Nodemailer sent a real test email to ${to}.`,
+                to,
+                fromEmail: fallbackConfig.fromEmail,
+                diagnostic: { ...retryDiagnostic, authSource: 'env-fallback' },
+                ...retryResult.advice
+              };
+            }
+          }
+        } catch {
+          // Keep the original auth error below.
+        }
+      }
+    }
     const advice = emailServerAdvice(config);
     return {
       ok: false,
@@ -411,8 +489,9 @@ function brandedHtml({ title, preview, bodyHtml }) {
 export async function sendTiwloEmail(ctxOrPrisma, { to, subject, title, preview, html, text, fromEmail, fromName, replyTo }) {
   const prisma = getPrisma(ctxOrPrisma);
   if (!prisma || !to) return { sent: false, reason: 'missing-recipient' };
+  let config = null;
   try {
-    const config = await systemEmailConfig(prisma, {
+    config = await systemEmailConfig(prisma, {
       ...(fromEmail ? { fromEmail } : {}),
       ...(fromName ? { fromName } : {}),
       ...(replyTo ? { replyTo } : {})
@@ -431,12 +510,30 @@ export async function sendTiwloEmail(ctxOrPrisma, { to, subject, title, preview,
     });
     return result;
   } catch (error) {
+    if (isAuthFailure(error) && config) {
+      const fallbackConfig = envAuthFallbackConfig(config);
+      if (fallbackConfig) {
+        try {
+          const result = await deliverEmail(fallbackConfig, {
+            to,
+            from: `"${fallbackConfig.fromName}" <${fallbackConfig.fromEmail}>`,
+            replyTo: fallbackConfig.replyTo,
+            subject,
+            text: text || preview || subject,
+            html: brandedHtml({ title: title || subject, preview, bodyHtml: html || `<p>${escapeHtml(text || preview || subject)}</p>` })
+          });
+          return { ...result, authSource: 'env-fallback' };
+        } catch {
+          // Report the original auth failure below.
+        }
+      }
+    }
     console.warn('[email] send failed:', error?.message || error);
     return {
       sent: false,
       reason: 'send-failed',
       code: error?.code || String(error?.responseCode || ''),
-      message: smtpErrorMessage(error, await systemEmailConfig(prisma))
+      message: smtpErrorMessage(error, config || await systemEmailConfig(prisma))
     };
   }
 }

@@ -28,6 +28,7 @@ const SITES_CONFIG_DIR = path.join(TPANEL_CONFIG_DIR, "sites");
 const ACCOUNT_BASE_DIR = process.env.TPANEL_ACCOUNT_BASE_DIR || (process.platform === "win32" ? path.join(process.cwd(), ".tpanel", "accounts") : "/home/tpanel/accounts");
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 const LICENSE_CACHE_MS = Number(process.env.TPANEL_LICENSE_CACHE_MS || 120000);
+let sslProvisioningChain: Promise<void> = Promise.resolve();
 const LICENSE_CHECK_QUERY = `mutation Check($input: TPanelLicenseCheckInput!) {
   tPanelLicenseCheck(input: $input) {
     ok
@@ -686,6 +687,18 @@ ${nginxContentBlock(account, documentRoot)}
 `;
 }
 
+function queueAccountSslProvision(account: any, args: string[], onComplete: (error: Error | null, stdout: string, stderr: string) => void) {
+  sslProvisioningChain = sslProvisioningChain
+    .catch(() => undefined)
+    .then(() => new Promise<void>((resolve) => {
+      execFile("certbot", args, { timeout: 180000 }, (error, stdout, stderr) => {
+        onComplete(error, stdout || "", stderr || "");
+        resolve();
+      });
+    }));
+  appendProvisioningLog(account, "Auto SSL queued behind any active certificate job.");
+}
+
 function applyAccountProvisioning(account: any) {
   if (process.platform === "win32") return;
   const siteName = `tpanel-${account.username}`;
@@ -735,8 +748,20 @@ function applyAccountProvisioning(account: any) {
       ...(account.provisioning?.vhost?.aliases || []),
       ...accountSubdomainRoutes(account).map((route: any) => route.domain)
     ]);
-    const args = ["--nginx", "--non-interactive", "--agree-tos", "--redirect", "-m", email, ...domains.flatMap((domain: string) => ["-d", domain])];
-    execFile("certbot", args, { timeout: 180000 }, (certbotError, certbotStdout, certbotStderr) => {
+    const args = [
+      "--nginx",
+      "--non-interactive",
+      "--agree-tos",
+      "--redirect",
+      "--expand",
+      "--keep-until-expiring",
+      "--cert-name",
+      cleanDomain(account.domain),
+      "-m",
+      email,
+      ...domains.flatMap((domain: string) => ["-d", domain])
+    ];
+    queueAccountSslProvision(account, args, (certbotError, certbotStdout, certbotStderr) => {
       if (certbotError) {
         appendProvisioningLog(account, `Auto SSL pending: ${certbotError.message} ${certbotStderr || certbotStdout || ""}`.trim());
         patchAccountProvisioning(account, {

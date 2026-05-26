@@ -13,6 +13,7 @@ import net from 'node:net';
 import tls from 'node:tls';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { getPowerDnsConfig, syncPowerDnsDomain } from '../powerdns/service.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -23,6 +24,7 @@ let autoTimer = null;
 let autoRunning = false;
 let sslAutoTimer = null;
 let sslAutoRunning = false;
+let sslRunChain = Promise.resolve();
 let restartScheduled = false;
 
 const BACKUP_KEY = 'backupAutomation';
@@ -243,6 +245,115 @@ const parseSslDomains = async (prisma, config, mode = 'all', explicitDomain = ''
     : allDomains;
   const wildcardDomains = config.includeWildcard && primary ? [`*.${primary}`] : [];
   return { httpDomains, wildcardDomains };
+};
+
+const apexForHost = (host, primaryDomain = '') => {
+  const clean = cleanHost(host);
+  const primary = cleanHost(primaryDomain);
+  if (primary && (clean === primary || clean.endsWith(`.${primary}`))) return primary;
+  const parts = clean.split('.').filter(Boolean);
+  return parts.length >= 2 ? parts.slice(-2).join('.') : clean;
+};
+
+const relativeDnsName = (host, zone) => {
+  const clean = cleanHost(host);
+  const root = cleanHost(zone);
+  if (clean === root) return '@';
+  return clean.endsWith(`.${root}`) ? clean.slice(0, -(root.length + 1)) : clean;
+};
+
+const expandSslDomainsForMode = (domains, config, mode, explicitDomain = '') => {
+  const primary = cleanHost(config.primaryDomain || defaultPrimaryDomain());
+  const selected = cleanHost(explicitDomain || primary);
+  const all = Array.from(new Set(domains.map(cleanHost).filter(isValidHost)));
+  if (mode !== 'main') return all;
+
+  const selectedApex = apexForHost(selected, primary);
+  const matching = all.filter((domain) => apexForHost(domain, primary) === selectedApex);
+  const defaults = selectedApex === primary
+    ? [primary, `www.${primary}`, `mail.${primary}`, `email.${primary}`, selected]
+    : [selected];
+  return Array.from(new Set([...defaults, ...matching].map(cleanHost).filter(isValidHost)));
+};
+
+const sortCertificateDomains = (domains, apex) => domains.sort((left, right) => {
+  if (left === apex) return -1;
+  if (right === apex) return 1;
+  if (left === `www.${apex}`) return -1;
+  if (right === `www.${apex}`) return 1;
+  return left.localeCompare(right);
+});
+
+const certificateGroupsForDomains = (domains, config) => {
+  const primary = cleanHost(config.primaryDomain || defaultPrimaryDomain());
+  const groups = new Map();
+  for (const domain of domains.map(cleanHost).filter(isValidHost)) {
+    const apex = apexForHost(domain, primary);
+    if (!groups.has(apex)) groups.set(apex, { certName: apex, domains: [] });
+    const group = groups.get(apex);
+    if (!group.domains.includes(domain)) group.domains.push(domain);
+  }
+  return Array.from(groups.values()).map((group) => ({
+    ...group,
+    domains: sortCertificateDomains(group.domains, group.certName).slice(0, 95)
+  }));
+};
+
+const systemOwnerId = async (prisma) => {
+  const user = await prisma.user.findFirst({
+    where: { role: { in: ['super_admin', 'admin'] } },
+    orderBy: { createdAt: 'asc' },
+    select: { id: true }
+  }).catch(() => null);
+  return user?.id || process.env.SYSTEM_ACTOR_ID || null;
+};
+
+const ensurePowerDnsSslRecords = async (prisma, domains = []) => {
+  const ctx = { prisma };
+  const config = await getPowerDnsConfig(ctx).catch(() => null);
+  const primary = cleanHost(config?.primaryDomain || defaultPrimaryDomain());
+  const serverIp = String(config?.serverIp || process.env.POWERDNS_SERVER_IP || process.env.SERVER_IP || process.env.PUBLIC_IP || '').trim();
+  if (!primary || !serverIp || serverIp === 'SERVER_IP') return [];
+  const managed = Array.from(new Set(domains.map(cleanHost).filter((domain) => domain === primary || domain.endsWith(`.${primary}`))));
+  if (!managed.length) return [];
+  const ownerId = await systemOwnerId(prisma);
+  if (!ownerId) return [];
+
+  const nameservers = Array.isArray(config.nameservers) && config.nameservers.length
+    ? config.nameservers
+    : [`ns1.${primary}`, `ns2.${primary}`];
+  const zone = await prisma.domain.upsert({
+    where: { name: primary },
+    create: { ownerId, name: primary, dns: nameservers, status: 'active', records: [] },
+    update: { dns: nameservers, status: 'active' }
+  });
+
+  for (const domain of managed) {
+    await prisma.dnsRecord.upsert({
+      where: { id: `ssl_auto_${domain.replace(/[^a-z0-9]+/g, '_')}_a` },
+      create: {
+        id: `ssl_auto_${domain.replace(/[^a-z0-9]+/g, '_')}_a`,
+        domainId: zone.id,
+        type: 'A',
+        name: relativeDnsName(domain, primary),
+        value: serverIp,
+        ttl: 300,
+        metadata: { source: 'ssl_auto_powerdns', provider: 'powerdns' }
+      },
+      update: {
+        domainId: zone.id,
+        type: 'A',
+        name: relativeDnsName(domain, primary),
+        value: serverIp,
+        ttl: 300,
+        status: 'active',
+        metadata: { source: 'ssl_auto_powerdns', provider: 'powerdns' }
+      }
+    });
+  }
+
+  await syncPowerDnsDomain(ctx, zone.id).catch(() => {});
+  return managed;
 };
 
 const backupConfig = async (prisma) => ({
@@ -922,11 +1033,14 @@ const runSsl = async ({ prisma, rootDir, job, actor, input }) => {
     const email = String(config.email || process.env.SSL_EMAIL || '').trim();
     if (!email || !email.includes('@')) throw new Error('A valid SSL email is required.');
     const mode = input.mode === 'main' ? 'main' : 'all';
-    const { httpDomains, wildcardDomains } = await parseSslDomains(prisma, config, mode, input.domain);
-    const filtered = Array.from(new Set(httpDomains.filter(isValidHost)));
+    const { httpDomains, wildcardDomains } = await parseSslDomains(prisma, config, 'all', input.domain);
+    const filtered = expandSslDomainsForMode(httpDomains, config, mode, input.domain);
     if (!filtered.length) throw new Error('No valid domain found for SSL.');
 
-    updateJob(job, { progress: 15, message: 'Checking DNS and HTTP reachability', domains: filtered });
+    updateJob(job, { progress: 12, message: 'Preparing PowerDNS records for SSL', domains: filtered });
+    const powerDnsPrepared = await ensurePowerDnsSslRecords(prisma, filtered).catch(() => []);
+
+    updateJob(job, { progress: 15, message: 'Checking DNS and HTTP reachability', domains: filtered, powerDnsPrepared });
     const diagnostics = await Promise.all(filtered.slice(0, 60).map(diagnoseSslDomain));
     const failed = diagnostics
       .filter((item) => item.status === 'error')
@@ -937,7 +1051,10 @@ const runSsl = async ({ prisma, rootDir, job, actor, input }) => {
       failed.push(...wildcard.domains.map((domain) => ({ domain, error: wildcard.message })));
     }
     if (!readyDomains.length) throw new Error(failed[0]?.error || 'No SSL-ready domain found.');
-    if (mode === 'main' && failed.length) throw new Error(failed[0].error);
+    const requestedDomain = cleanHost(input.domain || config.primaryDomain);
+    if (mode === 'main' && failed.some((item) => item.domain === requestedDomain)) {
+      throw new Error(failed.find((item) => item.domain === requestedDomain)?.error || failed[0].error);
+    }
 
     updateJob(job, { progress: 25, message: 'Installing certbot and enabling renew timer', diagnostics, wildcard });
     await runCommand('/bin/bash', installCertbotArgs(), { cwd: rootDir }, (text) => {
@@ -946,34 +1063,39 @@ const runSsl = async ({ prisma, rootDir, job, actor, input }) => {
 
     const certbot = await findExecutable(rootDir, 'certbot');
     const successful = [];
-    for (const [index, domain] of readyDomains.entries()) {
+    const groups = certificateGroupsForDomains(readyDomains, config);
+    for (const [index, group] of groups.entries()) {
       const args = [
         '--nginx',
         '--non-interactive',
         '--agree-tos',
         '--no-eff-email',
         '--redirect',
+        '--expand',
+        '--cert-name',
+        group.certName,
         '--email',
-        email,
-        '-d',
-        domain
+        email
       ];
+      for (const domain of group.domains) args.push('-d', domain);
       if (config.staging) args.push('--staging');
       if (config.forceRenewal || input.forceRenewal) args.push('--force-renewal');
 
       updateJob(job, {
-        progress: 42 + Math.round((index / Math.max(1, readyDomains.length)) * 42),
-        message: `Requesting SSL for ${domain}`
+        progress: 42 + Math.round((index / Math.max(1, groups.length)) * 42),
+        message: `Requesting free SSL for ${group.certName} (${group.domains.length} host${group.domains.length === 1 ? '' : 's'})`,
+        domains: group.domains
       });
       try {
         await runCommand(certbot, args, { cwd: rootDir }, (text) => {
           const clean = text.trim();
           if (clean) updateJob(job, { message: clean.slice(-260) });
         });
-        successful.push(domain);
+        successful.push(...group.domains);
       } catch (error) {
-        failed.push({ domain, error: explainCertbotError(error, domain) });
-        if (mode === 'main') throw new Error(explainCertbotError(error, domain));
+        const explained = explainCertbotError(error, group.certName);
+        failed.push(...group.domains.map((domain) => ({ domain, error: explained })));
+        if (mode === 'main' && group.domains.includes(requestedDomain)) throw new Error(explained);
       }
     }
     if (!successful.length) throw new Error(failed[0]?.error || 'No SSL certificate could be issued.');
@@ -1021,6 +1143,12 @@ const runSsl = async ({ prisma, rootDir, job, actor, input }) => {
     }).catch(() => {});
     updateJob(job, { status: 'failed', progress: Math.max(job.progress, 1), message: error.message || 'SSL failed', error: error.message || String(error) });
   }
+};
+
+const enqueueSslOperation = (operation) => {
+  const next = sslRunChain.catch(() => undefined).then(operation);
+  sslRunChain = next.catch(() => undefined);
+  return next;
 };
 
 const runSslRenew = async ({ prisma, rootDir, job, actor, input = {} }) => {
@@ -1126,7 +1254,7 @@ export const queueSslInstallForDomains = async ({ prisma, domains = [], actor = 
   });
   await writeSetting(prisma, SSL_KEY, next).catch(() => {});
   const job = createJob(sslJobs, 'ssl-auto-domain', { source: 'powerdns', domains: validDomains });
-  runSsl({ prisma, rootDir, job, actor, input: { ...next, mode: 'all' } });
+  enqueueSslOperation(() => runSsl({ prisma, rootDir, job, actor, input: { ...next, mode: 'all' } }));
   return publicJob(job);
 };
 
@@ -1161,7 +1289,7 @@ export const startSslAutomation = ({ prisma, rootDir = fallbackRootDir }) => {
     if (Date.now() < dueAt) return;
     sslAutoRunning = true;
     const job = createJob(sslJobs, 'ssl-auto-apply', { source: 'auto' });
-    await runSsl({ prisma, rootDir, job, actor: null, input: { ...config, mode: 'all' } });
+    await enqueueSslOperation(() => runSsl({ prisma, rootDir, job, actor: null, input: { ...config, mode: 'all' } }));
     sslAutoRunning = false;
   }, 60 * 60 * 1000);
 };
@@ -1275,13 +1403,13 @@ export const registerSystemToolRoutes = (app, { prisma, userFromRequest, rootDir
     const next = sanitizeSslConfig(input);
     if (req.body?.saveConfig !== false) await writeSetting(prisma, SSL_KEY, next);
     const job = createJob(sslJobs, 'ssl', { mode: req.body?.mode || 'all' });
-    runSsl({ prisma, rootDir, job, actor: req.tiwloUser, input: { ...next, mode: req.body?.mode || 'all', domain: req.body?.domain } });
+    enqueueSslOperation(() => runSsl({ prisma, rootDir, job, actor: req.tiwloUser, input: { ...next, mode: req.body?.mode || 'all', domain: req.body?.domain } }));
     res.status(202).json({ job: publicJob(job) });
   });
 
   router.post('/ssl/renew', async (req, res) => {
     const job = createJob(sslJobs, 'ssl-renew', { source: 'manual' });
-    runSslRenew({ prisma, rootDir, job, actor: req.tiwloUser, input: req.body || {} });
+    enqueueSslOperation(() => runSslRenew({ prisma, rootDir, job, actor: req.tiwloUser, input: req.body || {} }));
     res.status(202).json({ job: publicJob(job) });
   });
 

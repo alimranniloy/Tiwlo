@@ -111,6 +111,7 @@ configure_system_email_services() {
   cat >/etc/dovecot/conf.d/99-tiwlo-mail-auth.conf <<'DOVECOT'
 disable_plaintext_auth = yes
 auth_mechanisms = plain login
+auth_username_format = %n
 
 service auth {
   unix_listener /var/spool/postfix/private/auth {
@@ -123,6 +124,44 @@ DOVECOT
 
   systemctl enable --now postfix dovecot >/dev/null 2>&1 || true
   systemctl restart postfix dovecot >/dev/null 2>&1 || true
+}
+
+random_secret() {
+  openssl rand -base64 32 2>/dev/null | tr -dc 'A-Za-z0-9' | head -c 24 || date +%s%N
+}
+
+provision_system_mailbox() {
+  local smtp_user="$1"
+  local smtp_pass="$2"
+  local local_user
+  local shell_path
+  local home_dir
+
+  local_user="$(printf '%s' "${smtp_user%@*}" | tr -cd 'a-zA-Z0-9._-' | cut -c1-31)"
+  local_user="${local_user:-noreply}"
+  shell_path="/usr/sbin/nologin"
+  [ -x "$shell_path" ] || shell_path="/bin/false"
+  home_dir="/home/${local_user}"
+
+  if ! id "$local_user" >/dev/null 2>&1; then
+    useradd -m -d "$home_dir" -s "$shell_path" "$local_user" >/dev/null 2>&1 || true
+  fi
+  printf '%s:%s\n' "$local_user" "$smtp_pass" | chpasswd >/dev/null 2>&1 || true
+  mkdir -p "$home_dir/Maildir/cur" "$home_dir/Maildir/new" "$home_dir/Maildir/tmp"
+  chown -R "$local_user:$local_user" "$home_dir/Maildir" >/dev/null 2>&1 || true
+  chmod -R 700 "$home_dir/Maildir" >/dev/null 2>&1 || true
+
+  mkdir -p /etc/tiwlo-mail
+  cat >/etc/tiwlo-mail/system-smtp.env <<MAILENV
+SMTP_HOST=${MAIL_HOSTNAME}
+SMTP_PORT=465
+SMTP_SECURE=true
+SMTP_USER=${smtp_user}
+SMTP_PASS=${smtp_pass}
+MAIL_FROM=${smtp_user}
+MAIL_REPLY_TO=${EMAIL:-support@${MAIL_DOMAIN}}
+MAILENV
+  chmod 600 /etc/tiwlo-mail/system-smtp.env >/dev/null 2>&1 || true
 }
 
 server_ip() {
@@ -193,6 +232,8 @@ export API_BASE_URL="$PUBLIC_ORIGIN"
 export DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:5432/tiwlo?schema=public"
 export BACKEND_PORT
 export FRONTEND_PORT
+SMTP_PASSWORD="${SMTP_PASS:-$(random_secret)}"
+provision_system_mailbox "noreply@${MAIL_DOMAIN}" "$SMTP_PASSWORD"
 mkdir -p x
 {
   echo "SMTP_HOST=\"${MAIL_HOSTNAME}\""
@@ -200,6 +241,7 @@ mkdir -p x
   echo "SMTP_SECURE=\"true\""
   echo "SMTP_TLS_REJECT_UNAUTHORIZED=\"false\""
   echo "SMTP_USER=\"noreply@${MAIL_DOMAIN}\""
+  echo "SMTP_PASS=\"${SMTP_PASSWORD}\""
   echo "MAIL_FROM=\"noreply@${MAIL_DOMAIN}\""
   echo "MAIL_FROM_NAME=\"Tiwlo\""
   echo "MAIL_REPLY_TO=\"${EMAIL:-support@${MAIL_DOMAIN}}\""

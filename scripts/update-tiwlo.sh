@@ -33,6 +33,10 @@ clean_domain() {
   printf '%s' "$1" | sed -E 's#^https?://##; s#/.*$##; s#:[0-9]+$##; s#^mail\.##; s#^email\.##; s#^www\.##'
 }
 
+random_secret() {
+  openssl rand -base64 32 2>/dev/null | tr -dc 'A-Za-z0-9' | head -c 24 || date +%s%N
+}
+
 configure_postfix_dovecot() {
   local mail_domain="$1"
   local mail_hostname="$2"
@@ -87,6 +91,7 @@ configure_postfix_dovecot() {
   cat <<'DOVECOT' | run_sudo tee /etc/dovecot/conf.d/99-tiwlo-mail-auth.conf >/dev/null
 disable_plaintext_auth = yes
 auth_mechanisms = plain login
+auth_username_format = %n
 
 service auth {
   unix_listener /var/spool/postfix/private/auth {
@@ -99,6 +104,41 @@ DOVECOT
 
   run_sudo systemctl enable --now postfix dovecot >/dev/null 2>&1 || true
   run_sudo systemctl restart postfix dovecot >/dev/null 2>&1 || true
+}
+
+provision_system_mailbox() {
+  local mail_domain="$1"
+  local smtp_user="$2"
+  local smtp_pass="$3"
+  local local_user
+  local shell_path
+  local home_dir
+
+  local_user="$(printf '%s' "${smtp_user%@*}" | tr -cd 'a-zA-Z0-9._-' | cut -c1-31)"
+  local_user="${local_user:-noreply}"
+  shell_path="/usr/sbin/nologin"
+  [ -x "$shell_path" ] || shell_path="/bin/false"
+  home_dir="/home/${local_user}"
+
+  if ! id "$local_user" >/dev/null 2>&1; then
+    run_sudo useradd -m -d "$home_dir" -s "$shell_path" "$local_user" >/dev/null 2>&1 || true
+  fi
+  printf '%s:%s\n' "$local_user" "$smtp_pass" | run_sudo chpasswd >/dev/null 2>&1 || true
+  run_sudo mkdir -p "$home_dir/Maildir/cur" "$home_dir/Maildir/new" "$home_dir/Maildir/tmp"
+  run_sudo chown -R "$local_user:$local_user" "$home_dir/Maildir" >/dev/null 2>&1 || true
+  run_sudo chmod -R 700 "$home_dir/Maildir" >/dev/null 2>&1 || true
+
+  run_sudo mkdir -p /etc/tiwlo-mail
+  cat <<MAILENV | run_sudo tee /etc/tiwlo-mail/system-smtp.env >/dev/null
+SMTP_HOST=mail.${mail_domain}
+SMTP_PORT=465
+SMTP_SECURE=true
+SMTP_USER=${smtp_user}
+SMTP_PASS=${smtp_pass}
+MAIL_FROM=${smtp_user}
+MAIL_REPLY_TO=support@${mail_domain}
+MAILENV
+  run_sudo chmod 600 /etc/tiwlo-mail/system-smtp.env >/dev/null 2>&1 || true
 }
 
 ensure_mail_tls_certificate() {
@@ -219,6 +259,22 @@ set_env_value() {
   mv "$tmp" "$file"
 }
 
+get_env_value() {
+  local file="$1"
+  local key="$2"
+  [ -f "$file" ] || return 0
+  sed -n -E "s/^[[:space:]]*${key}=['\"]?([^'\"]*)['\"]?[[:space:]]*$/\\1/p" "$file" | tail -n 1
+}
+
+set_env_value_if_missing() {
+  local file="$1"
+  local key="$2"
+  local value="$3"
+  if [ -z "$(get_env_value "$file" "$key")" ]; then
+    set_env_value "$file" "$key" "$value"
+  fi
+}
+
 echo "Updating Tiwlo code..."
 git pull --ff-only
 
@@ -233,6 +289,19 @@ set_env_value "$ROOT/x/.env" POWERDNS_MODE "pgsql"
 set_env_value "$ROOT/x/.env" SMTP_PORT "465"
 set_env_value "$ROOT/x/.env" SMTP_SECURE "true"
 set_env_value "$ROOT/x/.env" SMTP_TLS_REJECT_UNAUTHORIZED "false"
+MAIL_DOMAIN="$(clean_domain "${TIWLO_MAIL_DOMAIN:-${APP_DOMAIN:-${TIWLO_DOMAIN:-tiwlo.com}}}")"
+MAIL_DOMAIN="${MAIL_DOMAIN:-tiwlo.com}"
+SYSTEM_SMTP_USER="$(get_env_value "$ROOT/x/.env" SMTP_USER)"
+SYSTEM_SMTP_USER="${SYSTEM_SMTP_USER:-noreply@${MAIL_DOMAIN}}"
+SYSTEM_SMTP_PASS="$(get_env_value "$ROOT/x/.env" SMTP_PASS)"
+SYSTEM_SMTP_PASS="${SYSTEM_SMTP_PASS:-$(random_secret)}"
+set_env_value_if_missing "$ROOT/x/.env" SMTP_HOST "mail.${MAIL_DOMAIN}"
+set_env_value "$ROOT/x/.env" SMTP_USER "$SYSTEM_SMTP_USER"
+set_env_value "$ROOT/x/.env" SMTP_PASS "$SYSTEM_SMTP_PASS"
+set_env_value_if_missing "$ROOT/x/.env" MAIL_FROM "$SYSTEM_SMTP_USER"
+set_env_value_if_missing "$ROOT/x/.env" MAIL_FROM_NAME "Tiwlo"
+set_env_value_if_missing "$ROOT/x/.env" MAIL_REPLY_TO "support@${MAIL_DOMAIN}"
+provision_system_mailbox "$MAIL_DOMAIN" "$SYSTEM_SMTP_USER" "$SYSTEM_SMTP_PASS"
 if [ -n "${FRONTEND_ORIGIN:-}" ]; then
   set_env_value "$ROOT/.env" APP_URL "$FRONTEND_ORIGIN"
   set_env_value "$ROOT/x/.env" FRONTEND_ORIGIN "$FRONTEND_ORIGIN"
