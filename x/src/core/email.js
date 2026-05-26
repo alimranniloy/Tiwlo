@@ -40,6 +40,13 @@ const isAuthFailure = (errorOrResult = {}) => {
   return errorOrResult.code === 'EAUTH' || [454, 530, 534, 535, 538].includes(responseCode);
 };
 
+const isConnectionOrHandshakeFailure = (errorOrResult = {}) => {
+  const code = errorOrResult.code || '';
+  const message = errorOrResult.message || errorOrResult.rawMessage || '';
+  return ['ECONNECTION', 'ECONNREFUSED', 'ETIMEDOUT', 'EHOSTUNREACH', 'ENOTFOUND', 'ESOCKET', 'SMTP_VERIFY_FAILED'].includes(code) ||
+    /ssl|tls|handshake|wrong version|greeting|socket/i.test(message);
+};
+
 function envAuthFallbackConfig(config = {}) {
   const envPassword = process.env.SMTP_PASS;
   if (!envPassword || envPassword === config.password) return null;
@@ -63,20 +70,96 @@ function domainFromMailConfig(config = {}) {
 }
 
 function localMailFallbackConfig(config = {}) {
-  if (booleanValue(process.env.SMTP_DISABLE_LOCAL_FALLBACK, false)) return null;
+  return localMailFallbackConfigs(config)[0] || null;
+}
+
+function localMailFallbackConfigs(config = {}) {
+  if (booleanValue(process.env.SMTP_DISABLE_LOCAL_FALLBACK, false)) return [];
   const currentHost = cleanHost(config.host || '');
-  if (!currentHost || LOCAL_SMTP_HOSTS.has(currentHost)) return null;
   const domain = domainFromMailConfig(config);
   const tlsServername = cleanHost(config.tlsServername || process.env.SMTP_TLS_SERVERNAME || process.env.SMTP_PUBLIC_HOST || `mail.${domain}`);
-  return {
-    ...config,
-    host: cleanHost(process.env.SMTP_LOCAL_HOST || '127.0.0.1'),
-    port: Number(process.env.SMTP_LOCAL_PORT || config.port || process.env.SMTP_PORT || 465),
-    secureSSL: process.env.SMTP_SECURE !== undefined ? process.env.SMTP_SECURE : config.secureSSL ?? config.secure ?? true,
-    tlsServername,
-    tlsRejectUnauthorized: config.tlsRejectUnauthorized,
-    authSource: 'local-loopback'
-  };
+  const localHost = cleanHost(process.env.SMTP_LOCAL_HOST || '127.0.0.1');
+  const currentPort = Number(config.port || process.env.SMTP_PORT || 465);
+  const currentMode = smtpModeForPort(currentPort, config.secureSSL ?? config.secure ?? process.env.SMTP_SECURE);
+  const candidates = [
+    {
+      ...config,
+      host: localHost,
+      port: currentMode.port,
+      secureSSL: currentMode.secure,
+      secure: currentMode.secure,
+      requireTLS: currentMode.requireTLS,
+      tlsServername,
+      tlsRejectUnauthorized: config.tlsRejectUnauthorized,
+      authSource: LOCAL_SMTP_HOSTS.has(currentHost) ? 'local-retry' : 'local-loopback'
+    },
+    {
+      ...config,
+      host: localHost,
+      port: 587,
+      secureSSL: false,
+      secure: false,
+      requireTLS: true,
+      tlsServername,
+      tlsRejectUnauthorized: config.tlsRejectUnauthorized,
+      authSource: 'local-starttls-fallback'
+    },
+    {
+      ...config,
+      host: localHost,
+      port: 465,
+      secureSSL: true,
+      secure: true,
+      requireTLS: false,
+      tlsServername,
+      tlsRejectUnauthorized: config.tlsRejectUnauthorized,
+      authSource: 'local-ssl-fallback'
+    }
+  ];
+  const seen = new Set();
+  return candidates.filter((item) => {
+    const key = `${item.host}:${item.port}:${item.secureSSL ? 'ssl' : 'starttls'}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return item.host && item.port;
+  });
+}
+
+function isSameSmtpMode(a = {}, b = {}) {
+  const aMode = smtpModeForPort(a.port, a.secureSSL ?? a.secure);
+  const bMode = smtpModeForPort(b.port, b.secureSSL ?? b.secure);
+  return cleanHost(a.host) === cleanHost(b.host) && aMode.port === bMode.port && aMode.secure === bMode.secure && aMode.requireTLS === bMode.requireTLS;
+}
+
+async function tryLocalMailFallbackDiagnostics(config, originalDiagnostic = {}) {
+  const failures = [];
+  for (const fallbackConfig of localMailFallbackConfigs(config)) {
+    if (isSameSmtpMode(fallbackConfig, config)) continue;
+    const fallbackDiagnostic = await diagnoseSmtpConfig(fallbackConfig);
+    if (fallbackDiagnostic.ok) {
+      return {
+        ok: true,
+        config: fallbackConfig,
+        diagnostic: {
+          ...fallbackDiagnostic,
+          authSource: fallbackConfig.authSource,
+          publicHost: originalDiagnostic.host,
+          publicStage: originalDiagnostic.stage,
+          publicCode: originalDiagnostic.code,
+          fallbacks: failures
+        }
+      };
+    }
+    failures.push({
+      stage: fallbackDiagnostic.stage,
+      code: fallbackDiagnostic.code,
+      host: fallbackDiagnostic.host,
+      port: fallbackDiagnostic.port,
+      smtpMode: fallbackDiagnostic.smtpMode,
+      message: fallbackDiagnostic.message
+    });
+  }
+  return { ok: false, failures };
 }
 
 function getPrisma(ctxOrPrisma) {
@@ -299,6 +382,15 @@ function smtpErrorMessage(error, config, diagnostic = {}) {
     }
     return `SMTP TLS/SSL failed on ${config.host}:${config.port}. Use 465 SSL or 587 STARTTLS for authenticated outgoing mail.`;
   }
+  if (code === 'SMTP_VERIFY_FAILED') {
+    if (Number(config.port) === 465) {
+      return `SMTP 465 SSL handshake failed on ${config.host}. Postfix smtps must run with TLS wrapper mode; Tiwlo will also try 587 STARTTLS if enabled.`;
+    }
+    if (Number(config.port) === 587) {
+      return `SMTP 587 STARTTLS handshake failed on ${config.host}. Check Postfix submission TLS/auth settings.`;
+    }
+    return `SMTP handshake failed on ${config.host}:${config.port}. Check the selected SSL/TLS mode and mail service listener.`;
+  }
   if (['ECONNECTION', 'ECONNREFUSED', 'ETIMEDOUT', 'EHOSTUNREACH', 'ENOTFOUND'].includes(code)) {
     if (diagnostic.tcpOk) {
       if (Number(config.port) === 465) {
@@ -349,30 +441,17 @@ export async function testTiwloEmail(ctxOrPrisma, input = {}) {
   }
 
   let diagnostic = await diagnoseSmtpConfig(config);
-  if (!diagnostic.ok && ['dns', 'tcp'].includes(diagnostic.stage)) {
-    const fallbackConfig = localMailFallbackConfig(config);
-    if (fallbackConfig) {
-      const fallbackDiagnostic = await diagnoseSmtpConfig(fallbackConfig);
-      if (fallbackDiagnostic.ok) {
-        config = fallbackConfig;
-        diagnostic = {
-          ...fallbackDiagnostic,
-          authSource: 'local-loopback',
-          publicHost: diagnostic.host,
-          publicStage: diagnostic.stage,
-          publicCode: diagnostic.code
-        };
-      } else {
-        diagnostic = {
-          ...diagnostic,
-          fallback: {
-            stage: fallbackDiagnostic.stage,
-            code: fallbackDiagnostic.code,
-            host: fallbackDiagnostic.host,
-            message: fallbackDiagnostic.message
-          }
-        };
-      }
+  if (!diagnostic.ok && ['dns', 'tcp', 'smtp-handshake'].includes(diagnostic.stage)) {
+    const fallback = await tryLocalMailFallbackDiagnostics(config, diagnostic);
+    if (fallback.ok) {
+      config = fallback.config;
+      diagnostic = fallback.diagnostic;
+    } else if (fallback.failures.length) {
+      diagnostic = {
+        ...diagnostic,
+        fallback: fallback.failures[0],
+        fallbacks: fallback.failures
+      };
     }
   }
   if (!diagnostic.ok && diagnostic.stage === 'smtp-auth') {
@@ -446,9 +525,9 @@ export async function testTiwloEmail(ctxOrPrisma, input = {}) {
       ...result.advice
     };
   } catch (error) {
-    if (['ECONNECTION', 'ECONNREFUSED', 'ETIMEDOUT', 'EHOSTUNREACH', 'ENOTFOUND', 'ESOCKET'].includes(error?.code) && config) {
-      const fallbackConfig = localMailFallbackConfig(config);
-      if (fallbackConfig) {
+    if (isConnectionOrHandshakeFailure(error) && config) {
+      for (const fallbackConfig of localMailFallbackConfigs(config)) {
+        if (isSameSmtpMode(fallbackConfig, config)) continue;
         try {
           const retryDiagnostic = await diagnoseSmtpConfig(fallbackConfig);
           if (retryDiagnostic.ok) {
@@ -475,7 +554,7 @@ export async function testTiwloEmail(ctxOrPrisma, input = {}) {
                 message: `Nodemailer sent a real test email to ${to}.`,
                 to,
                 fromEmail: fallbackConfig.fromEmail,
-                diagnostic: { ...retryDiagnostic, authSource: 'local-loopback' },
+                diagnostic: { ...retryDiagnostic, authSource: fallbackConfig.authSource },
                 ...retryResult.advice
               };
             }
@@ -600,9 +679,9 @@ export async function sendTiwloEmail(ctxOrPrisma, { to, subject, title, preview,
     });
     return result;
   } catch (error) {
-    if (['ECONNECTION', 'ECONNREFUSED', 'ETIMEDOUT', 'EHOSTUNREACH', 'ENOTFOUND', 'ESOCKET'].includes(error?.code) && config) {
-      const fallbackConfig = localMailFallbackConfig(config);
-      if (fallbackConfig) {
+    if (isConnectionOrHandshakeFailure(error) && config) {
+      for (const fallbackConfig of localMailFallbackConfigs(config)) {
+        if (isSameSmtpMode(fallbackConfig, config)) continue;
         try {
           const result = await deliverEmail(fallbackConfig, {
             to,
@@ -612,7 +691,7 @@ export async function sendTiwloEmail(ctxOrPrisma, { to, subject, title, preview,
             text: text || preview || subject,
             html: brandedHtml({ title: title || subject, preview, bodyHtml: html || `<p>${escapeHtml(text || preview || subject)}</p>` })
           });
-          return { ...result, authSource: 'local-loopback' };
+          return { ...result, authSource: fallbackConfig.authSource };
         } catch {
           // Report the original connection failure below.
         }

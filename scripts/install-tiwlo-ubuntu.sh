@@ -143,12 +143,12 @@ configure_system_email_services() {
   postconf -e "smtpd_sasl_security_options = noanonymous" || true
   postconf -e "smtpd_recipient_restrictions = permit_sasl_authenticated,permit_mynetworks,reject_unauth_destination" || true
   postconf -e "smtpd_relay_restrictions = permit_sasl_authenticated,permit_mynetworks,reject_unauth_destination" || true
-  postconf -M "submission/inet=submission inet n - y - - smtpd" || true
+  postconf -M "submission/inet=submission inet n - n - - smtpd" || true
   postconf -P "submission/inet/syslog_name=postfix/submission" || true
   postconf -P "submission/inet/smtpd_tls_security_level=encrypt" || true
   postconf -P "submission/inet/smtpd_sasl_auth_enable=yes" || true
   postconf -P "submission/inet/smtpd_recipient_restrictions=permit_sasl_authenticated,reject" || true
-  postconf -M "smtps/inet=smtps inet n - y - - smtpd" || true
+  postconf -M "smtps/inet=smtps inet n - n - - smtpd" || true
   postconf -P "smtps/inet/syslog_name=postfix/smtps" || true
   postconf -P "smtps/inet/smtpd_tls_wrappermode=yes" || true
   postconf -P "smtps/inet/smtpd_sasl_auth_enable=yes" || true

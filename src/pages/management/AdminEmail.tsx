@@ -22,6 +22,7 @@ const emptyAccount = {
 const emptySystemEmail = {
   domain: 'tiwlo.com',
   sender: 'noreply',
+  smtpMode: '465',
   password: '',
   fromName: 'Tiwlo',
   replyTo: 'support@tiwlo.com'
@@ -61,10 +62,12 @@ export default function AdminEmail() {
       const systemEmail = settings.find((setting) => setting.key === 'systemEmail')?.value;
       if (systemEmail) {
         const domain = domainFromEmail(systemEmail.username || systemEmail.fromEmail, powerDnsConfig?.primaryDomain || 'tiwlo.com');
+        const smtpMode = Number(systemEmail.port || 465) === 587 ? '587' : '465';
         setSystemForm({
           ...emptySystemEmail,
           domain,
           sender: localPart(systemEmail.username || systemEmail.fromEmail || 'noreply'),
+          smtpMode,
           password: systemEmail.password || '',
           fromName: systemEmail.fromName || 'Tiwlo',
           replyTo: systemEmail.replyTo || `support@${domain}`
@@ -93,13 +96,17 @@ export default function AdminEmail() {
   const systemAddress = `${systemSender}@${systemDomain}`;
   const publicMailHost = hostForDomain(systemDomain);
   const emailPortalHost = portalForDomain(systemDomain);
+  const selectedSmtpPort = systemForm.smtpMode === '587' ? 587 : 465;
+  const selectedSmtpMode = selectedSmtpPort === 587 ? '587 STARTTLS' : '465 SSL';
   const normalizedSystemEmail = React.useCallback(() => {
+    const port = systemForm.smtpMode === '587' ? 587 : 465;
     return {
       host: '127.0.0.1',
       publicHost: hostForDomain(cleanDomain(systemForm.domain)),
       tlsServername: hostForDomain(cleanDomain(systemForm.domain)),
-      port: 465,
-      secureSSL: true,
+      port,
+      secureSSL: port === 465,
+      requireTLS: port === 587,
       tlsRejectUnauthorized: false,
       username: `${localPart(systemForm.sender)}@${cleanDomain(systemForm.domain)}`,
       password: String(systemForm.password || '').trim(),
@@ -335,6 +342,13 @@ export default function AdminEmail() {
               <input type="password" value={systemForm.password} onChange={(event) => setSystemForm({ ...systemForm, password: event.target.value })} placeholder="Mailbox password" className="w-full rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" />
             </label>
             <label className="space-y-1">
+              <span className="text-[10px] font-black uppercase text-[#6B7280]">SSL/TLS Port</span>
+              <select value={systemForm.smtpMode} onChange={(event) => setSystemForm({ ...systemForm, smtpMode: event.target.value })} className="w-full rounded border border-[#DDE3EA] px-3 py-2 text-sm font-bold outline-none focus:border-blue-500">
+                <option value="465">465 SSL</option>
+                <option value="587">587 STARTTLS</option>
+              </select>
+            </label>
+            <label className="space-y-1">
               <span className="text-[10px] font-black uppercase text-[#6B7280]">From Name</span>
               <input value={systemForm.fromName} onChange={(event) => setSystemForm({ ...systemForm, fromName: event.target.value })} placeholder="Tiwlo" className="w-full rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" />
             </label>
@@ -344,8 +358,8 @@ export default function AdminEmail() {
             </label>
             <div className="grid grid-cols-1 gap-3 md:col-span-2 sm:grid-cols-3">
               {[
-                ['Backend SMTP', '127.0.0.1 : 465 SSL'],
-                ['Public Host', `${publicMailHost} : 465 SSL`],
+                ['Backend SMTP', `127.0.0.1 : ${selectedSmtpMode}`],
+                ['Public Host', `${publicMailHost} : ${selectedSmtpMode}`],
                 ['From Email', systemAddress]
               ].map(([label, value]) => (
                 <div key={label} className="rounded border border-[#E5E7EB] bg-[#F9FAFB] p-3">

@@ -121,12 +121,12 @@ configure_postfix_dovecot() {
   run_sudo postconf -e "smtpd_sasl_security_options = noanonymous" || true
   run_sudo postconf -e "smtpd_recipient_restrictions = permit_sasl_authenticated,permit_mynetworks,reject_unauth_destination" || true
   run_sudo postconf -e "smtpd_relay_restrictions = permit_sasl_authenticated,permit_mynetworks,reject_unauth_destination" || true
-  run_sudo postconf -M "submission/inet=submission inet n - y - - smtpd" || true
+  run_sudo postconf -M "submission/inet=submission inet n - n - - smtpd" || true
   run_sudo postconf -P "submission/inet/syslog_name=postfix/submission" || true
   run_sudo postconf -P "submission/inet/smtpd_tls_security_level=encrypt" || true
   run_sudo postconf -P "submission/inet/smtpd_sasl_auth_enable=yes" || true
   run_sudo postconf -P "submission/inet/smtpd_recipient_restrictions=permit_sasl_authenticated,reject" || true
-  run_sudo postconf -M "smtps/inet=smtps inet n - y - - smtpd" || true
+  run_sudo postconf -M "smtps/inet=smtps inet n - n - - smtpd" || true
   run_sudo postconf -P "smtps/inet/syslog_name=postfix/smtps" || true
   run_sudo postconf -P "smtps/inet/smtpd_tls_wrappermode=yes" || true
   run_sudo postconf -P "smtps/inet/smtpd_sasl_auth_enable=yes" || true
