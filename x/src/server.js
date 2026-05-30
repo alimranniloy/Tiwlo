@@ -90,6 +90,12 @@ app.get('/mail/avatar/:address', async (req, res) => {
   res.type('image/svg+xml').send(mailboxInitialSvg('tmail'));
 });
 
+app.get('/brand/bimi.svg', (_req, res) => {
+  res.type('image/svg+xml');
+  res.setHeader('Cache-Control', 'public, max-age=86400');
+  res.sendFile(join(__dirname, '../../public/brand/bimi.svg'));
+});
+
 const readAutomationToken = (req) => {
   const auth = req.headers.authorization || '';
   if (auth.startsWith('Bearer ')) return auth.slice(7);

@@ -26,8 +26,8 @@ const hostnameForRecord = (recordName, domainName) => {
 const addressTypeFor = (ipAddress = '') => String(ipAddress).includes(':') ? 'AAAA' : 'A';
 const cleanDkimValue = () => String(process.env.TIWLO_DKIM_PUBLIC_KEY || process.env.DKIM_PUBLIC_KEY || '').trim().replace(/^"|"$/g, '').replace(/\s+/g, '');
 const cleanDkimSelector = () => String(process.env.TIWLO_DKIM_SELECTOR || process.env.DKIM_SELECTOR || 'tiwlo').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '') || 'tiwlo';
-const bimiRecordValue = () => {
-  const logo = String(process.env.TIWLO_BIMI_LOGO_URL || process.env.BIMI_LOGO_URL || '').trim();
+const bimiRecordValue = (domainName) => {
+  const logo = String(process.env.TIWLO_BIMI_LOGO_URL || process.env.BIMI_LOGO_URL || `https://${domainName}/brand/bimi.svg`).trim();
   const authority = String(process.env.TIWLO_BIMI_CERT_URL || process.env.BIMI_CERT_URL || '').trim();
   if (!logo) return '';
   return `v=BIMI1; l=${logo}${authority ? `; a=${authority}` : ''}`;
@@ -52,7 +52,7 @@ const defaultDnsRecordsForDomain = (domainName, config) => {
     { type: 'TXT', name: '@', value: `v=spf1 mx a ${spfIp} ~all` },
     { type: 'TXT', name: '_dmarc', value: `v=DMARC1; p=quarantine; pct=100; rua=mailto:postmaster@${domainName}; ruf=mailto:postmaster@${domainName}; fo=1` },
     { type: 'TXT', name: `${cleanDkimSelector()}._domainkey`, value: cleanDkimValue() ? `v=DKIM1; h=sha256; k=rsa; p=${cleanDkimValue()}` : '' },
-    { type: 'TXT', name: 'default._bimi', value: bimiRecordValue() },
+    { type: 'TXT', name: 'default._bimi', value: bimiRecordValue(domainName) },
     { type: 'CNAME', name: 'autodiscover', value: `mail.${domainName}` },
     { type: 'CNAME', name: 'autoconfig', value: `mail.${domainName}` },
     { type: 'CAA', name: '@', value: '0 issue "letsencrypt.org"' }

@@ -44,8 +44,7 @@ const bimiLogoForDomain = (domain: string) => `https://${mailBaseDomain(domain)}
 const dmarcForDomain = (domain: string) => `v=DMARC1; p=quarantine; pct=100; rua=mailto:postmaster@${mailBaseDomain(domain)}; ruf=mailto:postmaster@${mailBaseDomain(domain)}; fo=1`;
 const bimiTxtForDomain = (domain: string, logoUrl = '', certificateUrl = '') => {
   const cert = certificateUrl.trim();
-  const logo = logoUrl.trim();
-  if (!logo && !cert) return '';
+  const logo = logoUrl.trim() || bimiLogoForDomain(domain);
   if (logo && cert) return `v=BIMI1; l=${logo}; a=${cert}`;
   if (logo) return `v=BIMI1; l=${logo}`;
   return '';
@@ -281,7 +280,7 @@ export default function AdminEmail() {
     }
 
     const domain = await findManagedDomain(domainName);
-    const logoUrl = systemForm.bimiLogoUrl.trim();
+    const logoUrl = systemForm.bimiLogoUrl.trim() || bimiLogoForDomain(domainName);
     const certificateUrl = systemForm.bimiCertificateUrl.trim();
     const bimiValue = bimiTxtForDomain(domainName, logoUrl, certificateUrl);
     await upsertDnsTxt(domain.id, '_dmarc', dmarcForDomain(domainName), { provider: 'powerdns', source: 'bimi_blue_badge', managed: true });
@@ -295,9 +294,9 @@ export default function AdminEmail() {
       dnsValue: bimiValue,
       status: logoUrl && certificateUrl ? 'gmail_blue_ready' : logoUrl ? 'pending_vmc_or_cmc' : 'pending_bimi_svg',
       steps: [
-        { label: 'SVG Tiny PS hosted', status: logoUrl ? 'done' : 'pending', detail: logoUrl || 'Optional: add a BIMI SVG URL when you want BIMI DNS published.' },
+        { label: 'SVG Tiny PS hosted', status: 'done', detail: logoUrl },
         { label: 'DMARC enforced', status: 'done', detail: `_dmarc.${domainName} uses p=quarantine and pct=100.` },
-        { label: 'BIMI DNS published', status: bimiValue ? 'done' : 'pending', detail: bimiValue ? `default._bimi.${domainName}` : 'Skipped until a BIMI SVG URL is provided.' },
+        { label: 'BIMI DNS published', status: 'done', detail: `default._bimi.${domainName}` },
         { label: 'Gmail blue check', status: logoUrl && certificateUrl ? 'done' : 'pending', detail: logoUrl && certificateUrl ? 'BIMI SVG and VMC/CMC PEM URLs are attached.' : 'Optional: add both BIMI SVG and VMC/CMC PEM URLs for Gmail verified checkmark.' }
       ]
     };

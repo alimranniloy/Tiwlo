@@ -82,6 +82,13 @@ function mailboxHost(domain) {
   return `mail.${baseDomain || 'tiwlo.com'}`;
 }
 
+function bimiRecordValue(domain) {
+  const baseDomain = cleanMailboxDomain(domain);
+  const logo = String(process.env.TIWLO_BIMI_LOGO_URL || process.env.BIMI_LOGO_URL || `https://${baseDomain}/brand/bimi.svg`).trim();
+  const authority = String(process.env.TIWLO_BIMI_CERT_URL || process.env.BIMI_CERT_URL || '').trim();
+  return logo ? `v=BIMI1; l=${logo}${authority ? `; a=${authority}` : ''}` : '';
+}
+
 function portalHost(domain) {
   const baseDomain = normalizeAddress(domain || 'tiwlo.com').replace(/^((mail|email|tmail)\.)+/, '');
   return `tmail.${baseDomain || 'tiwlo.com'}`;
@@ -195,7 +202,8 @@ async function ensureMailboxDns(ctx, record) {
     { type: targetIp.includes(':') ? 'AAAA' : 'A', name: 'email', value: targetIp, ttl: 300 },
     { type: 'MX', name: '@', value: mailHost, priority: 10, ttl: 300 },
     { type: 'TXT', name: '@', value: `v=spf1 mx a ${spfAddress} ~all`, ttl: 300 },
-    { type: 'TXT', name: '_dmarc', value: `v=DMARC1; p=quarantine; rua=mailto:postmaster@${domainName}`, ttl: 300 }
+    { type: 'TXT', name: '_dmarc', value: `v=DMARC1; p=quarantine; pct=100; rua=mailto:postmaster@${domainName}; ruf=mailto:postmaster@${domainName}; fo=1`, ttl: 300 },
+    { type: 'TXT', name: 'default._bimi', value: bimiRecordValue(domainName), ttl: 300 }
   ];
   const owner = await ctx.prisma.user.findFirst({ orderBy: { createdAt: 'asc' }, select: { id: true } }).catch(() => null);
   if (!owner?.id) return null;
