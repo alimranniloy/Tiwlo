@@ -604,6 +604,7 @@ export const sendMailboxMessage = async (ctx, input) => {
     title: subject,
     preview: body.slice(0, 160),
     text: body,
+    template: 'none',
     headers: {
       'X-Tiwlo-Sender': account.address,
       'X-Tiwlo-Sender-Name': senderDisplayName(record),

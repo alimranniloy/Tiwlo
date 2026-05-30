@@ -96,6 +96,18 @@ app.get('/brand/bimi.svg', (_req, res) => {
   res.sendFile(join(__dirname, '../../public/brand/bimi.svg'));
 });
 
+app.get('/brand/logo.png', (_req, res) => {
+  res.type('image/png');
+  res.setHeader('Cache-Control', 'public, max-age=86400');
+  res.sendFile(join(__dirname, '../../public/brand/logo.png'));
+});
+
+app.get('/brand/icon.png', (_req, res) => {
+  res.type('image/png');
+  res.setHeader('Cache-Control', 'public, max-age=86400');
+  res.sendFile(join(__dirname, '../../public/brand/icon.png'));
+});
+
 const readAutomationToken = (req) => {
   const auth = req.headers.authorization || '';
   if (auth.startsWith('Bearer ')) return auth.slice(7);

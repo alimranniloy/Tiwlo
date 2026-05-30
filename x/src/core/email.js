@@ -412,7 +412,7 @@ function emailLogoSrc(origin = appOrigin()) {
   const configured = String(process.env.MAIL_LOGO_URL || '').trim();
   if (configured) return configured;
   if (booleanValue(process.env.MAIL_INLINE_LOGO, false) && emailLogoAttachment()) return `cid:${EMAIL_LOGO_CID}`;
-  return `${String(origin || appOrigin()).replace(/\/$/, '')}/favicon.ico`;
+  return `${String(origin || appOrigin()).replace(/\/$/, '')}/brand/logo.png`;
 }
 
 function stripHtml(value = '') {
@@ -866,40 +866,43 @@ export async function testTiwloEmail(ctxOrPrisma, input = {}) {
   }
 }
 
-function brandedHtml({ title, preview, bodyHtml }) {
+function brandedHtml({ title, preview, bodyHtml, brandName = 'Tiwlo', brandLabel = 'Secure notification' }) {
   const origin = appOrigin().replace(/\/$/, '');
   const logoSrc = emailLogoSrc(origin);
   return `
-    <div style="margin:0;padding:0;background:#eef3fb;font-family:Arial,Helvetica,sans-serif;color:#111827;">
+    <div style="margin:0;padding:0;background:#f4f7fb;font-family:Arial,Helvetica,sans-serif;color:#111827;">
       <div style="display:none;max-height:0;overflow:hidden;opacity:0;">${escapeHtml(preview || title)}</div>
-      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#eef3fb;padding:28px 12px;">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f4f7fb;padding:28px 12px;">
         <tr>
           <td align="center">
-            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:640px;background:#ffffff;border:1px solid #dfe7f3;border-radius:12px;overflow:hidden;box-shadow:0 14px 36px rgba(15,23,42,0.08);">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:620px;background:#ffffff;border:1px solid #e5e7eb;border-radius:2px;overflow:hidden;">
               <tr>
-                <td style="padding:22px 24px;background:#0f172a;border-bottom:1px solid #17233d;">
+                <td align="center" style="padding:24px 24px 18px;background:#ffffff;border-bottom:1px solid #f1f5f9;">
+                  <img src="${escapeHtml(logoSrc)}" width="148" alt="${escapeHtml(brandName)}" style="display:block;width:148px;max-width:70%;height:auto;border:0;outline:none;text-decoration:none;color:#0f172a;font-size:18px;font-weight:800;">
+                  <div style="padding-top:8px;font-size:11px;line-height:1.4;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:.08em;">${escapeHtml(brandLabel)}</div>
+                </td>
+              </tr>
+              <tr>
+                <td align="center" style="padding:34px 24px 32px;background:#6f63ff;background-image:linear-gradient(135deg,#6b7cff 0%,#7c4dff 100%);">
                   <table role="presentation" cellspacing="0" cellpadding="0">
-                    <tr>
-                      <td width="44" height="44" style="width:44px;height:44px;border-radius:10px;background:#ffffff;text-align:center;vertical-align:middle;">
-                        <img src="${escapeHtml(logoSrc)}" width="28" height="28" alt="Tiwlo" style="display:inline-block;border:0;outline:none;text-decoration:none;vertical-align:middle;">
-                      </td>
-                      <td style="padding-left:12px;">
-                        <div style="font-size:18px;line-height:1.2;font-weight:800;color:#ffffff;">Tiwlo</div>
-                        <div style="font-size:12px;line-height:1.4;color:#b7c4d8;">Secure notification</div>
-                      </td>
-                    </tr>
+                    <tr><td align="center" width="56" height="56" style="width:56px;height:56px;border-radius:28px;background:#4ee1d2;color:#ffffff;font-size:34px;font-weight:800;line-height:56px;">✓</td></tr>
                   </table>
+                  <div style="margin-top:14px;font-size:30px;line-height:1.15;font-weight:800;color:#ffffff;">${escapeHtml(title)}</div>
+                  <div style="margin-top:8px;font-size:14px;line-height:1.6;color:#eef2ff;">${escapeHtml(preview || 'Your account update is ready.')}</div>
                 </td>
               </tr>
               <tr>
-                <td style="padding:30px 26px;">
-                  <h1 style="margin:0 0 14px;font-size:22px;line-height:1.3;color:#0f172a;">${escapeHtml(title)}</h1>
+                <td style="padding:28px 28px 24px;">
                   <div style="font-size:14px;line-height:1.75;color:#334155;">${bodyHtml}</div>
+                  <div style="margin-top:26px;border-top:1px solid #eef2f7;padding-top:18px;text-align:center;font-size:11px;line-height:1.6;color:#94a3b8;">
+                    This message was sent by ${escapeHtml(brandName)}.
+                  </div>
                 </td>
               </tr>
               <tr>
-                <td style="padding:18px 24px;background:#f8fafc;border-top:1px solid #e2e8f0;font-size:12px;line-height:1.6;color:#64748b;">
-                  This transactional email was sent by Tiwlo. If you did not request this, please contact support at ${escapeHtml(origin)}.
+                <td align="center" style="padding:18px 24px 24px;background:#ffffff;border-top:1px solid #f1f5f9;font-size:12px;line-height:1.6;color:#64748b;">
+                  <strong style="color:#0f172a;">${escapeHtml(brandName)}</strong><br>
+                  If you did not request this, contact support at ${escapeHtml(origin)}.
                 </td>
               </tr>
             </table>
@@ -910,7 +913,7 @@ function brandedHtml({ title, preview, bodyHtml }) {
   `;
 }
 
-export async function sendTiwloEmail(ctxOrPrisma, { to, subject, title, preview, html, text, fromEmail, fromName, replyTo, headers }) {
+export async function sendTiwloEmail(ctxOrPrisma, { to, subject, title, preview, html, text, fromEmail, fromName, replyTo, headers, template = 'system' }) {
   const prisma = getPrisma(ctxOrPrisma);
   if (!prisma || !to) return { sent: false, reason: 'missing-recipient' };
   let config = null;
@@ -931,7 +934,13 @@ export async function sendTiwloEmail(ctxOrPrisma, { to, subject, title, preview,
       subject,
       text: text || preview || subject,
       headers,
-      html: brandedHtml({ title: title || subject, preview, bodyHtml: html || `<p>${escapeHtml(text || preview || subject)}</p>` })
+      html: template === 'none' ? (html || `<p>${escapeHtml(text || preview || subject)}</p>`) : brandedHtml({
+        title: title || subject,
+        preview,
+        bodyHtml: html || `<p>${escapeHtml(text || preview || subject)}</p>`,
+        brandName: config.fromName || fromName || 'Tiwlo',
+        brandLabel: extractEmailAddress(config.fromEmail || fromEmail || '') || 'Secure notification'
+      })
     });
     return result;
   } catch (error) {
@@ -946,7 +955,13 @@ export async function sendTiwloEmail(ctxOrPrisma, { to, subject, title, preview,
             subject,
             text: text || preview || subject,
             headers,
-            html: brandedHtml({ title: title || subject, preview, bodyHtml: html || `<p>${escapeHtml(text || preview || subject)}</p>` })
+            html: template === 'none' ? (html || `<p>${escapeHtml(text || preview || subject)}</p>`) : brandedHtml({
+              title: title || subject,
+              preview,
+              bodyHtml: html || `<p>${escapeHtml(text || preview || subject)}</p>`,
+              brandName: fallbackConfig.fromName || fromName || 'Tiwlo',
+              brandLabel: extractEmailAddress(fallbackConfig.fromEmail || fromEmail || '') || 'Secure notification'
+            })
           });
           return { ...result, authSource: fallbackConfig.authSource };
         } catch {
@@ -965,7 +980,13 @@ export async function sendTiwloEmail(ctxOrPrisma, { to, subject, title, preview,
             subject,
             text: text || preview || subject,
             headers,
-            html: brandedHtml({ title: title || subject, preview, bodyHtml: html || `<p>${escapeHtml(text || preview || subject)}</p>` })
+            html: template === 'none' ? (html || `<p>${escapeHtml(text || preview || subject)}</p>`) : brandedHtml({
+              title: title || subject,
+              preview,
+              bodyHtml: html || `<p>${escapeHtml(text || preview || subject)}</p>`,
+              brandName: fallbackConfig.fromName || fromName || 'Tiwlo',
+              brandLabel: extractEmailAddress(fallbackConfig.fromEmail || fromEmail || '') || 'Secure notification'
+            })
           });
           return { ...result, authSource: 'env-fallback' };
         } catch {
@@ -984,9 +1005,9 @@ export async function sendTiwloEmail(ctxOrPrisma, { to, subject, title, preview,
 }
 
 export function paragraph(value) {
-  return `<p style="margin:0 0 14px;">${escapeHtml(value)}</p>`;
+  return `<p style="margin:0 0 15px;color:#334155;">${escapeHtml(value)}</p>`;
 }
 
 export function cta(label, href) {
-  return `<p style="margin:22px 0 0;"><a href="${escapeHtml(href)}" style="display:inline-block;background:#0069ff;color:#ffffff;text-decoration:none;border-radius:6px;padding:11px 16px;font-weight:bold;">${escapeHtml(label)}</a></p>`;
+  return `<p style="margin:24px 0 4px;text-align:center;"><a href="${escapeHtml(href)}" style="display:inline-block;background:#0b63f6;color:#ffffff;text-decoration:none;border-radius:4px;padding:12px 20px;font-weight:bold;font-size:14px;">${escapeHtml(label)}</a></p>`;
 }
