@@ -62,7 +62,7 @@ export const createResource = async (ctx, actor, input) => {
       ownerId: actor.id,
       type: input.type,
       name: input.name,
-      ip: resourceTypesWithAutoIp.has(input.type) ? randomIp() : null,
+      ip: input.ip || (resourceTypesWithAutoIp.has(input.type) ? randomIp() : null),
       status: 'active',
       region: input.region,
       specs: input.specs,

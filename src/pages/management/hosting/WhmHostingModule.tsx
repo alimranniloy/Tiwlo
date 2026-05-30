@@ -36,8 +36,8 @@ import {
 } from '../../../lib/tiwloApi';
 import { useActionConfirmation } from '../../../components/ActionConfirmation';
 
-const panels = ['hosting-panel', 'cpanel', 'plesk', 'virtualizor', 'directadmin', 'droplet'];
-const modules = ['hosting-panel', 'cpanel', 'droplet', 'plesk', 'directadmin'];
+const panels = ['tpanel', 'hosting-panel', 'cpanel', 'plesk', 'virtualizor', 'directadmin', 'droplet'];
+const modules = ['tpanel', 'hosting-panel', 'cpanel', 'droplet', 'plesk', 'directadmin'];
 const accountTypes = ['shared', 'reseller', 'vps', 'dedicated'];
 const intervals = ['month', 'quarter', 'year', 'one_time'];
 
@@ -46,11 +46,15 @@ const blankNode = {
   name: '',
   hostname: '',
   ip: '',
-  panel: 'hosting-panel',
-  port: '2087',
+  panel: 'tpanel',
+  port: '2086',
+  sshPort: '22',
   username: 'root',
+  rootPassword: '',
   apiToken: '',
   accessHash: '',
+  licenseKey: '',
+  agentToken: '',
   nameservers: '',
   maxAccounts: '100',
   activeAccounts: '0',
@@ -74,7 +78,7 @@ const blankProduct = {
   nodeId: '',
   code: '',
   name: '',
-  module: 'hosting-panel',
+  module: 'tpanel',
   accountType: 'shared',
   status: 'active',
   price: '0',
@@ -141,6 +145,21 @@ function limitsFrom(form: Record<string, string>) {
 function usagePercent(node: any) {
   if (!Number(node?.maxAccounts || 0)) return 0;
   return Math.min(100, Math.round((Number(node.activeAccounts || 0) / Number(node.maxAccounts || 1)) * 100));
+}
+
+function panelLabel(panel: string) {
+  const value = String(panel || '').toLowerCase();
+  if (value === 'tpanel') return 'tPanel';
+  if (value === 'hosting-panel') return 'Hosting Panel';
+  if (value === 'cpanel') return 'cPanel / WHM';
+  return value.toUpperCase();
+}
+
+function defaultPortFor(panel: string, currentPort?: string) {
+  const value = String(panel || '').toLowerCase();
+  if (value === 'tpanel') return '2086';
+  if (value === 'hosting-panel' || value === 'cpanel') return '2087';
+  return currentPort || '22';
 }
 
 function statusTone(status: string) {
@@ -273,11 +292,15 @@ export default function WhmHostingModule() {
       name: node.name || '',
       hostname: node.hostname || '',
       ip: node.ip || '',
-      panel: node.panel || 'whm',
-      port: String(node.port || 2087),
+      panel: node.panel || 'tpanel',
+      port: String(node.port || defaultPortFor(node.panel)),
+      sshPort: String(node.metadata?.sshPort || 22),
       username: node.username || 'root',
+      rootPassword: '',
       apiToken: node.apiToken || '',
       accessHash: node.accessHash || '',
+      licenseKey: node.metadata?.licenseKey || '',
+      agentToken: node.metadata?.agentToken || '',
       nameservers: Array.isArray(node.nameservers) ? node.nameservers.join(', ') : '',
       maxAccounts: String(node.maxAccounts || 0),
       activeAccounts: String(node.activeAccounts || 0),
@@ -378,7 +401,7 @@ export default function WhmHostingModule() {
     setOrderForm({
       ...blankOrder,
       productId: product?.id || '',
-      nodeId: product?.nodeId || nodes[0]?.id || '',
+      nodeId: '',
       amount: product ? String(product.price || 0) : ''
     });
     setModal('order');
@@ -396,16 +419,27 @@ export default function WhmHostingModule() {
         ip: nodeForm.ip,
         panel: nodeForm.panel,
         port: Number(nodeForm.port || 2087),
+        sshPort: Number(nodeForm.sshPort || 22),
         username: nodeForm.username,
+        rootPassword: nodeForm.rootPassword || undefined,
         apiToken: nodeForm.apiToken || undefined,
         accessHash: nodeForm.accessHash || undefined,
+        licenseKey: nodeForm.licenseKey || undefined,
+        agentToken: nodeForm.agentToken || undefined,
         nameservers: splitNameservers(nodeForm.nameservers),
         maxAccounts: Number(nodeForm.maxAccounts || 0),
         activeAccounts: Number(nodeForm.activeAccounts || 0),
         status: nodeForm.status,
         monthlyCost: Number(nodeForm.monthlyCost || 0),
         location: nodeForm.location,
-        metadata: { source: 'whm_hosting_module', ssl: Number(nodeForm.port) === 2087 }
+        metadata: {
+          source: 'whm_hosting_module',
+          provider: nodeForm.panel === 'tpanel' ? 'tpanel' : 'hosting',
+          ssl: Number(nodeForm.port) === 2087,
+          sshPort: Number(nodeForm.sshPort || 22),
+          licenseKey: nodeForm.licenseKey || '',
+          agentToken: nodeForm.agentToken || ''
+        }
       });
       setModal(null);
       await loadAll();
@@ -512,7 +546,7 @@ export default function WhmHostingModule() {
         hostname: orderForm.hostname || orderForm.domain,
         username: orderForm.username,
         password: orderForm.password,
-        module: product?.module || 'hosting-panel',
+        module: product?.module || 'tpanel',
         accountType: pkg?.accountType || product?.accountType || 'shared',
         amount: Number(orderForm.amount || product?.price || pkg?.pricing?.monthly || 0),
         currency: orderForm.currency,
@@ -649,12 +683,16 @@ export default function WhmHostingModule() {
                     <p className="font-mono text-[11px] text-gray-400">{node.hostname} / {node.ip}:{node.port}</p>
                   </div>
                 </div>
-                <span className="rounded border border-green-100 bg-green-50 px-2 py-0.5 text-[10px] font-bold uppercase text-green-700">{node.panel}</span>
+                <span className="rounded border border-green-100 bg-green-50 px-2 py-0.5 text-[10px] font-bold uppercase text-green-700">{panelLabel(node.panel)}</span>
               </div>
-              <div className="grid grid-cols-2 gap-3 text-sm md:grid-cols-4">
+              <div className="grid grid-cols-2 gap-3 text-sm md:grid-cols-5">
                 <div className="rounded bg-gray-50 p-3">
                   <p className="text-[10px] font-bold uppercase text-gray-400">Accounts</p>
                   <p className="mt-1 font-bold text-[#2e3d49]">{node.activeAccounts}/{node.maxAccounts || 'unlimited'}</p>
+                </div>
+                <div className="rounded bg-gray-50 p-3">
+                  <p className="text-[10px] font-bold uppercase text-gray-400">Free Slots</p>
+                  <p className="mt-1 font-bold text-[#2e3d49]">{node.maxAccounts ? Math.max(0, Number(node.maxAccounts || 0) - Number(node.activeAccounts || 0)) : 'unlimited'}</p>
                 </div>
                 <div className="rounded bg-gray-50 p-3">
                   <p className="text-[10px] font-bold uppercase text-gray-400">Cost</p>
@@ -746,7 +784,7 @@ export default function WhmHostingModule() {
                           <p className="text-sm font-bold text-[#2e3d49]">{product.name}</p>
                           <p className="font-mono text-[11px] text-gray-400">{product.code} / {product.groupName || 'No group'}</p>
                         </td>
-                        <td className="px-4 py-3 text-xs font-bold uppercase text-gray-600">{product.module} {product.accountType}</td>
+                        <td className="px-4 py-3 text-xs font-bold uppercase text-gray-600">{panelLabel(product.module)} {product.accountType}</td>
                         <td className="px-4 py-3 text-xs text-gray-500">
                           {product.limits?.cpu || 0} CPU / {product.limits?.ramMb || 0} MB / {product.limits?.diskGb || 0} GB
                         </td>
@@ -832,11 +870,15 @@ export default function WhmHostingModule() {
             <FormInput required label="Server Name" value={nodeForm.name} onChange={(value) => setNodeForm({ ...nodeForm, name: value })} placeholder="Hosting Node 01" />
             <FormInput required label="Hostname" value={nodeForm.hostname} onChange={(value) => setNodeForm({ ...nodeForm, hostname: value })} placeholder="server.example.com" />
             <FormInput required label="IP Address" value={nodeForm.ip} onChange={(value) => setNodeForm({ ...nodeForm, ip: value })} placeholder="192.0.2.10" />
-            <FormSelect label="Panel / Module" value={nodeForm.panel} onChange={(value) => setNodeForm({ ...nodeForm, panel: value, port: value === 'hosting-panel' ? '2087' : value === 'cpanel' ? '2083' : nodeForm.port })} options={panels.map((item) => ({ value: item, label: item === 'hosting-panel' ? 'Hosting Panel' : item.toUpperCase() }))} />
-            <FormInput label="Port" value={nodeForm.port} onChange={(value) => setNodeForm({ ...nodeForm, port: value })} type="number" />
-            <FormInput required label="Username" value={nodeForm.username} onChange={(value) => setNodeForm({ ...nodeForm, username: value })} />
+            <FormSelect label="Panel / Module" value={nodeForm.panel} onChange={(value) => setNodeForm({ ...nodeForm, panel: value, port: defaultPortFor(value, nodeForm.port) })} options={panels.map((item) => ({ value: item, label: panelLabel(item) }))} />
+            <FormInput label="Panel Port" value={nodeForm.port} onChange={(value) => setNodeForm({ ...nodeForm, port: value })} type="number" />
+            <FormInput label="SSH Port" value={nodeForm.sshPort} onChange={(value) => setNodeForm({ ...nodeForm, sshPort: value })} type="number" />
+            <FormInput required label="Root / Admin Username" value={nodeForm.username} onChange={(value) => setNodeForm({ ...nodeForm, username: value })} />
+            <FormInput label="Root Password" value={nodeForm.rootPassword} onChange={(value) => setNodeForm({ ...nodeForm, rootPassword: value })} type="password" placeholder={nodeForm.id ? 'Leave blank to keep existing password' : 'Server root password'} />
             <FormInput label="API Token" value={nodeForm.apiToken} onChange={(value) => setNodeForm({ ...nodeForm, apiToken: value })} type="password" />
             <FormInput label="Access Hash" value={nodeForm.accessHash} onChange={(value) => setNodeForm({ ...nodeForm, accessHash: value })} type="password" />
+            <FormInput label="tPanel License Key" value={nodeForm.licenseKey} onChange={(value) => setNodeForm({ ...nodeForm, licenseKey: value })} />
+            <FormInput label="tPanel Agent Token" value={nodeForm.agentToken} onChange={(value) => setNodeForm({ ...nodeForm, agentToken: value })} type="password" />
             <FormInput label="Max Accounts" value={nodeForm.maxAccounts} onChange={(value) => setNodeForm({ ...nodeForm, maxAccounts: value })} type="number" />
             <FormInput label="Active Accounts" value={nodeForm.activeAccounts} onChange={(value) => setNodeForm({ ...nodeForm, activeAccounts: value })} type="number" />
             <FormInput label="Monthly Cost" value={nodeForm.monthlyCost} onChange={(value) => setNodeForm({ ...nodeForm, monthlyCost: value })} type="number" />
@@ -873,7 +915,7 @@ export default function WhmHostingModule() {
             <FormSelect label="Product Group" value={productForm.groupId} onChange={(value) => setProductForm({ ...productForm, groupId: value })} options={groupOptions} />
             <FormInput required label="Product Name" value={productForm.name} onChange={(value) => setProductForm({ ...productForm, name: value })} />
             <FormInput required label="Product Code" value={productForm.code} onChange={(value) => setProductForm({ ...productForm, code: value })} />
-            <FormSelect label="Module" value={productForm.module} onChange={(value) => setProductForm({ ...productForm, module: value })} options={modules.map((item) => ({ value: item, label: item.toUpperCase() }))} />
+            <FormSelect label="Module" value={productForm.module} onChange={(value) => setProductForm({ ...productForm, module: value })} options={modules.map((item) => ({ value: item, label: panelLabel(item) }))} />
             <FormSelect label="Account Type" value={productForm.accountType} onChange={(value) => setProductForm({ ...productForm, accountType: value })} options={accountTypes.map((item) => ({ value: item, label: item }))} />
             <FormSelect label="Product Status" value={productForm.status} onChange={(value) => setProductForm({ ...productForm, status: value })} options={['active', 'hidden', 'archived'].map((item) => ({ value: item, label: item }))} />
             <FormSelect label="Default Server" value={productForm.nodeId} onChange={(value) => setProductForm({ ...productForm, nodeId: value })} options={nodeOptions} />
@@ -924,7 +966,7 @@ export default function WhmHostingModule() {
               const pkg = packages.find((item) => item.id === value);
               setOrderForm({ ...orderForm, packageId: value, nodeId: pkg?.nodeId || orderForm.nodeId, amount: pkg?.pricing?.monthly ? String(pkg.pricing.monthly) : orderForm.amount });
             }} options={packageOptions} />
-            <FormSelect label="Target Server" value={orderForm.nodeId} onChange={(value) => setOrderForm({ ...orderForm, nodeId: value })} options={nodeOptions} />
+            <FormSelect label="Target Server / Auto Capacity" value={orderForm.nodeId} onChange={(value) => setOrderForm({ ...orderForm, nodeId: value })} options={nodeOptions} />
             <FormInput label="Amount" value={orderForm.amount} onChange={(value) => setOrderForm({ ...orderForm, amount: value })} type="number" />
             <FormInput required label="Domain Name" value={orderForm.domain} onChange={(value) => setOrderForm({ ...orderForm, domain: value })} placeholder="clientdomain.com" />
             <FormInput label="Hostname" value={orderForm.hostname} onChange={(value) => setOrderForm({ ...orderForm, hostname: value })} placeholder="clientdomain.com" />

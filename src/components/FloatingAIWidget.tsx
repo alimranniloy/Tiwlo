@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Bot, CheckCheck, Headphones, MessageSquare, Paperclip, Send, ShieldCheck, X } from 'lucide-react';
+import { CheckCheck, MessageSquare, Paperclip, Send, X } from 'lucide-react';
 import {
   fetchLiveChatSessionWithApi,
   sendLiveChatMessageWithApi,
@@ -8,30 +8,11 @@ import {
   type SupportAiStreamEvent
 } from '../lib/tiwloApi';
 
-const AI_MESSAGES = [
-  "Hi! I'm Tiwlo AI. How can I help you today? ✨",
-  "Need any help with your cloud deployment? 🚀",
-  "I can generate code for your next project. Try me! 💻",
-  "Ask me anything about Tiwlo Cloud. ☁️",
-  "Looking for ways to optimize your workflow? ⚙️",
-];
-
-const AI_REPLIES = [
-  "I understand. Let me check that for you.",
-  "That's a great question! Our documentation covers this. Would you like a link?",
-  "I'm an automated assistant. I can help you with cloud deployment, code generation, and setup.",
-  "We are constantly improving our systems.",
-  "Could you please provide a few more details?",
-  "I can certainly help with that process.",
-  "Thanks for the details! Is there anything else you need?",
-  "You can automate this using our Tiwlo CLI."
-];
-
 const CHAT_PROMPTS = [
-  "Hi, I'm Tiwlo AI. Need help?",
+  "Hi, need help?",
   "Cloud, billing, hosting, ISP, or security issue?",
   "Tell me what happened. I'll keep it short.",
-  "If it is urgent, I can alert human support.",
+  "If it is urgent, support can review it.",
   "Tiwlo support is here."
 ];
 
@@ -43,7 +24,10 @@ type Message = {
   status?: 'seen';
   createdAt?: string;
   source?: 'local' | 'api' | 'stream';
+  authorName?: string;
 };
+
+const normalizeText = (value: string) => value.trim().toLowerCase().replace(/\s+/g, ' ');
 
 const timeLabel = (value?: string) => {
   const date = value ? new Date(value) : new Date();
@@ -53,15 +37,33 @@ const timeLabel = (value?: string) => {
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 };
 
-const chatMessageToWidgetMessage = (message: any): Message => ({
-  id: `api-${message.id}`,
-  sender: message.senderRole === 'user' ? 'user' : 'ai',
-  text: message.body,
-  time: timeLabel(message.createdAt),
-  status: message.senderRole === 'user' ? 'seen' : undefined,
-  createdAt: message.createdAt,
-  source: 'api'
-});
+const isCustomerSender = (message: any) => {
+  const role = String(message?.senderRole || message?.authorRole || '').toLowerCase();
+  return ['user', 'customer', 'client', 'owner', 'member'].includes(role);
+};
+
+const chatMessageToWidgetMessage = (message: any): Message => {
+  const customer = isCustomerSender(message);
+  return {
+    id: `api-${message.id}`,
+    sender: customer ? 'user' : 'ai',
+    text: message.body,
+    time: timeLabel(message.createdAt),
+    status: customer ? 'seen' : undefined,
+    createdAt: message.createdAt,
+    source: 'api',
+    authorName: message.authorName || (customer ? 'You' : 'Tiwlo Support')
+  };
+};
+
+const getStoredUser = () => {
+  try {
+    const saved = localStorage.getItem('tiwlo_user');
+    return saved ? JSON.parse(saved) : null;
+  } catch {
+    return null;
+  }
+};
 
 const TiwloAvatar = ({ className = "w-[46px] h-[46px]" }) => (
   <div className={`relative shrink-0 flex items-center justify-center bg-gray-50 rounded-full shadow-[inset_0_-2px_4px_rgba(0,0,0,0.05)] border border-gray-100 ${className}`}>
@@ -84,7 +86,25 @@ const TiwloAvatar = ({ className = "w-[46px] h-[46px]" }) => (
   </div>
 );
 
+const UserAvatar = ({ name, className = 'w-7 h-7' }: { name?: string; className?: string }) => {
+  const label = String(name || 'You').trim();
+  const initials = label
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((part) => part.charAt(0))
+    .join('')
+    .toUpperCase() || 'Y';
+
+  return (
+    <div className={`shrink-0 flex items-center justify-center rounded-full bg-[#111827] text-white text-[11px] font-black ${className}`}>
+      {initials}
+    </div>
+  );
+};
+
 export default function FloatingAIWidget() {
+  const storedUser = getStoredUser();
+  const userName = String(storedUser?.name || storedUser?.email || 'You');
   const [isOpen, setIsOpen] = useState(false);
   const [msgIndex, setMsgIndex] = useState(0);
   const [showBubble, setShowBubble] = useState(false);
@@ -100,14 +120,14 @@ export default function FloatingAIWidget() {
     {
       id: 'sys-2',
       sender: 'system',
-      text: 'Tiwlo AI joined the chat',
+      text: 'Tiwlo Support joined the chat',
       time: timeLabel(),
       source: 'local'
     },
     {
       id: 'ai-1',
       sender: 'ai',
-      text: "Hi there! 👋 I'm Tiwlo AI. How can I help you today?",
+      text: "Hi, welcome to Tiwlo Support. Tell me what you need help with.",
       time: timeLabel(),
       source: 'local'
     }
@@ -129,7 +149,7 @@ export default function FloatingAIWidget() {
   useEffect(() => {
     setMessages((current) => current.map((message) => (
       message.id === 'ai-1'
-        ? { ...message, text: "Hi, I'm Tiwlo AI. Tell me the issue, I'll keep it short." }
+        ? { ...message, text: "Hi, welcome to Tiwlo Support. Tell me what you need help with." }
         : message
     )));
   }, []);
@@ -156,7 +176,15 @@ export default function FloatingAIWidget() {
 
   const mergeApiSession = (session: any) => {
     if (!session?.messages) return;
-    const apiMessages = session.messages.map(chatMessageToWidgetMessage);
+    const apiMessages = session.messages
+      .map(chatMessageToWidgetMessage)
+      .filter((message: Message, index: number, list: Message[]) => {
+        if (message.sender !== 'ai') return true;
+        const previousUser = [...list.slice(0, index), ...messages]
+          .reverse()
+          .find((item) => item.sender === 'user');
+        return !previousUser || normalizeText(previousUser.text) !== normalizeText(message.text);
+      });
     setMessages((current) => {
       const localMessages = current.filter((message) => (
         message.source !== 'api' &&
@@ -237,7 +265,8 @@ export default function FloatingAIWidget() {
       time: timeLabel(),
       status: 'seen',
       createdAt: new Date().toISOString(),
-      source: 'local'
+      source: 'local',
+      authorName: userName
     };
 
     setMessages(prev => [...prev, newUserMsg]);
@@ -262,6 +291,9 @@ export default function FloatingAIWidget() {
       }, (event: SupportAiStreamEvent) => {
         if (event.type === 'chunk') {
           draft += event.text;
+          if (normalizeText(draft) === normalizeText(text)) {
+            return;
+          }
           setIsTyping(false);
           setMessages((current) => {
             const existing = current.some((message) => message.id === streamId);
@@ -286,6 +318,9 @@ export default function FloatingAIWidget() {
 
         if (event.type === 'done') {
           setIsTyping(false);
+          if (event.message && normalizeText(event.message) === normalizeText(text)) {
+            setMessages((current) => current.filter((message) => message.id !== streamId));
+          }
           setAiMode(event.manualOnly ? 'manual' : Boolean(event.analysis?.needsHuman) ? 'escalated' : 'ai');
           if (event.manualOnly) {
             setMessages((current) => [...current, {
@@ -436,9 +471,9 @@ export default function FloatingAIWidget() {
       `}</style>
 
       {/* Live Chat Window */}
-      <div 
+      <div
         className={`absolute bottom-[80px] right-0 transition-all duration-300 origin-bottom-right pointer-events-auto flex flex-col z-50 overflow-hidden bg-white border border-gray-200 ${
-          isOpen ? 'scale-100 opacity-100 translate-y-0 w-[350px] sm:w-[380px] h-[550px] max-h-[calc(100vh-120px)]' : 'scale-[0.85] opacity-0 translate-y-8 pointer-events-none w-[350px] sm:w-[380px] h-[550px]'
+          isOpen ? 'scale-100 opacity-100 translate-y-0 w-[calc(100vw-32px)] sm:w-[380px] h-[550px] max-h-[calc(100vh-120px)]' : 'scale-[0.85] opacity-0 translate-y-8 pointer-events-none w-[calc(100vw-32px)] sm:w-[380px] h-[550px]'
         }`}
       >
         {/* Header */}
@@ -447,15 +482,11 @@ export default function FloatingAIWidget() {
              <TiwloAvatar className="w-10 h-10 border-none bg-white/10" />
             <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-400 border-[2px] border-[#2f71ff] rounded-full"></div>
           </div>
-          <div className="flex-1 text-white">
+          <div className="flex-1 text-white min-w-0">
             <h3 className="font-bold text-[15px] leading-tight">Tiwlo Support</h3>
-            <p className="text-blue-100 text-[12px] opacity-90 mt-0.5">
-              {aiMode === 'manual' ? 'Manual support queue' : aiMode === 'escalated' ? 'AI alerted human support' : 'AI replies live, humans can join'}
+            <p className="text-blue-100 text-[12px] opacity-90 mt-0.5 truncate">
+              {aiMode === 'manual' ? 'Support queue' : aiMode === 'escalated' ? 'Support is reviewing this chat' : 'Usually replies in a few minutes'}
             </p>
-          </div>
-          <div className="hidden items-center gap-1 rounded-full bg-white/15 px-2 py-1 text-[10px] font-black uppercase text-white sm:flex">
-            {aiMode === 'manual' ? <Headphones className="h-3 w-3" /> : aiMode === 'escalated' ? <ShieldCheck className="h-3 w-3" /> : <Bot className="h-3 w-3" />}
-            {aiMode === 'manual' ? 'Manual' : aiMode === 'escalated' ? 'Escalated' : 'AI On'}
           </div>
           <button onClick={togglePopup} className="p-2 text-white hover:bg-white/20 rounded-full transition-colors">
             <X size={20} />
@@ -483,8 +514,15 @@ export default function FloatingAIWidget() {
             const isUser = m.sender === 'user';
             return (
               <div key={m.id} className={`flex gap-2 w-full mt-1 ${isUser ? 'flex-row-reverse' : ''}`}>
-                {!isUser && <TiwloAvatar className="w-7 h-7 shrink-0 mt-auto opacity-90" />}
+                {isUser ? (
+                  <UserAvatar name={m.authorName || userName} className="w-7 h-7 mt-auto" />
+                ) : (
+                  <TiwloAvatar className="w-7 h-7 shrink-0 mt-auto opacity-90" />
+                )}
                 <div className={`flex flex-col ${isUser ? 'items-end' : 'items-start'} max-w-[85%]`}>
+                  <span className="mb-1 px-1 text-[10px] font-bold uppercase tracking-wide text-gray-400">
+                    {isUser ? (m.authorName || userName) : (m.authorName || 'Tiwlo Support')}
+                  </span>
                   <div className={`px-3.5 py-2.5 text-[14px] leading-relaxed ${
                     isUser 
                       ? 'bg-[#2f71ff] text-white' 

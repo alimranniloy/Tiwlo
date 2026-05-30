@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { checkStoreSubdomainAvailability, createStoreWithApi, notifyDataRefresh } from '../../../lib/tiwloApi';
+import { OrderCompleteSummary, TowerOrderLoader, type OrderSummary } from '../../../components/SetupLoader';
 import { 
   ArrowLeft, 
   ShoppingBag, 
@@ -35,6 +36,8 @@ export default function EcommerceCreateStore() {
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [orderPhase, setOrderPhase] = useState<'form' | 'loading' | 'complete'>('form');
+  const [orderSummary, setOrderSummary] = useState<OrderSummary | null>(null);
   const [subdomainStatus, setSubdomainStatus] = useState<{
     checking: boolean;
     available: boolean | null;
@@ -193,7 +196,19 @@ export default function EcommerceCreateStore() {
           }
         });
         notifyDataRefresh();
-        navigate(`/store/admin?storeId=${createdStore.id}`);
+        const plan = plans.find((item) => item.id === selectedPlan);
+        setOrderSummary({
+          title: 'E-commerce store order completed',
+          invoiceNumber: 'Processing',
+          packageName: plan?.name || selectedPlan,
+          serverIp: createdStore.slug ? `${createdStore.slug}.tiwlo.com` : createdStore.id,
+          monthlyCost: Number(plan?.price || 0),
+          hourlyRate: Number(((Number(plan?.price || 0) / 730) || 0).toFixed(4)),
+          status: 'Store provisioned',
+          supportPath: '/support'
+        });
+        setOrderPhase('loading');
+        window.setTimeout(() => setOrderPhase('complete'), 10000);
         return;
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Unable to deploy store');
@@ -202,6 +217,25 @@ export default function EcommerceCreateStore() {
       }
     }
   };
+
+  if (orderPhase === 'loading') {
+    return (
+      <TowerOrderLoader
+        messages={[
+          'Setting up your commerce store',
+          'Checking selected plan',
+          'Provisioning storefront modules',
+          'Preparing dashboard access',
+          'Syncing domain settings',
+          'Finalizing store summary'
+        ]}
+      />
+    );
+  }
+
+  if (orderPhase === 'complete' && orderSummary) {
+    return <OrderCompleteSummary summary={orderSummary} onPrimary={() => navigate('/store/admin')} />;
+  }
 
   return (
     <div className="max-w-6xl mx-auto pb-20 animate-in fade-in slide-in-from-bottom-4 duration-500 font-sans">

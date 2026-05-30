@@ -280,6 +280,11 @@ const fastSupportReply = (body, analysis) => {
   return shortFallbackReply(body, 'manual');
 };
 
+const sameSupportText = (left, right) => (
+  String(left || '').trim().toLowerCase().replace(/\s+/g, ' ') ===
+  String(right || '').trim().toLowerCase().replace(/\s+/g, ' ')
+);
+
 const writeStaticStream = async (reply, onChunk) => {
   const parts = reply.match(/\S+\s*/g) || [reply];
   for (const part of parts) {
@@ -1424,6 +1429,10 @@ export const streamSupportAiReply = async (ctx, actor, input = {}, handlers = {}
       analysis.reasons = [...new Set([...analysis.reasons, 'ai-fallback'])];
     } else {
       reply = String(aiResult.message || reply).trim();
+      if (sameSupportText(reply, currentMessage)) {
+        emit({ type: 'action', action: 'echo_guard', label: 'Echo reply replaced' });
+        reply = fastSupportReply(currentMessage, analysis);
+      }
     }
   }
 

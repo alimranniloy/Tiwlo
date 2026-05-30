@@ -1575,6 +1575,7 @@ input CreateCloudResourceInput {
   name: String!
   region: String!
   specs: String!
+  ip: String
   image: String
   plan: String
   cpu: String
@@ -2131,8 +2132,13 @@ input HostingComputeNodeInput {
   panel: String!
   port: Int
   username: String!
+  password: String
+  rootPassword: String
   apiToken: String
   accessHash: String
+  sshPort: Int
+  licenseKey: String
+  agentToken: String
   nameservers: JSON
   maxAccounts: Int
   activeAccounts: Int

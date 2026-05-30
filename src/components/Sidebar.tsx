@@ -141,6 +141,7 @@ export default function Sidebar({ user, isOpen, setIsOpen, onLogout }: SidebarPr
       {
         label: 'MANAGE',
         items: [
+          { name: 'Dashboard', icon: BarChart3, path: '/dashboard' },
           { name: 'Droplets', icon: Server, path: '/droplets' },
           { name: 'Ecommerce Center', icon: ShoppingBag, path: '/store', serviceKey: SERVICE_MODULE_KEYS.ecommerce },
           { name: 'Connectivity Hub', icon: Activity, path: '/isp-billing', serviceKey: SERVICE_MODULE_KEYS.isp },
@@ -163,7 +164,6 @@ export default function Sidebar({ user, isOpen, setIsOpen, onLogout }: SidebarPr
       {
         label: 'MONITOR',
         items: [
-           { name: 'Dashboard', icon: BarChart3, path: '/' },
            { name: 'Activity', icon: Activity, path: '/activity' },
            { name: 'Alerts', icon: Bell, path: '/alerts' },
            { name: 'Support', icon: LifeBuoy, path: '/support' },

@@ -5,7 +5,6 @@ import {
   Key, 
   Lock, 
   Settings, 
-  CheckCircle2, 
   ChevronRight, 
   Plus, 
   Cpu, 
@@ -17,6 +16,7 @@ import {
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { createCloudResourceOrderWithApi, fetchBillingOverviewWithApi, notifyDataRefresh } from '../lib/tiwloApi';
+import { OrderCompleteSummary, TowerOrderLoader, type OrderSummary } from '../components/SetupLoader';
 
 const DISTRIBUTIONS = [
   { id: 'ubuntu', name: 'Ubuntu', version: '22.04 LTS x64', color: 'bg-orange-500' },
@@ -63,6 +63,8 @@ export default function CreateDroplet() {
   const [paymentProvider, setPaymentProvider] = useState('credit');
   const [billingOverview, setBillingOverview] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [orderPhase, setOrderPhase] = useState<'form' | 'loading' | 'complete'>('form');
+  const [orderSummary, setOrderSummary] = useState<OrderSummary | null>(null);
   const [error, setError] = useState('');
 
   React.useEffect(() => {
@@ -126,9 +128,20 @@ export default function CreateDroplet() {
       }
 
       notifyDataRefresh();
+      setOrderSummary({
+        title: 'Droplet order completed',
+        invoiceNumber: checkout.invoice?.number,
+        packageName: plan.name,
+        serverIp: checkout.resource?.ip || 'Provisioning',
+        hourlyRate: hourly,
+        monthlyCost: plan.price,
+        status: checkout.status === 'paid' ? 'Provisioning queued' : checkout.status
+      });
+      setOrderPhase('loading');
       setTimeout(() => {
-        navigate('/droplets');
-      }, 1500);
+        setIsLoading(false);
+        setOrderPhase('complete');
+      }, 10000);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to create checkout. Check your credit balance or configured payment gateway.');
       setIsLoading(false);
@@ -141,14 +154,23 @@ export default function CreateDroplet() {
   const creditBalance = Number(billingOverview?.credits || 0);
   const creditEmpty = Boolean(billingOverview) && creditBalance <= 0;
 
-  if (isLoading) {
+  if (isLoading || orderPhase === 'loading') {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[60vh]">
-        <div className="w-12 h-12 border-4 border-blue-100 border-t-blue-600 rounded-full animate-spin mb-4"></div>
-        <p className="text-lg font-bold text-[#111827]">Provisioning your Droplet...</p>
-        <p className="text-sm text-[#6B7280] mt-1">This usually takes less than a minute.</p>
-      </div>
+      <TowerOrderLoader
+        messages={[
+          'Setting up your droplet',
+          'Checking billing and credit',
+          'Preparing the selected image',
+          'Reserving compute capacity',
+          'Creating invoice details',
+          'Finalizing deployment'
+        ]}
+      />
     );
+  }
+
+  if (orderPhase === 'complete' && orderSummary) {
+    return <OrderCompleteSummary summary={orderSummary} onPrimary={() => navigate('/droplets')} />;
   }
 
   return (

@@ -74,6 +74,7 @@ export async function createCloudResourceOrderWithApi(input: {
     cpu?: string;
     ram?: string;
     disk?: string;
+    ip?: string;
     monthlyCost?: number;
     metadata?: Record<string, unknown>;
   };
@@ -255,6 +256,7 @@ export async function createSystemServerWithApi(input: {
         name: input.name,
         region: input.region,
         specs: input.specs,
+        ip: input.ip,
         metadata: {
           provider: input.provider,
           role: input.role,

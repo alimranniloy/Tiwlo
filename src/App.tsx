@@ -3,7 +3,26 @@ import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'r
 import { Droplet, Domain, User } from './types';
 
 // Pages
-const Dashboard = lazy(() => import('./pages/Dashboard'));
+import Dashboard from './pages/Dashboard';
+import ServicesPage from './pages/Services';
+import ProductsPage from './pages/Products';
+import CommercePage from './pages/Commerce';
+import BroadbandPage from './pages/Broadband';
+import TiwloPayCheckout from './pages/TiwloPayCheckout';
+import AdminDashboard from './pages/management/AdminDashboard';
+import LoginPage from './pages/Login';
+import SignupPage from './pages/Signup';
+import ForgotPassword from './pages/ForgotPassword';
+import ResetPassword from './pages/ResetPassword';
+import VerifyEmail from './pages/VerifyEmail';
+import EmailPortal from './pages/EmailPortal';
+import LandingPage from './pages/LandingPage';
+import BannedAccount from './pages/BannedAccount';
+import CompleteProfile from './pages/CompleteProfile';
+import StorefrontHost from './themes/StorefrontHost';
+import { AuraPreview } from './themes/aura';
+import { EplazaPreview } from './themes/eplaza';
+
 const DropletsPage = lazy(() => import('./pages/Droplets'));
 const DomainsPage = lazy(() => import('./pages/Domains'));
 const NetworkingPage = lazy(() => import('./pages/Networking'));
@@ -11,7 +30,6 @@ const SettingsPage = lazy(() => import('./pages/Settings'));
 const TeamPage = lazy(() => import('./pages/Team'));
 const BillingPage = lazy(() => import('./pages/Billing'));
 const TiwloPay = lazy(() => import('./pages/TiwloPay'));
-const TiwloPayCheckout = lazy(() => import('./pages/TiwloPayCheckout'));
 const TPanel = lazy(() => import('./pages/TPanel'));
 const APIPage = lazy(() => import('./pages/API'));
 const VolumesPage = lazy(() => import('./pages/Volumes'));
@@ -29,16 +47,8 @@ const CloudStorePage = lazy(() => import('./pages/CloudStore'));
 const StoreManagementPage = lazy(() => import('./pages/StoreManagement'));
 const StoreAdminDashboard = lazy(() => import('./cloudstore/storeadmin/StoreAdminDashboard'));
 const StoreUserDashboard = lazy(() => import('./cloudstore/userdashboard'));
-const AuraPreview = lazy(() => import('./themes/aura').then((module) => ({ default: module.AuraPreview })));
-const EplazaPreview = lazy(() => import('./themes/eplaza').then((module) => ({ default: module.EplazaPreview })));
-const StorefrontHost = lazy(() => import('./themes/StorefrontHost'));
-const ServicesPage = lazy(() => import('./pages/Services'));
-const ProductsPage = lazy(() => import('./pages/Products'));
-const CommercePage = lazy(() => import('./pages/Commerce'));
-const BroadbandPage = lazy(() => import('./pages/Broadband'));
 const DocumentationPage = lazy(() => import('./pages/Documentation'));
 const CreateDroplet = lazy(() => import('./pages/CreateDroplet'));
-const AdminDashboard = lazy(() => import('./pages/management/AdminDashboard'));
 const UserManagement = lazy(() => import('./pages/management/UserManagement'));
 const SystemLogs = lazy(() => import('./pages/management/SystemLogs'));
 const AddSystemServer = lazy(() => import('./pages/management/AddSystemServer'));
@@ -71,15 +81,6 @@ const ModulePlaceholder = lazy(() => import('./pages/management/ecommerce/Module
 const IspLayout = lazy(() => import('./pages/management/IspLayout'));
 const IspDashboard = lazy(() => import('./pages/management/isp/IspDashboard'));
 const IspClientManagement = lazy(() => import('./pages/management/isp/IspClientManagement'));
-const LoginPage = lazy(() => import('./pages/Login'));
-const SignupPage = lazy(() => import('./pages/Signup'));
-const ForgotPassword = lazy(() => import('./pages/ForgotPassword'));
-const ResetPassword = lazy(() => import('./pages/ResetPassword'));
-const VerifyEmail = lazy(() => import('./pages/VerifyEmail'));
-const EmailPortal = lazy(() => import('./pages/EmailPortal'));
-const LandingPage = lazy(() => import('./pages/LandingPage'));
-const BannedAccount = lazy(() => import('./pages/BannedAccount'));
-const CompleteProfile = lazy(() => import('./pages/CompleteProfile'));
 const FloatingAIWidget = lazy(() => import('./components/FloatingAIWidget'));
 const ISPStorefront = lazy(() => import('./pages/isp/ISPStorefront'));
 const ISPAddRouter = lazy(() => import('./pages/isp/ISPAddRouter'));
@@ -92,6 +93,7 @@ import { SERVICE_MODULE_GROUP, SERVICE_MODULE_KEYS, serviceEnabled } from './lib
 // Components
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
+import { CrystalSetupLoader } from './components/SetupLoader';
 
 const restrictedStatuses = new Set(['banned', 'blocked', 'suspended', 'disabled']);
 
@@ -103,20 +105,16 @@ function isRestrictedUser(user?: User | null) {
   return restrictedStatuses.has(String(user?.status || '').toLowerCase());
 }
 
-function WelcomeScreen({ user }: { user: User }) {
+function WelcomeScreen() {
   return (
-    <div className="grid min-h-screen place-items-center bg-[#f3f5f9] px-6 font-sans text-[#212121]">
-      <div className="w-full max-w-sm rounded-[10px] bg-white px-6 py-8 text-center shadow-[0_0_3px_rgba(0,0,0,0.084),0_2px_3px_rgba(0,0,0,0.168)]">
-        <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-[#212121] text-lg font-black uppercase text-white">
-          {(user.name || user.email || 'T').charAt(0)}
-        </div>
-        <h1 className="mt-5 text-xl font-bold">Welcome Back!</h1>
-        <p className="mt-1 text-sm font-medium text-gray-500">{user.name || user.email}</p>
-        <div className="mt-6 h-1.5 overflow-hidden rounded-full bg-gray-100">
-          <div className="h-full w-2/3 animate-pulse rounded-full bg-[#1778f2]" />
-        </div>
-      </div>
-    </div>
+    <CrystalSetupLoader
+      messages={[
+        'Setting up your console',
+        'Checking billing profile',
+        'Syncing services and modules',
+        'Opening dashboard'
+      ]}
+    />
   );
 }
 
@@ -254,7 +252,11 @@ function AppContent({
                 <Route path="/management/*" element={<AdminDashboard user={user} />} />
               </>
             ) : (
-              <Route path="/" element={<Dashboard user={user} droplets={droplets} domains={domains} />} />
+              <>
+                <Route path="/" element={<Dashboard user={user} droplets={droplets} domains={domains} />} />
+                <Route path="/dashboard" element={<Dashboard user={user} droplets={droplets} domains={domains} />} />
+                <Route path="/dasboard" element={<Dashboard user={user} droplets={droplets} domains={domains} />} />
+              </>
             )}
             
             <Route 
@@ -384,7 +386,7 @@ export default function App() {
 
   useEffect(() => {
     if (!showWelcome) return undefined;
-    const timer = window.setTimeout(() => setShowWelcome(false), 1150);
+    const timer = window.setTimeout(() => setShowWelcome(false), 3000);
     return () => window.clearTimeout(timer);
   }, [showWelcome]);
 
@@ -402,7 +404,7 @@ export default function App() {
   };
 
   if (showWelcome && user && !isRestrictedUser(user)) {
-    return <WelcomeScreen user={user} />;
+    return <WelcomeScreen />;
   }
 
   if (isEmailHost) {

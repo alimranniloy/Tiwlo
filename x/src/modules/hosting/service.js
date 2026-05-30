@@ -10,6 +10,7 @@ const number = (value, fallback = 0) => Number.isFinite(Number(value)) ? Number(
 const integer = (value, fallback = 0) => Number.isFinite(Number(value)) ? Math.floor(Number(value)) : fallback;
 const text = (value, fallback = '') => String(value ?? fallback).trim();
 const remoteWhmPanels = new Set(['whm', 'hosting-panel', 'cpanel']);
+const tpanelPanels = new Set(['tpanel', 'hosting-panel']);
 
 const normalizeRows = (rows) => toApi(rows || []);
 const first = (rows) => normalizeRows(rows)[0] || null;
@@ -91,6 +92,7 @@ export const ensureHostingTables = async (prisma) => {
       "panel" TEXT NOT NULL DEFAULT 'whm',
       "port" INTEGER NOT NULL DEFAULT 2087,
       "username" TEXT NOT NULL,
+      "passwordSecret" TEXT,
       "apiToken" TEXT,
       "accessHash" TEXT,
       "nameservers" JSONB DEFAULT '[]'::jsonb,
@@ -104,6 +106,7 @@ export const ensureHostingTables = async (prisma) => {
       "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
   `);
+  await prisma.$executeRawUnsafe('ALTER TABLE "HostingComputeNode" ADD COLUMN IF NOT EXISTS "passwordSecret" TEXT');
   await prisma.$executeRawUnsafe('CREATE INDEX IF NOT EXISTS "HostingComputeNode_panel_status_idx" ON "HostingComputeNode" ("panel", "status")');
 
   await prisma.$executeRawUnsafe(`
@@ -207,6 +210,7 @@ export const upsertComputeNode = async (ctx, input) => {
     panel: text(input.panel || 'whm').toLowerCase(),
     port: integer(input.port || 2087, 2087),
     username: text(input.username || 'root'),
+    passwordSecret: input.password || input.rootPassword ? String(input.password || input.rootPassword) : null,
     apiToken: input.apiToken ? String(input.apiToken) : null,
     accessHash: input.accessHash ? String(input.accessHash) : null,
     nameservers: input.nameservers || [],
@@ -215,7 +219,12 @@ export const upsertComputeNode = async (ctx, input) => {
     status: text(input.status || 'active'),
     monthlyCost: number(input.monthlyCost, 0),
     location: input.location ? String(input.location) : null,
-    metadata: input.metadata || {}
+    metadata: {
+      ...(input.metadata || {}),
+      sshPort: integer(input.sshPort || input.metadata?.sshPort || 22, 22),
+      licenseKey: text(input.licenseKey || input.metadata?.licenseKey || ''),
+      agentToken: text(input.agentToken || input.metadata?.agentToken || '')
+    }
   };
 
   if (!payload.name || !payload.hostname || !payload.ip) {
@@ -229,23 +238,23 @@ export const upsertComputeNode = async (ctx, input) => {
     ? await ctx.prisma.$queryRawUnsafe(`
         UPDATE "HostingComputeNode"
         SET "name" = $2, "hostname" = $3, "ip" = $4, "panel" = $5, "port" = $6,
-            "username" = $7, "apiToken" = $8, "accessHash" = $9,
-            "nameservers" = CAST($10 AS jsonb), "maxAccounts" = $11, "activeAccounts" = $12,
-            "status" = $13, "monthlyCost" = $14, "location" = $15,
-            "metadata" = CAST($16 AS jsonb), "updatedAt" = CURRENT_TIMESTAMP
+            "username" = $7, "passwordSecret" = COALESCE($8, "passwordSecret"), "apiToken" = $9, "accessHash" = $10,
+            "nameservers" = CAST($11 AS jsonb), "maxAccounts" = $12, "activeAccounts" = $13,
+            "status" = $14, "monthlyCost" = $15, "location" = $16,
+            "metadata" = CAST($17 AS jsonb), "updatedAt" = CURRENT_TIMESTAMP
         WHERE "id" = $1
         RETURNING *
       `, id, payload.name, payload.hostname, payload.ip, payload.panel, payload.port, payload.username,
-      payload.apiToken, payload.accessHash, json(payload.nameservers, []), payload.maxAccounts, payload.activeAccounts,
+      payload.passwordSecret, payload.apiToken, payload.accessHash, json(payload.nameservers, []), payload.maxAccounts, payload.activeAccounts,
       payload.status, payload.monthlyCost, payload.location, json(payload.metadata, {}))
     : await ctx.prisma.$queryRawUnsafe(`
         INSERT INTO "HostingComputeNode"
-          ("id", "name", "hostname", "ip", "panel", "port", "username", "apiToken", "accessHash",
+          ("id", "name", "hostname", "ip", "panel", "port", "username", "passwordSecret", "apiToken", "accessHash",
            "nameservers", "maxAccounts", "activeAccounts", "status", "monthlyCost", "location", "metadata")
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, CAST($10 AS jsonb), $11, $12, $13, $14, $15, CAST($16 AS jsonb))
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, CAST($11 AS jsonb), $12, $13, $14, $15, $16, CAST($17 AS jsonb))
         RETURNING *
       `, id, payload.name, payload.hostname, payload.ip, payload.panel, payload.port, payload.username,
-      payload.apiToken, payload.accessHash, json(payload.nameservers, []), payload.maxAccounts, payload.activeAccounts,
+      payload.passwordSecret, payload.apiToken, payload.accessHash, json(payload.nameservers, []), payload.maxAccounts, payload.activeAccounts,
       payload.status, payload.monthlyCost, payload.location, json(payload.metadata, {}));
 
   await writeAudit(ctx, input.id ? 'update_hosting_compute_node' : 'create_hosting_compute_node', 'hostingComputeNode', id, { panel: payload.panel, hostname: payload.hostname });
@@ -459,6 +468,32 @@ const findRecord = async (prisma, table, id) => {
   return first(await prisma.$queryRawUnsafe(`SELECT * FROM "${table}" WHERE "id" = $1`, id));
 };
 
+const nodeHasCapacity = (node) => node && node.status === 'active' && (!node.maxAccounts || node.activeAccounts < node.maxAccounts);
+
+const panelCandidatesFor = (module) => {
+  const value = text(module).toLowerCase();
+  if (value === 'tpanel') return ['tpanel', 'hosting-panel'];
+  if (value === 'cpanel' || value === 'whm') return ['cpanel', 'whm', 'hosting-panel'];
+  if (value) return [value];
+  return [];
+};
+
+const findAvailableNode = async (prisma, { preferredNodeId, module }) => {
+  const preferred = await findRecord(prisma, 'HostingComputeNode', preferredNodeId);
+  if (nodeHasCapacity(preferred)) return preferred;
+
+  const panels = panelCandidatesFor(module);
+  const rows = await prisma.$queryRawUnsafe(`
+    SELECT *
+    FROM "HostingComputeNode"
+    WHERE "status" = 'active'
+      AND ("maxAccounts" = 0 OR "activeAccounts" < "maxAccounts")
+    ORDER BY "activeAccounts" ASC, "createdAt" ASC
+  `);
+  const nodes = normalizeRows(rows);
+  return nodes.find((node) => panels.length === 0 || panels.includes(text(node.panel).toLowerCase())) || nodes[0] || null;
+};
+
 const updateProvisioningOrder = async (ctx, id, status, provisioning) => (
   first(await ctx.prisma.$queryRawUnsafe(`
     UPDATE "HostingProvisioningOrder"
@@ -481,15 +516,11 @@ export const createProvisioningOrder = async (ctx, input) => {
 
   const product = await findRecord(ctx.prisma, 'HostingProduct', input.productId);
   const pkg = await findRecord(ctx.prisma, 'HostingPackage', input.packageId);
-  const nodeId = input.nodeId || pkg?.nodeId || product?.nodeId;
-  const node = await findRecord(ctx.prisma, 'HostingComputeNode', nodeId);
-  if (!node) throw new AppError('A target WHM/cPanel server is required', 'BAD_USER_INPUT');
-  if (node.maxAccounts > 0 && node.activeAccounts >= node.maxAccounts) {
-    throw new AppError('This compute node has reached its account limit', 'RESOURCE_EXHAUSTED');
-  }
-
   const id = randomUUID();
-  const module = text(input.module || product?.module || node.panel || 'whm').toLowerCase();
+  const module = text(input.module || product?.module || 'tpanel').toLowerCase();
+  const preferredNodeId = input.nodeId || pkg?.nodeId || product?.nodeId;
+  const node = await findAvailableNode(ctx.prisma, { preferredNodeId, module });
+  if (!node) throw new AppError('No active tPanel/hosting node has free account capacity', 'RESOURCE_EXHAUSTED');
   const accountType = text(input.accountType || pkg?.accountType || product?.accountType || 'shared').toLowerCase();
   const amount = number(input.amount ?? product?.price ?? pkg?.pricing?.monthly ?? 0, 0);
   const domain = text(input.domain);
@@ -509,7 +540,7 @@ export const createProvisioningOrder = async (ctx, input) => {
     action: module === 'whm' || module === 'hosting-panel' || module === 'cpanel' ? 'createacct' : 'provision',
     panel: module,
     accountType,
-    automation: shouldAttemptRemote ? 'remote_whm_api' : 'queued',
+    automation: shouldAttemptRemote ? 'remote_whm_api' : tpanelPanels.has(text(node.panel).toLowerCase()) || module === 'tpanel' ? 'tpanel_agent_queue' : 'queued',
     targetServer: {
       id: node.id,
       name: node.name,
@@ -527,7 +558,7 @@ export const createProvisioningOrder = async (ctx, input) => {
       ...(input.limits || {})
     },
     requestedAt: new Date().toISOString(),
-    state: shouldAttemptRemote ? 'pending_remote_api' : 'queued_for_remote_api'
+    state: shouldAttemptRemote ? 'pending_remote_api' : 'queued_for_tpanel_agent'
   };
   const initialStatus = shouldAttemptRemote ? 'pending' : 'queued';
 
@@ -569,6 +600,11 @@ export const createProvisioningOrder = async (ctx, input) => {
       await writeAudit(ctx, 'create_hosting_provisioning_order_failed', 'hostingProvisioningOrder', id, { nodeId: node.id, module, domain, error: provisioning.error });
       throw err;
     }
+  } else {
+    await ctx.prisma.$executeRawUnsafe(
+      'UPDATE "HostingComputeNode" SET "activeAccounts" = "activeAccounts" + 1, "updatedAt" = CURRENT_TIMESTAMP WHERE "id" = $1',
+      node.id
+    );
   }
 
   await writeAudit(ctx, 'create_hosting_provisioning_order', 'hostingProvisioningOrder', id, { nodeId: node.id, module, domain, status: order?.status });

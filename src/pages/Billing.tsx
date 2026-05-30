@@ -76,12 +76,37 @@ export default function BillingPage() {
   const outstanding = invoices.filter((invoice) => invoice.status !== 'paid').reduce((sum, invoice) => sum + Number(invoice.amount || 0), 0);
   const paid = invoices.filter((invoice) => invoice.status === 'paid').reduce((sum, invoice) => sum + Number(invoice.amount || 0), 0);
   const usageLines = overview?.usageLines || [];
+  const creditBalance = Number(overview?.credits || 0);
+  const dueNow = Math.max(outstanding, Number(overview?.dueAmount || 0));
+  const creditHealth = Math.min(100, Math.max(0, Math.round((creditBalance / Math.max(creditBalance + dueNow, 1)) * 100)));
+  const activeGateways = gateways.filter((gateway) => ['active', 'enabled'].includes(String(gateway.status || '').toLowerCase())).length;
+  const billingTiles = [
+    { label: 'Current balance', value: money(creditBalance), tone: creditBalance <= 0 ? 'text-[#a4262c]' : 'text-[#107c10]' },
+    { label: 'Outstanding', value: money(outstanding), tone: outstanding > 0 ? 'text-[#a4262c]' : 'text-[#107c10]' },
+    { label: 'Hourly usage', value: money(overview?.hourlySpend || 0), tone: 'text-[#0078d4]' },
+    { label: 'Gateways', value: `${activeGateways}/${gateways.length}`, tone: 'text-[#323130]' }
+  ];
 
   return (
-    <div className="space-y-8 pb-12">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight text-[#111827]">Billing</h1>
-        <p className="mt-0.5 text-sm text-[#6B7280]">Payment methods, invoice totals, and gateway status from the billing API.</p>
+    <div className="space-y-6 pb-12">
+      <div className="border-b border-[#edebe9] pb-4">
+        <p className="text-[11px] font-black uppercase tracking-widest text-[#0078d4]">Microsoft Azure style billing</p>
+        <h1 className="mt-1 text-2xl font-bold tracking-tight text-[#1f1f1f]">Cost Management + Billing</h1>
+        <p className="mt-1 text-sm text-[#605e5c]">Credits, invoices, payment methods, and hourly usage from the billing API.</p>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2 border border-[#edebe9] bg-white p-2">
+        {['Overview', 'Invoices', 'Payment methods', 'Usage analysis'].map((item, index) => (
+          <a
+            key={item}
+            href={index === 1 ? '#invoices' : index === 2 ? '#gateways' : index === 3 ? '#usage' : '#add-credit'}
+            className={`border px-3 py-2 text-[12px] font-bold ${
+              index === 0 ? 'border-[#0078d4] bg-[#eff6fc] text-[#0078d4]' : 'border-transparent text-[#323130] hover:border-[#c8c6c4] hover:bg-[#f3f2f1]'
+            }`}
+          >
+            {item}
+          </a>
+        ))}
       </div>
 
       {error && <div className="rounded border border-red-100 bg-red-50 px-4 py-3 text-[13px] font-bold text-red-600">{error}</div>}
@@ -100,9 +125,47 @@ export default function BillingPage() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 gap-8 md:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        {billingTiles.map((tile) => (
+          <div key={tile.label} className="border border-[#edebe9] bg-white p-4">
+            <p className="text-[10px] font-black uppercase tracking-widest text-[#605e5c]">{tile.label}</p>
+            <p className={`mt-2 text-2xl font-black ${tile.tone}`}>{loading ? '...' : tile.value}</p>
+          </div>
+        ))}
+      </div>
+
+      <section className="grid grid-cols-1 gap-4 border border-[#c7e0f4] bg-[#f3f9fd] p-4 lg:grid-cols-[260px_1fr]">
+        <div className="flex items-center gap-4 border border-[#deecf9] bg-white p-4">
+          <div
+            className="grid h-24 w-24 shrink-0 place-items-center rounded-full"
+            style={{ background: `conic-gradient(#0078d4 ${creditHealth}%, #e1dfdd ${creditHealth}% 100%)` }}
+          >
+            <div className="grid h-16 w-16 place-items-center rounded-full bg-white text-center">
+              <span className="text-lg font-black text-[#1f1f1f]">{creditHealth}%</span>
+            </div>
+          </div>
+          <div>
+            <p className="text-[10px] font-black uppercase tracking-widest text-[#605e5c]">Billing health</p>
+            <p className="mt-1 text-sm font-bold text-[#323130]">{creditBalance <= 0 ? 'Credit required' : 'Account funded'}</p>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+          {[
+            ['Accrued usage', money(overview?.accruedUsage || 0)],
+            ['Paid invoices', money(paid)],
+            ['Invoice count', invoices.length]
+          ].map(([label, value]) => (
+            <div key={label} className="border border-[#deecf9] bg-white p-4">
+              <p className="text-[10px] font-black uppercase tracking-widest text-[#605e5c]">{label}</p>
+              <p className="mt-2 text-xl font-black text-[#1f1f1f]">{loading ? '...' : value}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
         <div className="space-y-8 md:col-span-2">
-          <section className="rounded-md border border-[#E5E7EB] bg-white p-8">
+          <section className="rounded-sm border border-[#E5E7EB] bg-white p-5 md:p-8">
             <div className="mb-8 flex items-center justify-between">
               <div>
                 <p className="mb-1 text-xs font-bold uppercase tracking-widest text-[#6B7280]">Outstanding Balance</p>
@@ -110,26 +173,26 @@ export default function BillingPage() {
               </div>
               <div className="text-right">
                 <p className="mb-1 text-xs font-bold uppercase tracking-widest text-[#6B7280]">Credit Balance</p>
-                <p className="text-xl font-bold text-[#111827]">{loading ? '...' : money(overview?.credits || 0)}</p>
+                <p className="text-xl font-bold text-[#111827]">{loading ? '...' : money(creditBalance)}</p>
               </div>
             </div>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-              <div className="rounded border border-gray-100 bg-gray-50 p-4">
+              <div className="rounded-sm border border-gray-100 bg-gray-50 p-4">
                 <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Invoices</p>
                 <p className="mt-2 text-xl font-bold">{invoices.length}</p>
               </div>
-              <div className="rounded border border-gray-100 bg-gray-50 p-4">
+              <div className="rounded-sm border border-gray-100 bg-gray-50 p-4">
                 <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Paid</p>
                 <p className="mt-2 text-xl font-bold text-green-600">{money(paid)}</p>
               </div>
-              <div className="rounded border border-gray-100 bg-gray-50 p-4">
+              <div className="rounded-sm border border-gray-100 bg-gray-50 p-4">
                 <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Hourly Usage</p>
                 <p className="mt-2 text-xl font-bold">{money(overview?.hourlySpend || 0)}</p>
               </div>
             </div>
           </section>
 
-          <section id="add-credit" className="rounded-md border border-[#E5E7EB] bg-white p-6">
+          <section id="add-credit" className="rounded-sm border border-[#E5E7EB] bg-white p-5 md:p-6">
             <div className="mb-5 flex items-center justify-between">
               <div>
                 <h2 className="text-sm font-bold uppercase tracking-wide text-[#111827]">Add Credit</h2>
@@ -147,7 +210,7 @@ export default function BillingPage() {
                     key={option.key}
                     type="button"
                     onClick={() => setTopUpCurrency(option.key)}
-                    className={`rounded border px-4 py-3 text-left transition-colors ${
+                    className={`rounded-sm border px-4 py-3 text-left transition-colors ${
                       topUpCurrency === option.key
                         ? 'border-blue-500 bg-blue-50 text-blue-700'
                         : 'border-gray-200 bg-white text-[#111827] hover:bg-gray-50'
@@ -166,25 +229,25 @@ export default function BillingPage() {
                 type="number"
                 min="1"
                 step="0.01"
-                className="rounded border border-gray-200 px-3 py-2 text-sm outline-none focus:border-blue-500"
+                className="rounded-sm border border-gray-200 px-3 py-2 text-sm outline-none focus:border-[#0078d4]"
                 placeholder={topUpCurrency === 'BDT' ? 'Amount in BDT' : 'Amount in USD'}
               />
               <select
                 value={topUpProvider}
                 onChange={(event) => setTopUpProvider(event.target.value)}
-                className="rounded border border-gray-200 px-3 py-2 text-sm font-bold outline-none focus:border-blue-500"
+                className="rounded-sm border border-gray-200 px-3 py-2 text-sm font-bold outline-none focus:border-[#0078d4]"
               >
                 <option value="bkash">bKash</option>
                 <option value="stripe">Stripe</option>
                 <option value="paypal">PayPal</option>
               </select>
-              <button onClick={addCredit} disabled={processing} className="rounded bg-blue-600 px-5 py-2 text-sm font-bold text-white hover:bg-blue-700 disabled:opacity-60">
+              <button onClick={addCredit} disabled={processing} className="rounded-sm bg-[#0078d4] px-5 py-2 text-sm font-bold text-white hover:bg-[#106ebe] disabled:opacity-60">
                 {processing ? 'Starting...' : 'Top Up'}
               </button>
             </div>
           </section>
 
-          <section className="overflow-hidden rounded-md border border-[#E5E7EB] bg-white">
+          <section id="gateways" className="overflow-hidden rounded-sm border border-[#E5E7EB] bg-white">
             <div className="flex items-center justify-between border-b border-[#E5E7EB] bg-[#F9FAFB] p-5">
               <h2 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-[#111827]">
                 <CreditCard className="h-4 w-4" /> Payment Gateways
@@ -208,7 +271,7 @@ export default function BillingPage() {
             </div>
           </section>
 
-          <section className="overflow-hidden rounded-md border border-[#E5E7EB] bg-white">
+          <section id="usage" className="overflow-hidden rounded-sm border border-[#E5E7EB] bg-white">
             <div className="flex items-center justify-between border-b border-[#E5E7EB] bg-[#F9FAFB] p-5">
               <h2 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-[#111827]">
                 <History className="h-4 w-4" /> Active Hourly Billing
@@ -232,7 +295,7 @@ export default function BillingPage() {
             </div>
           </section>
 
-          <section className="overflow-hidden rounded-md border border-[#E5E7EB] bg-white">
+          <section id="invoices" className="overflow-hidden rounded-sm border border-[#E5E7EB] bg-white">
             <div className="flex items-center justify-between border-b border-[#E5E7EB] bg-[#F9FAFB] p-5">
               <h2 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-[#111827]">
                 <History className="h-4 w-4" /> Recent Invoices
@@ -260,7 +323,7 @@ export default function BillingPage() {
         </div>
 
         <div className="space-y-6">
-          <div className="relative overflow-hidden rounded-md bg-[#111827] p-8 text-white">
+          <div className="relative overflow-hidden rounded-sm border border-[#004578] bg-[#002050] p-8 text-white">
             <Shield className="absolute -bottom-10 -right-10 h-48 w-48 text-white opacity-5" />
             <h3 className="mb-2 text-xl font-bold">Automated Billing</h3>
             <p className="mb-6 text-sm leading-relaxed text-gray-400">Monthly caps and hourly usage are tracked against your credit balance.</p>
@@ -270,7 +333,7 @@ export default function BillingPage() {
           </div>
 
           {(outstanding > 0 || Number(overview?.dueAmount || 0) > 0) && (
-            <div className="rounded-md border border-orange-100 bg-orange-50 p-6">
+            <div className="rounded-sm border border-orange-100 bg-orange-50 p-6">
               <div className="mb-2 flex items-center gap-3 text-orange-800">
                 <AlertCircle className="h-5 w-5" />
                 <h4 className="text-sm font-bold">Payment Pending</h4>
