@@ -348,6 +348,8 @@ function publicAccount(record) {
     address,
     username: record?.data?.username || username || '',
     domain,
+    displayName: record?.data?.displayName || username || address,
+    profileImageUrl: record?.data?.profileImageUrl || '',
     hostName: record?.data?.hostName || mailboxHost(domain),
     imapHost: record?.data?.incoming?.host || record?.data?.hostName || mailboxHost(domain),
     smtpHost: record?.data?.outgoing?.host || record?.data?.hostName || mailboxHost(domain),
@@ -356,6 +358,10 @@ function publicAccount(record) {
     usageMB: Number(usageMB.toFixed(3)),
     status: record.status || 'active'
   };
+}
+
+function senderDisplayName(record) {
+  return String(record?.data?.displayName || record?.data?.username || recordAddress(record)).trim();
 }
 
 function mailboxToken(record) {
@@ -578,7 +584,7 @@ export const sendMailboxMessage = async (ctx, input) => {
   const result = await sendTiwloEmail(ctx, {
     to,
     fromEmail: account.address,
-    fromName: account.username || account.address,
+    fromName: senderDisplayName(record),
     replyTo: account.address,
     subject,
     title: subject,
@@ -631,6 +637,30 @@ export const sendMailboxMessage = async (ctx, input) => {
   });
   await saveMailboxRecords(ctx.prisma, updatedRecords);
   return message;
+};
+
+export const updateMailboxProfile = async (ctx, input = {}) => {
+  const { record, records } = await recordFromToken(ctx, input?.token);
+  const displayName = String(input.displayName || '').trim().slice(0, 80) || record?.data?.displayName || recordAddress(record);
+  const profileImageUrl = String(input.profileImageUrl || '').trim();
+  if (profileImageUrl && !/^data:image\/(png|jpe?g|webp|gif);base64,|^https?:\/\//i.test(profileImageUrl)) {
+    throw new AppError('Use a valid image URL or uploaded image.', 'BAD_USER_INPUT');
+  }
+  if (profileImageUrl.length > 750000) {
+    throw new AppError('Profile picture is too large. Use an image below 750KB.', 'BAD_USER_INPUT');
+  }
+  const updatedRecord = {
+    ...record,
+    data: {
+      ...(record.data || {}),
+      displayName,
+      profileImageUrl,
+      profileUpdatedAt: now()
+    },
+    updatedAt: now()
+  };
+  await saveMailboxRecords(ctx.prisma, records.map((item) => (item.id === record.id ? updatedRecord : item)));
+  return publicAccount(updatedRecord);
 };
 
 export const syncEmailAccountRecords = async (ctx, records = []) => {

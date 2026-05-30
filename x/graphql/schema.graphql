@@ -396,6 +396,8 @@ type MailboxAccount {
   address: String!
   username: String!
   domain: String!
+  displayName: String
+  profileImageUrl: String
   hostName: String!
   imapHost: String!
   smtpHost: String!
@@ -1551,6 +1553,12 @@ input UpdateMailboxMessageInput {
   starred: Boolean
 }
 
+input UpdateMailboxProfileInput {
+  token: String!
+  displayName: String
+  profileImageUrl: String
+}
+
 input SignupInput {
   name: String!
   email: String!
@@ -2567,6 +2575,7 @@ type Mutation {
   mailboxRegister(input: MailboxRegisterInput!): MailboxLoginPayload!
   sendMailboxEmail(input: SendMailboxEmailInput!): MailboxMessage!
   updateMailboxMessage(input: UpdateMailboxMessageInput!): MailboxMessage!
+  updateMailboxProfile(input: UpdateMailboxProfileInput!): MailboxAccount!
   updateUserRole(id: ID!, role: String!): User!
   updateUser(input: UpdateUserInput!): User!
   deleteUser(id: ID!): Boolean!

@@ -5,6 +5,8 @@ const mailboxAccountFields = `
   address
   username
   domain
+  displayName
+  profileImageUrl
   hostName
   imapHost
   smtpHost
@@ -131,4 +133,15 @@ export async function updateMailboxMessageWithApi(input: Record<string, unknown>
   );
 
   return data.updateMailboxMessage;
+}
+
+export async function updateMailboxProfileWithApi(input: { token: string; displayName?: string; profileImageUrl?: string }) {
+  const data = await graphQL<{ updateMailboxProfile: any }>(
+    `mutation UpdateMailboxProfile($input: UpdateMailboxProfileInput!) {
+      updateMailboxProfile(input: $input) { ${mailboxAccountFields} }
+    }`,
+    { input }
+  );
+
+  return data.updateMailboxProfile;
 }
