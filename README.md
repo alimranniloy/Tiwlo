@@ -66,6 +66,16 @@ IP-only install without SSL:
 curl -fsSL https://raw.githubusercontent.com/alimranniloy/Tiwlo/main/scripts/install-tiwlo-ubuntu.sh | sudo bash
 ```
 
+## Server Update
+
+Use this command on the production server to pull the latest code and run the Tiwlo update script:
+
+```bash
+cd /var/www/Tiwlo
+git pull origin main
+sudo env TIWLO_MAIL_DOMAIN=tiwlo.com TIWLO_EMAIL=admin@tiwlo.com bash scripts/update-tiwlo.sh
+```
+
 ## Run On A Fresh Ubuntu Server
 
 These steps are for a blank Ubuntu VPS.
