@@ -910,7 +910,7 @@ function brandedHtml({ title, preview, bodyHtml }) {
   `;
 }
 
-export async function sendTiwloEmail(ctxOrPrisma, { to, subject, title, preview, html, text, fromEmail, fromName, replyTo }) {
+export async function sendTiwloEmail(ctxOrPrisma, { to, subject, title, preview, html, text, fromEmail, fromName, replyTo, headers }) {
   const prisma = getPrisma(ctxOrPrisma);
   if (!prisma || !to) return { sent: false, reason: 'missing-recipient' };
   let config = null;
@@ -930,6 +930,7 @@ export async function sendTiwloEmail(ctxOrPrisma, { to, subject, title, preview,
       replyTo: config.replyTo,
       subject,
       text: text || preview || subject,
+      headers,
       html: brandedHtml({ title: title || subject, preview, bodyHtml: html || `<p>${escapeHtml(text || preview || subject)}</p>` })
     });
     return result;
@@ -944,6 +945,7 @@ export async function sendTiwloEmail(ctxOrPrisma, { to, subject, title, preview,
             replyTo: fallbackConfig.replyTo,
             subject,
             text: text || preview || subject,
+            headers,
             html: brandedHtml({ title: title || subject, preview, bodyHtml: html || `<p>${escapeHtml(text || preview || subject)}</p>` })
           });
           return { ...result, authSource: fallbackConfig.authSource };
@@ -962,6 +964,7 @@ export async function sendTiwloEmail(ctxOrPrisma, { to, subject, title, preview,
             replyTo: fallbackConfig.replyTo,
             subject,
             text: text || preview || subject,
+            headers,
             html: brandedHtml({ title: title || subject, preview, bodyHtml: html || `<p>${escapeHtml(text || preview || subject)}</p>` })
           });
           return { ...result, authSource: 'env-fallback' };

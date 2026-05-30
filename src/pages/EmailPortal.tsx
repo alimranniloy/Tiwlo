@@ -2,6 +2,8 @@ import React from 'react';
 import {
   AlertCircle,
   Archive,
+  ArrowLeft,
+  BadgeCheck,
   Camera,
   Inbox,
   Loader2,
@@ -90,12 +92,30 @@ function emailName(value = '') {
 }
 
 function providerInfo(address = '') {
-  const domain = emailAddress(address).split('@')[1] || '';
+  const clean = emailAddress(address);
+  const domain = clean.split('@')[1] || '';
+  if (/^(sms:|tel:|\+?\d[\d\s().-]{6,})/i.test(clean || address)) return { label: 'S', name: 'SMS', className: 'bg-[#e8f5e9] text-[#137333] border-[#b7dfb9]' };
   if (domain.includes('gmail')) return { label: 'G', name: 'Gmail', className: 'bg-white text-[#ea4335] border-[#dadce0]' };
   if (domain.includes('outlook') || domain.includes('hotmail') || domain.includes('live.com')) return { label: 'O', name: 'Outlook', className: 'bg-[#0078d4] text-white border-[#0078d4]' };
   if (domain.includes('yahoo')) return { label: 'Y', name: 'Yahoo', className: 'bg-[#6001d2] text-white border-[#6001d2]' };
+  if (domain.includes('icloud') || domain.includes('me.com')) return { label: 'i', name: 'iCloud', className: 'bg-[#f5f7fb] text-[#111827] border-[#d1d5db]' };
+  if (domain.includes('proton')) return { label: 'P', name: 'Proton', className: 'bg-[#6d4aff] text-white border-[#6d4aff]' };
+  if (domain.includes('zoho')) return { label: 'Z', name: 'Zoho', className: 'bg-[#fff7ed] text-[#c2410c] border-[#fed7aa]' };
   if (domain.includes('tiwlo')) return { label: 'T', name: 'TMail', className: 'bg-[#0069ff] text-white border-[#0069ff]' };
   return { label: (emailName(address).charAt(0) || 'M').toUpperCase(), name: domain || 'Mail', className: 'bg-[#eef2ff] text-[#334155] border-[#dbe3f0]' };
+}
+
+function messagePreview(body = '') {
+  return (looksLikeHtml(body) ? body.replace(/<[^>]+>/g, ' ') : body).replace(/\s+/g, ' ').trim();
+}
+
+function senderTrust(value = '') {
+  const clean = emailAddress(value);
+  const domain = clean.split('@')[1] || '';
+  const trusted = /(^|\.)((gmail|googlemail|outlook|hotmail|live|yahoo|icloud|me|proton|zoho|tiwlo)\.)/i.test(domain) || /^(sms:|tel:|\+?\d[\d\s().-]{6,})/i.test(clean || value);
+  return trusted
+    ? { label: 'Real', className: 'border-[#b7dfb9] bg-[#e8f5e9] text-[#137333]' }
+    : { label: 'Unreal', className: 'border-[#f5c2c7] bg-[#fef2f2] text-[#b42318]' };
 }
 
 function sanitizeHtml(value = '') {
@@ -351,6 +371,19 @@ export default function EmailPortal() {
       return [message.from, message.to, message.subject, message.body].join(' ').toLowerCase().includes(q);
     });
 
+  if (token && loading && !account) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-white px-6 text-[#202124]">
+        <div className="flex w-full max-w-sm flex-col items-center border border-[#E5E7EB] bg-white p-8 text-center">
+          <TmailLogo className="h-12 w-36" />
+          <Loader2 className="mt-8 h-6 w-6 animate-spin text-[#1a73e8]" />
+          <p className="mt-4 text-sm font-black">Opening your inbox</p>
+          <p className="mt-1 text-xs font-semibold text-[#6B7280]">Checking mailbox, profile, and latest messages.</p>
+        </div>
+      </div>
+    );
+  }
+
   if (!token || !account) {
     return (
       <AuthShell>
@@ -409,15 +442,15 @@ export default function EmailPortal() {
 
   return (
     <div className="min-h-screen bg-[#f6f8fc] text-[#202124]">
-      <header className="flex h-16 items-center gap-3 border-b border-[#E5E7EB] bg-white px-4 md:px-6">
-        <TmailLogo className="h-10 w-28" />
-        <div className="relative max-w-3xl flex-1">
-          <Search className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[#5f6368]" />
-          <input value={search} onChange={(event) => setSearch(event.target.value)} className="h-11 w-full rounded-full border border-transparent bg-[#edf2fa] px-11 text-sm outline-none focus:border-[#c7d2e5] focus:bg-white" placeholder="Search mail" />
+      <header className="sticky top-0 z-40 flex min-h-14 flex-wrap items-center gap-2 border-b border-[#E5E7EB] bg-white px-3 py-2 md:h-16 md:flex-nowrap md:px-6 md:py-0">
+        <TmailLogo className="h-8 w-24 md:h-10 md:w-28" />
+        <div className="relative order-last w-full md:order-none md:max-w-xl md:flex-1">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#5f6368]" />
+          <input value={search} onChange={(event) => setSearch(event.target.value)} className="h-9 w-full rounded-md border border-transparent bg-[#edf2fa] px-10 text-sm outline-none focus:border-[#c7d2e5] focus:bg-white md:h-10" placeholder="Search mail" />
         </div>
-        <button onClick={() => loadMailbox(token)} className="rounded-full p-2 text-[#5f6368] hover:bg-[#F3F5F9]" title="Refresh"><RefreshCw className="h-4 w-4" /></button>
-        <button onClick={() => setSettingsOpen(true)} className="rounded-full p-2 text-[#5f6368] hover:bg-[#F3F5F9]" title="Settings"><Settings className="h-4 w-4" /></button>
-        <button onClick={logout} className="rounded-full p-2 text-[#5f6368] hover:bg-[#F3F5F9]" title="Sign out"><LogOut className="h-4 w-4" /></button>
+        <button onClick={() => loadMailbox(token)} className="rounded-md p-2 text-[#5f6368] hover:bg-[#F3F5F9]" title="Refresh"><RefreshCw className="h-4 w-4" /></button>
+        <button onClick={() => setSettingsOpen(true)} className="rounded-md p-2 text-[#5f6368] hover:bg-[#F3F5F9]" title="Settings"><Settings className="h-4 w-4" /></button>
+        <button onClick={logout} className="rounded-md p-2 text-[#5f6368] hover:bg-[#F3F5F9]" title="Sign out"><LogOut className="h-4 w-4" /></button>
         <button onClick={() => setSettingsOpen(true)} className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-full border border-[#DDE3EA] bg-[#e8f0fe] text-sm font-black text-[#1967d2]">
           {avatarForAccount(account)}
         </button>
@@ -446,7 +479,7 @@ export default function EmailPortal() {
         </aside>
 
         <main className="grid flex-1 grid-cols-1 overflow-hidden lg:grid-cols-[minmax(320px,430px)_1fr]">
-          <section className="border-r border-[#E5E7EB] bg-white">
+          <section className={`${selected ? 'hidden lg:block' : 'block'} border-r border-[#E5E7EB] bg-white`}>
             <div className="flex items-center justify-between border-b border-[#E5E7EB] px-4 py-3">
               <div>
                 <p className="text-sm font-black capitalize">{folder}</p>
@@ -466,8 +499,11 @@ export default function EmailPortal() {
                         <p className={`truncate text-sm ${message.read ? 'font-semibold text-[#3c4043]' : 'font-black text-[#202124]'}`}>{emailName(message.folder === 'sent' ? message.to : message.from)}</p>
                         <span className="shrink-0 text-[10px] font-bold text-[#5f6368]">{dateLabel(message.date)}</span>
                       </div>
-                      <p className={`mt-1 truncate text-[13px] ${message.read ? 'text-[#3c4043]' : 'font-bold text-[#202124]'}`}>{message.subject}</p>
-                      <p className="mt-1 truncate text-[12px] text-[#5f6368]">{looksLikeHtml(message.body) ? message.body.replace(/<[^>]+>/g, ' ') : message.body}</p>
+                      <div className="mt-1 flex items-center gap-2">
+                        <p className={`min-w-0 flex-1 truncate text-[13px] ${message.read ? 'text-[#3c4043]' : 'font-bold text-[#202124]'}`}>{message.subject}</p>
+                        <span className={`shrink-0 rounded-sm border px-1.5 py-0.5 text-[10px] font-black ${senderTrust(message.folder === 'sent' ? message.to : message.from).className}`}>{senderTrust(message.folder === 'sent' ? message.to : message.from).label}</span>
+                      </div>
+                      <p className="mt-1 truncate text-[12px] text-[#5f6368]">{providerInfo(message.folder === 'sent' ? message.to : message.from).name} · {messagePreview(message.body)}</p>
                     </div>
                   </button>
                 ))}
@@ -476,14 +512,22 @@ export default function EmailPortal() {
             )}
           </section>
 
-          <section className="relative bg-[#F9FAFB]">
+          <section className={`${selected ? 'block' : 'hidden lg:block'} relative bg-[#F9FAFB]`}>
             {error && <div className="m-4 flex items-start gap-2 rounded border border-red-100 bg-red-50 px-3 py-2 text-[12px] font-bold text-red-600"><AlertCircle className="mt-0.5 h-4 w-4" /> {error}</div>}
             {notice && <div className="m-4 flex items-start gap-2 rounded border border-emerald-100 bg-emerald-50 px-3 py-2 text-[12px] font-bold text-emerald-700"><ShieldCheck className="mt-0.5 h-4 w-4" /> {notice}</div>}
             {selected ? (
               <article className="mx-auto max-w-5xl p-4 md:p-8">
+                <button onClick={() => setSelectedId('')} className="mb-3 inline-flex items-center gap-2 rounded-md border border-[#DDE3EA] bg-white px-3 py-2 text-xs font-black text-[#3c4043] lg:hidden">
+                  <ArrowLeft className="h-4 w-4" /> Inbox
+                </button>
                 <div className="rounded-sm border border-[#E5E7EB] bg-white">
                   <div className="border-b border-[#EEF2F7] p-5">
-                    <h2 className="text-2xl font-normal text-[#202124]">{selected.subject}</h2>
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <h2 className="text-xl font-normal text-[#202124] md:text-2xl">{selected.subject}</h2>
+                      <span className={`inline-flex items-center gap-1 rounded-sm border px-2 py-1 text-[11px] font-black ${senderTrust(selected.from).className}`}>
+                        <BadgeCheck className="h-3.5 w-3.5" /> {senderTrust(selected.from).label}
+                      </span>
+                    </div>
                     <div className="mt-5 flex flex-wrap items-center justify-between gap-3 text-sm">
                       <div className="flex min-w-0 items-center gap-3">
                         <SenderAvatar value={selected.from} />

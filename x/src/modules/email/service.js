@@ -3,7 +3,7 @@ import { createHash, randomInt, randomUUID } from 'node:crypto';
 import { execFile, spawn } from 'node:child_process';
 import { access, readdir, readFile, stat } from 'node:fs/promises';
 import { AppError } from '../../core/errors.js';
-import { paragraph, sendTiwloEmail, emailServerAdvice, systemEmailConfig } from '../../core/email.js';
+import { appOrigin, paragraph, sendTiwloEmail, emailServerAdvice, systemEmailConfig } from '../../core/email.js';
 import { defaultNameserversFor, getPowerDnsConfig, serverIpFor, syncPowerDnsDomain } from '../powerdns/service.js';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret';
@@ -364,6 +364,12 @@ function senderDisplayName(record) {
   return String(record?.data?.displayName || record?.data?.username || recordAddress(record)).trim();
 }
 
+function mailboxAvatarUrl(record) {
+  const address = recordAddress(record);
+  if (!address || !record?.data?.profileImageUrl) return '';
+  return `${appOrigin().replace(/\/+$/, '')}/mail/avatar/${encodeURIComponent(address)}`;
+}
+
 function mailboxToken(record) {
   return jwt.sign({ kind: 'mailbox', mailboxId: record.id, address: recordAddress(record) }, JWT_SECRET, { expiresIn: '7d' });
 }
@@ -590,6 +596,11 @@ export const sendMailboxMessage = async (ctx, input) => {
     title: subject,
     preview: body.slice(0, 160),
     text: body,
+    headers: {
+      'X-Tiwlo-Sender': account.address,
+      'X-Tiwlo-Sender-Name': senderDisplayName(record),
+      ...(mailboxAvatarUrl(record) ? { 'X-Tiwlo-Sender-Avatar': mailboxAvatarUrl(record), 'X-Avatar-URL': mailboxAvatarUrl(record) } : {})
+    },
     html: body.split(/\r?\n/).map((line) => `<p style="margin:0 0 12px;">${line.replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[char]))}</p>`).join('')
   });
 

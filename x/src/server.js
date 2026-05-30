@@ -55,6 +55,41 @@ app.get('/health', (_req, res) => {
   res.json({ ok: true, service: 'tiwlo-x-backend' });
 });
 
+const mailboxAddress = (value = '') => String(value || '').trim().toLowerCase();
+
+const mailboxInitialSvg = (address = '') => {
+  const initial = (address.split('@')[0] || 'T').charAt(0).toUpperCase().replace(/[<>&"']/g, '');
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160" viewBox="0 0 160 160"><rect width="160" height="160" fill="#e8f0fe"/><text x="80" y="96" text-anchor="middle" font-family="Arial, sans-serif" font-size="72" font-weight="700" fill="#1967d2">${initial}</text></svg>`;
+};
+
+app.get('/mail/avatar/:address', async (req, res) => {
+  res.setHeader('Cache-Control', 'public, max-age=300');
+  try {
+    const address = mailboxAddress(decodeURIComponent(req.params.address || ''));
+    const setting = await prisma.systemSetting.findUnique({
+      where: { scope_scopeId_key: { scope: 'admin', scopeId: 'main-admin', key: 'mainAdmin:emailaccounts' } }
+    });
+    const records = Array.isArray(setting?.value?.records) ? setting.value.records : [];
+    const record = records.find((item) => mailboxAddress(item?.data?.address || item?.title) === address);
+    const image = String(record?.data?.profileImageUrl || '').trim();
+    if (/^https?:\/\//i.test(image)) {
+      res.redirect(302, image);
+      return;
+    }
+    const dataMatch = image.match(/^data:(image\/(?:png|jpe?g|webp|gif|svg\+xml));base64,(.+)$/i);
+    if (dataMatch) {
+      res.type(dataMatch[1]);
+      res.send(Buffer.from(dataMatch[2], 'base64'));
+      return;
+    }
+    res.type('image/svg+xml').send(mailboxInitialSvg(address));
+    return;
+  } catch (error) {
+    console.warn('[email] avatar lookup failed:', error?.message || error);
+  }
+  res.type('image/svg+xml').send(mailboxInitialSvg('tmail'));
+});
+
 const readAutomationToken = (req) => {
   const auth = req.headers.authorization || '';
   if (auth.startsWith('Bearer ')) return auth.slice(7);
