@@ -109,6 +109,26 @@ export async function fetchUsersForAdmin(search?: string) {
         credits
         createdAt
         updatedAt
+        securitySummary
+        deviceSessions {
+          id
+          fingerprintHint
+          deviceName
+          browser
+          os
+          ipAddress
+          ipPrefix
+          country
+          region
+          city
+          firstSeenAt
+          lastSeenAt
+          loginCount
+          lastEvent
+          unusual
+          unusualReasons
+          metadata
+        }
       }
     }`,
     { search }
@@ -129,6 +149,26 @@ export async function updateUserWithApi(input: Record<string, unknown>) {
         credits
         createdAt
         updatedAt
+        securitySummary
+        deviceSessions {
+          id
+          fingerprintHint
+          deviceName
+          browser
+          os
+          ipAddress
+          ipPrefix
+          country
+          region
+          city
+          firstSeenAt
+          lastSeenAt
+          loginCount
+          lastEvent
+          unusual
+          unusualReasons
+          metadata
+        }
       }
     }`,
     { input }

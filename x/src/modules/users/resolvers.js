@@ -1,7 +1,23 @@
 import { requireAdmin } from '../../core/auth.js';
 import * as service from './service.js';
+import { ensureDeviceSessionTable, securitySummaryForUser } from '../auth/deviceSecurity.js';
 
 export const userResolvers = {
+  User: {
+    deviceSessions: async (parent, _, ctx) => {
+      await requireAdmin(ctx);
+      await ensureDeviceSessionTable(ctx.prisma);
+      return ctx.prisma.userDeviceSession.findMany({
+        where: { userId: parent.id },
+        orderBy: { lastSeenAt: 'desc' },
+        take: 20
+      });
+    },
+    securitySummary: async (parent, _, ctx) => {
+      await requireAdmin(ctx);
+      return securitySummaryForUser(ctx.prisma, parent.id);
+    }
+  },
   Query: {
     users: async (_, args, ctx) => {
       await requireAdmin(ctx);

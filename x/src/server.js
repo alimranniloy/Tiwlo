@@ -286,7 +286,8 @@ app.use('/graphql', expressMiddleware(server, {
       user,
       storeCustomer,
       requestIp: requestIp(req),
-      userAgent: req.headers['user-agent'] || ''
+      userAgent: req.headers['user-agent'] || '',
+      requestHeaders: req.headers || {}
     };
   }
 }));

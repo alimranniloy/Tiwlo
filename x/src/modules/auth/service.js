@@ -7,6 +7,7 @@ import { writeAudit } from '../../core/audit.js';
 import { getNewAccountCredit } from '../../core/settings.js';
 import { isProfileInputComplete, profileCompletionData } from '../../core/profile.js';
 import { appOrigin, cta, paragraph, sendTiwloEmail } from '../../core/email.js';
+import { recordAuthDeviceSession } from './deviceSecurity.js';
 
 function randomToken() {
   return crypto.randomBytes(32).toString('hex');
@@ -84,15 +85,18 @@ export const login = async (ctx, input) => {
   const validPassword = await bcrypt.compare(input.password, user.passwordHash);
   if (!validPassword) throw new AppError('Invalid credentials', 'UNAUTHENTICATED');
 
-  await writeAudit({ ...ctx, user }, 'login', 'user', user.id, { email });
+  const device = await recordAuthDeviceSession(ctx, user, input, 'login');
+  await writeAudit({ ...ctx, user }, 'login', 'user', user.id, { email, device: device.session, unusual: device.unusual, reasons: device.reasons });
   queueAuthEmail(ctx, {
     to: user.email,
-    subject: 'New login to your Tiwlo account',
-    title: 'New login detected',
+    subject: device.unusual ? 'Unusual login to your Tiwlo account' : 'New login to your Tiwlo account',
+    title: device.unusual ? 'Unusual login detected' : 'New login detected',
     preview: 'Your Tiwlo account was just accessed.',
     html: [
       paragraph(`Hi ${user.name || 'there'},`),
       paragraph(`Your Tiwlo account was signed in on ${new Date().toLocaleString('en-US', { timeZone: 'UTC' })} UTC.`),
+      paragraph(`Device: ${device.session.deviceName || 'Unknown device'}. Location: ${[device.session.city, device.session.region, device.session.country].filter(Boolean).join(', ') || device.session.ipAddress || 'Unknown'}.`),
+      ...(device.unusual ? [paragraph(`Security note: ${device.reasons.join(', ').replace(/_/g, ' ')}.`)] : []),
       paragraph('If this was not you, reset your password immediately from the login page.')
     ].join('')
   });
@@ -129,7 +133,8 @@ export const signup = async (ctx, input) => {
     }
   });
 
-  await writeAudit({ ...ctx, user }, 'signup', 'user', user.id, { email });
+  const device = await recordAuthDeviceSession(ctx, user, input, 'signup');
+  await writeAudit({ ...ctx, user }, 'signup', 'user', user.id, { email, device: device.session });
   queueVerificationEmail(ctx, user, verificationToken);
   return { token: createToken(user), user: toApi(user) };
 };

@@ -53,6 +53,37 @@ model User {
   tiwloPayLinks            TiwloPayLink[]
   tiwloPayTransactions     TiwloPayTransaction[]
   tiwloPayWithdrawals      TiwloPayWithdrawal[]
+  deviceSessions           UserDeviceSession[]
+}
+
+model UserDeviceSession {
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fingerprintHash String
+  fingerprintHint String?
+  deviceName      String?
+  browser         String?
+  os              String?
+  userAgent       String?
+  ipAddress       String?
+  ipPrefix        String?
+  country         String?
+  region          String?
+  city            String?
+  firstSeenAt     DateTime @default(now())
+  lastSeenAt      DateTime @default(now())
+  loginCount      Int      @default(1)
+  lastEvent       String   @default("login")
+  unusual         Boolean  @default(false)
+  unusualReasons  Json?
+  metadata        Json?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([userId, fingerprintHash])
+  @@index([userId, lastSeenAt])
+  @@index([unusual, lastSeenAt])
 }
 
 model Role {

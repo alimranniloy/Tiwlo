@@ -21,6 +21,33 @@ type User {
   emailVerifiedAt: String
   createdAt: String
   updatedAt: String
+  securitySummary: JSON
+  deviceSessions: [UserDeviceSession!]!
+}
+
+type UserDeviceSession {
+  id: ID!
+  userId: String!
+  fingerprintHash: String!
+  fingerprintHint: String
+  deviceName: String
+  browser: String
+  os: String
+  userAgent: String
+  ipAddress: String
+  ipPrefix: String
+  country: String
+  region: String
+  city: String
+  firstSeenAt: String
+  lastSeenAt: String
+  loginCount: Int!
+  lastEvent: String!
+  unusual: Boolean!
+  unusualReasons: JSON
+  metadata: JSON
+  createdAt: String
+  updatedAt: String
 }
 
 type Role {
@@ -1478,6 +1505,8 @@ type AiModelChatResponse {
 input LoginInput {
   email: String!
   password: String!
+  deviceFingerprint: String
+  deviceMetadata: JSON
 }
 
 input MailboxLoginInput {
@@ -1526,6 +1555,8 @@ input SignupInput {
   name: String!
   email: String!
   password: String!
+  deviceFingerprint: String
+  deviceMetadata: JSON
   phone: String
   mobileCountryCode: String
   country: String

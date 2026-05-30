@@ -4,10 +4,15 @@ import {
   Building2,
   Download,
   Edit3,
+  Eye,
+  Fingerprint,
   Mail,
+  MapPin,
+  Monitor,
   RefreshCw,
   Save,
   Search,
+  ShieldAlert,
   Trash2,
   X
 } from 'lucide-react';
@@ -30,6 +35,12 @@ const formatDate = (value?: string) => {
   if (!value) return '-';
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? '-' : date.toLocaleDateString([], { month: 'short', day: '2-digit', year: 'numeric' });
+};
+
+const formatDateTime = (value?: string) => {
+  if (!value) return '-';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? '-' : date.toLocaleString([], { month: 'short', day: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 };
 
 const planFromRole = (role: string) => {
@@ -62,6 +73,7 @@ export default function UserManagement() {
   const [error, setError] = useState('');
   const [editing, setEditing] = useState<any | null>(null);
   const [editingCustomer, setEditingCustomer] = useState<any | null>(null);
+  const [detailsUser, setDetailsUser] = useState<any | null>(null);
   const { confirmDelete, confirmEdit } = useActionConfirmation();
 
   const mappedUsers = useMemo(() => users.map((item) => ({
@@ -313,6 +325,9 @@ export default function UserManagement() {
     { key: 'isp', label: 'ISP Users', detail: 'Subscriber clients' }
   ] as const;
 
+  const administratorCount = mappedUsers.filter((user) => ['admin', 'super_admin'].includes(String(user.role))).length;
+  const unusualUsers = mappedUsers.filter((user) => Number(user.securitySummary?.unusualCount || 0) > 0).length;
+
   return (
     <div className="space-y-6 pb-12">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -496,6 +511,18 @@ export default function UserManagement() {
 
       {directoryTab === 'platform' && (
       <div className="bg-white border border-[#e5e8ed] rounded-lg overflow-hidden shadow-sm">
+        <div className="grid gap-3 border-b border-[#f3f5f9] bg-white p-4 sm:grid-cols-3">
+          {[
+            ['Administrators', administratorCount],
+            ['Tracked devices', mappedUsers.reduce((sum, user) => sum + Number(user.securitySummary?.deviceCount || 0), 0)],
+            ['Unusual activity', unusualUsers]
+          ].map(([label, value]) => (
+            <div key={label} className="rounded-sm border border-[#e5e8ed] bg-[#f8f9fa] px-4 py-3">
+              <p className="text-[10px] font-black uppercase tracking-widest text-gray-400">{label}</p>
+              <p className="mt-1 text-xl font-black text-[#2e3d49]">{value}</p>
+            </div>
+          ))}
+        </div>
         <div className="p-4 border-b border-[#f3f5f9] flex flex-col md:flex-row md:items-center gap-4 bg-[#f8f9fa]">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
@@ -518,6 +545,7 @@ export default function UserManagement() {
                 <th className="px-6 py-4 text-[11px] font-bold text-[#4a4a4a] uppercase tracking-wider">Status</th>
                 <th className="px-6 py-4 text-[11px] font-bold text-[#4a4a4a] uppercase tracking-wider">Plan Type</th>
                 <th className="px-6 py-4 text-[11px] font-bold text-[#4a4a4a] uppercase tracking-wider">Registration</th>
+                <th className="px-6 py-4 text-[11px] font-bold text-[#4a4a4a] uppercase tracking-wider">Device Security</th>
                 <th className="px-6 py-4 text-[11px] font-bold text-[#4a4a4a] uppercase tracking-wider">Credit Balance</th>
                 <th className="px-6 py-4 text-[11px] font-bold text-[#4a4a4a] uppercase tracking-wider text-right">Actions</th>
               </tr>
@@ -525,11 +553,11 @@ export default function UserManagement() {
             <tbody className="divide-y divide-[#e5e8ed]">
               {loading ? (
                 <tr>
-                  <td colSpan={6} className="px-6 py-12 text-center text-[13px] font-bold text-gray-400">Loading users from API...</td>
+                  <td colSpan={7} className="px-6 py-12 text-center text-[13px] font-bold text-gray-400">Loading users from API...</td>
                 </tr>
               ) : mappedUsers.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-6 py-12 text-center text-[13px] font-bold text-gray-400">No users found in the database.</td>
+                  <td colSpan={7} className="px-6 py-12 text-center text-[13px] font-bold text-gray-400">No users found in the database.</td>
                 </tr>
               ) : mappedUsers.map((u) => (
                 <tr key={u.id} className="hover:bg-[#f3f5f9] transition-colors group">
@@ -561,10 +589,24 @@ export default function UserManagement() {
                     <p className="text-[13px] text-[#2e3d49] font-medium">{u.joined}</p>
                   </td>
                   <td className="px-6 py-4">
+                    <button onClick={() => setDetailsUser(u)} className="rounded-sm border border-[#e5e8ed] bg-white px-3 py-2 text-left transition-colors hover:border-[#0069ff] hover:bg-blue-50">
+                      <p className="flex items-center gap-1.5 text-[11px] font-black uppercase tracking-wider text-[#2e3d49]">
+                        <Monitor className="h-3.5 w-3.5 text-[#0069ff]" />
+                        {Number(u.securitySummary?.deviceCount || 0)} devices
+                      </p>
+                      <p className={`mt-1 text-[10px] font-bold ${Number(u.securitySummary?.unusualCount || 0) > 0 ? 'text-red-600' : 'text-gray-400'}`}>
+                        {Number(u.securitySummary?.unusualCount || 0)} unusual events
+                      </p>
+                    </button>
+                  </td>
+                  <td className="px-6 py-4">
                     <p className="text-[13px] font-bold text-[#2e3d49]">{u.spend}</p>
                   </td>
                   <td className="px-6 py-4">
                     <div className="flex items-center justify-end gap-2">
+                      <button onClick={() => setDetailsUser(u)} className="p-2 hover:bg-slate-50 rounded transition-colors text-gray-400 hover:text-[#2e3d49]" title="View security details">
+                        <Eye className="h-4 w-4" />
+                      </button>
                       <button onClick={() => openUserEdit(u)} className="p-2 hover:bg-blue-50 rounded transition-colors text-gray-400 hover:text-[#0069ff]" title="Edit user">
                         <Edit3 className="h-4 w-4" />
                       </button>
@@ -583,6 +625,92 @@ export default function UserManagement() {
           <p className="text-[12px] text-gray-500">Showing <span className="font-bold">{mappedUsers.length}</span> database users</p>
         </div>
       </div>
+      )}
+
+      {detailsUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
+          <div className="max-h-[92vh] w-full max-w-4xl overflow-y-auto rounded-sm border border-[#e5e8ed] bg-white">
+            <div className="flex items-start justify-between border-b border-[#f3f5f9] bg-[#f8f9fa] px-6 py-4">
+              <div>
+                <h2 className="text-[16px] font-black text-[#2e3d49]">User Security Details</h2>
+                <p className="mt-1 text-[12px] text-gray-500">{detailsUser.name} / {detailsUser.email}</p>
+              </div>
+              <button onClick={() => setDetailsUser(null)} className="p-2 text-gray-400 hover:text-gray-700">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="grid gap-4 p-6 md:grid-cols-3">
+              {[
+                ['First device login', detailsUser.securitySummary?.firstDevice?.deviceName || 'No device yet', formatDateTime(detailsUser.securitySummary?.firstDevice?.firstSeenAt)],
+                ['Last device login', detailsUser.securitySummary?.lastDevice?.deviceName || 'No device yet', formatDateTime(detailsUser.securitySummary?.lastDevice?.lastSeenAt)],
+                ['Last location', detailsUser.securitySummary?.lastLocation || 'Unknown', `${detailsUser.securitySummary?.deviceCount || 0} tracked devices`]
+              ].map(([label, value, detail]) => (
+                <div key={label} className="rounded-sm border border-[#e5e8ed] bg-white p-4">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-gray-400">{label}</p>
+                  <p className="mt-2 text-sm font-black text-[#2e3d49]">{value}</p>
+                  <p className="mt-1 text-[11px] font-medium text-gray-500">{detail}</p>
+                </div>
+              ))}
+            </div>
+
+            <div className="px-6 pb-6">
+              <div className="rounded-sm border border-[#e5e8ed]">
+                <div className="flex items-center justify-between border-b border-[#f3f5f9] bg-[#f8f9fa] px-4 py-3">
+                  <h3 className="flex items-center gap-2 text-[12px] font-black uppercase tracking-wider text-[#2e3d49]">
+                    <Fingerprint className="h-4 w-4 text-[#0069ff]" />
+                    Device fingerprint history
+                  </h3>
+                  {Number(detailsUser.securitySummary?.unusualCount || 0) > 0 && (
+                    <span className="inline-flex items-center gap-1 rounded-sm border border-red-100 bg-red-50 px-2 py-1 text-[10px] font-black uppercase text-red-600">
+                      <ShieldAlert className="h-3 w-3" />
+                      {detailsUser.securitySummary.unusualCount} unusual
+                    </span>
+                  )}
+                </div>
+                <div className="divide-y divide-[#f3f5f9]">
+                  {(detailsUser.deviceSessions || []).length === 0 ? (
+                    <div className="p-8 text-center text-[13px] font-bold text-gray-400">No device login history recorded yet.</div>
+                  ) : detailsUser.deviceSessions.map((session: any) => (
+                    <div key={session.id} className="grid gap-4 p-4 lg:grid-cols-[1.2fr_1fr_1fr_auto] lg:items-center">
+                      <div className="flex items-start gap-3">
+                        <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-sm border ${session.unusual ? 'border-red-100 bg-red-50 text-red-600' : 'border-blue-100 bg-blue-50 text-[#0069ff]'}`}>
+                          <Monitor className="h-4 w-4" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="truncate text-[13px] font-black text-[#2e3d49]">{session.deviceName || 'Unknown device'}</p>
+                          <p className="mt-1 font-mono text-[10px] text-gray-400">fp:{session.fingerprintHint || String(session.fingerprintHash || '').slice(0, 12)}</p>
+                          <p className="mt-1 text-[11px] text-gray-500">{session.browser || 'Unknown browser'} / {session.os || 'Unknown OS'}</p>
+                        </div>
+                      </div>
+                      <div>
+                        <p className="flex items-center gap-1.5 text-[11px] font-black uppercase tracking-wider text-gray-400"><MapPin className="h-3.5 w-3.5" /> Location</p>
+                        <p className="mt-1 text-[12px] font-bold text-[#2e3d49]">{[session.city, session.region, session.country].filter(Boolean).join(', ') || 'Unknown'}</p>
+                        <p className="mt-1 font-mono text-[10px] text-gray-400">{session.ipAddress || 'No IP'}</p>
+                      </div>
+                      <div>
+                        <p className="text-[11px] font-black uppercase tracking-wider text-gray-400">Activity</p>
+                        <p className="mt-1 text-[12px] font-bold text-[#2e3d49]">First: {formatDateTime(session.firstSeenAt)}</p>
+                        <p className="mt-1 text-[12px] font-bold text-[#2e3d49]">Last: {formatDateTime(session.lastSeenAt)}</p>
+                        <p className="mt-1 text-[10px] text-gray-400">{session.loginCount} logins / {session.lastEvent}</p>
+                      </div>
+                      <div className="lg:text-right">
+                        <span className={`inline-flex rounded-sm border px-2.5 py-1 text-[10px] font-black uppercase ${session.unusual ? 'border-red-100 bg-red-50 text-red-600' : 'border-emerald-100 bg-emerald-50 text-emerald-700'}`}>
+                          {session.unusual ? 'Unusual' : 'Trusted'}
+                        </span>
+                        {session.unusual && (
+                          <p className="mt-2 max-w-[180px] text-[10px] font-bold uppercase tracking-wide text-red-500 lg:ml-auto">
+                            {(session.unusualReasons || []).join(', ').replace(/_/g, ' ')}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {editing && (

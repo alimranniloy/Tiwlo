@@ -1,7 +1,32 @@
 import { User } from '../../types';
 import { graphQL, setAuthToken, userFields } from './client';
 
+function deviceMetadata() {
+  if (typeof window === 'undefined' || typeof navigator === 'undefined') {
+    return { deviceFingerprint: 'server', deviceMetadata: {} };
+  }
+  const screenText = typeof window.screen !== 'undefined'
+    ? `${window.screen.width}x${window.screen.height}x${window.screen.colorDepth}`
+    : '';
+  const metadata = {
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || '',
+    language: navigator.language || '',
+    platform: navigator.platform || '',
+    screen: screenText,
+    userAgent: navigator.userAgent || ''
+  };
+  const deviceFingerprint = [
+    metadata.userAgent,
+    metadata.language,
+    metadata.platform,
+    metadata.timezone,
+    metadata.screen
+  ].join('|');
+  return { deviceFingerprint, deviceMetadata: metadata };
+}
+
 export async function loginWithApi(email: string, password: string) {
+  const device = deviceMetadata();
   const data = await graphQL<{ login: { token: string; user: User } }>(
     `mutation Login($input: LoginInput!) {
       login(input: $input) {
@@ -9,7 +34,7 @@ export async function loginWithApi(email: string, password: string) {
         user { ${userFields} }
       }
     }`,
-    { input: { email, password } }
+    { input: { email, password, ...device } }
   );
 
   setAuthToken(data.login.token);
@@ -29,6 +54,7 @@ export async function signupWithApi(input: {
   postalCode?: string;
   billingName?: string;
 }) {
+  const device = deviceMetadata();
   const data = await graphQL<{ signup: { token: string; user: User } }>(
     `mutation Signup($input: SignupInput!) {
       signup(input: $input) {
@@ -36,7 +62,7 @@ export async function signupWithApi(input: {
         user { ${userFields} }
       }
     }`,
-    { input }
+    { input: { ...input, ...device } }
   );
 
   setAuthToken(data.signup.token);
