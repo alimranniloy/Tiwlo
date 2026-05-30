@@ -135,7 +135,7 @@ export default function Dashboard({ user, droplets, domains }: DashboardProps) {
           <h1 className="text-xl font-bold tracking-tight text-[#2e3d49] md:text-2xl">
             Welcome, <span className="text-[#0069ff]">{user.name.split(' ')[0]}</span>
           </h1>
-          <p className="mt-1 text-[13px] text-[#4a4a4a]">Your dashboard is populated from live API data.</p>
+          <p className="mt-1 text-[13px] text-[#4a4a4a]">Monitor services, billing, support, and recent account activity.</p>
         </div>
         <div className="flex items-center gap-2">
           <Link to="/documentation" className="rounded border border-[#e5e8ed] bg-[#f8f9fa] px-4 py-2 text-center text-[13px] font-bold text-[#4a4a4a] transition-all hover:bg-white">
@@ -169,8 +169,8 @@ export default function Dashboard({ user, droplets, domains }: DashboardProps) {
         <div className="border-b border-[#deecf9] bg-[#f3f9fd] px-4 py-3 md:px-5">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div>
-              <p className="text-[11px] font-black uppercase tracking-widest text-[#0078d4]">Azure-style operations overview</p>
-              <h2 className="mt-1 text-lg font-bold text-[#1f1f1f] md:text-xl">Dashboard</h2>
+              <p className="text-[11px] font-black uppercase tracking-widest text-[#0078d4]">Live account overview</p>
+              <h2 className="mt-1 text-lg font-bold text-[#1f1f1f] md:text-xl">Operations summary</h2>
             </div>
             <div className="grid grid-cols-2 gap-2 text-[12px] sm:grid-cols-4">
               {[
@@ -188,22 +188,24 @@ export default function Dashboard({ user, droplets, domains }: DashboardProps) {
           </div>
         </div>
         <div className="grid grid-cols-1 gap-4 p-4 md:grid-cols-[260px_1fr] md:p-5">
-          <div className="flex items-center gap-5 border border-[#edebe9] p-4">
+          <div className="border border-[#edebe9] p-4">
             <div
-              className="grid h-28 w-28 shrink-0 place-items-center rounded-full"
+              className="mx-auto grid h-28 w-28 place-items-center rounded-full"
               style={{ background: `conic-gradient(#0078d4 ${creditRatio}%, #e1dfdd ${creditRatio}% 100%)` }}
             >
               <div className="grid h-20 w-20 place-items-center rounded-full bg-white text-center">
                 <span className="text-xl font-black text-[#1f1f1f]">{creditRatio}%</span>
               </div>
             </div>
-            <div>
-              <p className="text-[11px] font-black uppercase tracking-widest text-[#605e5c]">Credit health</p>
-              <p className="mt-1 text-sm font-bold text-[#323130]">{creditEmpty ? 'Needs top-up' : 'Ready to deploy'}</p>
-              <Link to="/billing" className="mt-3 inline-flex border border-[#0078d4] px-3 py-1.5 text-[12px] font-bold text-[#0078d4] hover:bg-[#eff6fc]">
-                Manage billing
-              </Link>
+            <div className="mt-4 text-center">
+              <p className="text-[11px] font-black uppercase tracking-widest text-[#605e5c]">Available credit</p>
+              <p className="mt-1 text-sm font-bold leading-5 text-[#323130]">
+                {creditEmpty ? 'Add credit to resume orders and services.' : `${money(creditBalance)} available for new orders.`}
+              </p>
             </div>
+            <Link to="/billing" className="mt-4 flex w-full items-center justify-center border border-[#0078d4] px-3 py-2 text-[12px] font-bold text-[#0078d4] hover:bg-[#eff6fc]">
+              Manage billing
+            </Link>
           </div>
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
             <div className="border border-[#edebe9] p-4">

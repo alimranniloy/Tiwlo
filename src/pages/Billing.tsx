@@ -1,8 +1,7 @@
 import React from 'react';
-import { AlertCircle, CheckCircle2, CreditCard, History, Plus, Shield } from 'lucide-react';
+import { AlertCircle, CheckCircle2, History, Plus, Shield } from 'lucide-react';
 import {
   fetchBillingOverviewWithApi,
-  fetchAvailablePaymentGatewaysWithApi,
   notifyDataRefresh,
   settleUsageBillingWithApi,
   startCreditTopUpWithApi
@@ -21,7 +20,6 @@ function dateLabel(value?: string) {
 
 export default function BillingPage() {
   const [invoices, setInvoices] = React.useState<any[]>([]);
-  const [gateways, setGateways] = React.useState<any[]>([]);
   const [overview, setOverview] = React.useState<any | null>(null);
   const [topUpAmount, setTopUpAmount] = React.useState('10');
   const [topUpCurrency, setTopUpCurrency] = React.useState('USD');
@@ -33,20 +31,16 @@ export default function BillingPage() {
   const loadBilling = React.useCallback(() => {
     setLoading(true);
     setError('');
-    Promise.all([
-      settleUsageBillingWithApi().catch(() => fetchBillingOverviewWithApi()),
-      fetchAvailablePaymentGatewaysWithApi()
-    ])
-      .then(([nextOverview, nextGateways]) => {
+    settleUsageBillingWithApi()
+      .catch(() => fetchBillingOverviewWithApi())
+      .then((nextOverview) => {
         setOverview(nextOverview);
         setInvoices(nextOverview?.invoices || []);
-        setGateways(nextGateways);
         notifyDataRefresh();
       })
       .catch((err) => {
         setOverview(null);
         setInvoices([]);
-        setGateways([]);
         setError(err instanceof Error ? err.message : 'Unable to load billing data');
       })
       .finally(() => setLoading(false));
@@ -79,27 +73,26 @@ export default function BillingPage() {
   const creditBalance = Number(overview?.credits || 0);
   const dueNow = Math.max(outstanding, Number(overview?.dueAmount || 0));
   const creditHealth = Math.min(100, Math.max(0, Math.round((creditBalance / Math.max(creditBalance + dueNow, 1)) * 100)));
-  const activeGateways = gateways.filter((gateway) => ['active', 'enabled'].includes(String(gateway.status || '').toLowerCase())).length;
   const billingTiles = [
     { label: 'Current balance', value: money(creditBalance), tone: creditBalance <= 0 ? 'text-[#a4262c]' : 'text-[#107c10]' },
     { label: 'Outstanding', value: money(outstanding), tone: outstanding > 0 ? 'text-[#a4262c]' : 'text-[#107c10]' },
     { label: 'Hourly usage', value: money(overview?.hourlySpend || 0), tone: 'text-[#0078d4]' },
-    { label: 'Gateways', value: `${activeGateways}/${gateways.length}`, tone: 'text-[#323130]' }
+    { label: 'Invoices', value: invoices.length, tone: 'text-[#323130]' }
   ];
 
   return (
     <div className="space-y-6 pb-12">
       <div className="border-b border-[#edebe9] pb-4">
-        <p className="text-[11px] font-black uppercase tracking-widest text-[#0078d4]">Microsoft Azure style billing</p>
-        <h1 className="mt-1 text-2xl font-bold tracking-tight text-[#1f1f1f]">Cost Management + Billing</h1>
-        <p className="mt-1 text-sm text-[#605e5c]">Credits, invoices, payment methods, and hourly usage from the billing API.</p>
+        <p className="text-[11px] font-black uppercase tracking-widest text-[#0078d4]">Account billing</p>
+        <h1 className="mt-1 text-2xl font-bold tracking-tight text-[#1f1f1f]">Billing overview</h1>
+        <p className="mt-1 text-sm text-[#605e5c]">Manage credits, active usage, and invoices for your Tiwlo services.</p>
       </div>
 
       <div className="flex flex-wrap items-center gap-2 border border-[#edebe9] bg-white p-2">
-        {['Overview', 'Invoices', 'Payment methods', 'Usage analysis'].map((item, index) => (
+        {['Overview', 'Add credit', 'Usage', 'Invoices'].map((item, index) => (
           <a
             key={item}
-            href={index === 1 ? '#invoices' : index === 2 ? '#gateways' : index === 3 ? '#usage' : '#add-credit'}
+            href={index === 1 ? '#add-credit' : index === 2 ? '#usage' : index === 3 ? '#invoices' : '#overview'}
             className={`border px-3 py-2 text-[12px] font-bold ${
               index === 0 ? 'border-[#0078d4] bg-[#eff6fc] text-[#0078d4]' : 'border-transparent text-[#323130] hover:border-[#c8c6c4] hover:bg-[#f3f2f1]'
             }`}
@@ -134,7 +127,7 @@ export default function BillingPage() {
         ))}
       </div>
 
-      <section className="grid grid-cols-1 gap-4 border border-[#c7e0f4] bg-[#f3f9fd] p-4 lg:grid-cols-[260px_1fr]">
+      <section id="overview" className="grid grid-cols-1 gap-4 border border-[#c7e0f4] bg-[#f3f9fd] p-4 lg:grid-cols-[260px_1fr]">
         <div className="flex items-center gap-4 border border-[#deecf9] bg-white p-4">
           <div
             className="grid h-24 w-24 shrink-0 place-items-center rounded-full"
@@ -145,7 +138,7 @@ export default function BillingPage() {
             </div>
           </div>
           <div>
-            <p className="text-[10px] font-black uppercase tracking-widest text-[#605e5c]">Billing health</p>
+            <p className="text-[10px] font-black uppercase tracking-widest text-[#605e5c]">Credit status</p>
             <p className="mt-1 text-sm font-bold text-[#323130]">{creditBalance <= 0 ? 'Credit required' : 'Account funded'}</p>
           </div>
         </div>
@@ -165,43 +158,35 @@ export default function BillingPage() {
 
       <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
         <div className="space-y-8 md:col-span-2">
-          <section className="rounded-sm border border-[#E5E7EB] bg-white p-5 md:p-8">
-            <div className="mb-8 flex items-center justify-between">
-              <div>
-                <p className="mb-1 text-xs font-bold uppercase tracking-widest text-[#6B7280]">Outstanding Balance</p>
-                <p className="text-4xl font-bold text-[#111827]">{loading ? '...' : money(outstanding)}</p>
+          <section id="add-credit" className="grid grid-cols-1 gap-6 rounded-sm border border-[#E5E7EB] bg-white p-5 lg:grid-cols-[1fr_1.1fr] md:p-6">
+            <div className="border-b border-[#edebe9] pb-5 lg:border-b-0 lg:border-r lg:pb-0 lg:pr-6">
+              <p className="text-[11px] font-black uppercase tracking-widest text-[#605e5c]">Balance due</p>
+              <p className="mt-2 text-4xl font-black tracking-tight text-[#1f1f1f]">{loading ? '...' : money(outstanding)}</p>
+              <div className="mt-5 grid grid-cols-2 gap-3">
+                <div className="border border-[#edebe9] p-3">
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-[#605e5c]">Available credit</p>
+                  <p className="mt-1 text-base font-black text-[#107c10]">{loading ? '...' : money(creditBalance)}</p>
+                </div>
+                <div className="border border-[#edebe9] p-3">
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-[#605e5c]">Paid invoices</p>
+                  <p className="mt-1 text-base font-black text-[#323130]">{loading ? '...' : money(paid)}</p>
+                </div>
               </div>
-              <div className="text-right">
-                <p className="mb-1 text-xs font-bold uppercase tracking-widest text-[#6B7280]">Credit Balance</p>
-                <p className="text-xl font-bold text-[#111827]">{loading ? '...' : money(creditBalance)}</p>
-              </div>
+              <p className="mt-4 text-[12px] leading-5 text-[#605e5c]">
+                Credit is used for cloud, hosting, ecommerce, ISP, and hourly resource billing.
+              </p>
             </div>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-              <div className="rounded-sm border border-gray-100 bg-gray-50 p-4">
-                <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Invoices</p>
-                <p className="mt-2 text-xl font-bold">{invoices.length}</p>
-              </div>
-              <div className="rounded-sm border border-gray-100 bg-gray-50 p-4">
-                <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Paid</p>
-                <p className="mt-2 text-xl font-bold text-green-600">{money(paid)}</p>
-              </div>
-              <div className="rounded-sm border border-gray-100 bg-gray-50 p-4">
-                <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Hourly Usage</p>
-                <p className="mt-2 text-xl font-bold">{money(overview?.hourlySpend || 0)}</p>
-              </div>
-            </div>
-          </section>
 
-          <section id="add-credit" className="rounded-sm border border-[#E5E7EB] bg-white p-5 md:p-6">
-            <div className="mb-5 flex items-center justify-between">
-              <div>
-                <h2 className="text-sm font-bold uppercase tracking-wide text-[#111827]">Add Credit</h2>
-                <p className="mt-1 text-xs text-[#6B7280]">Top up balance with bKash, Stripe, or PayPal. Non-USD amounts convert into USD credit.</p>
+            <div>
+              <div className="mb-5 flex items-center justify-between">
+                <div>
+                  <h2 className="text-sm font-bold uppercase tracking-wide text-[#111827]">Add Credit</h2>
+                  <p className="mt-1 text-xs text-[#6B7280]">Choose currency, amount, and checkout provider.</p>
+                </div>
+                <Plus className="h-4 w-4 text-blue-600" />
               </div>
-              <Plus className="h-4 w-4 text-blue-600" />
-            </div>
-            <div className="grid grid-cols-1 gap-4">
-              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <div className="grid grid-cols-1 gap-4">
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 {[
                   { key: 'USD', title: 'USD Credit', detail: 'Add exact cloud credit balance' },
                   { key: 'BDT', title: 'BDT Payment', detail: 'Pay local amount, convert to credit' }
@@ -220,9 +205,9 @@ export default function BillingPage() {
                     <span className="mt-1 block text-[12px] font-medium text-[#6B7280]">{option.detail}</span>
                   </button>
                 ))}
+                </div>
               </div>
-            </div>
-            <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-[1fr_1fr_auto]">
+              <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-[1fr_1fr_auto]">
               <input
                 value={topUpAmount}
                 onChange={(event) => setTopUpAmount(event.target.value)}
@@ -244,30 +229,7 @@ export default function BillingPage() {
               <button onClick={addCredit} disabled={processing} className="rounded-sm bg-[#0078d4] px-5 py-2 text-sm font-bold text-white hover:bg-[#106ebe] disabled:opacity-60">
                 {processing ? 'Starting...' : 'Top Up'}
               </button>
-            </div>
-          </section>
-
-          <section id="gateways" className="overflow-hidden rounded-sm border border-[#E5E7EB] bg-white">
-            <div className="flex items-center justify-between border-b border-[#E5E7EB] bg-[#F9FAFB] p-5">
-              <h2 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-[#111827]">
-                <CreditCard className="h-4 w-4" /> Payment Gateways
-              </h2>
-              <span className="text-[11px] font-bold uppercase tracking-widest text-[#6B7280]">User checkout only</span>
-            </div>
-            <div className="divide-y divide-[#E5E7EB] p-6">
-              {loading && <div className="py-8 text-center text-sm font-bold text-gray-400">Loading gateways from API...</div>}
-              {!loading && gateways.length === 0 && <div className="py-8 text-center text-sm font-bold text-gray-400">No payment gateways configured.</div>}
-              {!loading && gateways.map((gateway) => (
-                <div key={gateway.id} className="flex items-center justify-between py-4 first:pt-0 last:pb-0">
-                  <div>
-                    <p className="text-sm font-bold text-[#111827]">{gateway.name}</p>
-                    <p className="text-xs text-[#6B7280]">{gateway.provider} / {gateway.mode}</p>
-                  </div>
-                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${gateway.status === 'active' || gateway.status === 'enabled' ? 'bg-green-50 text-green-600' : 'bg-gray-100 text-gray-500'}`}>
-                    {gateway.status}
-                  </span>
-                </div>
-              ))}
+              </div>
             </div>
           </section>
 
@@ -302,7 +264,7 @@ export default function BillingPage() {
               </h2>
             </div>
             <div className="divide-y divide-[#E5E7EB]">
-              {loading && <div className="p-8 text-center text-sm font-bold text-gray-400">Loading invoices from API...</div>}
+              {loading && <div className="p-8 text-center text-sm font-bold text-gray-400">Loading invoices...</div>}
               {!loading && invoices.length === 0 && <div className="p-8 text-center text-sm font-bold text-gray-400">No invoices found.</div>}
               {!loading && invoices.slice(0, 5).map((invoice) => (
                 <div key={invoice.id} className="flex items-center justify-between p-5 transition-colors hover:bg-gray-50">
