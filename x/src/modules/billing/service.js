@@ -321,6 +321,77 @@ const createOrUpdatePayment = async (tx, { invoice, provider, reference, status,
   });
 };
 
+export const requireProvisioningCredit = async (ctx, ownerId, amount, message) => {
+  const charge = roundMoney(amount);
+  if (charge <= 0) return true;
+  const owner = await ctx.prisma.user.findUnique({ where: { id: ownerId } });
+  if (Number(owner?.credits || 0) < charge) {
+    throw new AppError(message || `Insufficient credit balance. Add at least ${moneyLabel(charge)} before provisioning.`, 'BAD_USER_INPUT');
+  }
+  return true;
+};
+
+export const chargeProvisioningCredit = async (ctx, {
+  ownerId,
+  amount,
+  scope,
+  scopeId,
+  label,
+  monthlyCost = 0,
+  hourlyRate,
+  metadata = {}
+}) => {
+  const charge = roundMoney(amount);
+  if (charge <= 0) return null;
+  await requireProvisioningCredit(ctx, ownerId, charge);
+  const paidAt = new Date();
+  const rate = roundMoney(hourlyRate || hourlyRateFor(monthlyCost));
+  const invoice = await ctx.prisma.$transaction(async (tx) => {
+    await tx.user.update({ where: { id: ownerId }, data: { credits: { decrement: charge } } });
+    const createdInvoice = await tx.invoice.create({
+      data: {
+        ownerId,
+        number: invoiceNumber('PRV'),
+        amount: charge,
+        currency: CREDIT_CURRENCY,
+        status: 'paid',
+        scope,
+        scopeId,
+        paidAt,
+        items: {
+          lineItems: [{
+            label,
+            amount: charge,
+            monthlyCost: roundMoney(monthlyCost),
+            hourlyRate: rate
+          }],
+          billing: {
+            type: 'provisioning_first_hour',
+            monthlyCost: roundMoney(monthlyCost),
+            hourlyRate: rate,
+            initialCharge: charge,
+            chargedAt: paidAt.toISOString()
+          },
+          ...metadata
+        }
+      }
+    });
+    await tx.payment.create({
+      data: {
+        invoiceId: createdInvoice.id,
+        amount: charge,
+        provider: 'credits',
+        reference: `provision_${paidAt.getTime()}`,
+        status: 'succeeded'
+      }
+    });
+    return createdInvoice;
+  });
+  await runCreditAutomationForOwner(ctx, ownerId);
+  await writeAudit(ctx, 'charge_provisioning_credit', scope || 'billing', scopeId || invoice.id, { amount: charge, ownerId });
+  return toApi(invoice);
+};
+
 const tiwloPayFeeFor = (link) => {
   const settings = link.profile?.settings || {};
   const feePercent = Number(settings.feePercent ?? 2.9);

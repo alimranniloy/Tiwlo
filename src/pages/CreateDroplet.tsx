@@ -1,66 +1,75 @@
 import React, { useState } from 'react';
-import { 
-  Server, 
-  Globe, 
-  Key, 
-  Lock, 
-  Settings, 
-  ChevronRight, 
-  Plus, 
-  Cpu, 
-  HardDrive, 
-  Shield, 
-  Zap,
+import {
   ArrowLeft,
-  CreditCard
+  ChevronRight,
+  Lock,
+  User,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { createCloudResourceOrderWithApi, fetchBillingOverviewWithApi, notifyDataRefresh } from '../lib/tiwloApi';
+import {
+  createCloudResourceOrderWithApi,
+  fetchBillingOverviewWithApi,
+  fetchPlansWithApi,
+  notifyDataRefresh
+} from '../lib/tiwloApi';
 import { OrderCompleteSummary, TowerOrderLoader, type OrderSummary } from '../components/SetupLoader';
 
 const DISTRIBUTIONS = [
-  { id: 'ubuntu', name: 'Ubuntu', version: '22.04 LTS x64', color: 'bg-orange-500' },
-  { id: 'fedora', name: 'Fedora', version: '39 x64', color: 'bg-blue-600' },
-  { id: 'debian', name: 'Debian', version: '12 x64', color: 'bg-red-600' },
-  { id: 'centos', name: 'CentOS', version: '7.9 x64', color: 'bg-indigo-600' },
-  { id: 'rocky', name: 'Rocky Linux', version: '9.3 x64', color: 'bg-green-600' },
+  { id: 'ubuntu-22-04', name: 'Ubuntu', version: '22.04 LTS x64', color: 'bg-orange-500' },
+  { id: 'ubuntu-24-04', name: 'Ubuntu', version: '24.04 LTS x64', color: 'bg-orange-600' },
+  { id: 'debian-12', name: 'Debian', version: '12 x64', color: 'bg-red-600' },
+  { id: 'rocky-9', name: 'Rocky Linux', version: '9 x64', color: 'bg-green-600' }
 ];
 
 const REGIONS = [
-  { id: 'nyc', name: 'New York', datacenter: 'NYC3', flag: '🇺🇸' },
-  { id: 'sfo', name: 'San Francisco', datacenter: 'SFO3', flag: '🇺🇸' },
-  { id: 'fra', name: 'Frankfurt', datacenter: 'FRA1', flag: '🇩🇪' },
-  { id: 'lon', name: 'London', datacenter: 'LON1', flag: '🇬🇧' },
-  { id: 'sgp', name: 'Singapore', datacenter: 'SGP1', flag: '🇸🇬' },
-  { id: 'blr', name: 'Bangalore', datacenter: 'BLR1', flag: '🇮🇳' },
+  { id: 'nyc3', name: 'New York', datacenter: 'NYC3', country: 'US' },
+  { id: 'sfo3', name: 'San Francisco', datacenter: 'SFO3', country: 'US' },
+  { id: 'fra1', name: 'Frankfurt', datacenter: 'FRA1', country: 'DE' },
+  { id: 'lon1', name: 'London', datacenter: 'LON1', country: 'UK' },
+  { id: 'sgp1', name: 'Singapore', datacenter: 'SGP1', country: 'SG' }
 ];
 
-const PLANS = [
-  { id: 'basic', name: 'Basic', price: 6, ram: '1 GB', cpu: '1 vCPU', ssd: '25 GB' },
-  { id: 'standard', name: 'Standard', price: 12, ram: '2 GB', cpu: '1 vCPU', ssd: '50 GB' },
-  { id: 'pro', name: 'Pro', price: 24, ram: '4 GB', cpu: '2 vCPU', ssd: '80 GB' },
-  { id: 'ultra', name: 'Ultra', price: 48, ram: '8 GB', cpu: '4 vCPU', ssd: '160 GB' },
-];
+type CloudPlan = {
+  id: string;
+  code: string;
+  name: string;
+  price: number;
+  interval?: string;
+  features?: unknown;
+  limits?: Record<string, unknown> | null;
+};
 
-const PAYMENT_METHODS = [
-  { id: 'credit', label: 'Credit balance' },
-  { id: 'bkash', label: 'bKash' },
-  { id: 'stripe', label: 'Stripe' },
-  { id: 'paypal', label: 'PayPal' }
-];
+const fallbackLimits = {
+  cpu: '1 vCPU',
+  ram: '1 GB',
+  disk: '25 GB'
+};
 
 function hourlyPrice(monthly: number) {
   return Math.max(Math.round((monthly / 730) * 100) / 100, 0.01);
 }
 
+function limitValue(plan: CloudPlan | null, key: string, fallback: string) {
+  const value = plan?.limits?.[key];
+  return value === undefined || value === null || value === '' ? fallback : String(value);
+}
+
+function featureList(plan: CloudPlan) {
+  if (Array.isArray(plan.features)) return plan.features.map(String).filter(Boolean);
+  if (typeof plan.features === 'string') return plan.features.split('\n').map((item) => item.trim()).filter(Boolean);
+  return [];
+}
+
 export default function CreateDroplet() {
   const navigate = useNavigate();
-  const [selectedDist, setSelectedDist] = useState('ubuntu');
-  const [selectedRegion, setSelectedRegion] = useState('nyc');
-  const [selectedPlan, setSelectedPlan] = useState('basic');
-  const [authMethod, setAuthMethod] = useState('password');
-  const [hostname, setHostname] = useState('ubuntu-s-1vcpu-1gb-nyc3-01');
-  const [paymentProvider, setPaymentProvider] = useState('credit');
+  const [selectedDist, setSelectedDist] = useState(DISTRIBUTIONS[0].id);
+  const [selectedRegion, setSelectedRegion] = useState(REGIONS[0].id);
+  const [selectedPlan, setSelectedPlan] = useState('');
+  const [hostname, setHostname] = useState('ubuntu-nyc3-01');
+  const [username, setUsername] = useState('root');
+  const [password, setPassword] = useState('');
+  const [plans, setPlans] = useState<CloudPlan[]>([]);
+  const [plansLoading, setPlansLoading] = useState(true);
   const [billingOverview, setBillingOverview] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [orderPhase, setOrderPhase] = useState<'form' | 'loading' | 'complete'>('form');
@@ -71,58 +80,91 @@ export default function CreateDroplet() {
     fetchBillingOverviewWithApi()
       .then(setBillingOverview)
       .catch(() => setBillingOverview(null));
+
+    fetchPlansWithApi('cloud')
+      .then((records) => {
+        const activePlans = (records || []).filter((plan: CloudPlan) => Number(plan.price || 0) > 0);
+        setPlans(activePlans);
+        setSelectedPlan(activePlans[0]?.code || '');
+      })
+      .catch((err) => {
+        setError(err instanceof Error ? err.message : 'Unable to load cloud plans.');
+        setPlans([]);
+      })
+      .finally(() => setPlansLoading(false));
   }, []);
 
+  const selectedPlanRecord = plans.find((plan) => plan.code === selectedPlan) || plans[0] || null;
+  const selectedHourly = hourlyPrice(Number(selectedPlanRecord?.price || 0));
+  const creditBalance = Number(billingOverview?.credits || 0);
+  const creditEmpty = Boolean(billingOverview) && creditBalance <= 0;
+
   const handleCreate = async () => {
-    if (billingOverview && Number(billingOverview.credits || 0) <= 0) {
-      setError('Add credit now before placing a droplet order.');
+    if (!selectedPlanRecord) {
+      setError('No active cloud package is configured. Ask administrator to add a cloud plan first.');
+      return;
+    }
+    if (!hostname.trim()) {
+      setError('Hostname is required before creating a droplet.');
+      return;
+    }
+    if (!username.trim()) {
+      setError('Username is required before creating a droplet.');
+      return;
+    }
+    if (password.length < 8) {
+      setError('Password must be at least 8 characters before creating a droplet.');
+      return;
+    }
+    if (creditEmpty || creditBalance < selectedHourly) {
+      setError(`Add credit now. This package needs at least USD ${selectedHourly.toFixed(2)} for the first hour.`);
       return;
     }
 
     setIsLoading(true);
     setError('');
 
-    const plan = PLANS.find(p => p.id === selectedPlan)!;
-    const region = REGIONS.find(r => r.id === selectedRegion)!;
-    const distribution = DISTRIBUTIONS.find(d => d.id === selectedDist)!;
-    const hourly = hourlyPrice(plan.price);
+    const region = REGIONS.find((item) => item.id === selectedRegion) || REGIONS[0];
+    const distribution = DISTRIBUTIONS.find((item) => item.id === selectedDist) || DISTRIBUTIONS[0];
+    const cpu = limitValue(selectedPlanRecord, 'cpu', fallbackLimits.cpu);
+    const ram = limitValue(selectedPlanRecord, 'ram', fallbackLimits.ram);
+    const disk = limitValue(selectedPlanRecord, 'disk', fallbackLimits.disk);
 
     try {
       const checkout = await createCloudResourceOrderWithApi({
-        provider: paymentProvider,
+        provider: 'credit',
         currency: 'USD',
-        initialCharge: hourly,
-        hourlyRate: hourly,
+        initialCharge: selectedHourly,
+        hourlyRate: selectedHourly,
         resource: {
           type: 'droplet',
-          name: hostname,
+          name: hostname.trim(),
           region: `${region.name} ${region.datacenter}`,
-          specs: `${plan.ram} / ${plan.cpu} / ${plan.ssd} Disk`,
+          specs: `${ram} / ${cpu} / ${disk} Disk`,
           image: `${distribution.name} ${distribution.version}`,
-          plan: selectedPlan,
-          cpu: plan.cpu,
-          ram: plan.ram,
-          disk: plan.ssd,
-          monthlyCost: plan.price,
+          plan: selectedPlanRecord.code,
+          cpu,
+          ram,
+          disk,
+          monthlyCost: Number(selectedPlanRecord.price || 0),
           metadata: {
-            authMethod,
+            auth: {
+              method: 'password',
+              username: username.trim(),
+              passwordConfigured: true
+            },
             billing: {
-              hourlyRate: hourly,
-              initialCharge: hourly,
-              monthlyCost: plan.price
+              hourlyRate: selectedHourly,
+              initialCharge: selectedHourly,
+              monthlyCost: Number(selectedPlanRecord.price || 0)
             }
           }
         }
       });
 
-      if (checkout.paymentUrl) {
-        window.location.href = checkout.paymentUrl;
-        return;
-      }
-
       if (checkout.status === 'requires_payment') {
         setBillingOverview((current: any) => ({ ...(current || {}), credits: checkout.creditBalance }));
-        setError(checkout.message || 'Add credit or pay the generated invoice before this droplet can be deployed.');
+        setError(checkout.message || 'Add credit before this droplet can be deployed.');
         setIsLoading(false);
         return;
       }
@@ -131,10 +173,10 @@ export default function CreateDroplet() {
       setOrderSummary({
         title: 'Droplet order completed',
         invoiceNumber: checkout.invoice?.number,
-        packageName: plan.name,
+        packageName: selectedPlanRecord.name,
         serverIp: checkout.resource?.ip || 'Provisioning',
-        hourlyRate: hourly,
-        monthlyCost: plan.price,
+        hourlyRate: selectedHourly,
+        monthlyCost: Number(selectedPlanRecord.price || 0),
         status: checkout.status === 'paid' ? 'Provisioning queued' : checkout.status
       });
       setOrderPhase('loading');
@@ -143,23 +185,17 @@ export default function CreateDroplet() {
         setOrderPhase('complete');
       }, 10000);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to create checkout. Check your credit balance or configured payment gateway.');
+      setError(err instanceof Error ? err.message : 'Unable to create droplet. Check your credit balance and try again.');
       setIsLoading(false);
-      return;
     }
   };
-
-  const selectedPlanRecord = PLANS.find(p => p.id === selectedPlan)!;
-  const selectedHourly = hourlyPrice(selectedPlanRecord.price);
-  const creditBalance = Number(billingOverview?.credits || 0);
-  const creditEmpty = Boolean(billingOverview) && creditBalance <= 0;
 
   if (isLoading || orderPhase === 'loading') {
     return (
       <TowerOrderLoader
         messages={[
           'Setting up your droplet',
-          'Checking billing and credit',
+          'Checking credit balance',
           'Preparing the selected image',
           'Reserving compute capacity',
           'Creating invoice details',
@@ -174,31 +210,31 @@ export default function CreateDroplet() {
   }
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6 pb-20">
-      <div className="flex items-center justify-between border-b border-[#e5e8ed] pb-5">
+    <div className="mx-auto max-w-5xl space-y-6 pb-20">
+      <div className="flex flex-col gap-4 border-b border-[#e5e8ed] pb-5 md:flex-row md:items-center md:justify-between">
         <div className="flex items-center gap-2">
-          <button 
+          <button
             onClick={() => navigate('/droplets')}
-            className="p-1.5 hover:bg-[#f3f5f9] rounded transition-colors border border-transparent hover:border-[#e5e8ed]"
+            className="rounded-sm border border-transparent p-1.5 transition-colors hover:border-[#e5e8ed] hover:bg-[#f3f5f9]"
             id="back-button"
           >
             <ArrowLeft className="h-4 w-4 text-[#4a4a4a]" />
           </button>
           <div>
-            <h1 className="text-xl font-bold tracking-tight text-[#2e3d49]">Create Droplets</h1>
-            <p className="text-[12px] text-[#4a4a4a]">A Droplet is a full server that you can control.</p>
+            <h1 className="text-xl font-bold tracking-tight text-[#2e3d49]">Create Droplet</h1>
+            <p className="text-[12px] text-[#4a4a4a]">Credit billed compute with package data from administrator plans.</p>
           </div>
         </div>
-        <div className="hidden md:flex items-center gap-4">
+        <div className="flex items-center justify-between gap-4 md:justify-end">
           <div className="text-right">
-            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider leading-none mb-1">Total Cost</p>
-            <p className="text-lg font-bold text-[#2e3d49] leading-none">${selectedHourly.toFixed(2)}/hr</p>
-            <p className="mt-1 text-[10px] font-bold uppercase text-gray-400">${selectedPlanRecord.price}.00/mo cap</p>
+            <p className="mb-1 text-[10px] font-bold uppercase leading-none tracking-wider text-gray-400">Credit billing</p>
+            <p className="text-lg font-bold leading-none text-[#2e3d49]">${selectedHourly.toFixed(2)}/hr</p>
+            <p className="mt-1 text-[10px] font-bold uppercase text-gray-400">${Number(selectedPlanRecord?.price || 0).toFixed(2)}/mo cap</p>
           </div>
-          <button 
+          <button
             onClick={handleCreate}
-            disabled={creditEmpty}
-            className="group bg-[#0069ff] text-white px-5 py-2 rounded font-bold text-[13px] hover:bg-[#0056cc] transition-all flex items-center gap-2 disabled:cursor-not-allowed disabled:bg-gray-300"
+            disabled={creditEmpty || plansLoading || !selectedPlanRecord}
+            className="group flex items-center gap-2 rounded-sm bg-[#0069ff] px-5 py-2 text-[13px] font-bold text-white transition-all hover:bg-[#0056cc] disabled:cursor-not-allowed disabled:bg-gray-300"
             id="create-droplet-top"
           >
             Create <ChevronRight className="h-4 w-4" />
@@ -207,258 +243,218 @@ export default function CreateDroplet() {
       </div>
 
       {error && (
-        <div className="rounded border border-red-100 bg-red-50 px-4 py-3 text-[13px] font-bold text-red-600">
+        <div className="rounded-sm border border-red-100 bg-red-50 px-4 py-3 text-[13px] font-bold text-red-600">
           {error}
         </div>
       )}
 
       {creditEmpty && (
-        <div className="flex flex-col gap-3 rounded border border-red-100 bg-red-50 px-4 py-3 text-red-700 md:flex-row md:items-center md:justify-between">
+        <div className="flex flex-col gap-3 rounded-sm border border-red-100 bg-red-50 px-4 py-3 text-red-700 md:flex-row md:items-center md:justify-between">
           <div>
             <p className="text-[13px] font-bold">Add Credit Now</p>
-            <p className="text-[12px]">You cannot order droplets with 0 credit. Existing servers remain off until credit is added.</p>
+            <p className="text-[12px]">Droplet deployment uses credit only. Add balance before ordering.</p>
           </div>
-          <button onClick={() => navigate('/billing')} className="rounded bg-red-600 px-4 py-2 text-[12px] font-bold text-white hover:bg-red-700">
+          <button onClick={() => navigate('/billing')} className="rounded-sm bg-red-600 px-4 py-2 text-[12px] font-bold text-white hover:bg-red-700">
             Add Credit
           </button>
         </div>
       )}
 
-      {/* 1. Choose an Image */}
       <section className="space-y-3">
-        <div className="flex items-center gap-2">
-           <div className="w-5 h-5 bg-[#2e3d49] rounded flex items-center justify-center text-white font-bold text-[10px]">1</div>
-           <h2 className="text-[13px] font-bold text-[#2e3d49] uppercase tracking-wide">Choose an image</h2>
-        </div>
-        
-        <div className="bg-white border border-[#e5e8ed] rounded-lg overflow-hidden">
-          <div className="flex border-b border-[#f3f5f9] bg-[#f8f9fa] no-scrollbar overflow-x-auto">
-            {['Distributions', 'Marketplace', 'Snapshots'].map((tab, i) => (
-              <button 
-                key={tab}
-                className={`px-6 py-3 text-[13px] font-bold transition-all border-b-2 ${
-                  i === 0 ? 'text-[#0069ff] border-[#0069ff] bg-white' : 'text-[#4a4a4a] border-transparent hover:text-[#0069ff]'
-                }`}
-              >
-                {tab}
-              </button>
-            ))}
-          </div>
-          <div className="p-6">
-            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-              {DISTRIBUTIONS.map((dist) => (
-                <button
-                  key={dist.id}
-                  onClick={() => setSelectedDist(dist.id)}
-                  className={`p-4 border rounded relative transition-all text-center ${
-                    selectedDist === dist.id 
-                      ? 'border-[#0069ff] bg-[#f3f5f9] ring-1 ring-[#0069ff]' 
-                      : 'border-[#e5e8ed] bg-white hover:border-[#0069ff]'
-                  }`}
-                  id={`dist-${dist.id}`}
-                >
-                  <div className={`w-10 h-10 ${dist.color} rounded-full mx-auto flex items-center justify-center text-white font-bold text-sm mb-2 shadow-sm`}>
-                    {dist.name.charAt(0)}
-                  </div>
-                  <p className="font-bold text-[13px] text-[#2e3d49]">{dist.name}</p>
-                  <p className="text-[11px] text-gray-500 mt-0.5">{dist.version}</p>
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* 2. Choose a Plan */}
-      <section className="space-y-3">
-        <div className="flex items-center gap-2">
-           <div className="w-5 h-5 bg-[#2e3d49] rounded flex items-center justify-center text-white font-bold text-[10px]">2</div>
-           <h2 className="text-[13px] font-bold text-[#2e3d49] uppercase tracking-wide">Choose a plan</h2>
-        </div>
-        <div className="bg-white border border-[#e5e8ed] rounded-lg overflow-hidden">
-          <div className="border-b border-[#f3f5f9] px-6 py-3 bg-[#f8f9fa] flex gap-8 no-scrollbar overflow-x-auto">
-            {['Basic', 'General Purpose', 'CPU-Optimized'].map((tab, i) => (
-              <button 
-                key={tab}
-                className={`text-[13px] font-bold pb-1 transition-all border-b-2 ${
-                  i === 0 ? 'text-[#0069ff] border-[#0069ff]' : 'text-[#4a4a4a] border-transparent hover:text-[#0069ff]'
-                }`}
-              >
-                {tab}
-              </button>
-            ))}
-          </div>
-          <div className="p-6">
-            <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
-              {PLANS.map((plan) => (
-                <button
-                  key={plan.id}
-                  onClick={() => setSelectedPlan(plan.id)}
-                  className={`p-5 border rounded transition-all text-left relative ${
-                    selectedPlan === plan.id 
-                      ? 'border-[#0069ff] bg-[#f3f5f9] ring-1 ring-[#0069ff]' 
-                      : 'border-[#e5e8ed] hover:border-[#0069ff]'
-                  }`}
-                  id={`plan-${plan.id}`}
-                >
-                  <p className="text-[11px] font-bold text-gray-400 px-1 py-0.5 border border-gray-100 rounded inline-block mb-3 uppercase">{plan.name}</p>
-                  <div className="flex items-baseline gap-1 mb-4">
-                    <span className="text-2xl font-bold text-[#2e3d49]">${plan.price}</span>
-                    <span className="text-[11px] font-medium text-gray-400 capitalize">/ mo</span>
-                  </div>
-                  <p className="mb-3 rounded bg-white px-2 py-1 text-[11px] font-bold text-[#0069ff]">
-                    ${hourlyPrice(plan.price).toFixed(2)} / hour
-                  </p>
-                  <div className="grid grid-cols-2 gap-y-2 text-[12px] font-medium text-gray-600">
-                    <span className="text-gray-400">RAM</span>
-                    <span className="text-right text-[#2e3d49] font-bold">{plan.ram}</span>
-                    <span className="text-gray-400">CPU</span>
-                    <span className="text-right text-[#2e3d49] font-bold">{plan.cpu}</span>
-                    <span className="text-gray-400">SSD</span>
-                    <span className="text-right text-[#2e3d49] font-bold">{plan.ssd}</span>
-                  </div>
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section className="space-y-3">
-        <div className="flex items-center gap-2">
-           <div className="w-5 h-5 bg-[#2e3d49] rounded flex items-center justify-center text-white font-bold text-[10px]">5</div>
-           <h2 className="text-[13px] font-bold text-[#2e3d49] uppercase tracking-wide">Payment method</h2>
-        </div>
-        <div className="bg-white border border-[#e5e8ed] rounded-lg p-6">
-          <div className="mb-4 flex flex-col gap-1 md:flex-row md:items-center md:justify-between">
-            <div>
-              <p className="text-[13px] font-bold text-[#2e3d49]">First hour charge: ${selectedHourly.toFixed(2)}</p>
-              <p className="text-[11px] text-gray-500">Monthly cap: ${selectedPlanRecord.price.toFixed(2)}. Usage continues to bill hourly from credit.</p>
-            </div>
-            <div className="rounded border border-[#e5e8ed] bg-[#f8f9fa] px-3 py-2 text-[12px] font-bold text-[#2e3d49]">
-              Credit: USD {creditBalance.toFixed(2)}
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-            {PAYMENT_METHODS.map((method) => (
+        <StepTitle number="1" title="Choose an image" />
+        <div className="overflow-hidden rounded-sm border border-[#e5e8ed] bg-white">
+          <div className="grid grid-cols-2 gap-3 p-5 sm:grid-cols-4">
+            {DISTRIBUTIONS.map((dist) => (
               <button
-                key={method.id}
-                onClick={() => setPaymentProvider(method.id)}
-                className={`flex items-center justify-center gap-2 rounded border px-4 py-3 text-[13px] font-bold transition-all ${
-                  paymentProvider === method.id ? 'border-[#0069ff] bg-[#f3f5f9] text-[#0069ff] ring-1 ring-[#0069ff]' : 'border-[#e5e8ed] text-[#4a4a4a] hover:border-[#0069ff]'
+                key={dist.id}
+                onClick={() => setSelectedDist(dist.id)}
+                className={`relative rounded-sm border p-4 text-center transition-all ${
+                  selectedDist === dist.id
+                    ? 'border-[#0069ff] bg-[#f3f7ff] ring-1 ring-[#0069ff]'
+                    : 'border-[#e5e8ed] bg-white hover:border-[#0069ff]'
                 }`}
+                id={`dist-${dist.id}`}
               >
-                <CreditCard className="h-4 w-4" />
-                {method.label}
+                <div className={`mx-auto mb-2 flex h-10 w-10 items-center justify-center rounded-sm ${dist.color} text-sm font-bold text-white`}>
+                  {dist.name.charAt(0)}
+                </div>
+                <p className="text-[13px] font-bold text-[#2e3d49]">{dist.name}</p>
+                <p className="mt-0.5 text-[11px] text-gray-500">{dist.version}</p>
               </button>
             ))}
           </div>
         </div>
       </section>
 
-      {/* 3. Choose a Datacenter Region */}
       <section className="space-y-3">
-        <div className="flex items-center gap-2">
-           <div className="w-5 h-5 bg-[#2e3d49] rounded flex items-center justify-center text-white font-bold text-[10px]">3</div>
-           <h2 className="text-[13px] font-bold text-[#2e3d49] uppercase tracking-wide">Choose a datacenter region</h2>
+        <StepTitle number="2" title="Choose package size" />
+        <div className="overflow-hidden rounded-sm border border-[#e5e8ed] bg-white">
+          <div className="border-b border-[#f3f5f9] bg-[#f8f9fa] px-5 py-3">
+            <p className="text-[12px] font-bold text-[#2e3d49]">Cloud plans from Hosting Account Module</p>
+          </div>
+          <div className="p-5">
+            {plansLoading ? (
+              <div className="rounded-sm border border-[#e5e8ed] bg-[#f8f9fa] px-4 py-5 text-[13px] font-bold text-[#4a4a4a]">
+                Loading active cloud packages...
+              </div>
+            ) : plans.length === 0 ? (
+              <div className="rounded-sm border border-amber-200 bg-amber-50 px-4 py-5 text-[13px] font-bold text-amber-700">
+                No active cloud package is configured. Add cloud plans from Administrator Plans first.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                {plans.map((plan) => {
+                  const features = featureList(plan);
+                  const ram = limitValue(plan, 'ram', fallbackLimits.ram);
+                  const cpu = limitValue(plan, 'cpu', fallbackLimits.cpu);
+                  const disk = limitValue(plan, 'disk', fallbackLimits.disk);
+                  return (
+                    <button
+                      key={plan.id || plan.code}
+                      onClick={() => setSelectedPlan(plan.code)}
+                      className={`relative rounded-sm border p-5 text-left transition-all ${
+                        selectedPlan === plan.code
+                          ? 'border-[#0069ff] bg-[#f3f7ff] ring-1 ring-[#0069ff]'
+                          : 'border-[#e5e8ed] hover:border-[#0069ff]'
+                      }`}
+                      id={`plan-${plan.code}`}
+                    >
+                      <p className="mb-3 inline-block rounded-sm border border-gray-100 px-1 py-0.5 text-[11px] font-bold uppercase text-gray-500">{plan.name}</p>
+                      <div className="mb-4 flex items-baseline gap-1">
+                        <span className="text-2xl font-bold text-[#2e3d49]">${Number(plan.price || 0).toFixed(2)}</span>
+                        <span className="text-[11px] font-medium capitalize text-gray-400">/ mo</span>
+                      </div>
+                      <p className="mb-3 rounded-sm bg-white px-2 py-1 text-[11px] font-bold text-[#0069ff]">
+                        ${hourlyPrice(Number(plan.price || 0)).toFixed(2)} / hour
+                      </p>
+                      <div className="grid grid-cols-2 gap-y-2 text-[12px] font-medium text-gray-600">
+                        <span className="text-gray-400">RAM</span>
+                        <span className="text-right font-bold text-[#2e3d49]">{ram}</span>
+                        <span className="text-gray-400">CPU</span>
+                        <span className="text-right font-bold text-[#2e3d49]">{cpu}</span>
+                        <span className="text-gray-400">Disk</span>
+                        <span className="text-right font-bold text-[#2e3d49]">{disk}</span>
+                      </div>
+                      {features.length > 0 && (
+                        <p className="mt-4 line-clamp-2 text-[11px] font-medium text-gray-500">{features.slice(0, 2).join(' / ')}</p>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </div>
-        <div className="bg-white border border-[#e5e8ed] rounded-lg p-6">
-          <div className="grid grid-cols-3 md:grid-cols-6 gap-3">
+      </section>
+
+      <section className="space-y-3">
+        <StepTitle number="3" title="Choose datacenter region" />
+        <div className="rounded-sm border border-[#e5e8ed] bg-white p-5">
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
             {REGIONS.map((region) => (
-                <button
+              <button
                 key={region.id}
                 onClick={() => setSelectedRegion(region.id)}
-                className={`p-4 border rounded flex flex-col items-center text-center transition-all ${
-                  selectedRegion === region.id 
-                    ? 'border-[#0069ff] bg-[#f3f5f9] ring-1 ring-[#0069ff]' 
+                className={`flex flex-col items-center rounded-sm border p-4 text-center transition-all ${
+                  selectedRegion === region.id
+                    ? 'border-[#0069ff] bg-[#f3f7ff] ring-1 ring-[#0069ff]'
                     : 'border-[#e5e8ed] bg-white hover:border-[#0069ff]'
                 }`}
                 id={`region-${region.id}`}
               >
-                <span className="text-2xl mb-2">{region.flag}</span>
-                <p className="font-bold text-[#2e3d49] text-[13px]">{region.name}</p>
-                <p className="text-[11px] text-gray-400 mt-0.5">{region.datacenter}</p>
+                <span className="mb-2 rounded-sm border border-[#e5e8ed] px-2 py-1 text-[11px] font-bold text-[#0069ff]">{region.country}</span>
+                <p className="text-[13px] font-bold text-[#2e3d49]">{region.name}</p>
+                <p className="mt-0.5 text-[11px] text-gray-400">{region.datacenter}</p>
               </button>
             ))}
           </div>
         </div>
       </section>
 
-      {/* 4. Authentication */}
       <section className="space-y-3">
-        <div className="flex items-center gap-2">
-           <div className="w-5 h-5 bg-[#2e3d49] rounded flex items-center justify-center text-white font-bold text-[10px]">4</div>
-           <h2 className="text-[13px] font-bold text-[#2e3d49] uppercase tracking-wide">Authentication</h2>
-        </div>
-        <div className="bg-white border border-[#e5e8ed] rounded-lg p-6 space-y-6">
-          <div className="flex gap-4">
-            <button
-              onClick={() => setAuthMethod('ssh')}
-              className={`flex-1 p-4 border rounded text-left transition-all flex items-center gap-4 ${
-                authMethod === 'ssh' ? 'border-[#0069ff] bg-[#f3f5f9] ring-1 ring-[#0069ff]' : 'border-[#e5e8ed]'
-              }`}
-            >
-              <Key className="h-5 w-5 text-[#0069ff]" />
-              <div>
-                <p className="text-[14px] font-bold text-[#2e3d49]">SSH Keys</p>
-                <p className="text-[11px] text-gray-500">More secure authentication</p>
-              </div>
-            </button>
-            <button
-              onClick={() => setAuthMethod('password')}
-              className={`flex-1 p-4 border rounded text-left transition-all flex items-center gap-4 ${
-                authMethod === 'password' ? 'border-[#0069ff] bg-[#f3f5f9] ring-1 ring-[#0069ff]' : 'border-[#e5e8ed]'
-              }`}
-            >
-              <Lock className="h-5 w-5 text-[#0069ff]" />
-              <div>
-                <p className="text-[14px] font-bold text-[#2e3d49]">Password</p>
-                <p className="text-[11px] text-gray-500">Easier authentication</p>
-              </div>
-            </button>
+        <StepTitle number="4" title="Authentication" />
+        <div className="space-y-5 rounded-sm border border-[#e5e8ed] bg-white p-5">
+          <div className="flex items-start gap-3 rounded-sm border border-[#d8e6ff] bg-[#f3f7ff] px-4 py-3">
+            <Lock className="mt-0.5 h-4 w-4 text-[#0069ff]" />
+            <div>
+              <p className="text-[13px] font-bold text-[#2e3d49]">Password login required</p>
+              <p className="text-[12px] text-[#4a4a4a]">WHM/tPanel managed installs do not need SSH key selection here. Username and password are required before deployment.</p>
+            </div>
           </div>
-          <div className="space-y-2">
-            <label className="block text-[12px] font-bold text-[#2e3d49]">Create root password</label>
-            <input 
-              type="password" 
-              placeholder="Enter your root password"
-              className="w-full bg-[#f8f9fa] border border-[#e5e8ed] rounded px-4 py-2.5 text-[14px] focus:outline-none focus:border-[#0069ff]"
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <label className="space-y-2">
+              <span className="block text-[12px] font-bold text-[#2e3d49]">Username</span>
+              <div className="flex items-center gap-2 rounded-sm border border-[#e5e8ed] bg-[#f8f9fa] px-3">
+                <User className="h-4 w-4 text-gray-400" />
+                <input
+                  value={username}
+                  onChange={(event) => setUsername(event.target.value)}
+                  placeholder="root"
+                  className="w-full bg-transparent py-2.5 text-[14px] outline-none"
+                />
+              </div>
+            </label>
+            <label className="space-y-2">
+              <span className="block text-[12px] font-bold text-[#2e3d49]">Password</span>
+              <input
+                type="password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                placeholder="Minimum 8 characters"
+                className="w-full rounded-sm border border-[#e5e8ed] bg-[#f8f9fa] px-4 py-2.5 text-[14px] outline-none focus:border-[#0069ff]"
+              />
+            </label>
+          </div>
+          <label className="space-y-2">
+            <span className="block text-[12px] font-bold text-[#2e3d49]">Hostname</span>
+            <input
+              value={hostname}
+              onChange={(event) => setHostname(event.target.value)}
+              className="w-full rounded-sm border border-[#e5e8ed] bg-[#f8f9fa] px-4 py-2.5 text-[14px] outline-none focus:border-[#0069ff]"
             />
-          </div>
+          </label>
         </div>
       </section>
 
-      {/* Recap & Launch */}
-      <section className="bg-[#031b4e] rounded-lg p-8 text-white flex flex-col md:flex-row items-center justify-between gap-8">
-        <div className="flex flex-wrap items-center gap-10">
-           <div>
-              <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-2">Image</p>
-              <p className="font-bold text-[15px]">{DISTRIBUTIONS.find(d => d.id === selectedDist)?.name} {DISTRIBUTIONS.find(d => d.id === selectedDist)?.version}</p>
-           </div>
-           <div>
-              <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-2">Configuration</p>
-              <p className="font-bold text-[15px]">{PLANS.find(p => p.id === selectedPlan)?.ram} / {PLANS.find(p => p.id === selectedPlan)?.cpu}</p>
-           </div>
-           <div>
-              <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-2">Region</p>
-              <p className="font-bold text-[15px]">{REGIONS.find(r => r.id === selectedRegion)?.name}</p>
-           </div>
+      <section className="flex flex-col gap-6 rounded-sm bg-[#031b4e] p-6 text-white md:flex-row md:items-center md:justify-between">
+        <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
+          <RecapItem label="Image" value={`${DISTRIBUTIONS.find((item) => item.id === selectedDist)?.name || ''} ${DISTRIBUTIONS.find((item) => item.id === selectedDist)?.version || ''}`} />
+          <RecapItem label="Package" value={selectedPlanRecord ? `${limitValue(selectedPlanRecord, 'ram', fallbackLimits.ram)} / ${limitValue(selectedPlanRecord, 'cpu', fallbackLimits.cpu)}` : 'No plan'} />
+          <RecapItem label="Region" value={REGIONS.find((item) => item.id === selectedRegion)?.name || ''} />
         </div>
-        <div className="flex items-center gap-6 w-full md:w-auto border-t md:border-t-0 border-white/10 pt-6 md:pt-0">
-           <div className="text-right">
-              <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-1">Total</p>
-              <p className="text-3xl font-bold text-white leading-none">${selectedHourly.toFixed(2)}</p>
-              <p className="mt-1 text-[11px] font-bold text-gray-400 uppercase tracking-wider">${selectedPlanRecord.price}.00/mo cap</p>
-           </div>
-           <button 
-              onClick={handleCreate}
-              disabled={creditEmpty}
-              className="flex-1 md:flex-none bg-[#0069ff] text-white px-10 py-3.5 rounded font-bold text-[15px] hover:bg-[#0056cc] transition-all flex items-center gap-2 disabled:cursor-not-allowed disabled:bg-gray-500"
-           >
-              Deploy Droplet
-           </button>
+        <div className="flex w-full items-center gap-5 border-t border-white/10 pt-5 md:w-auto md:border-t-0 md:pt-0">
+          <div className="text-right">
+            <p className="mb-1 text-[11px] font-bold uppercase tracking-wider text-gray-400">Credit charge</p>
+            <p className="text-3xl font-bold leading-none text-white">${selectedHourly.toFixed(2)}</p>
+            <p className="mt-1 text-[11px] font-bold uppercase tracking-wider text-gray-400">${Number(selectedPlanRecord?.price || 0).toFixed(2)}/mo cap</p>
+          </div>
+          <button
+            onClick={handleCreate}
+            disabled={creditEmpty || plansLoading || !selectedPlanRecord}
+            className="flex flex-1 items-center justify-center gap-2 rounded-sm bg-[#0069ff] px-8 py-3.5 text-[15px] font-bold text-white transition-all hover:bg-[#0056cc] disabled:cursor-not-allowed disabled:bg-gray-500 md:flex-none"
+          >
+            Deploy Droplet
+          </button>
         </div>
       </section>
+    </div>
+  );
+}
+
+function StepTitle({ number, title }: { number: string; title: string }) {
+  return (
+    <div className="flex items-center gap-2">
+      <div className="flex h-5 w-5 items-center justify-center rounded-sm bg-[#2e3d49] text-[10px] font-bold text-white">{number}</div>
+      <h2 className="text-[13px] font-bold uppercase tracking-wide text-[#2e3d49]">{title}</h2>
+    </div>
+  );
+}
+
+function RecapItem({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <p className="mb-2 text-[11px] font-bold uppercase tracking-wider text-gray-400">{label}</p>
+      <p className="text-[15px] font-bold">{value}</p>
     </div>
   );
 }

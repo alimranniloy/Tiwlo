@@ -8,6 +8,7 @@ import { AppError } from '../../core/errors.js';
 import { pagination, searchWhere } from '../../core/validation.js';
 import { paragraph, sendTiwloEmail } from '../../core/email.js';
 import { ensureOwnerHasCredit } from '../billing/creditAutomation.js';
+import { chargeProvisioningCredit, requireProvisioningCredit } from '../billing/service.js';
 import { defaultNameserversFor, primaryDomainFor, serverIpFor, syncPowerDnsDomain } from '../powerdns/service.js';
 import { queueSslInstallForDomains } from '../system-tools/service.js';
 import { ECOMMERCE_CONTROL_SECTIONS, findEcommerceControlSection } from './controlCatalog.js';
@@ -70,6 +71,7 @@ const RESERVED_STOREFRONT_SUBDOMAINS = new Set([
 ]);
 
 const normalizeStoreSubdomain = (value) => slugify(value || '').toLowerCase();
+const firstHourCharge = (monthlyCost) => Math.max(Math.round((Number(monthlyCost || 0) / 730) * 100) / 100, 0.01);
 
 const normalizeHostname = (value) => String(value || '')
   .trim()
@@ -591,6 +593,11 @@ export const createStore = async (ctx, actor, input) => {
   }
 
   const plan = await planByCode(ctx, 'ecommerce', input.planCode || 'pro');
+  const monthlyCost = Number(plan?.price || 0);
+  const hourlyRate = monthlyCost > 0 ? firstHourCharge(monthlyCost) : 0;
+  if (!isAdmin(actor) && hourlyRate > 0) {
+    await requireProvisioningCredit(ctx, actor.id, hourlyRate, `Add at least USD ${hourlyRate.toFixed(2)} credit before opening this ecommerce store.`);
+  }
   const store = await ctx.prisma.store.create({
     data: {
       ownerId: actor.id,
@@ -719,6 +726,18 @@ export const createStore = async (ctx, actor, input) => {
   });
 
   await writeAudit(ctx, 'create_store', 'store', store.id, { slug: cleanSlug });
+  if (!isAdmin(actor) && hourlyRate > 0) {
+    await chargeProvisioningCredit(ctx, {
+      ownerId: actor.id,
+      amount: hourlyRate,
+      scope: 'store',
+      scopeId: store.id,
+      label: `${store.name} ecommerce first hour`,
+      monthlyCost,
+      hourlyRate,
+      metadata: { storeId: store.id, planCode: plan?.code || input.planCode || 'pro' }
+    });
+  }
   return toApi(store);
 };
 

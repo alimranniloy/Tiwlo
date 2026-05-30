@@ -3,8 +3,10 @@ import { randomIp, removeUndefined, toApi } from '../../core/format.js';
 import { writeAudit } from '../../core/audit.js';
 import { pagination, searchWhere } from '../../core/validation.js';
 import { ensureOwnerHasCredit } from '../billing/creditAutomation.js';
+import { chargeProvisioningCredit, requireProvisioningCredit } from '../billing/service.js';
 
 const resourceTypesWithAutoIp = new Set(['droplet', 'system_server']);
+const firstHourCharge = (monthlyCost) => Math.max(Math.round((Number(monthlyCost || 0) / 730) * 100) / 100, 0.01);
 
 export const listPlans = async (ctx, product) => toApi(await ctx.prisma.plan.findMany({
   where: product ? { product, isActive: true } : { isActive: true },
@@ -56,8 +58,28 @@ export const createResource = async (ctx, actor, input) => {
   if (!isAdmin(actor)) {
     await ensureOwnerHasCredit(ctx, actor.id, 'Credit balance is empty. Add credit now before creating resources.');
   }
+  const monthlyCost = Number(input.monthlyCost || 0);
+  const hourlyRate = monthlyCost > 0 ? firstHourCharge(monthlyCost) : 0;
+  if (!isAdmin(actor) && hourlyRate > 0) {
+    await requireProvisioningCredit(ctx, actor.id, hourlyRate, `Add at least USD ${hourlyRate.toFixed(2)} credit before creating this resource.`);
+  }
+  const provisionedAt = new Date().toISOString();
+  const metadata = {
+    ...(input.metadata || {}),
+    ...(monthlyCost > 0 ? {
+      billing: {
+        ...(input.metadata?.billing || {}),
+        monthlyCost,
+        hourlyRate,
+        billingCycle: 'hourly_monthly_cap',
+        startedAt: provisionedAt,
+        lastBilledAt: provisionedAt,
+        monthlyCap: monthlyCost
+      }
+    } : {})
+  };
 
-  const resource = await ctx.prisma.cloudResource.create({
+  let resource = await ctx.prisma.cloudResource.create({
     data: {
       ownerId: actor.id,
       type: input.type,
@@ -71,11 +93,43 @@ export const createResource = async (ctx, actor, input) => {
       cpu: input.cpu,
       ram: input.ram,
       disk: input.disk,
-      monthlyCost: input.monthlyCost || 0,
-      metadata: input.metadata || {}
+      monthlyCost,
+      metadata
     }
   });
   await writeAudit(ctx, 'create_resource', 'cloudResource', resource.id, { type: input.type });
+  if (!isAdmin(actor) && hourlyRate > 0) {
+    const invoice = await chargeProvisioningCredit(ctx, {
+      ownerId: actor.id,
+      amount: hourlyRate,
+      scope: 'cloud_resource',
+      scopeId: resource.id,
+      label: `${resource.name} first hour`,
+      monthlyCost,
+      hourlyRate,
+      metadata: { resourceId: resource.id, type: resource.type }
+    });
+    const billedAt = new Date().toISOString();
+    resource = await ctx.prisma.cloudResource.update({
+      where: { id: resource.id },
+      data: {
+        metadata: {
+          ...(resource.metadata || {}),
+          billing: {
+            ...(resource.metadata?.billing || {}),
+            monthlyCost,
+            hourlyRate,
+            billingCycle: 'hourly_monthly_cap',
+            startedAt: billedAt,
+            lastBilledAt: billedAt,
+            monthlyCap: monthlyCost,
+            initialInvoiceId: invoice?.id,
+            initialCharge: hourlyRate
+          }
+        }
+      }
+    });
+  }
   return toApi(resource);
 };
 

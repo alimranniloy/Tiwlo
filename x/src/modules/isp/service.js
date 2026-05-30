@@ -5,11 +5,13 @@ import { writeAudit } from '../../core/audit.js';
 import { AppError } from '../../core/errors.js';
 import { pagination, searchWhere } from '../../core/validation.js';
 import { ensureOwnerHasCredit } from '../billing/creditAutomation.js';
+import { chargeProvisioningCredit, requireProvisioningCredit } from '../billing/service.js';
 import { planByCode } from '../ecommerce/service.js';
 import { defaultNameserversFor, primaryDomainFor, serverIpFor, syncPowerDnsDomain } from '../powerdns/service.js';
 import { queueSslInstallForDomains } from '../system-tools/service.js';
 
 const ISP_ROOT_DOMAIN = (process.env.ISP_ROOT_DOMAIN || 'tiwlo.com').toLowerCase();
+const firstHourCharge = (monthlyCost) => Math.max(Math.round((Number(monthlyCost || 0) / 730) * 100) / 100, 0.01);
 
 export const listSites = async (ctx) => {
   const scoped = await ownerWhere(ctx);
@@ -102,6 +104,11 @@ export const createSite = async (ctx, actor, input) => {
   ]);
 
   const plan = await planByCode(ctx, 'isp', input.planCode || 'enterprise');
+  const monthlyCost = Number(plan?.price || 0);
+  const hourlyRate = monthlyCost > 0 ? firstHourCharge(monthlyCost) : 0;
+  if (!isAdmin(actor) && hourlyRate > 0) {
+    await requireProvisioningCredit(ctx, actor.id, hourlyRate, `Add at least USD ${hourlyRate.toFixed(2)} credit before opening this ISP deployment.`);
+  }
   const site = await ctx.prisma.ispSite.create({
     data: {
       ownerId: actor.id,
@@ -178,6 +185,18 @@ export const createSite = async (ctx, actor, input) => {
   });
 
   await writeAudit(ctx, 'create_isp_site', 'ispSite', site.id, { code: cleanCode });
+  if (!isAdmin(actor) && hourlyRate > 0) {
+    await chargeProvisioningCredit(ctx, {
+      ownerId: actor.id,
+      amount: hourlyRate,
+      scope: 'isp',
+      scopeId: site.id,
+      label: `${site.name} ISP first hour`,
+      monthlyCost,
+      hourlyRate,
+      metadata: { siteId: site.id, planCode: plan?.code || input.planCode || 'enterprise' }
+    });
+  }
   return toApi(site);
 };
 
