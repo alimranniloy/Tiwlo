@@ -63,7 +63,7 @@ export default function ISPStorefront() {
         <div className="flex items-center gap-3">
           <button 
             onClick={() => navigate('/isp-billing/add-router')}
-            className="px-6 py-2.5 bg-[#0069ff] hover:bg-blue-700 text-white rounded-sm text-sm font-bold shadow-sm transition-all flex items-center gap-2"
+            className="px-6 py-2.5 bg-[#0069ff] hover:bg-blue-700 text-white rounded-sm text-sm font-bold transition-all flex items-center gap-2"
           >
             <Plus className="w-4 h-4" /> Deploy New ISP Site
           </button>
@@ -96,22 +96,25 @@ export default function ISPStorefront() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* Instances List */}
         <div className="lg:col-span-2 space-y-4">
-           <div className="flex items-center justify-between mb-2">
-              <h2 className="text-lg font-bold text-gray-900">Active ISP Deployments</h2>
+           <div className="flex flex-col gap-3 border border-gray-200 bg-white p-4 md:flex-row md:items-center md:justify-between">
+              <div>
+                <h2 className="text-base font-black tracking-tight text-gray-900">Active ISP Deployments</h2>
+                <p className="mt-1 text-xs font-medium text-gray-500">Provisioned ISP sites with subscriber count, node, region, and bandwidth state.</p>
+              </div>
               <div className="relative">
                  <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                 <input type="text" placeholder="Search clusters..." className="pl-9 pr-4 py-1.5 bg-white border border-gray-200 rounded-sm text-xs w-48 focus:border-blue-400 transition-colors outline-none" />
+                 <input type="text" placeholder="Search deployments..." className="pl-9 pr-4 py-2 bg-white border border-gray-200 rounded-sm text-xs w-full md:w-56 focus:border-blue-400 transition-colors outline-none" />
               </div>
            </div>
            
            {isLoading ? (
-             <div className="bg-white rounded-sm border border-gray-200 p-12 text-center text-sm font-bold text-gray-400">Loading ISP sites from API...</div>
+             <div className="bg-white rounded-sm border border-gray-200 p-12 text-center text-sm font-bold text-gray-400">Loading ISP sites...</div>
            ) : myInstances.length === 0 ? (
              <div className="bg-white rounded-sm border border-gray-200 p-12 text-center text-sm font-bold text-gray-400">No ISP deployments found in the database.</div>
            ) : myInstances.map((instance) => (
              <div key={instance.id} className="bg-white rounded-sm border border-gray-200 hover:border-blue-300 transition-all group overflow-hidden">
-                <div className="p-6">
-                   <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                <div className="p-5">
+                   <div className="grid grid-cols-1 gap-5 xl:grid-cols-[1fr_auto] xl:items-center">
                       <div className="flex items-center gap-4">
                          <div className={`w-12 h-12 flex items-center justify-center rounded-sm border ${instance.active ? 'bg-blue-50 border-blue-100 text-[#0069ff]' : 'bg-gray-50 border-gray-200 text-gray-400'}`}>
                             <Globe className="w-6 h-6" />
@@ -129,25 +132,27 @@ export default function ISPStorefront() {
                          </div>
                       </div>
                       
-                      <div className="flex items-center gap-8 md:text-right">
-                         <div>
-                            <span className="block text-[10px] uppercase font-bold text-gray-400 tracking-tight leading-none mb-1">Subscribers</span>
-                            <span className="text-sm font-bold text-gray-700">{instance.subscribers}</span>
-                         </div>
-                         <div>
-                            <span className="block text-[10px] uppercase font-bold text-gray-400 tracking-tight leading-none mb-1">Load</span>
-                            <span className="text-sm font-bold text-gray-700">{instance.bandwidth}</span>
-                         </div>
+                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-[120px_120px_120px_auto] xl:text-right">
+                         {[
+                           ['Subscribers', instance.subscribers],
+                           ['Bandwidth', instance.bandwidth],
+                           ['Region', instance.region]
+                         ].map(([label, value]) => (
+                           <div key={label} className="border border-gray-100 bg-gray-50 px-3 py-2">
+                              <span className="block text-[9px] uppercase font-black text-gray-400 tracking-widest leading-none mb-1">{label}</span>
+                              <span className="block truncate text-xs font-bold text-gray-800">{value || 'Not set'}</span>
+                           </div>
+                         ))}
                          <button 
                            onClick={() => navigate(`/isp-billing/admin?siteId=${instance.id}`)}
-                           className="p-2.5 bg-gray-50 text-gray-400 hover:bg-[#0069ff] hover:text-white rounded-sm transition-all shadow-sm"
+                           className="flex min-h-[42px] items-center justify-center border border-gray-200 bg-white px-3 text-gray-400 transition-all hover:bg-[#0069ff] hover:text-white"
                          >
                             <ChevronRight className="w-5 h-5" />
                          </button>
                       </div>
                    </div>
                 </div>
-                <div className="px-6 py-2 bg-gray-50/50 border-t border-gray-100 flex items-center justify-between">
+                <div className="px-5 py-3 bg-gray-50/70 border-t border-gray-100 flex items-center justify-between">
                    <div className="flex items-center gap-4">
                       <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">{instance.node}</span>
                       <span className="text-[10px] font-medium text-gray-500">{instance.region}</span>
@@ -165,30 +170,30 @@ export default function ISPStorefront() {
         <div className="space-y-6">
            <div className="bg-white p-6 rounded-sm border border-gray-200">
               <h3 className="font-bold text-gray-900 mb-4 flex items-center gap-2">
-                 <Shield className="w-4 h-4 text-blue-600" /> Security Status
+                 <Shield className="w-4 h-4 text-blue-600" /> Deployment Summary
               </h3>
               <div className="space-y-4">
                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-gray-600">RADIUS Auth</span>
-                    <span className="text-[11px] font-bold text-green-600 bg-green-50 px-2 py-0.5 rounded-full">ENCRYPTED</span>
+                    <span className="text-sm text-gray-600">Active Sites</span>
+                    <span className="text-[11px] font-bold text-green-600 bg-green-50 px-2 py-0.5 rounded-sm">{activeSites}</span>
                  </div>
                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-gray-600">API Handshake</span>
-                    <span className="text-[11px] font-bold text-green-600 bg-green-50 px-2 py-0.5 rounded-full">TLS 1.3</span>
+                    <span className="text-sm text-gray-600">Subscribers</span>
+                    <span className="text-[11px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-sm">{totalSubscribers.toLocaleString()}</span>
                  </div>
                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-gray-600">Firewall Rules</span>
-                    <span className="text-[11px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full">84 ACTIVE</span>
+                    <span className="text-sm text-gray-600">Total Sites</span>
+                    <span className="text-[11px] font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded-sm">{myInstances.length}</span>
                  </div>
               </div>
            </div>
 
-           <div className="bg-gray-900 p-6 rounded-sm text-white relative overflow-hidden">
+           <div className="bg-gray-900 p-6 rounded-sm text-white relative overflow-hidden border border-gray-800">
               <div className="relative z-10">
-                 <h3 className="font-bold text-white mb-1">Global Traffic Monitor</h3>
-                 <p className="text-gray-400 text-xs mb-4">View real-time BGP and peering sessions across all sites.</p>
-                 <button className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-sm text-xs font-bold transition-all">
-                    Launch Network Visualizer
+                 <h3 className="font-bold text-white mb-1">Network Operations</h3>
+                 <p className="text-gray-400 text-xs mb-4">Open the ISP admin workspace to review routers, subscribers, invoices, and reports.</p>
+                 <button onClick={() => navigate('/isp-billing/admin')} className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-sm text-xs font-bold transition-all">
+                    Open ISP Workspace
                  </button>
               </div>
               <Activity className="absolute -bottom-6 -right-6 w-24 h-24 text-white/5" />
