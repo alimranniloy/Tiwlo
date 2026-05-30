@@ -212,6 +212,7 @@ configure_postfix_dovecot() {
   run_sudo postconf -e "myhostname = ${mail_hostname}" || true
   run_sudo postconf -e "mydomain = ${mail_domain}" || true
   run_sudo postconf -e "myorigin = /etc/mailname" || true
+  run_sudo postconf -e "mydestination = \$myhostname, localhost.\$mydomain, localhost, \$mydomain" || true
   run_sudo postconf -e "inet_interfaces = all" || true
   run_sudo postconf -e "inet_protocols = all" || true
   run_sudo postconf -e "mynetworks = 127.0.0.0/8 [::1]/128" || true
@@ -395,6 +396,40 @@ MAIL_FROM=${local_user}@${mail_domain}
 MAIL_REPLY_TO=${local_user}@${mail_domain}
 MAILENV
   run_sudo chmod 600 /etc/tiwlo-mail/system-smtp.env >/dev/null 2>&1 || true
+}
+
+install_mailbox_provision_helper() {
+  run_sudo mkdir -p /usr/local/sbin
+  cat <<'HELPER' | run_sudo tee /usr/local/sbin/tiwlo-mailbox-provision >/dev/null
+#!/usr/bin/env bash
+set -euo pipefail
+
+local_user="$(printf '%s' "${1:-}" | tr -cd 'a-zA-Z0-9._-' | cut -c1-31)"
+mail_pass="${2:-}"
+mail_domain="$(printf '%s' "${3:-tiwlo.com}" | tr '[:upper:]' '[:lower:]' | sed -E 's#^((mail|email|tmail|www)\.)+##; s#[^a-z0-9.-]##g; s#^\.+|\.+$##g')"
+mail_address="${4:-${local_user}@${mail_domain}}"
+
+[ -n "$local_user" ] || { echo "local user is required" >&2; exit 2; }
+[ -n "$mail_pass" ] || { echo "mail password is required" >&2; exit 2; }
+shell_path="/usr/sbin/nologin"
+[ -x "$shell_path" ] || shell_path="/bin/false"
+home_dir="/home/${local_user}"
+
+if ! id "$local_user" >/dev/null 2>&1; then
+  useradd -m -d "$home_dir" -s "$shell_path" "$local_user" >/dev/null 2>&1 || true
+fi
+printf '%s:%s\n' "$local_user" "$mail_pass" | chpasswd >/dev/null 2>&1 || true
+mkdir -p "$home_dir/Maildir/cur" "$home_dir/Maildir/new" "$home_dir/Maildir/tmp"
+chown -R "$local_user:$local_user" "$home_dir/Maildir" >/dev/null 2>&1 || true
+chmod -R 700 "$home_dir/Maildir" >/dev/null 2>&1 || true
+
+if command -v postconf >/dev/null 2>&1; then
+  postconf -e "mydestination = \$myhostname, localhost.\$mydomain, localhost, \$mydomain" >/dev/null 2>&1 || true
+fi
+
+printf 'provisioned %s as %s\n' "$mail_address" "$local_user"
+HELPER
+  run_sudo chmod 750 /usr/local/sbin/tiwlo-mailbox-provision
 }
 
 configure_opendkim() {
@@ -711,6 +746,7 @@ echo "Updating Tiwlo code..."
 git pull --ff-only
 
 install_system_email_stack
+install_mailbox_provision_helper
 install_system_ssl_stack
 ensure_mail_tls_certificate
 install_system_powerdns_stack
@@ -735,6 +771,7 @@ set_env_value "$ROOT/x/.env" SMTP_PUBLIC_HOST "mail.${MAIL_DOMAIN}"
 set_env_value "$ROOT/x/.env" SMTP_TLS_SERVERNAME "mail.${MAIL_DOMAIN}"
 set_env_value "$ROOT/x/.env" SMTP_USER "$SYSTEM_SMTP_USER"
 set_env_value "$ROOT/x/.env" SMTP_PASS "$SYSTEM_SMTP_PASS"
+set_env_value "$ROOT/x/.env" TIWLO_MAILBOX_HELPER "/usr/local/sbin/tiwlo-mailbox-provision"
 set_env_value "$ROOT/x/.env" MAIL_FROM "${SYSTEM_SMTP_USER}@${MAIL_DOMAIN}"
 set_env_value "$ROOT/x/.env" MAIL_INLINE_LOGO "false"
 set_env_value_if_missing "$ROOT/x/.env" MAIL_FROM_NAME "Tiwlo"
@@ -766,6 +803,7 @@ npm --prefix x install
 echo "Preparing Prisma without deleting data..."
 npm --prefix x run db:generate
 npm --prefix x run db:push
+node "$ROOT/x/scripts/sync-mailboxes.mjs" || true
 
 echo "Building frontend..."
 npm run build

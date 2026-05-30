@@ -4,6 +4,7 @@ import { isReadonlySetting } from '../../core/settings.js';
 import { toApi } from '../../core/format.js';
 import { writeAudit } from '../../core/audit.js';
 import { testTiwloEmail } from '../../core/email.js';
+import { syncEmailAccountRecords } from '../email/service.js';
 
 const ensureCanWriteSetting = async (ctx, actor, input) => {
   if (isReadonlySetting(input.scope, input.key)) {
@@ -39,6 +40,11 @@ export const upsertSetting = async (ctx, input) => {
     create: { scope: input.scope, scopeId: input.scopeId || '', key: input.key, value: input.value },
     update: { value: input.value }
   });
+  if (input.scope === 'admin' && input.scopeId === 'main-admin' && input.key === 'mainAdmin:emailaccounts') {
+    await syncEmailAccountRecords(ctx, input.value?.records || []).catch((error) => {
+      console.warn('[settings] email mailbox provisioning sync failed:', error?.message || error);
+    });
+  }
   await writeAudit(ctx, 'upsert_setting', 'systemSetting', setting.id, { key: input.key, scope: input.scope });
   return toApi(setting);
 };
