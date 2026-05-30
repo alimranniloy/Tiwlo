@@ -107,11 +107,33 @@ export async function fetchDdosProtectionOverviewWithApi() {
 }
 
 export async function updateDdosProtectionPolicyWithApi(input: Record<string, unknown>) {
+  const allowedKeys = [
+    'enabled',
+    'mode',
+    'sensitivity',
+    'requestsPerSecondThreshold',
+    'packetsPerSecondThreshold',
+    'burstWindowSeconds',
+    'blockDurationSeconds',
+    'challengeThreshold',
+    'syncToConnectedServers',
+    'protectHostingNodes',
+    'protectCloudResources',
+    'protectDomains',
+    'protectEcommerceDomains',
+    'automationMode',
+    'metadata'
+  ];
+  const cleanInput = Object.fromEntries(
+    allowedKeys
+      .filter((key) => input[key] !== undefined)
+      .map((key) => [key, input[key]])
+  );
   const data = await graphQL<{ updateDdosProtectionPolicy: any }>(
     `mutation UpdateDdosProtectionPolicy($input: DdosProtectionPolicyInput!) {
       updateDdosProtectionPolicy(input: $input) { ${policyFields} }
     }`,
-    { input }
+    { input: cleanInput }
   );
 
   return data.updateDdosProtectionPolicy;

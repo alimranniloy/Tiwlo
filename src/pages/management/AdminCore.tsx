@@ -1,9 +1,12 @@
 import React from 'react';
-import { Settings, Cpu, HardDrive, Database, LifeBuoy, Save, AlertCircle, Globe2 } from 'lucide-react';
+import { AlertCircle, Cpu, Database, Globe2, LifeBuoy, Save, ShieldAlert, SlidersHorizontal } from 'lucide-react';
 import { fetchPowerDnsConfigWithApi, fetchSettingsWithApi, updatePowerDnsConfigWithApi, upsertSettingWithApi } from '../../lib/tiwloApi';
 import DdosProtectionPanel from './DdosProtectionPanel';
 
+type CoreSection = 'resources' | 'domain' | 'accounts' | 'security' | 'support';
+
 export default function AdminCore() {
+  const [activeSection, setActiveSection] = React.useState<CoreSection>('resources');
   const [maxDroplets, setMaxDroplets] = React.useState(0);
   const [maxVolumes, setMaxVolumes] = React.useState(0);
   const [newAccountCredit, setNewAccountCredit] = React.useState(0);
@@ -67,130 +70,141 @@ export default function AdminCore() {
     }
   };
 
+  const sections: Array<{ id: CoreSection; label: string; desc: string; icon: any }> = [
+    { id: 'resources', label: 'Resources', desc: 'Limits and quotas', icon: Cpu },
+    { id: 'domain', label: 'Domain & DNS', desc: 'Primary domain, IP, NS', icon: Globe2 },
+    { id: 'accounts', label: 'User Accounts', desc: 'Signup credit and billing guard', icon: Database },
+    { id: 'security', label: 'Security', desc: 'Maintenance and DDoS', icon: ShieldAlert },
+    { id: 'support', label: 'Support', desc: 'Live chat integration', icon: LifeBuoy }
+  ];
+
+  const inputClass = 'w-full rounded-sm border border-[#dfe5ee] bg-white px-3 py-2 text-sm outline-none focus:border-[#0069ff]';
+
   return (
     <div className="space-y-6 pb-12">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight text-[#2e3d49]">Core System Options</h1>
-        <p className="text-[13px] text-[#4a4a4a] mt-1">Fine-tune platform fundamentals and resource limits.</p>
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight text-[#2e3d49]">Core System Options</h1>
+          <p className="mt-1 text-[13px] text-[#4a4a4a]">Menu based control center for platform fundamentals and live security.</p>
+        </div>
+        <button onClick={saveSettings} className="inline-flex items-center gap-2 rounded-sm bg-[#0069ff] px-4 py-2 text-[12px] font-bold text-white hover:bg-[#0056cc]">
+          <Save className="h-4 w-4" /> Save Changes
+        </button>
       </div>
 
-      <div className="bg-white border border-[#e5e8ed] rounded-lg overflow-hidden shadow-sm">
-        <div className="px-6 py-4 border-b border-[#f3f5f9] bg-[#f8f9fa] flex items-center justify-between">
-           <h2 className="text-[14px] font-bold text-[#2e3d49] uppercase tracking-wide">Platform Behavior</h2>
-           <button onClick={saveSettings} className="bg-[#0069ff] text-white px-4 py-1.5 rounded font-bold text-[12px] flex items-center gap-2 hover:bg-[#0056cc] transition-all">
-              <Save className="h-4 w-4" /> Save Changes
-           </button>
-        </div>
-        {error && <div className="mx-8 mt-6 rounded border border-red-100 bg-red-50 px-4 py-3 text-[13px] font-bold text-red-600">{error}</div>}
-        {saved && <div className="mx-8 mt-6 rounded border border-green-100 bg-green-50 px-4 py-3 text-[13px] font-bold text-green-600">Settings saved.</div>}
-        <div className="p-8 space-y-10">
-           {/* Section: Resource Limits */}
-           <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-              <div>
-                <h3 className="text-[15px] font-bold text-[#2e3d49] mb-1">Resource Limits</h3>
-                <p className="text-[12px] text-gray-400">Thresholds for default accounts.</p>
-              </div>
-              <div className="md:col-span-2 space-y-6">
-                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-                    <div className="space-y-2">
-                       <label className="text-[12px] font-bold text-[#4a4a4a] uppercase tracking-wider">Max Droplets / User</label>
-                       <input type="number" value={maxDroplets} onChange={(event) => setMaxDroplets(Number(event.target.value || 0))} className="w-full bg-[#f8f9fa] border border-[#e5e8ed] rounded px-4 py-2 text-[14px] focus:outline-none focus:border-[#0069ff]" />
-                    </div>
-                    <div className="space-y-2">
-                       <label className="text-[12px] font-bold text-[#4a4a4a] uppercase tracking-wider">Max Volumes / User</label>
-                       <input type="number" value={maxVolumes} onChange={(event) => setMaxVolumes(Number(event.target.value || 0))} className="w-full bg-[#f8f9fa] border border-[#e5e8ed] rounded px-4 py-2 text-[14px] focus:outline-none focus:border-[#0069ff]" />
-                    </div>
-                 </div>
-              </div>
-           </div>
+      {error && <div className="rounded-sm border border-red-100 bg-red-50 px-4 py-3 text-[13px] font-bold text-red-600">{error}</div>}
+      {saved && <div className="rounded-sm border border-green-100 bg-green-50 px-4 py-3 text-[13px] font-bold text-green-600">Settings saved.</div>}
 
-           <div className="h-px bg-[#f3f5f9]"></div>
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[280px_1fr]">
+        <aside className="rounded-sm border border-[#e5e8ed] bg-white p-2">
+          {sections.map((section) => {
+            const Icon = section.icon;
+            const active = activeSection === section.id;
+            return (
+              <button key={section.id} onClick={() => setActiveSection(section.id)} className={`mb-1 flex w-full items-start gap-3 rounded-sm px-3 py-3 text-left ${active ? 'bg-[#e8f1ff] text-[#0056cc]' : 'text-[#2e3d49] hover:bg-[#f8fafc]'}`}>
+                <Icon className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>
+                  <span className="block text-sm font-black">{section.label}</span>
+                  <span className="block text-[11px] font-semibold text-[#64748b]">{section.desc}</span>
+                </span>
+              </button>
+            );
+          })}
+        </aside>
 
-           <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-              <div>
-                <h3 className="text-[15px] font-bold text-[#2e3d49] mb-1 flex items-center gap-2"><Globe2 className="h-4 w-4 text-blue-600" /> Domain Name</h3>
-                <p className="text-[12px] text-gray-400">Changing this updates platform URLs, PowerDNS nameservers, generated store domains, ISP hostnames, and SSL automation.</p>
+        <section className="rounded-sm border border-[#e5e8ed] bg-white">
+          {activeSection === 'resources' && (
+            <div className="space-y-6 p-6">
+              <SectionTitle icon={SlidersHorizontal} title="Resource Limits" desc="Thresholds for default accounts." />
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <label className="space-y-1">
+                  <span className="text-[11px] font-black uppercase text-[#64748b]">Max Droplets / User</span>
+                  <input type="number" value={maxDroplets} onChange={(event) => setMaxDroplets(Number(event.target.value || 0))} className={inputClass} />
+                </label>
+                <label className="space-y-1">
+                  <span className="text-[11px] font-black uppercase text-[#64748b]">Max Volumes / User</span>
+                  <input type="number" value={maxVolumes} onChange={(event) => setMaxVolumes(Number(event.target.value || 0))} className={inputClass} />
+                </label>
               </div>
-              <div className="md:col-span-2 space-y-4">
-                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-                    <div className="space-y-2">
-                       <label className="text-[12px] font-bold text-[#4a4a4a] uppercase tracking-wider">Primary Domain</label>
-                       <input value={primaryDomain} onChange={(event) => setPrimaryDomain(event.target.value)} placeholder="example.com" className="w-full bg-[#f8f9fa] border border-[#e5e8ed] rounded px-4 py-2 text-[14px] focus:outline-none focus:border-[#0069ff]" />
-                    </div>
-                    <div className="space-y-2">
-                       <label className="text-[12px] font-bold text-[#4a4a4a] uppercase tracking-wider">Server IP</label>
-                       <input value={serverIp} onChange={(event) => setServerIp(event.target.value)} placeholder="203.0.113.10" className="w-full bg-[#f8f9fa] border border-[#e5e8ed] rounded px-4 py-2 text-[14px] focus:outline-none focus:border-[#0069ff]" />
-                    </div>
-                 </div>
-                 <div className="space-y-2">
-                    <label className="text-[12px] font-bold text-[#4a4a4a] uppercase tracking-wider">Nameservers</label>
-                    <textarea value={nameserversText} onChange={(event) => setNameserversText(event.target.value)} rows={3} className="w-full bg-[#f8f9fa] border border-[#e5e8ed] rounded px-4 py-2 font-mono text-[12px] focus:outline-none focus:border-[#0069ff]" />
-                 </div>
+            </div>
+          )}
+
+          {activeSection === 'domain' && (
+            <div className="space-y-6 p-6">
+              <SectionTitle icon={Globe2} title="Domain & DNS" desc="Changing this updates platform URLs, PowerDNS nameservers, generated domains, and SSL automation." />
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <label className="space-y-1">
+                  <span className="text-[11px] font-black uppercase text-[#64748b]">Primary Domain</span>
+                  <input value={primaryDomain} onChange={(event) => setPrimaryDomain(event.target.value)} placeholder="example.com" className={inputClass} />
+                </label>
+                <label className="space-y-1">
+                  <span className="text-[11px] font-black uppercase text-[#64748b]">Server IP</span>
+                  <input value={serverIp} onChange={(event) => setServerIp(event.target.value)} placeholder="203.0.113.10" className={inputClass} />
+                </label>
               </div>
-           </div>
+              <label className="block space-y-1">
+                <span className="text-[11px] font-black uppercase text-[#64748b]">Nameservers</span>
+                <textarea value={nameserversText} onChange={(event) => setNameserversText(event.target.value)} rows={4} className={`${inputClass} font-mono text-xs`} />
+              </label>
+            </div>
+          )}
 
-           <div className="h-px bg-[#f3f5f9]"></div>
-
-           <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-              <div>
-                <h3 className="text-[15px] font-bold text-[#2e3d49] mb-1">New Account Credit</h3>
-                <p className="text-[12px] text-gray-400">Default credit applied when a user signs up.</p>
+          {activeSection === 'accounts' && (
+            <div className="space-y-6 p-6">
+              <SectionTitle icon={Database} title="User Accounts" desc="Signup credit and spending guardrails." />
+              <label className="block max-w-sm space-y-1">
+                <span className="text-[11px] font-black uppercase text-[#64748b]">Signup Credit (USD)</span>
+                <input type="number" min="0" step="0.01" value={newAccountCredit} onChange={(event) => setNewAccountCredit(Number(event.target.value || 0))} className={inputClass} />
+              </label>
+              <div className="flex items-start gap-2 rounded-sm border border-blue-100 bg-blue-50 px-3 py-2 text-[12px] font-semibold text-blue-700">
+                <AlertCircle className="mt-0.5 h-4 w-4" />
+                <span>Accounts with 0 credit must add credit before orders or services run.</span>
               </div>
-              <div className="md:col-span-2 space-y-4">
-                 <div className="max-w-sm space-y-2">
-                    <label className="text-[12px] font-bold text-[#4a4a4a] uppercase tracking-wider">Signup Credit (USD)</label>
-                    <input type="number" min="0" step="0.01" value={newAccountCredit} onChange={(event) => setNewAccountCredit(Number(event.target.value || 0))} className="w-full bg-[#f8f9fa] border border-[#e5e8ed] rounded px-4 py-2 text-[14px] focus:outline-none focus:border-[#0069ff]" />
-                 </div>
-                 <div className="flex items-center gap-2 p-3 bg-blue-50 border border-blue-100 rounded text-blue-700 text-[12px] font-medium">
-                    <AlertCircle className="h-4 w-4" />
-                    <span>Current default is USD {Number(newAccountCredit || 0).toFixed(2)}. Accounts with 0 credit must add credit before orders or services run.</span>
-                 </div>
+            </div>
+          )}
+
+          {activeSection === 'security' && (
+            <div className="space-y-6 p-6">
+              <SectionTitle icon={ShieldAlert} title="Security & DDoS" desc="Maintenance mode and live attack protection." />
+              <div className="flex flex-col gap-3 rounded-sm border border-[#e5e8ed] p-4 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <p className="text-sm font-black text-[#2e3d49]">Maintenance Mode</p>
+                  <p className="text-xs font-semibold text-[#64748b]">When active, non-admin users cannot spin up new resources.</p>
+                </div>
+                <button onClick={() => setMaintenanceMode((value) => !value)} className={`relative h-7 w-12 rounded-full ${maintenanceMode ? 'bg-[#0069ff]' : 'bg-gray-200'}`}>
+                  <span className={`absolute top-1 h-5 w-5 rounded-full bg-white transition-all ${maintenanceMode ? 'right-1' : 'left-1'}`}></span>
+                </button>
               </div>
-           </div>
+              <DdosProtectionPanel />
+            </div>
+          )}
 
-           <div className="h-px bg-[#f3f5f9]"></div>
+          {activeSection === 'support' && (
+            <div className="space-y-6 p-6">
+              <SectionTitle icon={LifeBuoy} title="Support Integration" desc="External helpdesk and live chat settings." />
+              <label className="block space-y-1">
+                <span className="text-[11px] font-black uppercase text-[#64748b]">Zendesk / Intercom App ID</span>
+                <input value={supportAppId} onChange={(event) => setSupportAppId(event.target.value)} placeholder="app_xxxx_xxxx" className={inputClass} />
+              </label>
+              <label className="flex items-center gap-3 text-[13px] font-bold text-[#4a4a4a]">
+                <input type="checkbox" checked={chatWidget} onChange={(event) => setChatWidget(event.target.checked)} className="h-4 w-4" />
+                Enable global chat widget for all users
+              </label>
+            </div>
+          )}
+        </section>
+      </div>
+    </div>
+  );
+}
 
-           {/* Section: Maintenance Role */}
-           <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-              <div>
-                <h3 className="text-[15px] font-bold text-[#2e3d49] mb-1">Maintenance Mode</h3>
-                <p className="text-[12px] text-gray-400">Put platform into read-only mode.</p>
-              </div>
-              <div className="md:col-span-2 flex items-center gap-6">
-                 <button onClick={() => setMaintenanceMode((value) => !value)} className={`w-12 h-7 rounded-full relative cursor-pointer ${maintenanceMode ? 'bg-[#0069ff]' : 'bg-gray-200'}`}>
-                    <div className={`absolute top-1 w-5 h-5 bg-white rounded-full transition-all ${maintenanceMode ? 'right-1' : 'left-1'}`}></div>
-                 </button>
-                 <div className="flex items-center gap-2 p-3 bg-amber-50 border border-amber-100 rounded text-amber-600 text-[12px] font-medium">
-                    <AlertCircle className="h-4 w-4" />
-                    <span>When active, non-admin users cannot spin up new resources.</span>
-                 </div>
-              </div>
-           </div>
-
-           <div className="h-px bg-[#f3f5f9]"></div>
-
-           <DdosProtectionPanel />
-
-           <div className="h-px bg-[#f3f5f9]"></div>
-
-           {/* Section: Support API */}
-           <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-              <div>
-                <h3 className="text-[15px] font-bold text-[#2e3d49] mb-1">Support Integration</h3>
-                <p className="text-[12px] text-gray-400">External helpdesk credentials.</p>
-              </div>
-              <div className="md:col-span-2 space-y-4">
-                  <div className="space-y-2">
-                     <label className="text-[12px] font-bold text-[#4a4a4a] uppercase tracking-wider">Zendesk / Intercom App ID</label>
-                     <input type="text" value={supportAppId} onChange={(event) => setSupportAppId(event.target.value)} placeholder="app_xxxx_xxxx" className="w-full bg-[#f8f9fa] border border-[#e5e8ed] rounded px-4 py-2 text-[14px] focus:outline-none focus:border-[#0069ff]" />
-                  </div>
-                  <div className="flex items-center gap-3">
-                     <input type="checkbox" checked={chatWidget} onChange={(event) => setChatWidget(event.target.checked)} className="w-4 h-4" />
-                     <span className="text-[13px] text-[#4a4a4a]">Enable global chat widget for all users</span>
-                  </div>
-              </div>
-           </div>
-        </div>
+function SectionTitle({ icon: Icon, title, desc }: { icon: any; title: string; desc: string }) {
+  return (
+    <div className="flex items-start gap-3 border-b border-[#f3f5f9] pb-4">
+      <div className="rounded-sm bg-blue-50 p-2 text-[#0069ff]"><Icon className="h-4 w-4" /></div>
+      <div>
+        <h2 className="text-[15px] font-black text-[#2e3d49]">{title}</h2>
+        <p className="mt-1 text-[12px] font-semibold text-[#64748b]">{desc}</p>
       </div>
     </div>
   );

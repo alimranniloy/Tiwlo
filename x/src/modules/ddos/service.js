@@ -34,7 +34,11 @@ const defaultPolicy = {
   automationMode: 'audit',
   metadata: {
     edgeSampling: true,
-    managedRuleSets: ['layer7-rate-limit', 'syn-flood-shield', 'bad-bot-signature', 'geo-anomaly']
+    adaptiveThresholds: true,
+    verifiedCrawlerAllowlist: true,
+    managedRuleSets: ['layer7-rate-limit', 'syn-flood-shield', 'udp-amplification', 'bad-bot-signature', 'geo-anomaly', 'credential-stuffing', 'checkout-abuse-shield'],
+    challengeActions: ['js_challenge', 'turnstile', 'rate_limit'],
+    escalation: ['observe', 'challenge', 'temporary_block', 'agent_firewall_sync']
   }
 };
 
@@ -52,10 +56,14 @@ const actionPlanFor = (rule, asset, policy) => {
   const panel = text(asset?.panel || '').toLowerCase();
   const commands = {
     linux: [
+      `nft add set inet filter tiwlo_ddos_blocklist { type ipv4_addr\\; flags interval\\; }`,
+      `nft add element inet filter tiwlo_ddos_blocklist { ${source} }`,
+      `nft add rule inet filter input ip saddr @tiwlo_ddos_blocklist drop`,
       `nft add rule inet filter input ip saddr ${source} drop`,
       `iptables -I INPUT -s ${source} -j DROP`
     ],
     nginx: [
+      `limit_req_zone $binary_remote_addr zone=tiwlo_ddos:20m rate=${Math.max(10, Math.floor(policy.challengeThreshold / 60))}r/s;`,
       `deny ${source};`,
       'nginx -s reload'
     ],
@@ -69,7 +77,7 @@ const actionPlanFor = (rule, asset, policy) => {
 
   return {
     mode: policy.automationMode,
-    state: policy.automationMode === 'remote_agent' ? 'queued_for_agent' : 'audit_only',
+    state: policy.automationMode === 'remote_agent' ? 'queued_for_agent' : policy.automationMode === 'manual' ? 'manual_review_required' : 'audit_only',
     target: asset ? {
       assetId: asset.id,
       kind: asset.kind,
@@ -108,6 +116,11 @@ export const updatePolicy = async (ctx, actor, input) => {
     throw new AppError('automationMode must be one of: audit, remote_agent, manual', 'BAD_USER_INPUT');
   }
 
+  const nextMetadata = {
+    ...defaultPolicy.metadata,
+    ...(input.metadata || {})
+  };
+
   const data = removeUndefined({
     enabled: input.enabled,
     mode: input.mode,
@@ -123,7 +136,7 @@ export const updatePolicy = async (ctx, actor, input) => {
     protectDomains: input.protectDomains,
     protectEcommerceDomains: input.protectEcommerceDomains,
     automationMode: input.automationMode,
-    metadata: input.metadata
+    metadata: nextMetadata
   });
 
   const policy = await ctx.prisma.ddosProtectionPolicy.upsert({
@@ -318,13 +331,20 @@ const classifyTraffic = (policy, input) => {
   const pps = Math.max(0, integer(input.packetsPerSecond, 0));
   const rpsLimit = Math.max(1, Math.floor(policy.requestsPerSecondThreshold * riskMultiplier(policy)));
   const ppsLimit = Math.max(1, Math.floor(policy.packetsPerSecondThreshold * riskMultiplier(policy)));
-  const ratio = Math.max(rps / rpsLimit, pps / ppsLimit);
-  const confidence = Math.min(0.99, Math.max(0.15, ratio * 0.55));
-  const severity = ratio >= 3 ? 'critical' : ratio >= 1.75 ? 'high' : ratio >= 1 ? 'medium' : 'low';
+  const vector = text(input.vector, 'http-flood');
+  const path = text(input.path).toLowerCase();
+  const userAgent = text(input.userAgent).toLowerCase();
+  const suspiciousPath = /(wp-login|xmlrpc|checkout|login|graphql|admin|api\/auth)/i.test(path);
+  const suspiciousAgent = /(curl|python|masscan|nikto|sqlmap|bot|spider|scanner)/i.test(userAgent);
+  const vectorBoost = /(syn|udp|amplification|slowloris|credential|bot)/i.test(vector) ? 0.35 : 0;
+  const behaviorBoost = (suspiciousPath ? 0.2 : 0) + (suspiciousAgent ? 0.2 : 0);
+  const ratio = Math.max(rps / rpsLimit, pps / ppsLimit) + vectorBoost + behaviorBoost;
+  const confidence = Math.min(0.99, Math.max(0.15, ratio * 0.52));
+  const severity = ratio >= 3 ? 'critical' : ratio >= 1.75 ? 'high' : ratio >= 1 ? 'medium' : ratio >= 0.65 ? 'elevated' : 'low';
   const shouldBlock = policy.enabled && policy.mode === 'mitigate' && ratio >= 1;
-  const shouldChallenge = policy.enabled && ['challenge', 'mitigate'].includes(policy.mode) && rps >= policy.challengeThreshold;
+  const shouldChallenge = policy.enabled && ['challenge', 'mitigate'].includes(policy.mode) && (rps >= policy.challengeThreshold || ratio >= 0.65);
   const status = shouldBlock ? 'blocked' : shouldChallenge ? 'mitigating' : 'observed';
-  return { rps, pps, ratio, confidence, severity, shouldBlock, status };
+  return { rps, pps, ratio, confidence, severity, shouldBlock, status, suspiciousPath, suspiciousAgent };
 };
 
 export const ingestTelemetry = async (ctx, actor, input) => {
@@ -353,7 +373,13 @@ export const ingestTelemetry = async (ctx, actor, input) => {
       packetsPerSecond: policy.packetsPerSecondThreshold,
       burstWindowSeconds: policy.burstWindowSeconds
     },
-    ratio: Number(classification.ratio.toFixed(2))
+    ratio: Number(classification.ratio.toFixed(2)),
+    signals: {
+      suspiciousPath: classification.suspiciousPath,
+      suspiciousAgent: classification.suspiciousAgent,
+      edgeSampling: Boolean(policy.metadata?.edgeSampling),
+      managedRuleSets: policy.metadata?.managedRuleSets || []
+    }
   };
 
   const event = await ctx.prisma.ddosAttackEvent.create({
