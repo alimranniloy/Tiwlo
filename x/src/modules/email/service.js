@@ -271,6 +271,46 @@ function parseHeaderBlock(raw = '') {
   return { headers, body: bodyParts.join('\n\n').trim() };
 }
 
+function headerParam(value = '', name = '') {
+  const pattern = new RegExp(`${name}=("?)([^";\\r\\n]+)\\1`, 'i');
+  return String(value || '').match(pattern)?.[2] || '';
+}
+
+function decodeTransferBody(body = '', encoding = '') {
+  const value = String(body || '').trim();
+  if (/base64/i.test(encoding)) {
+    try {
+      return Buffer.from(value.replace(/\s+/g, ''), 'base64').toString('utf8').trim();
+    } catch {
+      return value;
+    }
+  }
+  if (/quoted-printable/i.test(encoding)) {
+    return value
+      .replace(/=\r?\n/g, '')
+      .replace(/=([a-f0-9]{2})/gi, (_, code) => String.fromCharCode(parseInt(code, 16)))
+      .trim();
+  }
+  return value;
+}
+
+function extractRenderableMailBody(headers = {}, body = '') {
+  const contentType = String(headers['content-type'] || '');
+  const transferEncoding = String(headers['content-transfer-encoding'] || '');
+  if (/multipart\//i.test(contentType)) {
+    const boundary = headerParam(contentType, 'boundary');
+    if (boundary) {
+      const parts = String(body || '').split(`--${boundary}`).filter((part) => part.trim() && !part.trim().startsWith('--'));
+      const parsedParts = parts.map((part) => parseHeaderBlock(part.trim()));
+      const htmlPart = parsedParts.find((part) => /text\/html/i.test(String(part.headers['content-type'] || '')));
+      const textPart = parsedParts.find((part) => /text\/plain/i.test(String(part.headers['content-type'] || '')));
+      const bestPart = htmlPart || textPart;
+      if (bestPart) return extractRenderableMailBody(bestPart.headers, bestPart.body);
+    }
+  }
+  return decodeTransferBody(body, transferEncoding);
+}
+
 function cleanHeaderAddress(value = '') {
   const match = String(value || '').match(/<([^<>@\s]+@[^<>@\s]+)>/);
   return normalizeAddress(match?.[1] || String(value || '').split(',')[0]);
@@ -319,7 +359,7 @@ async function importMaildirMessages(ctx, record, records) {
       from: decodeMimeWords(parsed.headers.from || 'External sender'),
       to: cleanHeaderAddress(parsed.headers.to || recordAddress(record)) || recordAddress(record),
       subject: decodeMimeWords(parsed.headers.subject || '(no subject)'),
-      body: parsed.body || stripMailBody(raw),
+      body: extractRenderableMailBody(parsed.headers, parsed.body) || stripMailBody(raw),
       date: safeMailDate(parsed.headers.date, file.mtimeMs),
       read: file.folder === 'cur' && /:2,.*S/.test(file.name),
       starred: false,
@@ -636,7 +676,13 @@ export const sendMailboxMessage = async (ctx, input) => {
     if (item.id === record.id) {
       return {
         ...item,
-        data: { ...(item.data || {}), messages: [...messagesForRecord(item).filter((mail) => !String(mail.id).startsWith('welcome-')), message] },
+        data: {
+          ...(item.data || {}),
+          messages: [
+            ...messagesForRecord(item).filter((mail) => !String(mail.id).startsWith('welcome-') && mail.id !== input?.draftId),
+            message
+          ]
+        },
         updatedAt: now()
       };
     }
@@ -656,6 +702,36 @@ export const sendMailboxMessage = async (ctx, input) => {
     return item;
   });
   await saveMailboxRecords(ctx.prisma, updatedRecords);
+  return message;
+};
+
+export const saveMailboxDraft = async (ctx, input = {}) => {
+  const { record, records } = await recordFromToken(ctx, input?.token);
+  const account = publicAccount(record);
+  const draftId = String(input.id || '').trim();
+  const message = {
+    id: draftId || `draft-${Date.now().toString(36)}-${Math.random().toString(16).slice(2, 8)}`,
+    mailboxId: record.id,
+    folder: 'drafts',
+    from: account.address,
+    to: normalizeAddress(input?.to || ''),
+    subject: String(input?.subject || '').trim(),
+    body: String(input?.body || ''),
+    date: now(),
+    read: true,
+    starred: false
+  };
+  await saveMailboxRecords(ctx.prisma, records.map((item) => {
+    if (item.id !== record.id) return item;
+    const nextMessages = messagesForRecord(item)
+      .filter((mail) => !String(mail.id).startsWith('welcome-'))
+      .filter((mail) => mail.id !== message.id);
+    return {
+      ...item,
+      data: { ...(item.data || {}), messages: [...nextMessages, message] },
+      updatedAt: now()
+    };
+  }));
   return message;
 };
 
@@ -715,4 +791,15 @@ export const updateMailboxMessage = async (ctx, input) => {
     item.id === record.id ? { ...item, data: { ...(item.data || {}), messages }, updatedAt: now() } : item
   )));
   return updated;
+};
+
+export const deleteMailboxMessage = async (ctx, input) => {
+  const { record, records } = await recordFromToken(ctx, input?.token);
+  const before = messagesForRecord(record);
+  const messages = before.filter((message) => message.id !== input?.id);
+  if (messages.length === before.length) throw new AppError('Message was not found.', 'NOT_FOUND');
+  await saveMailboxRecords(ctx.prisma, records.map((item) => (
+    item.id === record.id ? { ...item, data: { ...(item.data || {}), messages }, updatedAt: now() } : item
+  )));
+  return true;
 };

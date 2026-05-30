@@ -113,7 +113,7 @@ export async function fetchMailboxOverviewWithApi(token: string) {
   return data.mailboxOverview;
 }
 
-export async function sendMailboxEmailWithApi(input: { token: string; to: string; subject: string; body: string }) {
+export async function sendMailboxEmailWithApi(input: { token: string; draftId?: string; to: string; subject: string; body: string }) {
   const data = await graphQL<{ sendMailboxEmail: any }>(
     `mutation SendMailboxEmail($input: SendMailboxEmailInput!) {
       sendMailboxEmail(input: $input) { ${mailboxMessageFields} }
@@ -122,6 +122,17 @@ export async function sendMailboxEmailWithApi(input: { token: string; to: string
   );
 
   return data.sendMailboxEmail;
+}
+
+export async function saveMailboxDraftWithApi(input: { token: string; id?: string; to?: string; subject?: string; body?: string }) {
+  const data = await graphQL<{ saveMailboxDraft: any }>(
+    `mutation SaveMailboxDraft($input: SaveMailboxDraftInput!) {
+      saveMailboxDraft(input: $input) { ${mailboxMessageFields} }
+    }`,
+    { input }
+  );
+
+  return data.saveMailboxDraft;
 }
 
 export async function updateMailboxMessageWithApi(input: Record<string, unknown>) {
@@ -133,6 +144,17 @@ export async function updateMailboxMessageWithApi(input: Record<string, unknown>
   );
 
   return data.updateMailboxMessage;
+}
+
+export async function deleteMailboxMessageWithApi(input: Record<string, unknown>) {
+  const data = await graphQL<{ deleteMailboxMessage: boolean }>(
+    `mutation DeleteMailboxMessage($input: UpdateMailboxMessageInput!) {
+      deleteMailboxMessage(input: $input)
+    }`,
+    { input }
+  );
+
+  return data.deleteMailboxMessage;
 }
 
 export async function updateMailboxProfileWithApi(input: { token: string; displayName?: string; profileImageUrl?: string }) {

@@ -1540,9 +1540,18 @@ type MailboxRecoveryOtpPayload {
 
 input SendMailboxEmailInput {
   token: String!
+  draftId: ID
   to: String!
   subject: String!
   body: String!
+}
+
+input SaveMailboxDraftInput {
+  token: String!
+  id: ID
+  to: String
+  subject: String
+  body: String
 }
 
 input UpdateMailboxMessageInput {
@@ -2574,7 +2583,9 @@ type Mutation {
   requestMailboxRecoveryOtp(input: RequestMailboxRecoveryOtpInput!): MailboxRecoveryOtpPayload!
   mailboxRegister(input: MailboxRegisterInput!): MailboxLoginPayload!
   sendMailboxEmail(input: SendMailboxEmailInput!): MailboxMessage!
+  saveMailboxDraft(input: SaveMailboxDraftInput!): MailboxMessage!
   updateMailboxMessage(input: UpdateMailboxMessageInput!): MailboxMessage!
+  deleteMailboxMessage(input: UpdateMailboxMessageInput!): Boolean!
   updateMailboxProfile(input: UpdateMailboxProfileInput!): MailboxAccount!
   updateUserRole(id: ID!, role: String!): User!
   updateUser(input: UpdateUserInput!): User!

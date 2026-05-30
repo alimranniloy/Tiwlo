@@ -9,7 +9,9 @@ export const emailResolvers = {
     mailboxRegister: (_, { input }, ctx) => service.registerMailbox(ctx, input),
     mailboxLogin: (_, { input }, ctx) => service.loginMailbox(ctx, input),
     sendMailboxEmail: (_, { input }, ctx) => service.sendMailboxMessage(ctx, input),
+    saveMailboxDraft: (_, { input }, ctx) => service.saveMailboxDraft(ctx, input),
     updateMailboxMessage: (_, { input }, ctx) => service.updateMailboxMessage(ctx, input),
+    deleteMailboxMessage: (_, { input }, ctx) => service.deleteMailboxMessage(ctx, input),
     updateMailboxProfile: (_, { input }, ctx) => service.updateMailboxProfile(ctx, input)
   }
 };

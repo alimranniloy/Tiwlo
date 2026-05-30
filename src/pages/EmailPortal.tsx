@@ -5,10 +5,13 @@ import {
   ArrowLeft,
   BadgeCheck,
   Camera,
+  FileText,
   Inbox,
   Loader2,
   LogOut,
   Mail,
+  Menu,
+  MoreVertical,
   Plus,
   RefreshCw,
   Reply,
@@ -26,6 +29,8 @@ import {
   mailboxLoginWithApi,
   mailboxRegisterWithApi,
   requestMailboxRecoveryOtpWithApi,
+  deleteMailboxMessageWithApi,
+  saveMailboxDraftWithApi,
   sendMailboxEmailWithApi,
   updateMailboxMessageWithApi,
   updateMailboxProfileWithApi
@@ -68,6 +73,8 @@ type MailboxMessage = {
   read: boolean;
   starred?: boolean;
 };
+
+type MailboxFolder = 'inbox' | 'sent' | 'drafts' | 'starred' | 'trash';
 
 function dateLabel(value: string) {
   const date = new Date(value);
@@ -170,7 +177,7 @@ export default function EmailPortal() {
   const [token, setToken] = React.useState(() => localStorage.getItem(MAILBOX_TOKEN_KEY) || '');
   const [account, setAccount] = React.useState<MailboxAccount | null>(null);
   const [messages, setMessages] = React.useState<MailboxMessage[]>([]);
-  const [folder, setFolder] = React.useState<'inbox' | 'sent' | 'starred' | 'trash'>('inbox');
+  const [folder, setFolder] = React.useState<MailboxFolder>('inbox');
   const [selectedId, setSelectedId] = React.useState('');
   const [search, setSearch] = React.useState('');
   const [loading, setLoading] = React.useState(Boolean(token));
@@ -183,9 +190,12 @@ export default function EmailPortal() {
   const [registerForm, setRegisterForm] = React.useState({ username: '', domain: defaultMailDomain(), password: '', confirmPassword: '', displayName: '', recoveryEmail: '', recoveryOtp: '' });
   const [composeOpen, setComposeOpen] = React.useState(false);
   const [composeMode, setComposeMode] = React.useState<'new' | 'reply'>('new');
-  const [compose, setCompose] = React.useState({ to: '', subject: '', body: '' });
+  const [compose, setCompose] = React.useState({ draftId: '', to: '', subject: '', body: '' });
   const [settingsOpen, setSettingsOpen] = React.useState(false);
+  const [menuOpen, setMenuOpen] = React.useState(false);
+  const [actionMessage, setActionMessage] = React.useState<MailboxMessage | null>(null);
   const [profileForm, setProfileForm] = React.useState({ displayName: '', profileImageUrl: '' });
+  const longPressTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loadMailbox = React.useCallback(async (nextToken = token) => {
     if (!nextToken) return;
@@ -290,13 +300,39 @@ export default function EmailPortal() {
     setSelectedId('');
   };
 
+  const changeFolder = (nextFolder: MailboxFolder) => {
+    setFolder(nextFolder);
+    setSelectedId('');
+    setMenuOpen(false);
+    setActionMessage(null);
+  };
+
   const updateMessage = async (message: MailboxMessage, patch: Record<string, unknown>) => {
     if (!token) return;
     const updated = await updateMailboxMessageWithApi({ token, id: message.id, ...patch });
     setMessages((current) => current.map((item) => (item.id === updated.id ? updated : item)));
+    if (patch.folder) setSelectedId('');
+  };
+
+  const deleteMessage = async (message: MailboxMessage) => {
+    if (!token) return;
+    if (message.folder === 'trash' || message.folder === 'drafts') {
+      await deleteMailboxMessageWithApi({ token, id: message.id });
+      setMessages((current) => current.filter((item) => item.id !== message.id));
+    } else {
+      await updateMessage(message, { folder: 'trash' });
+    }
+    setActionMessage(null);
+    setSelectedId('');
   };
 
   const openMessage = async (message: MailboxMessage) => {
+    if (message.folder === 'drafts') {
+      setComposeMode('new');
+      setCompose({ draftId: message.id, to: message.to, subject: message.subject, body: message.body });
+      setComposeOpen(true);
+      return;
+    }
     setSelectedId(message.id);
     if (!message.read) await updateMessage(message, { read: true });
   };
@@ -307,14 +343,35 @@ export default function EmailPortal() {
     setComposeMode(mode);
     if (mode === 'reply' && message) {
       setCompose({
+        draftId: '',
         to: emailAddress(message.from),
         subject: message.subject.toLowerCase().startsWith('re:') ? message.subject : `Re: ${message.subject}`,
         body: `\n\nOn ${dateLabel(message.date)}, ${message.from} wrote:\n${message.body.replace(/^/gm, '> ')}`
       });
     } else {
-      setCompose({ to: '', subject: '', body: '' });
+      setCompose({ draftId: '', to: '', subject: '', body: '' });
     }
     setComposeOpen(true);
+  };
+
+  const saveDraft = async () => {
+    if (!token) return false;
+    if (!compose.to.trim() && !compose.subject.trim() && !compose.body.trim()) return false;
+    const draft = await saveMailboxDraftWithApi({ token, id: compose.draftId || undefined, to: compose.to, subject: compose.subject, body: compose.body });
+    setCompose((current) => ({ ...current, draftId: draft.id }));
+    setMessages((current) => [draft, ...current.filter((item) => item.id !== draft.id)]);
+    setNotice('Draft saved.');
+    return true;
+  };
+
+  const closeCompose = async () => {
+    try {
+      await saveDraft();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to save draft');
+    } finally {
+      setComposeOpen(false);
+    }
   };
 
   const sendMessage = async (event: React.FormEvent) => {
@@ -324,8 +381,8 @@ export default function EmailPortal() {
     setError('');
     setNotice('');
     try {
-      await sendMailboxEmailWithApi({ token, ...compose });
-      setCompose({ to: '', subject: '', body: '' });
+      await sendMailboxEmailWithApi({ token, ...compose, draftId: compose.draftId || undefined });
+      setCompose({ draftId: '', to: '', subject: '', body: '' });
       setComposeOpen(false);
       setFolder('sent');
       setNotice(composeMode === 'reply' ? 'Reply sent.' : 'Email sent.');
@@ -335,6 +392,16 @@ export default function EmailPortal() {
     } finally {
       setSending(false);
     }
+  };
+
+  const beginMessagePress = (message: MailboxMessage) => {
+    if (longPressTimer.current) clearTimeout(longPressTimer.current);
+    longPressTimer.current = setTimeout(() => setActionMessage(message), 520);
+  };
+
+  const endMessagePress = () => {
+    if (longPressTimer.current) clearTimeout(longPressTimer.current);
+    longPressTimer.current = null;
   };
 
   const saveProfile = async (event: React.FormEvent) => {
@@ -370,6 +437,13 @@ export default function EmailPortal() {
       const q = search.toLowerCase();
       return [message.from, message.to, message.subject, message.body].join(' ').toLowerCase().includes(q);
     });
+  const folderItems: Array<[MailboxFolder, any, string]> = [
+    ['inbox', Inbox, 'Inbox'],
+    ['sent', Send, 'Sent'],
+    ['drafts', FileText, 'Drafts'],
+    ['starred', Star, 'Starred'],
+    ['trash', Trash2, 'Trash']
+  ];
 
   if (token && loading && !account) {
     return (
@@ -443,6 +517,7 @@ export default function EmailPortal() {
   return (
     <div className="min-h-screen bg-[#f6f8fc] text-[#202124]">
       <header className="sticky top-0 z-40 flex min-h-14 flex-wrap items-center gap-2 border-b border-[#E5E7EB] bg-white px-3 py-2 md:h-16 md:flex-nowrap md:px-6 md:py-0">
+        <button onClick={() => setMenuOpen(true)} className="rounded-md p-2 text-[#5f6368] hover:bg-[#F3F5F9]" title="Menu"><Menu className="h-5 w-5" /></button>
         <TmailLogo className="h-8 w-24 md:h-10 md:w-28" />
         <div className="relative order-last w-full md:order-none md:max-w-xl md:flex-1">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#5f6368]" />
@@ -450,8 +525,8 @@ export default function EmailPortal() {
         </div>
         <button onClick={() => loadMailbox(token)} className="rounded-md p-2 text-[#5f6368] hover:bg-[#F3F5F9]" title="Refresh"><RefreshCw className="h-4 w-4" /></button>
         <button onClick={() => setSettingsOpen(true)} className="rounded-md p-2 text-[#5f6368] hover:bg-[#F3F5F9]" title="Settings"><Settings className="h-4 w-4" /></button>
-        <button onClick={logout} className="rounded-md p-2 text-[#5f6368] hover:bg-[#F3F5F9]" title="Sign out"><LogOut className="h-4 w-4" /></button>
-        <button onClick={() => setSettingsOpen(true)} className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-full border border-[#DDE3EA] bg-[#e8f0fe] text-sm font-black text-[#1967d2]">
+        <button onClick={logout} className="hidden rounded-md p-2 text-[#5f6368] hover:bg-[#F3F5F9] md:block" title="Sign out"><LogOut className="h-4 w-4" /></button>
+        <button onClick={() => setSettingsOpen(true)} className="ml-auto flex h-10 w-10 items-center justify-center overflow-hidden rounded-full border border-[#DDE3EA] bg-[#e8f0fe] text-sm font-black text-[#1967d2] md:ml-0">
           {avatarForAccount(account)}
         </button>
       </header>
@@ -461,13 +536,8 @@ export default function EmailPortal() {
           <button onClick={() => openCompose('new')} className="mb-5 inline-flex h-12 items-center gap-3 rounded-2xl bg-[#c2e7ff] px-5 text-sm font-black text-[#001d35] hover:bg-[#b3def7]">
             <Plus className="h-5 w-5" /> Compose
           </button>
-          {[
-            ['inbox', Inbox, 'Inbox'],
-            ['starred', Star, 'Starred'],
-            ['sent', Send, 'Sent'],
-            ['trash', Trash2, 'Trash']
-          ].map(([key, Icon, label]) => (
-            <button key={String(key)} onClick={() => { setFolder(key as any); setSelectedId(''); }} className={`mb-1 flex w-full items-center gap-3 rounded-r-full px-4 py-2 text-sm font-bold ${folder === key ? 'bg-[#d3e3fd] text-[#001d35]' : 'text-[#3c4043] hover:bg-[#F3F5F9]'}`}>
+          {folderItems.map(([key, Icon, label]) => (
+            <button key={String(key)} onClick={() => changeFolder(key)} className={`mb-1 flex w-full items-center gap-3 rounded-r-full px-4 py-2 text-sm font-bold ${folder === key ? 'bg-[#d3e3fd] text-[#001d35]' : 'text-[#3c4043] hover:bg-[#F3F5F9]'}`}>
               {React.createElement(Icon as any, { className: 'h-4 w-4' })} {label}
             </button>
           ))}
@@ -492,11 +562,23 @@ export default function EmailPortal() {
             ) : (
               <div className="divide-y divide-[#EEF2F7]">
                 {visibleMessages.map((message) => (
-                  <button key={message.id} onClick={() => openMessage(message)} className={`grid w-full grid-cols-[auto_1fr] gap-3 px-4 py-3 text-left hover:bg-[#F6F8FC] ${selectedId === message.id ? 'bg-[#eaf1fb]' : ''}`}>
+                  <button
+                    key={message.id}
+                    onClick={() => openMessage(message)}
+                    onContextMenu={(event) => { event.preventDefault(); setActionMessage(message); }}
+                    onMouseDown={() => beginMessagePress(message)}
+                    onMouseUp={endMessagePress}
+                    onMouseLeave={endMessagePress}
+                    onTouchStart={() => beginMessagePress(message)}
+                    onTouchEnd={endMessagePress}
+                    className={`grid w-full grid-cols-[auto_1fr_auto] gap-3 px-4 py-3 text-left hover:bg-[#F6F8FC] ${selectedId === message.id ? 'bg-[#eaf1fb]' : ''}`}
+                  >
                     <SenderAvatar value={message.folder === 'sent' ? message.to : message.from} />
                     <div className="min-w-0">
                       <div className="flex items-center justify-between gap-3">
-                        <p className={`truncate text-sm ${message.read ? 'font-semibold text-[#3c4043]' : 'font-black text-[#202124]'}`}>{emailName(message.folder === 'sent' ? message.to : message.from)}</p>
+                        <p className={`truncate text-sm ${message.read ? 'font-semibold text-[#3c4043]' : 'font-black text-[#202124]'}`}>
+                          {message.folder === 'sent' ? `To ${emailName(message.to)}` : message.folder === 'drafts' ? `Draft to ${emailName(message.to || 'No recipient')}` : emailName(message.from)}
+                        </p>
                         <span className="shrink-0 text-[10px] font-bold text-[#5f6368]">{dateLabel(message.date)}</span>
                       </div>
                       <div className="mt-1 flex items-center gap-2">
@@ -505,6 +587,7 @@ export default function EmailPortal() {
                       </div>
                       <p className="mt-1 truncate text-[12px] text-[#5f6368]">{providerInfo(message.folder === 'sent' ? message.to : message.from).name} · {messagePreview(message.body)}</p>
                     </div>
+                    <span onClick={(event) => { event.stopPropagation(); setActionMessage(message); }} className="mt-1 rounded-md p-1 text-[#5f6368] hover:bg-[#EEF2F7]"><MoreVertical className="h-4 w-4" /></span>
                   </button>
                 ))}
                 {visibleMessages.length === 0 && <div className="p-10 text-center text-sm font-bold text-[#9CA3AF]">No mail here.</div>}
@@ -539,7 +622,7 @@ export default function EmailPortal() {
                       <div className="flex items-center gap-1">
                         <button onClick={() => openCompose('reply', selected)} className="rounded-full p-2 text-[#5f6368] hover:bg-[#F3F5F9]" title="Reply"><Reply className="h-4 w-4" /></button>
                         <button onClick={() => updateMessage(selected, { starred: !selected.starred })} className="rounded-full p-2 text-[#5f6368] hover:bg-[#F3F5F9]" title="Star"><Star className={`h-4 w-4 ${selected.starred ? 'fill-amber-400 text-amber-400' : ''}`} /></button>
-                        <button onClick={() => updateMessage(selected, { folder: 'trash' })} className="rounded-full p-2 text-[#5f6368] hover:bg-[#F3F5F9]" title="Trash"><Trash2 className="h-4 w-4" /></button>
+                        <button onClick={() => deleteMessage(selected)} className="rounded-full p-2 text-[#5f6368] hover:bg-[#F3F5F9]" title="Trash"><Trash2 className="h-4 w-4" /></button>
                         <button className="rounded-full p-2 text-[#5f6368] hover:bg-[#F3F5F9]" title="Archive"><Archive className="h-4 w-4" /></button>
                       </div>
                     </div>
@@ -559,17 +642,53 @@ export default function EmailPortal() {
         </main>
       </div>
 
+      {menuOpen && (
+        <div className="fixed inset-0 z-50 bg-black/25" onClick={() => setMenuOpen(false)}>
+          <aside onClick={(event) => event.stopPropagation()} className="h-full w-80 max-w-[86vw] border-r border-[#E5E7EB] bg-white p-4">
+            <div className="mb-5 flex items-center justify-between">
+              <TmailLogo className="h-9 w-28" />
+              <button onClick={() => setMenuOpen(false)} className="rounded-md p-2 text-[#5f6368] hover:bg-[#F3F5F9]"><X className="h-4 w-4" /></button>
+            </div>
+            <button onClick={() => { openCompose('new'); setMenuOpen(false); }} className="mb-5 inline-flex h-11 items-center gap-3 rounded-md bg-[#c2e7ff] px-4 text-sm font-black text-[#001d35]">
+              <Plus className="h-5 w-5" /> Compose
+            </button>
+            {folderItems.map(([key, Icon, label]) => (
+              <button key={key} onClick={() => changeFolder(key)} className={`mb-1 flex w-full items-center justify-between rounded-md px-3 py-2 text-sm font-bold ${folder === key ? 'bg-[#d3e3fd] text-[#001d35]' : 'text-[#3c4043] hover:bg-[#F3F5F9]'}`}>
+                <span className="flex items-center gap-3">{React.createElement(Icon as any, { className: 'h-4 w-4' })} {label}</span>
+                <span className="text-[11px] text-[#6B7280]">{key === 'starred' ? messages.filter((mail) => mail.starred).length : messages.filter((mail) => mail.folder === key).length}</span>
+              </button>
+            ))}
+            <button onClick={logout} className="mt-4 flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-bold text-[#b42318] hover:bg-[#fef2f2]"><LogOut className="h-4 w-4" /> Sign out</button>
+          </aside>
+        </div>
+      )}
+
+      {actionMessage && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/25 p-3" onClick={() => setActionMessage(null)}>
+          <div onClick={(event) => event.stopPropagation()} className="w-full max-w-md rounded-sm border border-[#E5E7EB] bg-white p-3">
+            <p className="mb-2 truncate px-2 text-sm font-black">{actionMessage.subject || '(no subject)'}</p>
+            <button onClick={() => { openMessage(actionMessage); setActionMessage(null); }} className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-bold hover:bg-[#F3F5F9]"><Mail className="h-4 w-4" /> Open</button>
+            <button onClick={() => { updateMessage(actionMessage, { starred: !actionMessage.starred }); setActionMessage(null); }} className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-bold hover:bg-[#F3F5F9]"><Star className="h-4 w-4" /> {actionMessage.starred ? 'Remove star' : 'Star'}</button>
+            {actionMessage.folder !== 'drafts' && <button onClick={() => { openCompose('reply', actionMessage); setActionMessage(null); }} className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-bold hover:bg-[#F3F5F9]"><Reply className="h-4 w-4" /> Reply</button>}
+            <button onClick={() => deleteMessage(actionMessage)} className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-bold text-[#b42318] hover:bg-[#fef2f2]"><Trash2 className="h-4 w-4" /> {actionMessage.folder === 'trash' || actionMessage.folder === 'drafts' ? 'Delete forever' : 'Move to trash'}</button>
+          </div>
+        </div>
+      )}
+
       {composeOpen && (
         <div className="fixed inset-0 z-50 bg-white">
           <form onSubmit={sendMessage} className="flex h-full flex-col">
             <div className="flex h-16 items-center justify-between border-b border-[#E5E7EB] px-4 md:px-8">
               <div className="flex items-center gap-3">
-                <button type="button" onClick={() => setComposeOpen(false)} className="rounded-full p-2 text-[#5f6368] hover:bg-[#F3F5F9]"><X className="h-5 w-5" /></button>
-                <p className="text-lg font-black">{composeMode === 'reply' ? 'Reply' : 'New Message'}</p>
+                <button type="button" onClick={closeCompose} className="rounded-full p-2 text-[#5f6368] hover:bg-[#F3F5F9]"><X className="h-5 w-5" /></button>
+                <p className="text-lg font-black">{compose.draftId ? 'Draft' : composeMode === 'reply' ? 'Reply' : 'New Message'}</p>
               </div>
-              <button disabled={sending} className="inline-flex items-center gap-2 rounded-full bg-[#0b57d0] px-5 py-2 text-sm font-black text-white hover:bg-[#0842a0] disabled:opacity-60">
-                {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />} Send
-              </button>
+              <div className="flex items-center gap-2">
+                <button type="button" onClick={saveDraft} className="hidden rounded-sm border border-[#DDE3EA] px-3 py-2 text-xs font-black text-[#3c4043] hover:bg-[#F8FAFC] md:inline-flex">Save draft</button>
+                <button disabled={sending} className="inline-flex items-center gap-2 rounded-full bg-[#0b57d0] px-5 py-2 text-sm font-black text-white hover:bg-[#0842a0] disabled:opacity-60">
+                  {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />} Send
+                </button>
+              </div>
             </div>
             <div className="mx-auto flex w-full max-w-5xl flex-1 flex-col p-4 md:p-8">
               <input type="email" required value={compose.to} onChange={(event) => setCompose((current) => ({ ...current, to: event.target.value }))} className="border-b border-[#EEF2F7] px-2 py-4 text-sm outline-none" placeholder="To" />
