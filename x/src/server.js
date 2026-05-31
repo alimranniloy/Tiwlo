@@ -5,7 +5,7 @@ import helmet from 'helmet';
 import hpp from 'hpp';
 import rateLimit from 'express-rate-limit';
 import jwt from 'jsonwebtoken';
-import { createReadStream, existsSync, readFileSync } from 'node:fs';
+import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { ApolloServer } from '@apollo/server';
@@ -130,9 +130,11 @@ app.get('/brand/icon.png', (_req, res) => {
   res.sendFile(join(__dirname, '../../public/brand/icon.png'));
 });
 
-const setPrivateAssetHeaders = (res) => {
-  res.setHeader('Cache-Control', 'no-store, private, max-age=0');
-  res.setHeader('Pragma', 'no-cache');
+const setPrivateAssetHeaders = (res, cacheControl = 'no-store, private, max-age=0') => {
+  res.setHeader('Cache-Control', cacheControl);
+  if (cacheControl.includes('no-store')) {
+    res.setHeader('Pragma', 'no-cache');
+  }
   res.setHeader('X-Robots-Tag', 'noindex, nofollow, noarchive, noimageindex');
   res.setHeader('Referrer-Policy', 'no-referrer');
   res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -176,8 +178,23 @@ app.get('/api/system-assets/:asset', (req, res) => {
     return;
   }
 
-  setPrivateAssetHeaders(res);
+  const stat = statSync(filePath);
+  const etag = `W/"${stat.size}-${Math.floor(stat.mtimeMs)}"`;
+  if (req.headers['if-none-match'] === etag) {
+    setPrivateAssetHeaders(res, 'private, max-age=86400, immutable');
+    res.setHeader('ETag', etag);
+    res.setHeader('Last-Modified', stat.mtime.toUTCString());
+    res.setHeader('Vary', 'Sec-Fetch-Dest, Accept');
+    res.status(304).end();
+    return;
+  }
+
+  setPrivateAssetHeaders(res, 'private, max-age=86400, immutable');
   res.type('image/jpeg');
+  res.setHeader('Content-Length', stat.size);
+  res.setHeader('ETag', etag);
+  res.setHeader('Last-Modified', stat.mtime.toUTCString());
+  res.setHeader('Vary', 'Sec-Fetch-Dest, Accept');
   res.setHeader('Content-Disposition', `inline; filename="${key}.jpeg"`);
   createReadStream(filePath).pipe(res);
 });

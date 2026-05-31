@@ -49,6 +49,16 @@ export async function loginWithApi(email: string, password: string) {
   return data.login;
 }
 
+export async function fetchCurrentUserWithApi() {
+  const data = await graphQL<{ me: User | null }>(
+    `query CurrentUser {
+      me { ${userFields} }
+    }`
+  );
+
+  return data.me;
+}
+
 export async function signupWithApi(input: {
   name: string;
   email: string;

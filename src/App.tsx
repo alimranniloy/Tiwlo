@@ -89,7 +89,7 @@ const FloatingAIWidget = lazy(() => import('./components/FloatingAIWidget'));
 const ISPStorefront = lazy(() => import('./pages/isp/ISPStorefront'));
 const ISPAddRouter = lazy(() => import('./pages/isp/ISPAddRouter'));
 const ISPAdminRoot = lazy(() => import('./pages/isp/admin/ISPAdminRoot'));
-import { clearAuthToken, fetchAdminModules, fetchConsoleData, fetchPlatformStatusWithApi, getAuthToken } from './lib/tiwloApi';
+import { clearAuthToken, fetchAdminModules, fetchConsoleData, fetchCurrentUserWithApi, fetchPlatformStatusWithApi, getAuthToken } from './lib/tiwloApi';
 import { getStorefrontHostContext } from './lib/storefrontHost';
 import { isProfileComplete } from './lib/countries';
 import { SERVICE_MODULE_GROUP, SERVICE_MODULE_KEYS, serviceEnabled } from './lib/serviceModules';
@@ -382,16 +382,25 @@ export default function App() {
   useEffect(() => {
     if (!user) return;
     if (platformStatus.maintenance && !isAdminRole(user)) return;
-    if (isRestrictedUser(user)) {
-      setDroplets([]);
-      setDomains([]);
-      return;
-    }
 
     let isMounted = true;
 
     const loadConsoleData = async () => {
       try {
+        if (isRestrictedUser(user)) {
+          const latestUser = await fetchCurrentUserWithApi();
+          if (!isMounted) return;
+          if (latestUser) {
+            setUser(latestUser);
+            localStorage.setItem('tiwlo_user', JSON.stringify(latestUser));
+          }
+          if (!latestUser || isRestrictedUser(latestUser)) {
+            setDroplets([]);
+            setDomains([]);
+            return;
+          }
+        }
+
         const data = await fetchConsoleData();
         if (!isMounted) return;
         if (data.user) {
@@ -413,13 +422,15 @@ export default function App() {
     };
 
     loadConsoleData();
+    const interval = window.setInterval(loadConsoleData, isRestrictedUser(user) ? 10000 : 30000);
     window.addEventListener('tiwlo:data-refresh', loadConsoleData);
 
     return () => {
       isMounted = false;
+      window.clearInterval(interval);
       window.removeEventListener('tiwlo:data-refresh', loadConsoleData);
     };
-  }, [user?.id, user?.role, platformStatus.maintenance]);
+  }, [user?.id, user?.role, user?.status, platformStatus.maintenance]);
 
   useEffect(() => {
     if (!showWelcome) return undefined;

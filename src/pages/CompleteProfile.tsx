@@ -101,11 +101,11 @@ export default function CompleteProfile({ user, setUser, onLogout }: CompletePro
               <label className="space-y-2">
                 <span className="text-[11px] font-bold uppercase tracking-widest text-[#6B7280]">Country</span>
                 <select value={form.country} onChange={(event) => setValue('country', event.target.value)} className="w-full rounded border border-[#D1D5DB] px-4 py-3 text-sm font-bold outline-none focus:border-blue-600">
-                  {COUNTRIES.map((country) => <option key={country.code} value={country.code}>{country.flag} {country.name} {country.dialCode}</option>)}
+                  {COUNTRIES.map((country) => <option key={country.code} value={country.code}>{country.flag} {country.name}</option>)}
                 </select>
               </label>
               <label className="space-y-2">
-                <span className="text-[11px] font-bold uppercase tracking-widest text-[#6B7280]">Mobile {selectedCountry.dialCode}</span>
+                <span className="text-[11px] font-bold uppercase tracking-widest text-[#6B7280]">Mobile Number</span>
                 <div className="relative">
                   <Phone className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
                   <input value={form.phone} onChange={(event) => setValue('phone', event.target.value)} placeholder={form.country === 'BD' ? '1712345678' : 'Mobile number'} className="w-full rounded border border-[#D1D5DB] px-4 py-3 pl-11 text-sm outline-none focus:border-blue-600" />
