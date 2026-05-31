@@ -5,6 +5,7 @@ import {
   Brain,
   CheckCircle2,
   ClipboardCheck,
+  Copy,
   Clock,
   ExternalLink,
   Hash,
@@ -314,6 +315,29 @@ const workflowPreview = [
   { title: 'Case closed', detail: 'Close thread, save transcript, CSAT survey, post AI summary.', icon: Sparkles }
 ];
 
+const developerPortalUrls = [
+  {
+    label: 'Interactions Endpoint URL',
+    value: 'https://tiwlo.com/api/discord/interactions',
+    detail: 'Use this in Discord Developer Portal when the bot should receive slash commands and buttons over HTTP.'
+  },
+  {
+    label: 'Linked Roles Verification URL',
+    value: 'https://tiwlo.com/discord/verify',
+    detail: 'Use this if a Discord server role requires Tiwlo account verification.'
+  },
+  {
+    label: 'Terms of Service URL',
+    value: 'https://tiwlo.com/terms',
+    detail: 'Use this in the application legal settings.'
+  },
+  {
+    label: 'Privacy Policy URL',
+    value: 'https://tiwlo.com/privacy',
+    detail: 'Use this in the application legal settings.'
+  }
+];
+
 function safeConfig(value: any) {
   return { ...defaultConfig, ...(value && typeof value === 'object' ? value : {}) };
 }
@@ -385,6 +409,15 @@ export default function AdminDiscordBot() {
 
   const connected = status === 'active' && config.botToken && config.clientId && config.publicKey && config.guildId;
   const url = inviteUrl(config.clientId);
+
+  const copyText = async (value: string) => {
+    try {
+      await navigator.clipboard?.writeText(value);
+      setNotice('URL copied.');
+    } catch {
+      setError('Unable to copy URL');
+    }
+  };
 
   return (
     <form onSubmit={saveSettings} className="space-y-6 pb-12">
@@ -474,6 +507,27 @@ export default function AdminDiscordBot() {
                 className="w-full rounded border border-[#d8dee9] px-3 py-2 text-sm focus:border-[#0069ff] focus:outline-none"
               />
             </label>
+          ))}
+        </div>
+      </section>
+
+      <section className="rounded-lg border border-[#e5e8ed] bg-white">
+        <div className="border-b border-[#f3f5f9] bg-[#f8f9fa] px-5 py-4">
+          <h2 className="text-[14px] font-bold uppercase tracking-wide text-[#2e3d49]">Discord Developer Portal URLs</h2>
+          <p className="mt-1 text-[12px] text-[#4a4a4a]">When creating or configuring another Discord bot application, use these Tiwlo links in the Developer Portal.</p>
+        </div>
+        <div className="grid grid-cols-1 gap-3 p-5 xl:grid-cols-2">
+          {developerPortalUrls.map((item) => (
+            <div key={item.label} className="rounded border border-[#e5e8ed] p-4">
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <p className="text-[11px] font-black uppercase tracking-widest text-gray-500">{item.label}</p>
+                <button type="button" onClick={() => copyText(item.value)} className="inline-flex items-center gap-1 rounded border border-[#d8dee9] px-2 py-1 text-[11px] font-black text-[#374151] hover:bg-[#f8f9fa]">
+                  <Copy className="h-3.5 w-3.5" /> Copy
+                </button>
+              </div>
+              <p className="break-all rounded border border-blue-100 bg-blue-50 px-3 py-2 font-mono text-[12px] font-bold text-blue-800">{item.value}</p>
+              <p className="mt-2 text-[12px] leading-relaxed text-gray-500">{item.detail}</p>
+            </div>
           ))}
         </div>
       </section>
