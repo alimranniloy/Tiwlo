@@ -34,6 +34,7 @@ const permissionScopes = [
   'Send Messages',
   'Read Message History',
   'Manage Channels',
+  'Manage Messages',
   'Create Private Threads',
   'Manage Threads',
   'Attach Files',
@@ -117,7 +118,47 @@ const defaultConfig = {
   dailyDigest: true,
   incidentBroadcasts: true,
   aiSummaryOnClose: true,
-  aiSuggestedReplies: true
+  aiSuggestedReplies: true,
+  syncCustomerProfileCard: true,
+  showAccountRiskScore: true,
+  detectDuplicateTickets: true,
+  mergeDuplicateTickets: true,
+  autoReopenOnCustomerReply: true,
+  customerCooldownNotice: true,
+  routeByProductArea: true,
+  routeByCustomerTier: true,
+  routeByTimezone: true,
+  onCallRotation: true,
+  afterHoursAutoResponder: true,
+  emergencyPageAdmin: true,
+  requireTwoPersonApproval: true,
+  paymentFraudScoring: true,
+  invoiceDunningAlerts: true,
+  refundApprovalFlow: true,
+  chargebackAlertFlow: true,
+  kycExpiryReminder: true,
+  kycResubmissionFlow: true,
+  documentBlurDetection: true,
+  documentTamperSignal: true,
+  webhookRetryQueue: true,
+  deadLetterQueueAlerts: true,
+  botHealthHeartbeat: true,
+  autoDisableBrokenRules: true,
+  permissionDriftAlert: true,
+  channelArchiveSchedule: true,
+  transcriptExportCsv: true,
+  transcriptExportPdf: true,
+  tagSentiment: true,
+  detectAngryCustomer: true,
+  csatSurveyAfterClose: true,
+  staffPerformanceDigest: true,
+  queueLoadBalancing: true,
+  cannedReplyLibrary: true,
+  knowledgeBaseSuggestions: true,
+  fileVirusScanGate: true,
+  attachmentSizeGuard: true,
+  piiExportApproval: true,
+  retentionAutoPurge: true
 };
 
 const roleFields = [
@@ -194,6 +235,70 @@ const automationGroups = [
       ['aiSummaryOnClose', 'AI close summary', 'Create a short close summary for transcript and admin history.'],
       ['aiSuggestedReplies', 'AI suggested replies', 'Show staff-only suggested replies before sending to customer.']
     ]
+  },
+  {
+    title: 'Customer Intelligence',
+    icon: Brain,
+    items: [
+      ['syncCustomerProfileCard', 'Customer profile card', 'Discord embeds show account age, plan, email, invoices, and last cases.'],
+      ['showAccountRiskScore', 'Account risk score', 'Flag new, banned, overdue, or high-risk customers before staff replies.'],
+      ['detectDuplicateTickets', 'Detect duplicate tickets', 'Find same-user or same-subject duplicate support requests.'],
+      ['mergeDuplicateTickets', 'Merge duplicate tickets', 'Let staff merge duplicate Discord threads into one admin ticket.'],
+      ['autoReopenOnCustomerReply', 'Auto reopen on reply', 'Closed cases reopen when the customer replies again.'],
+      ['customerCooldownNotice', 'Cooldown notice', 'Warn users when they open too many tickets too quickly.'],
+      ['tagSentiment', 'Sentiment tagging', 'Tag calm, confused, angry, urgent, or churn-risk messages.'],
+      ['detectAngryCustomer', 'Angry customer alert', 'Escalate heated conversations before they turn into churn.']
+    ]
+  },
+  {
+    title: 'Smart Routing and On-call',
+    icon: Users,
+    items: [
+      ['routeByProductArea', 'Route by product area', 'Send cloud, billing, tPanel, ISP, email, and store issues to matching roles.'],
+      ['routeByCustomerTier', 'Route by customer tier', 'VIP, enterprise, and overdue customers follow separate routing rules.'],
+      ['routeByTimezone', 'Route by timezone', 'Prefer staff whose local time is inside working hours.'],
+      ['onCallRotation', 'On-call rotation', 'Rotate urgent after-hours pings across configured admin/support roles.'],
+      ['afterHoursAutoResponder', 'After-hours responder', 'Send a customer-safe response when no staff is online.'],
+      ['emergencyPageAdmin', 'Emergency page admin', 'Page admin role when outage, fraud, or security keywords appear.'],
+      ['queueLoadBalancing', 'Queue load balancing', 'Avoid assigning new cases to overloaded staff.'],
+      ['cannedReplyLibrary', 'Canned reply library', 'Expose approved reply templates in Discord actions.']
+    ]
+  },
+  {
+    title: 'Billing, Fraud, and KYC Guardrails',
+    icon: Receipt,
+    items: [
+      ['requireTwoPersonApproval', 'Two-person approval', 'Require second admin approval for risky refunds, KYC, or payment changes.'],
+      ['paymentFraudScoring', 'Payment fraud scoring', 'Score suspicious invoice proof, repeated failures, and mismatched payer data.'],
+      ['invoiceDunningAlerts', 'Invoice dunning alerts', 'Post overdue, failed retry, and grace-period warnings to invoice channel.'],
+      ['refundApprovalFlow', 'Refund approval flow', 'Create refund review cards with approve, reject, and request-info actions.'],
+      ['chargebackAlertFlow', 'Chargeback alert flow', 'Open high-priority billing tickets when chargeback signals arrive.'],
+      ['kycExpiryReminder', 'KYC expiry reminders', 'Warn identity channel before document evidence expires.'],
+      ['kycResubmissionFlow', 'KYC resubmission flow', 'Ask users for missing or rejected documents after decline.'],
+      ['documentBlurDetection', 'Document blur signal', 'Flag unreadable document images for manual review.'],
+      ['documentTamperSignal', 'Document tamper signal', 'Flag suspicious document metadata or edits for admin review.']
+    ]
+  },
+  {
+    title: 'Reliability and Data Controls',
+    icon: ShieldCheck,
+    items: [
+      ['webhookRetryQueue', 'Webhook retry queue', 'Retry failed Discord callbacks before marking automation failed.'],
+      ['deadLetterQueueAlerts', 'Dead-letter alerts', 'Notify log channel when bot jobs fail permanently.'],
+      ['botHealthHeartbeat', 'Bot health heartbeat', 'Post periodic online, latency, queue depth, and permission status.'],
+      ['autoDisableBrokenRules', 'Auto-disable broken rules', 'Disable a failing automation rule after repeated errors.'],
+      ['permissionDriftAlert', 'Permission drift alert', 'Alert when bot loses required permissions or channel access.'],
+      ['channelArchiveSchedule', 'Channel archive schedule', 'Archive stale temporary threads on a schedule.'],
+      ['transcriptExportCsv', 'CSV transcript export', 'Allow CSV export for support and audit reviews.'],
+      ['transcriptExportPdf', 'PDF transcript export', 'Allow PDF transcript export for compliance evidence.'],
+      ['fileVirusScanGate', 'Attachment scan gate', 'Hold risky attachments until scanner or staff approval passes.'],
+      ['attachmentSizeGuard', 'Attachment size guard', 'Block oversized files before they reach Discord threads.'],
+      ['piiExportApproval', 'PII export approval', 'Require admin approval before exporting sensitive customer evidence.'],
+      ['retentionAutoPurge', 'Retention auto purge', 'Purge old transcripts and attachments after retention period.'],
+      ['csatSurveyAfterClose', 'CSAT after close', 'Ask customer for satisfaction after solved ticket or live chat.'],
+      ['staffPerformanceDigest', 'Staff performance digest', 'Summarize response time, solved count, and overdue cases by staff.'],
+      ['knowledgeBaseSuggestions', 'Knowledge suggestions', 'Suggest docs and runbooks based on message subject.']
+    ]
   }
 ];
 
@@ -203,7 +308,9 @@ const workflowPreview = [
   { title: 'ID verification', detail: 'Post user, email, submitted docs, image metadata, approve/decline buttons.', icon: ClipboardCheck },
   { title: 'Invoice proof', detail: 'Post paid/non-paid proof, payment actions, dispute ticket option.', icon: Receipt },
   { title: 'SLA breach', detail: 'Escalate, mention admin role, log event, keep transcript.', icon: Clock },
-  { title: 'Case closed', detail: 'Close thread, save transcript, send customer update, post AI summary.', icon: Sparkles }
+  { title: 'Fraud/KYC risk', detail: 'Score payment proof and document risk before approve/decline.', icon: ShieldAlert },
+  { title: 'Webhook failure', detail: 'Retry job, then dead-letter alert with action context.', icon: TimerReset },
+  { title: 'Case closed', detail: 'Close thread, save transcript, CSAT survey, post AI summary.', icon: Sparkles }
 ];
 
 function safeConfig(value: any) {
