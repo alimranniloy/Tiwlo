@@ -1,8 +1,9 @@
 import { getActor } from './auth.js';
+import { notifyDiscordAuditLog } from '../modules/discord/service.js';
 
 export const writeAudit = async (ctx, action, resource, resourceId, metadata = {}) => {
   const actor = await getActor(ctx);
-  return ctx.prisma.auditLog.create({
+  const audit = await ctx.prisma.auditLog.create({
     data: {
       actorId: actor?.id,
       action,
@@ -11,4 +12,6 @@ export const writeAudit = async (ctx, action, resource, resourceId, metadata = {
       metadata
     }
   });
+  notifyDiscordAuditLog(ctx, audit).catch(() => null);
+  return audit;
 };

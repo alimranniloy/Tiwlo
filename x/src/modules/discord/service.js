@@ -4,6 +4,10 @@ import { createPublicKey, verify } from 'node:crypto';
 const DISCORD_INTEGRATION_KEY = 'discord-bot';
 const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
 const DISCORD_API = 'https://discord.com/api/v10';
+const DISCORD_GATEWAY = 'wss://gateway.discord.gg/?v=10&encoding=json';
+const DISCORD_INTENTS = 1 | 512 | 32768;
+let gatewayState = null;
+let gatewayWorkerStarted = false;
 
 const html = (title, body) => `<!doctype html>
 <html lang="en">
@@ -103,6 +107,37 @@ const commandResponse = (name) => {
   return { type: 4, data: { content, flags: 64 } };
 };
 
+const componentResponse = async (prisma, payload) => {
+  const customId = String(payload.data?.custom_id || '');
+  const [, kind, action, id, value] = customId.split(':');
+  if (customId.startsWith('tiwlo:ticket:status:') && id && value) {
+    const ticket = await prisma.supportTicket.update({
+      where: { id },
+      data: { status: value },
+      include: { owner: true, assignedTo: true, messages: { orderBy: { createdAt: 'asc' }, take: 20 } }
+    });
+    await notifyDiscordTicketEvent({ prisma }, 'status', ticket);
+    return { type: 4, data: { content: `Ticket marked ${value}.`, flags: 64 } };
+  }
+  if (customId.startsWith('tiwlo:ticket:delete:') && action === 'delete' && id) {
+    await prisma.supportTicket.delete({ where: { id } });
+    return { type: 4, data: { content: 'Ticket deleted from Tiwlo.', flags: 64 } };
+  }
+  if (customId.startsWith('tiwlo:chat:status:') && id && value) {
+    const chat = await prisma.liveChatSession.update({
+      where: { id },
+      data: { status: value },
+      include: { owner: true, assignedTo: true, messages: { orderBy: { createdAt: 'asc' }, take: 20 } }
+    });
+    await notifyDiscordLiveChatEvent({ prisma }, 'status', chat);
+    return { type: 4, data: { content: `Live chat marked ${value}.`, flags: 64 } };
+  }
+  if (kind || action) {
+    return { type: 4, data: { content: 'This Tiwlo action is not available for that record.', flags: 64 } };
+  }
+  return { type: 4, data: { content: 'Action received by Tiwlo.', flags: 64 } };
+};
+
 const cleanChannelName = (value, fallback) => String(value || fallback || 'tiwlo')
   .trim()
   .toLowerCase()
@@ -132,6 +167,408 @@ const discordFetch = async (token, path, options = {}) => {
     throw new Error(message);
   }
   return data;
+};
+
+const truncate = (value, length = 900) => {
+  const text = String(value || '').trim();
+  return text.length > length ? `${text.slice(0, length - 3)}...` : text;
+};
+
+const moneyLabel = (amount, currency = 'USD') => `${String(currency || 'USD').toUpperCase()} ${Number(amount || 0).toFixed(2)}`;
+
+const isDiscordReady = (integration) => (
+  integration?.status === 'active'
+  && integration?.config
+  && String(integration.config.botToken || '').trim()
+  && String(integration.config.guildId || '').trim()
+);
+
+const readDiscordIntegration = async (prisma) => {
+  const integration = await prisma.integration.findUnique({ where: { key: DISCORD_INTEGRATION_KEY } }).catch(() => null);
+  if (!isDiscordReady(integration)) return null;
+  return integration;
+};
+
+const findResourceByDiscordChannel = async (prisma, channelId) => {
+  const ticket = await prisma.supportTicket.findFirst({
+    where: { metadata: { path: ['discord', 'channelId'], equals: channelId } },
+    include: { owner: true, assignedTo: true, messages: { orderBy: { createdAt: 'asc' }, take: 20 } }
+  }).catch(() => null);
+  if (ticket) return { kind: 'ticket', resource: ticket };
+
+  const chat = await prisma.liveChatSession.findFirst({
+    where: { metadata: { path: ['discord', 'channelId'], equals: channelId } },
+    include: { owner: true, assignedTo: true, messages: { orderBy: { createdAt: 'asc' }, take: 20 } }
+  }).catch(() => null);
+  if (chat) return { kind: 'live-chat', resource: chat };
+
+  return null;
+};
+
+const persistDiscordChannelReply = async (prisma, message) => {
+  if (!message?.channel_id || !String(message.content || '').trim() || message.author?.bot) return;
+  const match = await findResourceByDiscordChannel(prisma, message.channel_id);
+  if (!match) return;
+
+  const authorName = message.member?.nick || message.author?.global_name || message.author?.username || 'Discord Staff';
+  const body = truncate(message.content, 3800);
+  if (match.kind === 'ticket') {
+    const reply = await prisma.supportTicketMessage.create({
+      data: {
+        ticketId: match.resource.id,
+        authorId: null,
+        authorName,
+        authorRole: 'support',
+        body,
+        visibility: 'public',
+        attachments: (message.attachments || []).map((item) => ({ id: item.id, name: item.filename, url: item.url }))
+      },
+      include: { author: true }
+    });
+    await prisma.supportTicket.update({
+      where: { id: match.resource.id },
+      data: { status: match.resource.status === 'closed' ? 'closed' : 'pending' }
+    }).catch(() => null);
+    await postDiscordMessage((await readDiscordIntegration(prisma)).config, message.channel_id, {
+      content: `Saved to Tiwlo ticket as ${reply.authorName}.`
+    }).catch(() => null);
+    return;
+  }
+
+  const reply = await prisma.liveChatMessage.create({
+    data: {
+      sessionId: match.resource.id,
+      authorId: null,
+      authorName,
+      senderRole: 'support',
+      body,
+      attachments: (message.attachments || []).map((item) => ({ id: item.id, name: item.filename, url: item.url }))
+    },
+    include: { author: true }
+  });
+  await prisma.liveChatSession.update({
+    where: { id: match.resource.id },
+    data: { lastMessageAt: new Date(), status: match.resource.status === 'closed' ? 'closed' : 'assigned' }
+  }).catch(() => null);
+  await postDiscordMessage((await readDiscordIntegration(prisma)).config, message.channel_id, {
+    content: `Saved to Tiwlo live chat as ${reply.authorName}.`
+  }).catch(() => null);
+};
+
+const stopDiscordGateway = () => {
+  if (!gatewayState) return;
+  clearInterval(gatewayState.heartbeat);
+  clearTimeout(gatewayState.reconnect);
+  gatewayState.ws?.close?.();
+  gatewayState = null;
+};
+
+const connectDiscordGateway = async (prisma, integration) => {
+  const token = String(integration?.config?.botToken || '').trim();
+  if (!token || typeof WebSocket === 'undefined') return;
+  stopDiscordGateway();
+
+  const ws = new WebSocket(DISCORD_GATEWAY);
+  gatewayState = { ws, heartbeat: null, reconnect: null, token };
+  let sequence = null;
+
+  const send = (payload) => {
+    if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(payload));
+  };
+
+  ws.addEventListener('message', (event) => {
+    let payload;
+    try {
+      payload = JSON.parse(String(event.data || '{}'));
+    } catch {
+      return;
+    }
+
+    if (payload.op === 10) {
+      gatewayState.heartbeat = setInterval(() => send({ op: 1, d: sequence }), payload.d.heartbeat_interval);
+      send({
+        op: 2,
+        d: {
+          token,
+          intents: DISCORD_INTENTS,
+          properties: { os: process.platform, browser: 'tiwlo', device: 'tiwlo' }
+        }
+      });
+      return;
+    }
+
+    if (payload.s !== null && payload.s !== undefined) sequence = payload.s;
+    if (payload.op === 11) return;
+    if (payload.t === 'MESSAGE_CREATE') {
+      persistDiscordChannelReply(prisma, payload.d).catch((error) => {
+        updateDiscordHealth(prisma, { status: 'error', lastError: error.message, area: 'gateway-message' });
+      });
+    }
+  });
+
+  ws.addEventListener('open', () => {
+    updateDiscordHealth(prisma, { status: 'gateway_connected' });
+  });
+
+  ws.addEventListener('close', () => {
+    if (!gatewayState || gatewayState.ws !== ws) return;
+    clearInterval(gatewayState.heartbeat);
+    gatewayState.reconnect = setTimeout(() => {
+      readDiscordIntegration(prisma).then((next) => {
+        if (next) connectDiscordGateway(prisma, next);
+      }).catch(() => null);
+    }, 10000);
+  });
+
+  ws.addEventListener('error', () => {
+    updateDiscordHealth(prisma, { status: 'error', lastError: 'Discord gateway connection failed', area: 'gateway' });
+  });
+};
+
+const startDiscordGatewayWorker = (prisma) => {
+  if (gatewayWorkerStarted) return;
+  gatewayWorkerStarted = true;
+  if (typeof WebSocket === 'undefined') {
+    updateDiscordHealth(prisma, { status: 'error', lastError: 'Node WebSocket API is not available', area: 'gateway' });
+    return;
+  }
+
+  setInterval(async () => {
+    const integration = await readDiscordIntegration(prisma);
+    const token = String(integration?.config?.botToken || '').trim();
+    if (!token) {
+      stopDiscordGateway();
+      return;
+    }
+    if (!gatewayState || gatewayState.token !== token || gatewayState.ws?.readyState === WebSocket.CLOSED) {
+      await connectDiscordGateway(prisma, integration);
+    }
+  }, 30000).unref?.();
+
+  readDiscordIntegration(prisma).then((integration) => {
+    if (integration) connectDiscordGateway(prisma, integration);
+  }).catch(() => null);
+};
+
+const postDiscordMessage = async (config, channelId, payload) => {
+  if (!channelId) return null;
+  return discordFetch(String(config.botToken).trim(), `/channels/${channelId}/messages`, {
+    method: 'POST',
+    body: JSON.stringify({
+      allowed_mentions: { parse: [] },
+      ...payload
+    })
+  });
+};
+
+const ensureResourceChannel = async (prisma, config, kind, resource) => {
+  const current = resource?.metadata?.discord || {};
+  if (current.channelId) return current;
+
+  const categoryId = kind === 'ticket' ? config.ticketCategoryId : config.liveChatCategoryId;
+  if (!categoryId) return current;
+
+  const suffix = String(resource.id || '').slice(-6).toLowerCase();
+  const subject = cleanChannelName(resource.subject || resource.message || kind, kind).slice(0, 36);
+  const name = cleanChannelName(`${kind}-${suffix}-${subject}`, `${kind}-${suffix}`);
+  const channel = await discordFetch(String(config.botToken).trim(), `/guilds/${config.guildId}/channels`, {
+    method: 'POST',
+    body: JSON.stringify({
+      name,
+      type: 0,
+      parent_id: categoryId,
+      topic: `Tiwlo ${kind} ${resource.id} for ${resource.owner?.email || resource.ownerId || 'customer'}`
+    })
+  });
+
+  const discord = {
+    ...current,
+    channelId: channel.id,
+    channelName: channel.name,
+    channelLink: `https://discord.com/channels/${config.guildId}/${channel.id}`,
+    createdAt: new Date().toISOString()
+  };
+
+  const model = kind === 'ticket' ? prisma.supportTicket : prisma.liveChatSession;
+  await model.update({
+    where: { id: resource.id },
+    data: { metadata: { ...(resource.metadata || {}), discord } }
+  }).catch(() => null);
+
+  return discord;
+};
+
+const actionRow = (items) => ({
+  type: 1,
+  components: items.map((item) => ({
+    type: 2,
+    style: item.style,
+    label: item.label,
+    custom_id: item.id
+  }))
+});
+
+const ticketButtons = (ticketId) => [
+  actionRow([
+    { label: 'Open', style: 1, id: `tiwlo:ticket:status:${ticketId}:open` },
+    { label: 'Solved', style: 3, id: `tiwlo:ticket:status:${ticketId}:resolved` },
+    { label: 'Close', style: 2, id: `tiwlo:ticket:status:${ticketId}:closed` },
+    { label: 'Delete', style: 4, id: `tiwlo:ticket:delete:${ticketId}` }
+  ])
+];
+
+const chatButtons = (sessionId) => [
+  actionRow([
+    { label: 'Open', style: 1, id: `tiwlo:chat:status:${sessionId}:open` },
+    { label: 'Assigned', style: 3, id: `tiwlo:chat:status:${sessionId}:assigned` },
+    { label: 'Close', style: 2, id: `tiwlo:chat:status:${sessionId}:closed` }
+  ])
+];
+
+const userLine = (owner) => owner ? `${owner.name || 'Customer'} <${owner.email || 'no-email'}>` : 'Customer';
+
+const supportEmbed = ({ title, color, resource, description, fields = [] }) => ({
+  title,
+  description: truncate(description, 1800),
+  color,
+  fields: [
+    { name: 'Customer', value: userLine(resource.owner), inline: false },
+    { name: 'Status', value: String(resource.status || 'open'), inline: true },
+    { name: 'Priority', value: String(resource.priority || 'normal'), inline: true },
+    ...fields.filter((field) => field.value)
+  ].slice(0, 12),
+  timestamp: new Date().toISOString(),
+  footer: { text: `Tiwlo ID ${resource.id}` }
+});
+
+export const notifyDiscordTicketEvent = async (ctx, event, ticket, message = null) => {
+  try {
+    const integration = await readDiscordIntegration(ctx.prisma);
+    if (!integration) return null;
+    const config = integration.config;
+    const fresh = await ctx.prisma.supportTicket.findUnique({
+      where: { id: ticket.id },
+      include: { owner: true, assignedTo: true, messages: { orderBy: { createdAt: 'asc' }, take: 20 } }
+    });
+    if (!fresh) return null;
+
+    const discord = await ensureResourceChannel(ctx.prisma, config, 'ticket', fresh);
+    const title = event === 'message' ? 'Ticket reply' : event === 'status' ? 'Ticket status updated' : 'New support ticket';
+    const body = message?.body || fresh.message;
+    const embed = supportEmbed({
+      title,
+      color: event === 'status' ? 0xf59e0b : 0x0069ff,
+      resource: fresh,
+      description: body,
+      fields: [
+        { name: 'Subject', value: truncate(fresh.subject, 256), inline: false },
+        { name: 'Author', value: message ? `${message.authorName || 'Unknown'} (${message.authorRole || 'user'})` : userLine(fresh.owner), inline: false },
+        { name: 'Discord thread', value: discord.channelLink || 'Not created', inline: false }
+      ]
+    });
+
+    await postDiscordMessage(config, config.ticketChannelId, { embeds: [embed], components: ticketButtons(fresh.id) });
+    if (discord.channelId) {
+      await postDiscordMessage(config, discord.channelId, { embeds: [embed], components: ticketButtons(fresh.id) });
+    }
+  } catch (error) {
+    await updateDiscordHealth(ctx.prisma, { status: 'error', lastError: error.message, area: 'ticket' });
+  }
+};
+
+export const notifyDiscordLiveChatEvent = async (ctx, event, session, message = null) => {
+  try {
+    const integration = await readDiscordIntegration(ctx.prisma);
+    if (!integration) return null;
+    const config = integration.config;
+    const fresh = await ctx.prisma.liveChatSession.findUnique({
+      where: { id: session.id },
+      include: { owner: true, assignedTo: true, messages: { orderBy: { createdAt: 'asc' }, take: 20 } }
+    });
+    if (!fresh) return null;
+
+    const discord = await ensureResourceChannel(ctx.prisma, config, 'live-chat', fresh);
+    const title = event === 'message' ? 'Live chat message' : event === 'status' ? 'Live chat status updated' : 'New live support chat';
+    const embed = supportEmbed({
+      title,
+      color: event === 'message' ? 0x22c55e : 0x06b6d4,
+      resource: fresh,
+      description: message?.body || fresh.subject || 'Live chat started.',
+      fields: [
+        { name: 'Author', value: message ? `${message.authorName || 'Unknown'} (${message.senderRole || 'user'})` : userLine(fresh.owner), inline: false },
+        { name: 'Discord channel', value: discord.channelLink || 'Not created', inline: false }
+      ]
+    });
+
+    await postDiscordMessage(config, config.liveChatChannelId, { embeds: [embed], components: chatButtons(fresh.id) });
+    if (discord.channelId) {
+      await postDiscordMessage(config, discord.channelId, { embeds: [embed], components: chatButtons(fresh.id) });
+    }
+  } catch (error) {
+    await updateDiscordHealth(ctx.prisma, { status: 'error', lastError: error.message, area: 'live-chat' });
+  }
+};
+
+export const notifyDiscordInvoiceEvent = async (ctx, event, invoice, extra = {}) => {
+  try {
+    const integration = await readDiscordIntegration(ctx.prisma);
+    if (!integration?.config?.invoiceChannelId) return null;
+    const fresh = await ctx.prisma.invoice.findUnique({ where: { id: invoice.id }, include: { owner: true, payments: { orderBy: { createdAt: 'desc' }, take: 3 } } });
+    if (!fresh) return null;
+    const title = event === 'paid' ? 'Invoice paid' : event === 'failed' ? 'Invoice payment failed' : 'Invoice created';
+    const color = event === 'paid' ? 0x22c55e : event === 'failed' ? 0xef4444 : 0xf59e0b;
+    await postDiscordMessage(integration.config, integration.config.invoiceChannelId, {
+      embeds: [{
+        title,
+        color,
+        description: truncate(extra.message || `${fresh.number} is ${fresh.status}.`),
+        fields: [
+          { name: 'Invoice', value: fresh.number || fresh.id, inline: true },
+          { name: 'Amount', value: moneyLabel(fresh.amount, fresh.currency), inline: true },
+          { name: 'Status', value: String(fresh.status || 'open'), inline: true },
+          { name: 'Customer', value: userLine(fresh.owner), inline: false },
+          { name: 'Scope', value: String(fresh.scope || 'billing'), inline: true },
+          { name: 'Provider', value: String(extra.provider || fresh.payments?.[0]?.provider || 'n/a'), inline: true }
+        ],
+        timestamp: new Date().toISOString(),
+        footer: { text: `Tiwlo invoice ${fresh.id}` }
+      }]
+    });
+  } catch (error) {
+    await updateDiscordHealth(ctx.prisma, { status: 'error', lastError: error.message, area: 'invoice' });
+  }
+};
+
+export const notifyDiscordAuditLog = async (ctx, audit) => {
+  try {
+    if (String(audit.action || '').startsWith('discord_')) return null;
+    const integration = await readDiscordIntegration(ctx.prisma);
+    if (!integration?.config?.logChannelId) return null;
+    await postDiscordMessage(integration.config, integration.config.logChannelId, {
+      embeds: [{
+        title: 'System log',
+        color: 0x64748b,
+        description: truncate(`${audit.action} on ${audit.resource || 'system'}`),
+        fields: [
+          { name: 'Resource ID', value: String(audit.resourceId || 'n/a'), inline: false },
+          { name: 'Actor', value: String(audit.actorId || 'system'), inline: true }
+        ],
+        timestamp: new Date().toISOString()
+      }]
+    });
+  } catch {
+    return null;
+  }
+};
+
+const updateDiscordHealth = async (prisma, patch) => {
+  await prisma.integration.update({
+    where: { key: DISCORD_INTEGRATION_KEY },
+    data: {
+      health: { ...patch, checkedAt: new Date().toISOString() },
+      lastSyncAt: new Date()
+    }
+  }).catch(() => null);
 };
 
 const resolveGuildId = async (token, configuredGuildId) => {
@@ -350,7 +787,7 @@ const handleDiscordInteraction = async (prisma, req, res) => {
   }
 
   if (payload.type === 3) {
-    res.json({ type: 4, data: { content: 'Action received. Tiwlo automation will process it.', flags: 64 } });
+    res.json(await componentResponse(prisma, payload));
     return;
   }
 
@@ -358,6 +795,8 @@ const handleDiscordInteraction = async (prisma, req, res) => {
 };
 
 export const registerDiscordRoutes = (app, { prisma, userFromRequest }) => {
+  startDiscordGatewayWorker(prisma);
+
   const rawJson = express.raw({ type: 'application/json', limit: '256kb' });
   const json = express.json({ limit: '256kb' });
 

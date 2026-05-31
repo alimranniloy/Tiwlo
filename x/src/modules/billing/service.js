@@ -5,6 +5,7 @@ import { AppError } from '../../core/errors.js';
 import { pagination } from '../../core/validation.js';
 import { paragraph, sendTiwloEmail } from '../../core/email.js';
 import { ensureOwnerHasCredit, runCreditAutomationForOwner, runCreditAutomationJob } from './creditAutomation.js';
+import { notifyDiscordInvoiceEvent } from '../discord/service.js';
 import {
   createBkashPayment,
   createPaypalOrder,
@@ -56,6 +57,7 @@ async function notifyBillingEvent(ctx, invoice, title, message, path = '/invoice
       paragraph(`Invoice ${invoice.number} total: ${moneyLabel(invoice.amount, invoice.currency)}.`)
     ].join('')
   });
+  await notifyDiscordInvoiceEvent(ctx, 'created', invoice, { message });
 }
 
 const exchangeRate = (fromCurrency, toCurrency) => {
@@ -528,6 +530,7 @@ const completeInvoicePayment = async (ctx, { invoiceId, provider, reference, amo
 
   await completeTiwloPayInvoice(ctx, result.invoice, { provider, reference, amount });
   await runCreditAutomationForOwner(ctx, result.invoice.ownerId);
+  await notifyDiscordInvoiceEvent(ctx, 'paid', result.invoice, { provider, reference, amount, message: `${result.invoice.number} was paid via ${provider}.` });
   return result;
 };
 
@@ -550,6 +553,7 @@ const failInvoicePayment = async (ctx, { invoiceId, provider, reference, message
     });
   });
   await failTiwloPayInvoice(ctx, invoice, { provider, reference, message });
+  await notifyDiscordInvoiceEvent(ctx, 'failed', invoice, { provider, reference, message });
   return { invoiceId, status: 'failed', provider, message };
 };
 

@@ -5,6 +5,7 @@ import { writeAudit } from '../../core/audit.js';
 import { pagination } from '../../core/validation.js';
 import { aiModelStatus, streamAiModelPrompt } from '../ai-model/service.js';
 import { createBlockRule } from '../ddos/service.js';
+import { notifyDiscordLiveChatEvent, notifyDiscordTicketEvent } from '../discord/service.js';
 
 const SUPPORT_STAFF_ROLES = new Set(['super_admin', 'admin', 'manager', 'staff']);
 const TICKET_STATUSES = ['open', 'pending', 'resolved', 'closed'];
@@ -1014,6 +1015,7 @@ export const createTicket = async (ctx, actor, input) => {
   });
 
   await writeAudit(ctx, 'create_ticket', 'supportTicket', ticket.id, { priority, category });
+  await notifyDiscordTicketEvent(ctx, 'created', ticket);
   return toApi(ticket);
 };
 
@@ -1053,6 +1055,7 @@ export const replyTicket = async (ctx, actor, id, input) => {
   }
 
   await writeAudit(ctx, 'reply_ticket', 'supportTicket', id, { visibility });
+  await notifyDiscordTicketEvent(ctx, 'message', ticket, message);
   return toApi(message);
 };
 
@@ -1083,6 +1086,7 @@ export const updateStatus = async (ctx, actor, id, status) => {
   });
 
   await writeAudit(ctx, 'update_ticket_status', 'supportTicket', id, { status: nextStatus });
+  await notifyDiscordTicketEvent(ctx, 'status', ticket);
   return toApi(ticket);
 };
 
@@ -1137,6 +1141,7 @@ export const startLiveChat = async (ctx, actor, input = {}) => {
   });
 
   await writeAudit(ctx, 'start_live_chat', 'liveChatSession', session.id, { priority });
+  await notifyDiscordLiveChatEvent(ctx, 'created', session);
   return toApi(session);
 };
 
@@ -1168,6 +1173,7 @@ export const sendLiveChatMessage = async (ctx, actor, sessionId, input) => {
   });
 
   await writeAudit(ctx, 'send_live_chat_message', 'liveChatSession', sessionId, { senderRole: staffActor ? 'support' : 'user' });
+  await notifyDiscordLiveChatEvent(ctx, 'message', session, message);
   return toApi(message);
 };
 
@@ -1204,6 +1210,7 @@ export const updateLiveChatSessionStatus = async (ctx, actor, id, status) => {
   });
 
   await writeAudit(ctx, 'update_live_chat_status', 'liveChatSession', id, { status: nextStatus });
+  await notifyDiscordLiveChatEvent(ctx, 'status', session);
   return toApi(session);
 };
 
@@ -1252,6 +1259,8 @@ export const createTicketFromLiveChat = async (ctx, actor, sessionId, subject) =
 
   await ctx.prisma.liveChatSession.update({ where: { id: sessionId }, data: { status: 'closed' } });
   await writeAudit(ctx, 'create_ticket_from_live_chat', 'supportTicket', ticket.id, { liveChatSessionId: sessionId });
+  await notifyDiscordTicketEvent(ctx, 'created', ticket);
+  await notifyDiscordLiveChatEvent(ctx, 'status', { ...session, status: 'closed' });
   return toApi(ticket);
 };
 
