@@ -12,6 +12,8 @@ const backendPrefixes = [
   '/admin',
   '/health',
   '/webhooks/',
+  '/api/',
+  '/discord/',
   '/automation/',
   '/ai/',
   '/payments/',

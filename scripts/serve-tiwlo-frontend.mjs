@@ -26,6 +26,8 @@ const proxyPrefixes = [
   '/health',
   '/payments',
   '/webhooks',
+  '/api',
+  '/discord',
   '/automation',
   '/ai',
   '/tpanel/api',

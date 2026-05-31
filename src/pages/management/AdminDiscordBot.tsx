@@ -385,7 +385,7 @@ export default function AdminDiscordBot() {
     setError('');
     setNotice('');
     try {
-      const connected = Boolean(config.botToken.trim() && config.clientId.trim() && config.publicKey.trim() && config.guildId.trim());
+      const connected = Boolean(config.botToken.trim() && config.clientId.trim() && config.publicKey.trim());
       await upsertIntegrationWithApi({
         key: DISCORD_KEY,
         group: DISCORD_GROUP,
@@ -407,7 +407,7 @@ export default function AdminDiscordBot() {
     }
   };
 
-  const connected = status === 'active' && config.botToken && config.clientId && config.publicKey && config.guildId;
+  const connected = status === 'active' && config.botToken && config.clientId && config.publicKey;
   const url = inviteUrl(config.clientId);
 
   const copyText = async (value: string) => {
@@ -454,7 +454,7 @@ export default function AdminDiscordBot() {
               ['botToken', 'Bot token', 'Paste Discord bot token'],
               ['clientId', 'Application client ID', 'Discord application ID'],
               ['publicKey', 'Application public key', 'Discord interactions public key'],
-              ['guildId', 'Server / guild ID', 'Target Discord server ID'],
+              ['guildId', 'Server / guild ID', 'Optional target server ID for automation'],
               ['ticketCategoryName', 'Ticket category', 'Temporary ticket channels category'],
               ['liveChatCategoryName', 'Live chat category', 'Temporary live chat channels category']
             ].map(([key, label, placeholder]) => (
@@ -479,7 +479,7 @@ export default function AdminDiscordBot() {
           <div className="space-y-3 p-5">
             <div className={`flex items-center gap-3 rounded border px-4 py-3 ${connected ? 'border-emerald-100 bg-emerald-50 text-emerald-700' : 'border-amber-100 bg-amber-50 text-amber-700'}`}>
               <Bot className="h-5 w-5" />
-              <span className="text-sm font-black">{connected ? 'Discord API connected' : 'Add bot token, client ID, public key, and guild ID to connect'}</span>
+              <span className="text-sm font-black">{connected ? 'Discord API connected' : 'Add bot token, client ID, and public key to connect'}</span>
             </div>
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               {permissionScopes.map((scope) => (

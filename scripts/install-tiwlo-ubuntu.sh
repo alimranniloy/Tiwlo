@@ -620,6 +620,14 @@ server {
         proxy_pass http://127.0.0.1:${BACKEND_PORT};
     }
 
+    location /api {
+        proxy_pass http://127.0.0.1:${BACKEND_PORT};
+    }
+
+    location /discord {
+        proxy_pass http://127.0.0.1:${BACKEND_PORT};
+    }
+
     location /automation {
         proxy_pass http://127.0.0.1:${BACKEND_PORT};
     }

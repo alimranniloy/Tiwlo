@@ -39,6 +39,14 @@ export default defineConfig(({mode}) => {
           target: env.TIWLO_BACKEND_URL || 'http://127.0.0.1:4000',
           changeOrigin: true,
         },
+        '/api': {
+          target: env.TIWLO_BACKEND_URL || 'http://127.0.0.1:4000',
+          changeOrigin: true,
+        },
+        '/discord': {
+          target: env.TIWLO_BACKEND_URL || 'http://127.0.0.1:4000',
+          changeOrigin: true,
+        },
         '/automation': {
           target: env.TIWLO_BACKEND_URL || 'http://127.0.0.1:4000',
           changeOrigin: true,
