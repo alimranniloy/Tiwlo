@@ -37,10 +37,10 @@ export const normalizeCountry = (value) => cleanText(value, 'BD').toUpperCase().
 
 export const normalizePhoneDigits = (value) => cleanText(value).replace(/\D/g, '');
 
-export const phoneValidationMessage = (countryCode, phone) => {
+export const phoneValidationMessage = (countryCode, phone, mobileCountryCode = '') => {
   const country = normalizeCountry(countryCode);
   const digits = normalizePhoneDigits(phone);
-  const dialDigits = String(COUNTRY_DIAL_CODES[country] || '').replace(/\D/g, '');
+  const dialDigits = String(mobileCountryCode || COUNTRY_DIAL_CODES[country] || '').replace(/\D/g, '');
   const localDigits = dialDigits && digits.startsWith(dialDigits) ? digits.slice(dialDigits.length) : digits;
   const [min, max] = COUNTRY_LENGTHS[country] || [6, 15];
 
@@ -64,7 +64,7 @@ export const isProfileInputComplete = (input = {}) => (
 );
 
 export const profileCompletionData = (input = {}) => {
-  const phoneError = phoneValidationMessage(input.country, input.phone);
+  const phoneError = phoneValidationMessage(input.country, input.phone, input.mobileCountryCode);
   if (phoneError) return { error: phoneError };
   return {
     data: {

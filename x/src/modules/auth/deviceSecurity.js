@@ -118,6 +118,10 @@ export const recordAuthDeviceSession = async (ctx, user, input = {}, event = 'lo
       timezone: metadata.timezone || '',
       language: metadata.language || '',
       platform: metadata.platform || '',
+      vendor: metadata.vendor || '',
+      hardwareConcurrency: metadata.hardwareConcurrency || 0,
+      deviceMemory: metadata.deviceMemory || 0,
+      maxTouchPoints: metadata.maxTouchPoints || 0,
       screen: metadata.screen || ''
     }
   };

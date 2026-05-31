@@ -101,7 +101,7 @@ export default function CompleteProfile({ user, setUser, onLogout }: CompletePro
               <label className="space-y-2">
                 <span className="text-[11px] font-bold uppercase tracking-widest text-[#6B7280]">Country</span>
                 <select value={form.country} onChange={(event) => setValue('country', event.target.value)} className="w-full rounded border border-[#D1D5DB] px-4 py-3 text-sm font-bold outline-none focus:border-blue-600">
-                  {COUNTRIES.map((country) => <option key={country.code} value={country.code}>{country.name}</option>)}
+                  {COUNTRIES.map((country) => <option key={country.code} value={country.code}>{country.flag} {country.name} {country.dialCode}</option>)}
                 </select>
               </label>
               <label className="space-y-2">

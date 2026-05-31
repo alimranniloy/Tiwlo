@@ -188,7 +188,7 @@ export default function SettingsPage({ user, setUser }: SettingsProps) {
                       onChange={(event) => setCountry(event.target.value)}
                       className="w-full rounded-md border border-[#D1D5DB] bg-[#F9FAFB] px-5 py-3 text-[14px] font-bold transition-all focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-600/20"
                     >
-                      {COUNTRIES.map((item) => <option key={item.code} value={item.code}>{item.name}</option>)}
+                      {COUNTRIES.map((item) => <option key={item.code} value={item.code}>{item.flag} {item.name} {item.dialCode}</option>)}
                     </select>
                   </label>
                   <label className="space-y-2">

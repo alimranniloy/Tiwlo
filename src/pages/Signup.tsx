@@ -173,13 +173,29 @@ export default function SignupPage({ onSignup }: SignupProps) {
                   <span className="ml-1 text-[10px] font-bold uppercase tracking-wider text-[#4a4a4a] md:text-xs">Country</span>
                   <select value={form.country} onChange={(e) => setValue('country', e.target.value)} className="w-full rounded-sm border border-gray-200 bg-white px-4 py-3 text-sm font-bold outline-none transition-all focus:border-blue-600">
                     {COUNTRIES.map((country) => (
-                      <option key={country.code} value={country.code}>{country.name}</option>
+                      <option key={country.code} value={country.code}>{country.flag} {country.name} {country.dialCode}</option>
                     ))}
                   </select>
                 </label>
-                <Field label={`Mobile Number ${selectedCountry.dialCode || ''}`} icon={Phone}>
-                  <input required type="tel" value={form.phone} onChange={(e) => setValue('phone', e.target.value)} placeholder={form.country === 'BD' ? '1712345678' : 'Mobile number'} className="w-full rounded-sm border border-gray-200 bg-white px-4 py-3 pl-12 text-sm font-medium outline-none transition-all focus:border-blue-600" />
-                </Field>
+                <label className="space-y-1.5 md:col-span-2">
+                  <span className="ml-1 text-[10px] font-bold uppercase tracking-wider text-[#4a4a4a] md:text-xs">Mobile Number</span>
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-[180px_1fr]">
+                    <select
+                      value={form.country}
+                      onChange={(e) => setValue('country', e.target.value)}
+                      className="w-full rounded-sm border border-gray-200 bg-white px-3 py-3 text-sm font-bold outline-none transition-all focus:border-blue-600"
+                      aria-label="Country calling code"
+                    >
+                      {COUNTRIES.map((country) => (
+                        <option key={country.code} value={country.code}>{country.flag} {country.dialCode} {country.name}</option>
+                      ))}
+                    </select>
+                    <div className="relative">
+                      <Phone className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                      <input required type="tel" value={form.phone} onChange={(e) => setValue('phone', e.target.value)} placeholder={form.country === 'BD' ? '1712345678' : 'Mobile number'} className="w-full rounded-sm border border-gray-200 bg-white px-4 py-3 pl-12 text-sm font-medium outline-none transition-all focus:border-blue-600" />
+                    </div>
+                  </div>
+                </label>
                 <Field label="Address" icon={MapPin}>
                   <input required type="text" value={form.addressLine1} onChange={(e) => setValue('addressLine1', e.target.value)} placeholder="Street address" className="w-full rounded-sm border border-gray-200 bg-white px-4 py-3 pl-12 text-sm font-medium outline-none transition-all focus:border-blue-600" />
                 </Field>

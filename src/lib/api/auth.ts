@@ -12,6 +12,10 @@ function deviceMetadata() {
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || '',
     language: navigator.language || '',
     platform: navigator.platform || '',
+    vendor: navigator.vendor || '',
+    hardwareConcurrency: navigator.hardwareConcurrency || 0,
+    deviceMemory: (navigator as Navigator & { deviceMemory?: number }).deviceMemory || 0,
+    maxTouchPoints: navigator.maxTouchPoints || 0,
     screen: screenText,
     userAgent: navigator.userAgent || ''
   };
@@ -19,8 +23,12 @@ function deviceMetadata() {
     metadata.userAgent,
     metadata.language,
     metadata.platform,
+    metadata.vendor,
     metadata.timezone,
-    metadata.screen
+    metadata.screen,
+    metadata.hardwareConcurrency,
+    metadata.deviceMemory,
+    metadata.maxTouchPoints
   ].join('|');
   return { deviceFingerprint, deviceMetadata: metadata };
 }

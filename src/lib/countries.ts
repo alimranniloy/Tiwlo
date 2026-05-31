@@ -1,6 +1,9 @@
+import { getCountryCallingCode, type CountryCode } from 'libphonenumber-js';
+
 export type CountryOption = {
   code: string;
   name: string;
+  flag: string;
   dialCode: string;
   minLength: number;
   maxLength: number;
@@ -47,7 +50,14 @@ const DIAL_CODES: Record<string, string> = {
   MX: '+52',
   ZA: '+27',
   NG: '+234',
-  EG: '+20'
+  EG: '+20',
+  AQ: '+672',
+  BV: '+47',
+  TF: '+262',
+  HM: '+672',
+  PN: '+64',
+  GS: '+500',
+  UM: '+1'
 };
 
 const LENGTHS: Record<string, [number, number]> = {
@@ -73,13 +83,31 @@ function countryName(code: string) {
   }
 }
 
+function countryFlag(code: string) {
+  const normalized = code.toUpperCase().replace(/[^A-Z]/g, '');
+  if (normalized.length !== 2) return '';
+  return normalized
+    .split('')
+    .map((letter) => String.fromCodePoint(127397 + letter.charCodeAt(0)))
+    .join('');
+}
+
+function dialCodeFor(code: string) {
+  try {
+    return `+${getCountryCallingCode(code as CountryCode)}`;
+  } catch {
+    return DIAL_CODES[code] || '';
+  }
+}
+
 export const COUNTRIES: CountryOption[] = ISO_COUNTRY_CODES
   .map((code) => {
     const [minLength, maxLength] = LENGTHS[code] || [6, 15];
     return {
       code,
       name: countryName(code),
-      dialCode: DIAL_CODES[code] || '',
+      flag: countryFlag(code),
+      dialCode: dialCodeFor(code),
       minLength,
       maxLength
     };

@@ -1,6 +1,9 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
+import hpp from 'hpp';
+import rateLimit from 'express-rate-limit';
 import jwt from 'jsonwebtoken';
 import { createReadStream, existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -46,6 +49,19 @@ await server.start();
 
 app.set('trust proxy', true);
 app.use(cors(createCorsOptionsDelegate()));
+app.use(helmet({
+  contentSecurityPolicy: false,
+  crossOriginEmbedderPolicy: false
+}));
+app.use(hpp());
+app.use(['/graphql', '/api', '/ai', '/automation', '/payments'], rateLimit({
+  windowMs: 60 * 1000,
+  limit: 240,
+  standardHeaders: true,
+  legacyHeaders: false,
+  validate: { trustProxy: false },
+  skip: (req) => req.path === '/health' || req.originalUrl.startsWith('/api/system-assets/')
+}));
 
 app.post('/webhooks/stripe', express.raw({ type: 'application/json' }), async (req, res) => {
   try {

@@ -8,6 +8,7 @@ import { getNewAccountCredit } from '../../core/settings.js';
 import { isProfileInputComplete, profileCompletionData } from '../../core/profile.js';
 import { appOrigin, cta, paragraph, sendTiwloEmail } from '../../core/email.js';
 import { recordAuthDeviceSession } from './deviceSecurity.js';
+import { enforceSignupShield } from './systemShield.js';
 
 function randomToken() {
   return crypto.randomBytes(32).toString('hex');
@@ -135,8 +136,11 @@ export const signup = async (ctx, input) => {
 
   const device = await recordAuthDeviceSession(ctx, user, input, 'signup');
   await writeAudit({ ...ctx, user }, 'signup', 'user', user.id, { email, device: device.session });
-  queueVerificationEmail(ctx, user, verificationToken);
-  return { token: createToken(user), user: toApi(user) };
+  const shield = await enforceSignupShield(ctx, user, input, device.session);
+  if (String(shield.user.status || '').toLowerCase() !== 'disabled') {
+    queueVerificationEmail(ctx, shield.user, verificationToken);
+  }
+  return { token: createToken(shield.user), user: toApi(shield.user) };
 };
 
 export const updateProfile = async (ctx, actor, input) => {
