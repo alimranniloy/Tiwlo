@@ -4,6 +4,7 @@ import {
   Bot,
   CheckCircle2,
   Clock,
+  ExternalLink,
   Filter,
   LifeBuoy,
   Loader2,
@@ -23,6 +24,7 @@ import {
   assignSupportTicketWithApi,
   createSupportTicketWithApi,
   createTicketFromLiveChatWithApi,
+  fetchIntegrationsWithApi,
   fetchLiveChatSessionWithApi,
   fetchLiveChatSessionsWithApi,
   fetchSupportTicketWithApi,
@@ -35,6 +37,10 @@ import {
 } from '../../lib/tiwloApi';
 
 const staffRoles = new Set(['super_admin', 'admin', 'manager', 'staff']);
+const discordChannelKeys = {
+  tickets: 'ticketChannelLink',
+  liveChat: 'liveChatChannelLink'
+};
 
 function getStoredUser() {
   try {
@@ -100,6 +106,7 @@ export default function AdminSupport() {
   const [tickets, setTickets] = React.useState<any[]>([]);
   const [chatSessions, setChatSessions] = React.useState<any[]>([]);
   const [staffUsers, setStaffUsers] = React.useState<any[]>([]);
+  const [discordConfig, setDiscordConfig] = React.useState<any | null>(null);
   const [search, setSearch] = React.useState('');
   const [chatSearch, setChatSearch] = React.useState('');
   const [statusFilter, setStatusFilter] = React.useState('');
@@ -169,6 +176,15 @@ export default function AdminSupport() {
     fetchUsersForAdmin()
       .then((users) => setStaffUsers(users.filter((user: any) => staffRoles.has(String(user.role || '').toLowerCase()))))
       .catch(() => setStaffUsers([]));
+  }, []);
+
+  React.useEffect(() => {
+    fetchIntegrationsWithApi('communications', 'active')
+      .then((items) => {
+        const discord = items.find((item: any) => item.key === 'discord-bot');
+        setDiscordConfig(discord?.config || null);
+      })
+      .catch(() => setDiscordConfig(null));
   }, []);
 
   const createMemo = async (event: React.FormEvent) => {
@@ -323,6 +339,11 @@ export default function AdminSupport() {
   const resolvedCount = tickets.filter((ticket) => ['resolved', 'closed'].includes(String(ticket.status).toLowerCase())).length;
   const highCount = tickets.filter((ticket) => String(ticket.priority).toLowerCase() === 'high').length;
   const activeChatCount = chatSessions.filter((session) => ['open', 'assigned'].includes(String(session.status).toLowerCase())).length;
+  const newTicketCount = tickets.filter((ticket) => ['open', 'pending'].includes(String(ticket.status).toLowerCase())).length;
+  const newLiveChatCount = chatSessions.filter((session) => ['open', 'assigned'].includes(String(session.status).toLowerCase())).length;
+  const showDiscordDots = discordConfig?.showRedDot !== false;
+  const discordTicketLink = discordConfig?.[discordChannelKeys.tickets];
+  const discordLiveChatLink = discordConfig?.[discordChannelKeys.liveChat];
   const filteredTickets = tickets.filter((ticket) => {
     const haystack = `${ticket.subject} ${ticket.category} ${ticket.priority} ${ticket.status} ${ticket.owner?.name || ''} ${ticket.assignedTo?.name || ''}`.toLowerCase();
     return haystack.includes(search.toLowerCase());
@@ -370,6 +391,33 @@ export default function AdminSupport() {
         ))}
       </div>
 
+      {discordConfig && (
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+          {[
+            { label: 'Discord ticket channel', href: discordTicketLink, count: newTicketCount, name: discordConfig.ticketChannelName || 'support-tickets' },
+            { label: 'Discord live chat channel', href: discordLiveChatLink, count: newLiveChatCount, name: discordConfig.liveChatChannelName || 'live-support' }
+          ].map((channel) => (
+            <div key={channel.label} className="flex items-center justify-between gap-3 rounded-lg border border-[#e5e8ed] bg-white px-4 py-3">
+              <div className="min-w-0">
+                <p className="text-[11px] font-black uppercase tracking-widest text-gray-400">{channel.label}</p>
+                <p className="mt-1 flex min-w-0 items-center gap-2 text-[13px] font-bold text-[#2e3d49]">
+                  {showDiscordDots && channel.count > 0 && <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-red-500 shadow-[0_0_0_4px_rgba(239,68,68,0.12)]" />}
+                  <span className="truncate">#{channel.name}</span>
+                  <span className="rounded border border-red-100 bg-red-50 px-2 py-0.5 text-[10px] font-black text-red-700">{channel.count}</span>
+                </p>
+              </div>
+              {channel.href ? (
+                <a href={channel.href} target="_blank" rel="noreferrer" className="inline-flex shrink-0 items-center gap-2 rounded border border-indigo-100 bg-indigo-50 px-3 py-2 text-[12px] font-bold text-indigo-700 hover:bg-indigo-100">
+                  <ExternalLink className="h-4 w-4" /> Open
+                </a>
+              ) : (
+                <span className="shrink-0 text-[11px] font-bold text-gray-400">No link</span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
       <div className="flex rounded-lg border border-[#e5e8ed] bg-white p-1">
         <button onClick={() => setActiveView('tickets')} className={`flex flex-1 items-center justify-center gap-2 rounded-md px-4 py-2 text-[13px] font-bold ${activeView === 'tickets' ? 'bg-[#0069ff] text-white' : 'text-[#4a4a4a] hover:bg-gray-50'}`}>
           <LifeBuoy className="h-4 w-4" /> Tickets
@@ -415,8 +463,10 @@ export default function AdminSupport() {
                     <td className="px-6 py-4">
                       <div className="flex flex-col">
                         <span className="flex flex-wrap items-center gap-2 text-[14px] font-bold text-[#2e3d49] transition-colors group-hover:text-[#0069ff]">
+                          {showDiscordDots && ['open', 'pending'].includes(String(ticket.status).toLowerCase()) && <span className="h-2 w-2 rounded-full bg-red-500" title="New Discord ticket alert" />}
                           {ticket.subject}
                           {aiBadge(ticket)}
+                          {discordTicketLink && <a href={discordTicketLink} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()} className="inline-flex items-center gap-1 rounded border border-indigo-100 bg-indigo-50 px-2 py-0.5 text-[10px] font-black uppercase text-indigo-700"><ExternalLink className="h-3 w-3" /> Discord</a>}
                         </span>
                         <span className="font-mono text-[11px] text-gray-400">ID: {ticket.id}</span>
                       </div>
@@ -488,8 +538,10 @@ export default function AdminSupport() {
                     <td className="px-6 py-4">
                       <div className="flex flex-col">
                         <span className="flex flex-wrap items-center gap-2 text-[14px] font-bold text-[#2e3d49] transition-colors group-hover:text-[#0069ff]">
+                          {showDiscordDots && ['open', 'assigned'].includes(String(session.status).toLowerCase()) && <span className="h-2 w-2 rounded-full bg-red-500" title="New Discord live chat alert" />}
                           {session.subject || 'Live chat'}
                           {aiBadge(session)}
+                          {discordLiveChatLink && <a href={discordLiveChatLink} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()} className="inline-flex items-center gap-1 rounded border border-indigo-100 bg-indigo-50 px-2 py-0.5 text-[10px] font-black uppercase text-indigo-700"><ExternalLink className="h-3 w-3" /> Discord</a>}
                         </span>
                         <span className="font-mono text-[11px] text-gray-400">ID: {session.id}</span>
                       </div>

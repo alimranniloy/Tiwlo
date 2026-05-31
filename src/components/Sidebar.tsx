@@ -31,6 +31,7 @@ import {
   Puzzle,
   Lock,
   Mail,
+  MessageCircle,
   Settings,
   Coins,
   Archive
@@ -105,6 +106,7 @@ export default function Sidebar({ user, isOpen, setIsOpen, onLogout }: SidebarPr
           { name: 'tPanel', icon: Server, path: '/management/tpanel' },
           { name: 'Cloud Templates', icon: LayoutGrid, path: '/management/cloud-templates' },
           { name: 'System Addons', icon: Puzzle, path: '/management/plugins' },
+          { name: 'Discord Bot', icon: MessageCircle, path: '/management/discord-bot' },
         ]
       },
       {

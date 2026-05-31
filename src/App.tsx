@@ -60,6 +60,7 @@ const AdminDns = lazy(() => import('./pages/management/AdminDns'));
 const AdminDnsHostnames = lazy(() => import('./pages/management/AdminDnsHostnames'));
 const AdminIdentity = lazy(() => import('./pages/management/AdminIdentity'));
 const AdminPlugins = lazy(() => import('./pages/management/AdminPlugins'));
+const AdminDiscordBot = lazy(() => import('./pages/management/AdminDiscordBot'));
 const AdminSecurity = lazy(() => import('./pages/management/AdminSecurity'));
 const AdminCore = lazy(() => import('./pages/management/AdminCore'));
 const AdminAiModel = lazy(() => import('./pages/management/AdminAiModel'));
@@ -236,6 +237,7 @@ function AppContent({
                 <Route path="/management/identity" element={<AdminIdentity />} />
                 <Route path="/management/contact-groups" element={<AdminSectionRecords sectionKey="contactGroups" />} />
                 <Route path="/management/plugins" element={<AdminPlugins />} />
+                <Route path="/management/discord-bot" element={<AdminDiscordBot />} />
                 <Route path="/management/security" element={<AdminSecurity />} />
                 <Route path="/management/core" element={<AdminCore />} />
                 <Route path="/management/ai-model" element={<AdminAiModel />} />
