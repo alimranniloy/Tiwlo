@@ -2,18 +2,25 @@ import React from 'react';
 import {
   AlertCircle,
   Bot,
+  Brain,
   CheckCircle2,
   ClipboardCheck,
+  Clock,
   ExternalLink,
   Hash,
   LifeBuoy,
   Link as LinkIcon,
   MessageCircle,
+  Radio,
   Receipt,
   RefreshCw,
   Save,
+  ShieldAlert,
   ShieldCheck,
+  Sparkles,
   Ticket,
+  TimerReset,
+  Users,
   Workflow
 } from 'lucide-react';
 import { fetchIntegrationsWithApi, upsertIntegrationWithApi } from '../../lib/tiwloApi';
@@ -28,8 +35,12 @@ const permissionScopes = [
   'Read Message History',
   'Manage Channels',
   'Create Private Threads',
+  'Manage Threads',
   'Attach Files',
   'Embed Links',
+  'Mention Everyone',
+  'Manage Webhooks',
+  'View Audit Log',
   'Use Slash Commands'
 ];
 
@@ -62,6 +73,18 @@ const defaultConfig = {
   invoiceChannelLink: '',
   logChannelName: 'system-logs',
   logChannelLink: '',
+  adminRoleId: '',
+  supportRoleId: '',
+  billingRoleId: '',
+  identityRoleId: '',
+  webhookSecret: '',
+  transcriptRetentionDays: 180,
+  firstResponseSlaMinutes: 10,
+  escalationSlaMinutes: 30,
+  autoCloseAfterHours: 24,
+  maxOpenTicketsPerUser: 3,
+  spamMessageLimit: 6,
+  spamWindowSeconds: 45,
   createTemporaryChannels: true,
   showRedDot: true,
   syncTicketNumbers: true,
@@ -69,8 +92,119 @@ const defaultConfig = {
   storeClosedThreads: true,
   sendIdentityImages: true,
   sendInvoiceProof: true,
-  animatedLiveTyping: true
+  animatedLiveTyping: true,
+  usePrivateThreads: true,
+  mentionRoleOnUrgent: true,
+  autoEscalateSla: true,
+  sendTranscriptOnClose: true,
+  saveTranscriptToAdmin: true,
+  autoTagPriority: true,
+  autoAssignStaff: true,
+  detectLanguage: true,
+  translateCustomerMessage: false,
+  autoCreateInvoiceDisputeTicket: true,
+  verifyPaymentProof: true,
+  postAuditEmbeds: true,
+  mirrorAdminActions: true,
+  slashCommands: true,
+  buttonActions: true,
+  staffPresenceRouting: true,
+  rateLimitUsers: true,
+  blockSpamLinks: true,
+  maskSensitiveData: true,
+  requireModeratorForIdDocs: true,
+  notifyCustomerByEmail: true,
+  dailyDigest: true,
+  incidentBroadcasts: true,
+  aiSummaryOnClose: true,
+  aiSuggestedReplies: true
 };
+
+const roleFields = [
+  { key: 'adminRoleId', label: 'Admin role ID', placeholder: 'Discord admin role ID', icon: Users },
+  { key: 'supportRoleId', label: 'Support role ID', placeholder: 'Support agent role ID', icon: LifeBuoy },
+  { key: 'billingRoleId', label: 'Billing role ID', placeholder: 'Billing team role ID', icon: Receipt },
+  { key: 'identityRoleId', label: 'Identity role ID', placeholder: 'KYC/ID review role ID', icon: ClipboardCheck },
+  { key: 'webhookSecret', label: 'Webhook secret', placeholder: 'Shared secret for bot callbacks', icon: ShieldCheck }
+];
+
+const numericFields = [
+  { key: 'firstResponseSlaMinutes', label: 'First response SLA', suffix: 'min', min: 1, max: 240 },
+  { key: 'escalationSlaMinutes', label: 'Escalation SLA', suffix: 'min', min: 5, max: 1440 },
+  { key: 'autoCloseAfterHours', label: 'Auto close solved', suffix: 'hours', min: 1, max: 720 },
+  { key: 'transcriptRetentionDays', label: 'Transcript retention', suffix: 'days', min: 1, max: 3650 },
+  { key: 'maxOpenTicketsPerUser', label: 'Max open tickets/user', suffix: 'tickets', min: 1, max: 50 },
+  { key: 'spamMessageLimit', label: 'Spam message limit', suffix: 'msgs', min: 1, max: 100 },
+  { key: 'spamWindowSeconds', label: 'Spam window', suffix: 'sec', min: 5, max: 3600 }
+];
+
+const automationGroups = [
+  {
+    title: 'Ticket and Live Chat Flow',
+    icon: Ticket,
+    items: [
+      ['createTemporaryChannels', 'Create temporary channels', 'New ticket or live chat opens a temporary Discord channel.'],
+      ['usePrivateThreads', 'Use private threads', 'Keep each customer case isolated under the mapped channel.'],
+      ['syncTicketNumbers', 'Sync ticket numbers', 'Discord embeds include ticket/session ID and admin deep link.'],
+      ['buttonActions', 'Discord action buttons', 'Approve, decline, assign, solved, reopen, and close buttons are available on embeds.'],
+      ['closeOnSolved', 'Close on solved', 'Solved/closed status closes the temporary Discord workflow.'],
+      ['sendTranscriptOnClose', 'Send close transcript', 'Post a transcript summary when a case is closed.'],
+      ['saveTranscriptToAdmin', 'Store transcript in admin', 'Closed ticket/live-chat history stays in admin records.'],
+      ['animatedLiveTyping', 'Animated live typing', 'Live chat widget can show animated typing while staff replies.']
+    ]
+  },
+  {
+    title: 'Routing and Escalation',
+    icon: TimerReset,
+    items: [
+      ['showRedDot', 'Show red dot queue', 'New tickets and chats show red notification dots with ticket number.'],
+      ['mentionRoleOnUrgent', 'Mention role on urgent', 'High-priority cases ping the matching support, billing, or identity role.'],
+      ['autoEscalateSla', 'Auto escalate SLA', 'Cases breaching SLA move to escalation and mention admin role.'],
+      ['autoTagPriority', 'Auto tag priority', 'Bot tags urgent, billing, identity, abuse, and outage messages automatically.'],
+      ['autoAssignStaff', 'Auto assign staff', 'New cases can be assigned to available staff automatically.'],
+      ['staffPresenceRouting', 'Staff presence routing', 'Prefer online staff before assigning a Discord case.'],
+      ['dailyDigest', 'Daily digest', 'Send daily open, solved, overdue, and invoice review summary.'],
+      ['incidentBroadcasts', 'Incident broadcasts', 'Send outage and maintenance announcements to mapped channels.']
+    ]
+  },
+  {
+    title: 'Identity and Invoice Automation',
+    icon: ClipboardCheck,
+    items: [
+      ['sendIdentityImages', 'Send ID documents', 'Identity verification sends user, email, and document image metadata.'],
+      ['requireModeratorForIdDocs', 'Restrict ID documents', 'Only mapped identity/admin roles can see document channels.'],
+      ['sendInvoiceProof', 'Send invoice proof', 'Invoice paid/unpaid proof is routed to invoice channel.'],
+      ['verifyPaymentProof', 'Review payment proof', 'Payment proof embeds include approve, reject, and mark paid actions.'],
+      ['autoCreateInvoiceDisputeTicket', 'Create dispute tickets', 'Failed or disputed invoice proof can open a support ticket automatically.'],
+      ['notifyCustomerByEmail', 'Email customer updates', 'Approval, decline, solved, and payment status changes notify the user.']
+    ]
+  },
+  {
+    title: 'Security, AI, and Logs',
+    icon: ShieldAlert,
+    items: [
+      ['slashCommands', 'Slash commands', '/ticket, /live, /assign, /solved, /invoice, /idreview, and /broadcast are enabled.'],
+      ['postAuditEmbeds', 'Audit embeds', 'Admin actions and bot actions are posted to the log channel.'],
+      ['mirrorAdminActions', 'Mirror admin actions', 'Actions from the web admin panel are mirrored back to Discord.'],
+      ['rateLimitUsers', 'Rate limit users', 'Throttle users who exceed the message window.'],
+      ['blockSpamLinks', 'Block spam links', 'Flag suspicious links and keep them out of customer replies.'],
+      ['maskSensitiveData', 'Mask sensitive data', 'Hide tokens, card-like numbers, passwords, and private keys in Discord embeds.'],
+      ['detectLanguage', 'Detect language', 'Detect Bangla/English and tag the case for the right staff.'],
+      ['translateCustomerMessage', 'Translate message', 'Add translated customer message text for staff when available.'],
+      ['aiSummaryOnClose', 'AI close summary', 'Create a short close summary for transcript and admin history.'],
+      ['aiSuggestedReplies', 'AI suggested replies', 'Show staff-only suggested replies before sending to customer.']
+    ]
+  }
+];
+
+const workflowPreview = [
+  { title: 'New ticket', detail: 'Create thread, red dot, ticket number, role mention, admin link.', icon: Ticket },
+  { title: 'Live chat', detail: 'Open live thread, show typing state, route to online staff.', icon: Radio },
+  { title: 'ID verification', detail: 'Post user, email, submitted docs, image metadata, approve/decline buttons.', icon: ClipboardCheck },
+  { title: 'Invoice proof', detail: 'Post paid/non-paid proof, payment actions, dispute ticket option.', icon: Receipt },
+  { title: 'SLA breach', detail: 'Escalate, mention admin role, log event, keep transcript.', icon: Clock },
+  { title: 'Case closed', detail: 'Close thread, save transcript, send customer update, post AI summary.', icon: Sparkles }
+];
 
 function safeConfig(value: any) {
   return { ...defaultConfig, ...(value && typeof value === 'object' ? value : {}) };
@@ -109,7 +243,7 @@ export default function AdminDiscordBot() {
     loadDiscord();
   }, [loadDiscord]);
 
-  const updateConfig = (key: string, value: string | boolean) => {
+  const updateConfig = (key: string, value: string | boolean | number) => {
     setConfig((current) => ({ ...current, [key]: value }));
   };
 
@@ -237,32 +371,84 @@ export default function AdminDiscordBot() {
 
       <section className="rounded-lg border border-[#e5e8ed] bg-white">
         <div className="border-b border-[#f3f5f9] bg-[#f8f9fa] px-5 py-4">
-          <h2 className="text-[14px] font-bold uppercase tracking-wide text-[#2e3d49]">Automation Rules</h2>
+          <h2 className="text-[14px] font-bold uppercase tracking-wide text-[#2e3d49]">Roles, Security, and SLA</h2>
         </div>
-        <div className="grid grid-cols-1 gap-3 p-5 md:grid-cols-2 xl:grid-cols-4">
-          {[
-            ['createTemporaryChannels', 'Create temporary channels', 'New ticket or live chat opens a temporary Discord channel.'],
-            ['showRedDot', 'Show red dot queue', 'New tickets and chats show red notification dots with ticket number.'],
-            ['syncTicketNumbers', 'Sync ticket numbers', 'Discord message includes ticket/session ID and channel link.'],
-            ['closeOnSolved', 'Close on solved', 'Solved/closed status closes the temporary Discord workflow.'],
-            ['storeClosedThreads', 'Store closed threads', 'Closed ticket/live-chat history stays in admin records.'],
-            ['sendIdentityImages', 'Send ID documents', 'Identity verification sends user, email, and document image metadata.'],
-            ['sendInvoiceProof', 'Send invoice proof', 'Invoice paid/unpaid proof is routed to invoice channel.'],
-            ['animatedLiveTyping', 'Animated live typing', 'Live chat widget can show animated typing while staff replies.']
-          ].map(([key, title, detail]) => (
-            <label key={key} className="flex cursor-pointer gap-3 rounded border border-[#e5e8ed] p-4 hover:bg-[#f8f9fa]">
-              <input type="checkbox" checked={Boolean((config as any)[key])} onChange={(event) => updateConfig(key, event.target.checked)} className="mt-1 h-4 w-4 rounded border-gray-300" />
-              <span>
-                <span className="flex items-center gap-2 text-[13px] font-black text-[#2e3d49]"><Workflow className="h-4 w-4 text-[#0069ff]" />{title}</span>
-                <span className="mt-1 block text-[12px] leading-relaxed text-gray-500">{detail}</span>
-              </span>
-            </label>
+        <div className="grid grid-cols-1 gap-5 p-5 xl:grid-cols-[1fr_1fr]">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            {roleFields.map((field) => (
+              <label key={field.key} className={field.key === 'webhookSecret' ? 'space-y-2 md:col-span-2' : 'space-y-2'}>
+                <span className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-widest text-gray-500"><field.icon className="h-3.5 w-3.5" />{field.label}</span>
+                <input
+                  type={field.key === 'webhookSecret' ? 'password' : 'text'}
+                  value={(config as any)[field.key]}
+                  onChange={(event) => updateConfig(field.key, event.target.value)}
+                  placeholder={field.placeholder}
+                  className="w-full rounded border border-[#d8dee9] px-3 py-2 text-sm focus:border-[#0069ff] focus:outline-none"
+                />
+              </label>
+            ))}
+          </div>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            {numericFields.map((field) => (
+              <label key={field.key} className="space-y-2">
+                <span className="text-[11px] font-bold uppercase tracking-widest text-gray-500">{field.label}</span>
+                <div className="flex overflow-hidden rounded border border-[#d8dee9] bg-white focus-within:border-[#0069ff]">
+                  <input
+                    type="number"
+                    min={field.min}
+                    max={field.max}
+                    value={(config as any)[field.key]}
+                    onChange={(event) => updateConfig(field.key, Number(event.target.value || field.min))}
+                    className="min-w-0 flex-1 px-3 py-2 text-sm outline-none"
+                  />
+                  <span className="flex items-center border-l border-[#e5e8ed] bg-[#f8f9fa] px-3 text-[11px] font-black uppercase text-gray-400">{field.suffix}</span>
+                </div>
+              </label>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {automationGroups.map((group) => (
+        <section key={group.title} className="rounded-lg border border-[#e5e8ed] bg-white">
+          <div className="flex items-center gap-2 border-b border-[#f3f5f9] bg-[#f8f9fa] px-5 py-4">
+            <group.icon className="h-4 w-4 text-[#0069ff]" />
+            <h2 className="text-[14px] font-bold uppercase tracking-wide text-[#2e3d49]">{group.title}</h2>
+          </div>
+          <div className="grid grid-cols-1 gap-3 p-5 md:grid-cols-2 xl:grid-cols-4">
+            {group.items.map(([key, title, detail]) => (
+              <label key={key} className="flex cursor-pointer gap-3 rounded border border-[#e5e8ed] p-4 hover:bg-[#f8f9fa]">
+                <input type="checkbox" checked={Boolean((config as any)[key])} onChange={(event) => updateConfig(key, event.target.checked)} className="mt-1 h-4 w-4 rounded border-gray-300" />
+                <span>
+                  <span className="flex items-center gap-2 text-[13px] font-black text-[#2e3d49]"><Workflow className="h-4 w-4 text-[#0069ff]" />{title}</span>
+                  <span className="mt-1 block text-[12px] leading-relaxed text-gray-500">{detail}</span>
+                </span>
+              </label>
+            ))}
+          </div>
+        </section>
+      ))}
+
+      <section className="rounded-lg border border-[#e5e8ed] bg-white">
+        <div className="flex items-center gap-2 border-b border-[#f3f5f9] bg-[#f8f9fa] px-5 py-4">
+          <Brain className="h-4 w-4 text-[#0069ff]" />
+          <h2 className="text-[14px] font-bold uppercase tracking-wide text-[#2e3d49]">Automation Logic Preview</h2>
+        </div>
+        <div className="grid grid-cols-1 gap-3 p-5 md:grid-cols-2 xl:grid-cols-3">
+          {workflowPreview.map((item) => (
+            <div key={item.title} className="rounded border border-[#e5e8ed] p-4">
+              <div className="mb-2 flex items-center gap-2 text-[13px] font-black text-[#2e3d49]">
+                <item.icon className="h-4 w-4 text-[#0069ff]" />
+                {item.title}
+              </div>
+              <p className="text-[12px] leading-relaxed text-gray-500">{item.detail}</p>
+            </div>
           ))}
         </div>
       </section>
 
       <section className="rounded-lg border border-blue-100 bg-blue-50 p-5 text-[13px] font-medium leading-relaxed text-blue-950">
-        Discord bot worker note: this page stores the connection and channel policy in the `discord-bot` integration. The automation worker should read this config, create ticket/live-chat temporary channels, post ID and invoice embeds, and update support records when staff replies or clicks solved.
+        Discord bot worker note: this page stores the complete automation policy in the `discord-bot` integration. The worker should read this config, create channels or private threads, post embed cards with buttons, validate webhook callbacks with the secret, enforce SLA/rate-limit rules, write audit logs, and update support, identity, and invoice records when staff replies or clicks actions.
       </section>
     </form>
   );
