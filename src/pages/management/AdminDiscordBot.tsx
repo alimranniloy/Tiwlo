@@ -16,6 +16,7 @@ import {
   Receipt,
   RefreshCw,
   Save,
+  Server,
   ShieldAlert,
   ShieldCheck,
   Sparkles,
@@ -24,7 +25,7 @@ import {
   Users,
   Workflow
 } from 'lucide-react';
-import { fetchIntegrationsWithApi, upsertIntegrationWithApi } from '../../lib/tiwloApi';
+import { fetchIntegrationsWithApi, getAuthToken, upsertIntegrationWithApi } from '../../lib/tiwloApi';
 
 const DISCORD_KEY = 'discord-bot';
 const DISCORD_GROUP = 'communications';
@@ -353,6 +354,7 @@ export default function AdminDiscordBot() {
   const [status, setStatus] = React.useState('inactive');
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
+  const [provisioning, setProvisioning] = React.useState(false);
   const [error, setError] = React.useState('');
   const [notice, setNotice] = React.useState('');
 
@@ -379,31 +381,63 @@ export default function AdminDiscordBot() {
     setConfig((current) => ({ ...current, [key]: value }));
   };
 
+  const persistSettings = async () => {
+    const connected = Boolean(config.botToken.trim() && config.clientId.trim() && config.publicKey.trim());
+    await upsertIntegrationWithApi({
+      key: DISCORD_KEY,
+      group: DISCORD_GROUP,
+      name: 'Discord Bot',
+      status: connected ? 'active' : status,
+      config,
+      health: {
+        status: connected ? 'connected' : 'needs_credentials',
+        checkedAt: new Date().toISOString(),
+        requiredScopes: permissionScopes
+      }
+    });
+    setStatus(connected ? 'active' : status);
+  };
+
   const saveSettings = async (event: React.FormEvent) => {
     event.preventDefault();
     setSaving(true);
     setError('');
     setNotice('');
     try {
-      const connected = Boolean(config.botToken.trim() && config.clientId.trim() && config.publicKey.trim());
-      await upsertIntegrationWithApi({
-        key: DISCORD_KEY,
-        group: DISCORD_GROUP,
-        name: 'Discord Bot',
-        status: connected ? 'active' : status,
-        config,
-        health: {
-          status: connected ? 'connected' : 'needs_credentials',
-          checkedAt: new Date().toISOString(),
-          requiredScopes: permissionScopes
-        }
-      });
-      setStatus(connected ? 'active' : status);
+      await persistSettings();
       setNotice('Discord bot settings saved.');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to save Discord settings');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const provisionServer = async () => {
+    setProvisioning(true);
+    setError('');
+    setNotice('');
+    try {
+      await persistSettings();
+      const token = getAuthToken();
+      const response = await fetch('/api/discord/provision', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify({})
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(payload?.error || 'Discord server provisioning failed');
+      setConfig(safeConfig(payload?.config));
+      setStatus('active');
+      const created = Array.isArray(payload?.channels) ? payload.channels.filter((item: any) => item.created).length : 0;
+      setNotice(`Discord server provisioned. ${created} new channels created.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to provision Discord server');
+    } finally {
+      setProvisioning(false);
     }
   };
 
@@ -435,6 +469,9 @@ export default function AdminDiscordBot() {
               <ExternalLink className="h-4 w-4" /> Invite Bot
             </a>
           )}
+          <button type="button" onClick={provisionServer} disabled={provisioning || saving} className="inline-flex items-center gap-2 rounded border border-emerald-100 bg-emerald-50 px-4 py-2 text-[13px] font-bold text-emerald-700 hover:bg-emerald-100 disabled:opacity-60">
+            <Server className="h-4 w-4" /> {provisioning ? 'Provisioning...' : 'Provision Server'}
+          </button>
           <button disabled={saving} className="inline-flex items-center gap-2 rounded bg-[#0069ff] px-5 py-2 text-[13px] font-bold text-white hover:bg-[#0056cc] disabled:opacity-60">
             <Save className="h-4 w-4" /> {saving ? 'Saving...' : 'Save Settings'}
           </button>
@@ -495,6 +532,7 @@ export default function AdminDiscordBot() {
       <section className="rounded-lg border border-[#e5e8ed] bg-white">
         <div className="border-b border-[#f3f5f9] bg-[#f8f9fa] px-5 py-4">
           <h2 className="text-[14px] font-bold uppercase tracking-wide text-[#2e3d49]">Channel Mapping</h2>
+          <p className="mt-1 text-[12px] text-[#4a4a4a]">Click Provision Server after inviting the bot. Tiwlo will create missing categories/channels and save the Discord links here.</p>
         </div>
         <div className="grid grid-cols-1 gap-4 p-5 md:grid-cols-2">
           {channelFields.map((field) => (

@@ -3,6 +3,7 @@ import { createPublicKey, verify } from 'node:crypto';
 
 const DISCORD_INTEGRATION_KEY = 'discord-bot';
 const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
+const DISCORD_API = 'https://discord.com/api/v10';
 
 const html = (title, body) => `<!doctype html>
 <html lang="en">
@@ -102,6 +103,213 @@ const commandResponse = (name) => {
   return { type: 4, data: { content, flags: 64 } };
 };
 
+const cleanChannelName = (value, fallback) => String(value || fallback || 'tiwlo')
+  .trim()
+  .toLowerCase()
+  .replace(/[^a-z0-9-_ ]+/g, '')
+  .replace(/\s+/g, '-')
+  .replace(/^-+|-+$/g, '')
+  .slice(0, 90) || fallback;
+
+const discordFetch = async (token, path, options = {}) => {
+  const response = await fetch(`${DISCORD_API}${path}`, {
+    ...options,
+    headers: {
+      Authorization: `Bot ${token}`,
+      'Content-Type': 'application/json',
+      ...(options.headers || {})
+    }
+  });
+  const text = await response.text();
+  let data = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = text;
+  }
+  if (!response.ok) {
+    const message = data?.message || text || `Discord API failed: ${response.status}`;
+    throw new Error(message);
+  }
+  return data;
+};
+
+const resolveGuildId = async (token, configuredGuildId) => {
+  if (String(configuredGuildId || '').trim()) return String(configuredGuildId).trim();
+  const guilds = await discordFetch(token, '/users/@me/guilds');
+  if (Array.isArray(guilds) && guilds.length === 1) return guilds[0].id;
+  if (Array.isArray(guilds) && guilds.length > 1) {
+    throw new Error('Bot is installed in multiple servers. Add Server / guild ID before provisioning.');
+  }
+  throw new Error('Bot is not installed in a server yet. Invite the bot first, then provision channels.');
+};
+
+const findChannel = (channels, name, type, parentId = undefined) => channels.find((channel) => (
+  channel.type === type
+  && channel.name === name
+  && (parentId === undefined || channel.parent_id === parentId)
+));
+
+const ensureCategory = async (token, guildId, channels, name) => {
+  const existing = findChannel(channels, name, 4);
+  if (existing) return { channel: existing, created: false };
+  const channel = await discordFetch(token, `/guilds/${guildId}/channels`, {
+    method: 'POST',
+    body: JSON.stringify({ name, type: 4 })
+  });
+  channels.push(channel);
+  return { channel, created: true };
+};
+
+const ensureTextChannel = async (token, guildId, channels, { name, parentId, topic }) => {
+  const existing = findChannel(channels, name, 0, parentId);
+  if (existing) return { channel: existing, created: false };
+  const channel = await discordFetch(token, `/guilds/${guildId}/channels`, {
+    method: 'POST',
+    body: JSON.stringify({
+      name,
+      type: 0,
+      parent_id: parentId || undefined,
+      topic
+    })
+  });
+  channels.push(channel);
+  return { channel, created: true };
+};
+
+const provisionDiscordServer = async ({ prisma, userFromRequest }, req, res) => {
+  const user = await userFromRequest(req);
+  if (!user || !['super_admin', 'admin'].includes(user.role)) {
+    res.status(user ? 403 : 401).json({ error: user ? 'Admin access required' : 'Authentication required' });
+    return;
+  }
+
+  const integration = await prisma.integration.findUnique({ where: { key: DISCORD_INTEGRATION_KEY } });
+  const config = integration?.config || {};
+  const token = String(config.botToken || '').trim();
+  if (!token) {
+    res.status(400).json({ error: 'Discord bot token is required before provisioning.' });
+    return;
+  }
+
+  const guildId = await resolveGuildId(token, config.guildId);
+  const channels = await discordFetch(token, `/guilds/${guildId}/channels`);
+  const ticketCategory = await ensureCategory(token, guildId, channels, String(config.ticketCategoryName || 'Tiwlo Tickets'));
+  const liveCategory = await ensureCategory(token, guildId, channels, String(config.liveChatCategoryName || 'Tiwlo Live Chat'));
+  const opsCategory = await ensureCategory(token, guildId, channels, 'Tiwlo Operations');
+
+  const definitions = [
+    {
+      key: 'ticket',
+      nameKey: 'ticketChannelName',
+      linkKey: 'ticketChannelLink',
+      fallback: 'support-tickets',
+      parentId: ticketCategory.channel.id,
+      topic: 'Tiwlo support ticket queue and automated ticket alerts.'
+    },
+    {
+      key: 'liveChat',
+      nameKey: 'liveChatChannelName',
+      linkKey: 'liveChatChannelLink',
+      fallback: 'live-support',
+      parentId: liveCategory.channel.id,
+      topic: 'Tiwlo live chat queue and staff reply workflow.'
+    },
+    {
+      key: 'idVerified',
+      nameKey: 'idVerifiedChannelName',
+      linkKey: 'idVerifiedChannelLink',
+      fallback: 'id-verified',
+      parentId: opsCategory.channel.id,
+      topic: 'Tiwlo ID verification review cards and approve/decline actions.'
+    },
+    {
+      key: 'invoice',
+      nameKey: 'invoiceChannelName',
+      linkKey: 'invoiceChannelLink',
+      fallback: 'invoices',
+      parentId: opsCategory.channel.id,
+      topic: 'Tiwlo invoice proof, paid/unpaid, dispute, and billing alerts.'
+    },
+    {
+      key: 'log',
+      nameKey: 'logChannelName',
+      linkKey: 'logChannelLink',
+      fallback: 'system-logs',
+      parentId: opsCategory.channel.id,
+      topic: 'Tiwlo bot audit logs, automation health, and backend events.'
+    }
+  ];
+
+  const results = [];
+  const nextConfig = {
+    ...config,
+    guildId,
+    ticketCategoryId: ticketCategory.channel.id,
+    liveChatCategoryId: liveCategory.channel.id,
+    operationsCategoryId: opsCategory.channel.id
+  };
+
+  for (const definition of definitions) {
+    const name = cleanChannelName(config[definition.nameKey], definition.fallback);
+    const result = await ensureTextChannel(token, guildId, channels, {
+      name,
+      parentId: definition.parentId,
+      topic: definition.topic
+    });
+    nextConfig[definition.nameKey] = name;
+    nextConfig[definition.linkKey] = `https://discord.com/channels/${guildId}/${result.channel.id}`;
+    nextConfig[`${definition.key}ChannelId`] = result.channel.id;
+    results.push({
+      key: definition.key,
+      name,
+      id: result.channel.id,
+      link: nextConfig[definition.linkKey],
+      created: result.created
+    });
+  }
+
+  const updated = await prisma.integration.upsert({
+    where: { key: DISCORD_INTEGRATION_KEY },
+    create: {
+      key: DISCORD_INTEGRATION_KEY,
+      group: 'communications',
+      name: 'Discord Bot',
+      status: 'active',
+      config: nextConfig,
+      health: { status: 'provisioned', checkedAt: new Date().toISOString(), guildId }
+    },
+    update: {
+      status: 'active',
+      config: nextConfig,
+      health: { ...(integration?.health || {}), status: 'provisioned', checkedAt: new Date().toISOString(), guildId },
+      lastSyncAt: new Date()
+    }
+  });
+
+  await prisma.auditLog.create({
+    data: {
+      actorId: user.id,
+      action: 'discord_server_provisioned',
+      resource: 'integration',
+      resourceId: updated.id,
+      metadata: { guildId, channels: results }
+    }
+  }).catch(() => null);
+
+  res.json({
+    ok: true,
+    guildId,
+    categories: {
+      ticket: ticketCategory.channel.id,
+      liveChat: liveCategory.channel.id,
+      operations: opsCategory.channel.id
+    },
+    channels: results,
+    config: nextConfig
+  });
+};
+
 const handleDiscordInteraction = async (prisma, req, res) => {
   const verified = await verifyDiscordRequest(prisma, req);
   if (!verified.ok) {
@@ -149,12 +357,19 @@ const handleDiscordInteraction = async (prisma, req, res) => {
   res.json({ type: 4, data: { content: 'Interaction received by Tiwlo.', flags: 64 } });
 };
 
-export const registerDiscordRoutes = (app, { prisma }) => {
+export const registerDiscordRoutes = (app, { prisma, userFromRequest }) => {
   const rawJson = express.raw({ type: 'application/json', limit: '256kb' });
+  const json = express.json({ limit: '256kb' });
 
   app.post(['/discord/interactions', '/api/discord/interactions'], rawJson, (req, res) => {
     handleDiscordInteraction(prisma, req, res).catch((error) => {
       res.status(500).json({ error: error.message || 'Discord interaction failed' });
+    });
+  });
+
+  app.post('/api/discord/provision', json, (req, res) => {
+    provisionDiscordServer({ prisma, userFromRequest }, req, res).catch((error) => {
+      res.status(400).json({ error: error.message || 'Discord provisioning failed' });
     });
   });
 

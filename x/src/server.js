@@ -40,8 +40,6 @@ await server.start();
 app.set('trust proxy', true);
 app.use(cors(createCorsOptionsDelegate()));
 
-registerDiscordRoutes(app, { prisma });
-
 app.post('/webhooks/stripe', express.raw({ type: 'application/json' }), async (req, res) => {
   try {
     const rawBody = Buffer.isBuffer(req.body) ? req.body.toString('utf8') : String(req.body || '');
@@ -51,8 +49,6 @@ app.post('/webhooks/stripe', express.raw({ type: 'application/json' }), async (r
     res.status(400).json({ error: error.message || 'Stripe webhook failed' });
   }
 });
-
-app.use(express.json({ limit: '2mb' }));
 
 app.get('/health', (_req, res) => {
   res.json({ ok: true, service: 'tiwlo-x-backend' });
@@ -149,6 +145,10 @@ const requestIp = (req) => {
   const forwarded = req.headers['x-forwarded-for'];
   return Array.isArray(forwarded) ? forwarded[0] : forwarded || req.ip || req.socket.remoteAddress || '';
 };
+
+registerDiscordRoutes(app, { prisma, userFromRequest });
+
+app.use(express.json({ limit: '2mb' }));
 
 const writeSse = (res, event) => {
   res.write(`data: ${JSON.stringify(event)}\n\n`);
