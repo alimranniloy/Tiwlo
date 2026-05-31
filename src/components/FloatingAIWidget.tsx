@@ -16,6 +16,9 @@ const CHAT_PROMPTS = [
   "Tiwlo support is here."
 ];
 
+const CHAT_SESSION_KEY = 'tiwlo_live_chat_session_id';
+const CHAT_SESSION_OWNER_KEY = 'tiwlo_live_chat_owner_id';
+
 type Message = {
   id: string;
   sender: 'user' | 'ai' | 'system';
@@ -65,6 +68,19 @@ const getStoredUser = () => {
   }
 };
 
+const isRecoverableSessionError = (err: unknown) => {
+  const message = err instanceof Error ? err.message.toLowerCase() : '';
+  return [
+    'not found',
+    'forbidden',
+    'permission',
+    'access',
+    'unauthorized',
+    'authentication',
+    'login'
+  ].some((term) => message.includes(term));
+};
+
 const TiwloAvatar = ({ className = "w-[46px] h-[46px]" }) => (
   <div className={`relative shrink-0 flex items-center justify-center bg-gray-50 rounded-full shadow-[inset_0_-2px_4px_rgba(0,0,0,0.05)] border border-gray-100 ${className}`}>
     <div className="ai-profile-anim relative">
@@ -105,6 +121,7 @@ const UserAvatar = ({ name, className = 'w-7 h-7' }: { name?: string; className?
 export default function FloatingAIWidget() {
   const storedUser = getStoredUser();
   const userName = String(storedUser?.name || storedUser?.email || 'You');
+  const userId = storedUser?.id ? String(storedUser.id) : '';
   const [isOpen, setIsOpen] = useState(false);
   const [msgIndex, setMsgIndex] = useState(0);
   const [showBubble, setShowBubble] = useState(false);
@@ -135,12 +152,25 @@ export default function FloatingAIWidget() {
   const [inputValue, setInputValue] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [hasRequestedAgent, setHasRequestedAgent] = useState(false);
-  const [sessionId, setSessionId] = useState<string | null>(() => localStorage.getItem('tiwlo_live_chat_session_id'));
+  const [sessionId, setSessionId] = useState<string | null>(() => localStorage.getItem(CHAT_SESSION_KEY));
   const [apiError, setApiError] = useState('');
   const [aiMode, setAiMode] = useState<'ai' | 'manual' | 'escalated'>('ai');
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const activeStreamRef = useRef<AbortController | null>(null);
+
+  const clearStoredSession = () => {
+    localStorage.removeItem(CHAT_SESSION_KEY);
+    localStorage.removeItem(CHAT_SESSION_OWNER_KEY);
+    setSessionId(null);
+  };
+
+  useEffect(() => {
+    const savedOwnerId = localStorage.getItem(CHAT_SESSION_OWNER_KEY);
+    if (savedOwnerId && userId && savedOwnerId !== userId) {
+      clearStoredSession();
+    }
+  }, [userId]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -205,23 +235,24 @@ export default function FloatingAIWidget() {
       if (session) mergeApiSession(session);
       return session;
     } catch (err) {
-      if (err instanceof Error && err.message.toLowerCase().includes('not found')) {
-        localStorage.removeItem('tiwlo_live_chat_session_id');
-        setSessionId(null);
+      if (isRecoverableSessionError(err)) {
+        clearStoredSession();
       }
       return null;
     }
   };
 
-  const ensureChatSession = async (metadata: Record<string, unknown> = {}) => {
-    if (sessionId) return sessionId;
+  const createChatSession = async (metadata: Record<string, unknown> = {}) => {
     const session = await startLiveChatWithApi({
       subject: 'Widget live chat',
       priority: metadata.requestedAgent ? 'high' : 'normal',
       metadata: { source: 'floating-widget', ...metadata }
     });
     setSessionId(session.id);
-    localStorage.setItem('tiwlo_live_chat_session_id', session.id);
+    localStorage.setItem(CHAT_SESSION_KEY, session.id);
+    if (userId) {
+      localStorage.setItem(CHAT_SESSION_OWNER_KEY, userId);
+    }
     setMessages((current) => [...current, {
       id: `session-${session.id}`,
       sender: 'system',
@@ -231,6 +262,28 @@ export default function FloatingAIWidget() {
     }]);
     mergeApiSession(session);
     return session.id;
+  };
+
+  const ensureChatSession = async (metadata: Record<string, unknown> = {}) => {
+    const currentSessionId = sessionId || localStorage.getItem(CHAT_SESSION_KEY);
+    if (currentSessionId) {
+      try {
+        const session = await fetchLiveChatSessionWithApi(currentSessionId);
+        if (session?.id) {
+          setSessionId(session.id);
+          if (userId) {
+            localStorage.setItem(CHAT_SESSION_OWNER_KEY, userId);
+          }
+          mergeApiSession(session);
+          return session.id;
+        }
+      } catch (err) {
+        if (!isRecoverableSessionError(err)) throw err;
+        clearStoredSession();
+      }
+    }
+
+    return createChatSession(metadata);
   };
 
   const openPopup = async (metadata: Record<string, unknown> = {}) => {
@@ -274,8 +327,15 @@ export default function FloatingAIWidget() {
     setIsTyping(true);
 
     try {
-      const id = await ensureChatSession({ openedFrom: 'message-send' });
-      await sendLiveChatMessageWithApi(id, { body: text });
+      let id = await ensureChatSession({ openedFrom: 'message-send' });
+      try {
+        await sendLiveChatMessageWithApi(id, { body: text });
+      } catch (err) {
+        if (!isRecoverableSessionError(err)) throw err;
+        clearStoredSession();
+        id = await createChatSession({ openedFrom: 'message-send-retry' });
+        await sendLiveChatMessageWithApi(id, { body: text });
+      }
       await syncChatSession(id);
       setApiError('');
 
@@ -363,8 +423,15 @@ export default function FloatingAIWidget() {
       }]);
 
     try {
-      const id = await ensureChatSession({ requestedAgent: true });
-      await sendLiveChatMessageWithApi(id, { body: 'Live agent requested from chat widget.' });
+      let id = await ensureChatSession({ requestedAgent: true });
+      try {
+        await sendLiveChatMessageWithApi(id, { body: 'Live agent requested from chat widget.' });
+      } catch (err) {
+        if (!isRecoverableSessionError(err)) throw err;
+        clearStoredSession();
+        id = await createChatSession({ requestedAgent: true, openedFrom: 'agent-request-retry' });
+        await sendLiveChatMessageWithApi(id, { body: 'Live agent requested from chat widget.' });
+      }
       await syncChatSession(id);
       setMessages(prev => [...prev, {
         id: `agent-queued-${Date.now()}`,
