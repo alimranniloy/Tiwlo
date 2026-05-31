@@ -4,8 +4,7 @@ import {
   fetchLiveChatSessionWithApi,
   sendLiveChatMessageWithApi,
   startLiveChatWithApi,
-  streamSupportAiReplyWithApi,
-  type SupportAiStreamEvent
+  updateLiveChatSessionStatusWithApi
 } from '../lib/tiwloApi';
 
 const CHAT_PROMPTS = [
@@ -18,6 +17,7 @@ const CHAT_PROMPTS = [
 
 const CHAT_SESSION_KEY = 'tiwlo_live_chat_session_id';
 const CHAT_SESSION_OWNER_KEY = 'tiwlo_live_chat_owner_id';
+const CLOSED_NOTICE_ID = 'sys-chat-closed';
 
 type Message = {
   id: string;
@@ -31,6 +31,8 @@ type Message = {
 };
 
 const normalizeText = (value: string) => value.trim().toLowerCase().replace(/\s+/g, ' ');
+
+const ticketNumberForSession = (id: string) => `LC-${String(id).slice(-6).toUpperCase()}`;
 
 const timeLabel = (value?: string) => {
   const date = value ? new Date(value) : new Date();
@@ -81,6 +83,24 @@ const isRecoverableSessionError = (err: unknown) => {
   ].some((term) => message.includes(term));
 };
 
+const initialMessages = (): Message[] => [
+  {
+    id: 'sys-ready',
+    sender: 'system',
+    text: 'Tiwlo Support is ready. Send a message to open a support ticket.',
+    time: timeLabel(),
+    source: 'local'
+  },
+  {
+    id: 'support-ready',
+    sender: 'ai',
+    text: 'Hi, welcome to Tiwlo Support. A human teammate will reply here.',
+    time: timeLabel(),
+    source: 'local',
+    authorName: 'Tiwlo Support'
+  }
+];
+
 const TiwloAvatar = ({ className = "w-[46px] h-[46px]" }) => (
   <div className={`relative shrink-0 flex items-center justify-center bg-gray-50 rounded-full shadow-[inset_0_-2px_4px_rgba(0,0,0,0.05)] border border-gray-100 ${className}`}>
     <div className="ai-profile-anim relative">
@@ -126,38 +146,15 @@ export default function FloatingAIWidget() {
   const [msgIndex, setMsgIndex] = useState(0);
   const [showBubble, setShowBubble] = useState(false);
   
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: 'sys-1',
-      sender: 'system',
-      text: `Chat Ticket #${Math.floor(10000 + Math.random() * 90000)} initiated`,
-      time: timeLabel(),
-      source: 'local'
-    },
-    {
-      id: 'sys-2',
-      sender: 'system',
-      text: 'Tiwlo Support joined the chat',
-      time: timeLabel(),
-      source: 'local'
-    },
-    {
-      id: 'ai-1',
-      sender: 'ai',
-      text: "Hi, welcome to Tiwlo Support. Tell me what you need help with.",
-      time: timeLabel(),
-      source: 'local'
-    }
-  ]);
+  const [messages, setMessages] = useState<Message[]>(initialMessages);
   const [inputValue, setInputValue] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [hasRequestedAgent, setHasRequestedAgent] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(() => localStorage.getItem(CHAT_SESSION_KEY));
   const [apiError, setApiError] = useState('');
-  const [aiMode, setAiMode] = useState<'ai' | 'manual' | 'escalated'>('ai');
+  const [aiMode, setAiMode] = useState<'ai' | 'manual' | 'escalated'>('manual');
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const activeStreamRef = useRef<AbortController | null>(null);
 
   const clearStoredSession = () => {
     localStorage.removeItem(CHAT_SESSION_KEY);
@@ -177,16 +174,6 @@ export default function FloatingAIWidget() {
   }, [messages, isTyping, isOpen]);
 
   useEffect(() => {
-    setMessages((current) => current.map((message) => (
-      message.id === 'ai-1'
-        ? { ...message, text: "Hi, welcome to Tiwlo Support. Tell me what you need help with." }
-        : message
-    )));
-  }, []);
-
-  useEffect(() => () => activeStreamRef.current?.abort(), []);
-
-  useEffect(() => {
     setMsgIndex(Math.floor(Math.random() * CHAT_PROMPTS.length));
 
     const isClosed = localStorage.getItem('tiwlo_ai_popup_closed');
@@ -202,6 +189,20 @@ export default function FloatingAIWidget() {
     e.stopPropagation();
     setShowBubble(false);
     localStorage.setItem('tiwlo_ai_popup_closed', 'true');
+  };
+
+  const announceTicketNumber = (id: string) => {
+    const ticketNumber = ticketNumberForSession(id);
+    setMessages((current) => {
+      if (current.some((message) => message.id === `session-${id}`)) return current;
+      return [...current, {
+        id: `session-${id}`,
+        sender: 'system',
+        text: `Your support ticket number is ${ticketNumber}. Keep it for future reference.`,
+        time: timeLabel(),
+        source: 'local'
+      }];
+    });
   };
 
   const mergeApiSession = (session: any) => {
@@ -232,7 +233,23 @@ export default function FloatingAIWidget() {
     if (!id) return null;
     try {
       const session = await fetchLiveChatSessionWithApi(id);
-      if (session) mergeApiSession(session);
+      if (session) {
+        if (String(session.status || '').toLowerCase() === 'closed') {
+          clearStoredSession();
+          setHasRequestedAgent(false);
+          setAiMode('manual');
+          setMessages((current) => current.some((message) => message.id === CLOSED_NOTICE_ID) ? current : [...current, {
+            id: CLOSED_NOTICE_ID,
+            sender: 'system',
+            text: 'This support ticket was closed. Send a new message to open a new ticket.',
+            time: timeLabel(),
+            source: 'local'
+          }]);
+        } else {
+          announceTicketNumber(session.id);
+          mergeApiSession(session);
+        }
+      }
       return session;
     } catch (err) {
       if (isRecoverableSessionError(err)) {
@@ -253,13 +270,7 @@ export default function FloatingAIWidget() {
     if (userId) {
       localStorage.setItem(CHAT_SESSION_OWNER_KEY, userId);
     }
-    setMessages((current) => [...current, {
-      id: `session-${session.id}`,
-      sender: 'system',
-      text: `Live chat #${String(session.id).slice(-6).toUpperCase()} connected to support`,
-      time: timeLabel(),
-      source: 'local'
-    }]);
+    announceTicketNumber(session.id);
     mergeApiSession(session);
     return session.id;
   };
@@ -270,10 +281,15 @@ export default function FloatingAIWidget() {
       try {
         const session = await fetchLiveChatSessionWithApi(currentSessionId);
         if (session?.id) {
+          if (String(session.status || '').toLowerCase() === 'closed') {
+            clearStoredSession();
+            return createChatSession(metadata);
+          }
           setSessionId(session.id);
           if (userId) {
             localStorage.setItem(CHAT_SESSION_OWNER_KEY, userId);
           }
+          announceTicketNumber(session.id);
           mergeApiSession(session);
           return session.id;
         }
@@ -290,17 +306,33 @@ export default function FloatingAIWidget() {
     setIsOpen(true);
     setShowBubble(false);
     localStorage.setItem('tiwlo_ai_popup_closed', 'true');
+    setApiError('');
+  };
+
+  const closeCurrentChat = async () => {
+    const id = sessionId || localStorage.getItem(CHAT_SESSION_KEY);
+    setIsOpen(false);
+    if (!id) return;
     try {
-      await ensureChatSession(metadata);
-      setApiError('');
-    } catch (err) {
-      setApiError(err instanceof Error ? err.message : 'Unable to start live chat');
+      await updateLiveChatSessionStatusWithApi(id, 'closed');
+    } catch {
+      // Local close should still make the next message create a fresh ticket.
     }
+    clearStoredSession();
+    setHasRequestedAgent(false);
+    setAiMode('manual');
+    setMessages([...initialMessages(), {
+      id: CLOSED_NOTICE_ID,
+      sender: 'system',
+      text: 'This support ticket was closed. Send a new message to open a new ticket.',
+      time: timeLabel(),
+      source: 'local'
+    }]);
   };
 
   const togglePopup = () => {
     if (isOpen) {
-      setIsOpen(false);
+      void closeCurrentChat();
       return;
     }
     void openPopup({ openedFrom: 'floating-button' });
@@ -310,7 +342,6 @@ export default function FloatingAIWidget() {
     if (!inputValue.trim()) return;
 
     const text = inputValue.trim();
-    activeStreamRef.current?.abort();
     const newUserMsg: Message = {
       id: `local-${Date.now()}`,
       sender: 'user',
@@ -338,65 +369,9 @@ export default function FloatingAIWidget() {
       }
       await syncChatSession(id);
       setApiError('');
-
-      const streamId = `stream-ai-${Date.now()}`;
-      let draft = '';
-      const controller = new AbortController();
-      activeStreamRef.current = controller;
-
-      await streamSupportAiReplyWithApi({
-        channel: 'live-chat',
-        sessionId: id,
-        message: text
-      }, (event: SupportAiStreamEvent) => {
-        if (event.type === 'chunk') {
-          draft += event.text;
-          if (normalizeText(draft) === normalizeText(text)) {
-            return;
-          }
-          setIsTyping(false);
-          setMessages((current) => {
-            const existing = current.some((message) => message.id === streamId);
-            if (!existing) {
-              return [...current, {
-                id: streamId,
-                sender: 'ai',
-                text: draft,
-                time: timeLabel(),
-                source: 'stream'
-              }];
-            }
-            return current.map((message) => (
-              message.id === streamId ? { ...message, text: draft } : message
-            ));
-          });
-        }
-
-        if (event.type === 'action' && event.action === 'human_notified') {
-          setAiMode('escalated');
-        }
-
-        if (event.type === 'done') {
-          setIsTyping(false);
-          if (event.message && normalizeText(event.message) === normalizeText(text)) {
-            setMessages((current) => current.filter((message) => message.id !== streamId));
-          }
-          setAiMode(event.manualOnly ? 'manual' : Boolean(event.analysis?.needsHuman) ? 'escalated' : 'ai');
-          if (event.manualOnly) {
-            setMessages((current) => [...current, {
-              id: `manual-${Date.now()}`,
-              sender: 'system',
-              text: 'AI is off. Your message is in the human support queue.',
-              time: timeLabel(),
-              source: 'local'
-            }]);
-          }
-        }
-      }, { signal: controller.signal });
-
-      await syncChatSession(id);
+      setAiMode('manual');
+      setIsTyping(false);
     } catch (err) {
-      if (err instanceof DOMException && err.name === 'AbortError') return;
       setIsTyping(false);
       setAiMode('manual');
       setApiError(err instanceof Error ? err.message : 'Unable to send message');
@@ -411,7 +386,6 @@ export default function FloatingAIWidget() {
   };
   
   const requestLiveAgent = async () => {
-    activeStreamRef.current?.abort();
     setHasRequestedAgent(true);
     setAiMode('manual');
     setMessages(prev => [...prev, {

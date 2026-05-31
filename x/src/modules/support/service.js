@@ -1071,6 +1071,7 @@ export const assignTicket = async (ctx, actor, id, assigneeId) => {
   });
 
   await writeAudit(ctx, 'assign_ticket', 'supportTicket', id, { assigneeId: assigneeId || null });
+  await notifyDiscordTicketEvent(ctx, 'assigned', ticket);
   return toApi(ticket);
 };
 
@@ -1141,7 +1142,9 @@ export const startLiveChat = async (ctx, actor, input = {}) => {
   });
 
   await writeAudit(ctx, 'start_live_chat', 'liveChatSession', session.id, { priority });
-  await notifyDiscordLiveChatEvent(ctx, 'created', session);
+  if (firstMessage) {
+    await notifyDiscordLiveChatEvent(ctx, 'created', session, session.messages?.[0] || null);
+  }
   return toApi(session);
 };
 
@@ -1192,6 +1195,7 @@ export const assignLiveChatSession = async (ctx, actor, id, assigneeId) => {
   });
 
   await writeAudit(ctx, 'assign_live_chat', 'liveChatSession', id, { assigneeId: assigneeId || null });
+  await notifyDiscordLiveChatEvent(ctx, 'assigned', session);
   return toApi(session);
 };
 

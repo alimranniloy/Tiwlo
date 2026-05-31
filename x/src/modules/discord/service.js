@@ -6,6 +6,15 @@ const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
 const DISCORD_API = 'https://discord.com/api/v10';
 const DISCORD_GATEWAY = 'wss://gateway.discord.gg/?v=10&encoding=json';
 const DISCORD_INTENTS = 1 | 512 | 32768;
+const VIEW_CHANNEL = 1024n;
+const SEND_MESSAGES = 2048n;
+const EMBED_LINKS = 16384n;
+const ATTACH_FILES = 32768n;
+const READ_MESSAGE_HISTORY = 65536n;
+const MANAGE_MESSAGES = 8192n;
+const MANAGE_CHANNELS = 16n;
+const SUPPORT_ALLOW = VIEW_CHANNEL | SEND_MESSAGES | EMBED_LINKS | ATTACH_FILES | READ_MESSAGE_HISTORY;
+const SUPPORT_MANAGE_ALLOW = SUPPORT_ALLOW | MANAGE_MESSAGES | MANAGE_CHANNELS;
 let gatewayState = null;
 let gatewayWorkerStarted = false;
 
@@ -110,6 +119,14 @@ const commandResponse = (name) => {
 const componentResponse = async (prisma, payload) => {
   const customId = String(payload.data?.custom_id || '');
   const [, kind, action, id, value] = customId.split(':');
+  if ((kind === 'ticket' || kind === 'chat') && action === 'assign' && id) {
+    const discordUserId = payload.data?.values?.[0];
+    if (!discordUserId) {
+      return { type: 4, data: { content: 'Select a Discord staff member first.', flags: 64 } };
+    }
+    await assignDiscordResource(prisma, kind, id, discordUserId, payload.member?.user?.id || payload.user?.id || '');
+    return { type: 4, data: { content: `Assigned to <@${discordUserId}>. Only that staff member can see this case channel now.`, flags: 64, allowed_mentions: { users: [discordUserId] } } };
+  }
   if (customId.startsWith('tiwlo:ticket:status:') && id && value) {
     const ticket = await prisma.supportTicket.update({
       where: { id },
@@ -120,6 +137,11 @@ const componentResponse = async (prisma, payload) => {
     return { type: 4, data: { content: `Ticket marked ${value}.`, flags: 64 } };
   }
   if (customId.startsWith('tiwlo:ticket:delete:') && action === 'delete' && id) {
+    const integration = await readDiscordIntegration(prisma);
+    const ticket = await prisma.supportTicket.findUnique({ where: { id } }).catch(() => null);
+    if (integration && ticket) {
+      await clearResourceDiscordChannel(prisma, 'ticket', ticket, integration.config);
+    }
     await prisma.supportTicket.delete({ where: { id } });
     return { type: 4, data: { content: 'Ticket deleted from Tiwlo.', flags: 64 } };
   }
@@ -176,6 +198,8 @@ const truncate = (value, length = 900) => {
 
 const moneyLabel = (amount, currency = 'USD') => `${String(currency || 'USD').toUpperCase()} ${Number(amount || 0).toFixed(2)}`;
 
+const caseNumber = (kind, id) => `${kind === 'ticket' ? 'TKT' : 'LC'}-${String(id || '').slice(-6).toUpperCase()}`;
+
 const isDiscordReady = (integration) => (
   integration?.status === 'active'
   && integration?.config
@@ -187,6 +211,18 @@ const readDiscordIntegration = async (prisma) => {
   const integration = await prisma.integration.findUnique({ where: { key: DISCORD_INTEGRATION_KEY } }).catch(() => null);
   if (!isDiscordReady(integration)) return null;
   return integration;
+};
+
+const ensureConfigBotUser = async (prisma, config) => {
+  if (config.botUserId) return config;
+  const botUser = await discordFetch(String(config.botToken).trim(), '/users/@me').catch(() => null);
+  if (!botUser?.id) return config;
+  const nextConfig = { ...config, botUserId: botUser.id, botUsername: botUser.username };
+  await prisma.integration.update({
+    where: { key: DISCORD_INTEGRATION_KEY },
+    data: { config: nextConfig }
+  }).catch(() => null);
+  return nextConfig;
 };
 
 const findResourceByDiscordChannel = async (prisma, channelId) => {
@@ -361,23 +397,133 @@ const postDiscordMessage = async (config, channelId, payload) => {
   });
 };
 
+const deleteDiscordChannel = async (config, channelId) => {
+  if (!channelId) return null;
+  return discordFetch(String(config.botToken).trim(), `/channels/${channelId}`, { method: 'DELETE' });
+};
+
+const permissionOverwrite = (id, type, allow, deny = 0n) => ({
+  id: String(id),
+  type,
+  allow: String(allow),
+  deny: String(deny)
+});
+
+const caseChannelOverwrites = (config, { assignedUserId = '', includeSupportRole = true } = {}) => {
+  const overwrites = [
+    permissionOverwrite(config.guildId, 0, 0n, VIEW_CHANNEL)
+  ];
+  if (config.botUserId) {
+    overwrites.push(permissionOverwrite(config.botUserId, 1, SUPPORT_MANAGE_ALLOW));
+  }
+  if (config.adminRoleId) {
+    overwrites.push(permissionOverwrite(config.adminRoleId, 0, SUPPORT_MANAGE_ALLOW));
+  }
+  if (assignedUserId) {
+    overwrites.push(permissionOverwrite(assignedUserId, 1, SUPPORT_ALLOW));
+  } else if (includeSupportRole && config.supportRoleId) {
+    overwrites.push(permissionOverwrite(config.supportRoleId, 0, SUPPORT_ALLOW));
+  }
+
+  return overwrites.filter((item, index, list) => (
+    item.id && list.findIndex((candidate) => candidate.id === item.id && candidate.type === item.type) === index
+  ));
+};
+
+const updateCaseChannelPermissions = async (config, channelId, options = {}) => {
+  if (!channelId) return null;
+  return discordFetch(String(config.botToken).trim(), `/channels/${channelId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ permission_overwrites: caseChannelOverwrites(config, options) })
+  });
+};
+
+const clearResourceDiscordChannel = async (prisma, kind, resource, config) => {
+  const discord = resource?.metadata?.discord || {};
+  if (discord.channelId) {
+    await deleteDiscordChannel(config, discord.channelId).catch(() => null);
+  }
+
+  const model = kind === 'ticket' ? prisma.supportTicket : prisma.liveChatSession;
+  await model.update({
+    where: { id: resource.id },
+    data: {
+      metadata: {
+        ...(resource.metadata || {}),
+        discord: {
+          ...discord,
+          channelId: null,
+          channelName: null,
+          channelLink: null,
+          deletedAt: new Date().toISOString()
+        }
+      }
+    }
+  }).catch(() => null);
+};
+
+const assignDiscordResource = async (prisma, kind, id, discordUserId, assignedByDiscordUserId = '') => {
+  const integration = await readDiscordIntegration(prisma);
+  if (!integration) throw new Error('Discord integration is not active');
+  const config = await ensureConfigBotUser(prisma, integration.config);
+  const model = kind === 'ticket' ? prisma.supportTicket : prisma.liveChatSession;
+  const resource = await model.findUnique({
+    where: { id },
+    include: { owner: true, assignedTo: true, messages: { orderBy: { createdAt: 'asc' }, take: 20 } }
+  });
+  if (!resource) throw new Error('Tiwlo case was not found');
+
+  const discord = await ensureResourceChannel(prisma, config, kind === 'ticket' ? 'ticket' : 'live-chat', resource);
+  await updateCaseChannelPermissions(config, discord.channelId, {
+    assignedUserId: discordUserId,
+    includeSupportRole: false
+  });
+
+  const nextDiscord = {
+    ...(resource.metadata?.discord || {}),
+    ...discord,
+    assignedUserId: discordUserId,
+    assignedByDiscordUserId,
+    assignedAt: new Date().toISOString()
+  };
+  await model.update({
+    where: { id: resource.id },
+    data: { metadata: { ...(resource.metadata || {}), discord: nextDiscord } }
+  });
+
+  await postDiscordMessage(config, discord.channelId, {
+    content: `<@${discordUserId}> you are assigned to ${caseNumber(kind === 'ticket' ? 'ticket' : 'live-chat', resource.id)}.`,
+    allowed_mentions: { users: [discordUserId], roles: [] }
+  });
+
+  return { resource, discord: nextDiscord };
+};
+
 const ensureResourceChannel = async (prisma, config, kind, resource) => {
   const current = resource?.metadata?.discord || {};
-  if (current.channelId) return current;
+  const readyConfig = await ensureConfigBotUser(prisma, config);
+  if (current.channelId) {
+    await updateCaseChannelPermissions(readyConfig, current.channelId, {
+      assignedUserId: current.assignedUserId || '',
+      includeSupportRole: !current.assignedUserId
+    }).catch(() => null);
+    return current;
+  }
 
-  const categoryId = kind === 'ticket' ? config.ticketCategoryId : config.liveChatCategoryId;
+  const categoryId = kind === 'ticket' ? readyConfig.ticketCategoryId : readyConfig.liveChatCategoryId;
   if (!categoryId) return current;
 
   const suffix = String(resource.id || '').slice(-6).toLowerCase();
   const subject = cleanChannelName(resource.subject || resource.message || kind, kind).slice(0, 36);
   const name = cleanChannelName(`${kind}-${suffix}-${subject}`, `${kind}-${suffix}`);
-  const channel = await discordFetch(String(config.botToken).trim(), `/guilds/${config.guildId}/channels`, {
+  const channel = await discordFetch(String(readyConfig.botToken).trim(), `/guilds/${readyConfig.guildId}/channels`, {
     method: 'POST',
     body: JSON.stringify({
       name,
       type: 0,
       parent_id: categoryId,
-      topic: `Tiwlo ${kind} ${resource.id} for ${resource.owner?.email || resource.ownerId || 'customer'}`
+      topic: `Tiwlo ${kind} ${caseNumber(kind, resource.id)} for ${resource.owner?.email || resource.ownerId || 'customer'}`,
+      permission_overwrites: caseChannelOverwrites(readyConfig)
     })
   });
 
@@ -385,7 +531,7 @@ const ensureResourceChannel = async (prisma, config, kind, resource) => {
     ...current,
     channelId: channel.id,
     channelName: channel.name,
-    channelLink: `https://discord.com/channels/${config.guildId}/${channel.id}`,
+    channelLink: `https://discord.com/channels/${readyConfig.guildId}/${channel.id}`,
     createdAt: new Date().toISOString()
   };
 
@@ -408,13 +554,25 @@ const actionRow = (items) => ({
   }))
 });
 
+const assignUserSelect = (kind, id) => ({
+  type: 1,
+  components: [{
+    type: 5,
+    custom_id: `tiwlo:${kind}:assign:${id}`,
+    placeholder: 'Assign Discord staff',
+    min_values: 1,
+    max_values: 1
+  }]
+});
+
 const ticketButtons = (ticketId) => [
   actionRow([
     { label: 'Open', style: 1, id: `tiwlo:ticket:status:${ticketId}:open` },
     { label: 'Solved', style: 3, id: `tiwlo:ticket:status:${ticketId}:resolved` },
     { label: 'Close', style: 2, id: `tiwlo:ticket:status:${ticketId}:closed` },
     { label: 'Delete', style: 4, id: `tiwlo:ticket:delete:${ticketId}` }
-  ])
+  ]),
+  assignUserSelect('ticket', ticketId)
 ];
 
 const chatButtons = (sessionId) => [
@@ -422,7 +580,8 @@ const chatButtons = (sessionId) => [
     { label: 'Open', style: 1, id: `tiwlo:chat:status:${sessionId}:open` },
     { label: 'Assigned', style: 3, id: `tiwlo:chat:status:${sessionId}:assigned` },
     { label: 'Close', style: 2, id: `tiwlo:chat:status:${sessionId}:closed` }
-  ])
+  ]),
+  assignUserSelect('chat', sessionId)
 ];
 
 const userLine = (owner) => owner ? `${owner.name || 'Customer'} <${owner.email || 'no-email'}>` : 'Customer';
@@ -452,8 +611,9 @@ export const notifyDiscordTicketEvent = async (ctx, event, ticket, message = nul
     });
     if (!fresh) return null;
 
-    const discord = await ensureResourceChannel(ctx.prisma, config, 'ticket', fresh);
-    const title = event === 'message' ? 'Ticket reply' : event === 'status' ? 'Ticket status updated' : 'New support ticket';
+    const closed = event === 'status' && ['closed', 'resolved'].includes(String(fresh.status || '').toLowerCase());
+    const discord = closed ? (fresh.metadata?.discord || {}) : await ensureResourceChannel(ctx.prisma, config, 'ticket', fresh);
+    const title = event === 'assigned' ? 'Ticket assigned' : event === 'message' ? 'Ticket reply' : event === 'status' ? 'Ticket status updated' : 'New support ticket';
     const body = message?.body || fresh.message;
     const embed = supportEmbed({
       title,
@@ -461,13 +621,21 @@ export const notifyDiscordTicketEvent = async (ctx, event, ticket, message = nul
       resource: fresh,
       description: body,
       fields: [
+        { name: 'Ticket number', value: caseNumber('ticket', fresh.id), inline: true },
         { name: 'Subject', value: truncate(fresh.subject, 256), inline: false },
         { name: 'Author', value: message ? `${message.authorName || 'Unknown'} (${message.authorRole || 'user'})` : userLine(fresh.owner), inline: false },
+        { name: 'Assigned to', value: fresh.assignedTo ? userLine(fresh.assignedTo) : (discord.assignedUserId ? `<@${discord.assignedUserId}>` : 'Unassigned'), inline: false },
         { name: 'Discord thread', value: discord.channelLink || 'Not created', inline: false }
       ]
     });
 
-    await postDiscordMessage(config, config.ticketChannelId, { embeds: [embed], components: ticketButtons(fresh.id) });
+    if (!discord.assignedUserId || event === 'created') {
+      await postDiscordMessage(config, config.ticketChannelId, { embeds: [embed], components: ticketButtons(fresh.id) });
+    }
+    if (closed) {
+      await clearResourceDiscordChannel(ctx.prisma, 'ticket', fresh, config);
+      return;
+    }
     if (discord.channelId) {
       await postDiscordMessage(config, discord.channelId, { embeds: [embed], components: ticketButtons(fresh.id) });
     }
@@ -487,20 +655,29 @@ export const notifyDiscordLiveChatEvent = async (ctx, event, session, message = 
     });
     if (!fresh) return null;
 
-    const discord = await ensureResourceChannel(ctx.prisma, config, 'live-chat', fresh);
-    const title = event === 'message' ? 'Live chat message' : event === 'status' ? 'Live chat status updated' : 'New live support chat';
+    const closed = event === 'status' && String(fresh.status || '').toLowerCase() === 'closed';
+    const discord = closed ? (fresh.metadata?.discord || {}) : await ensureResourceChannel(ctx.prisma, config, 'live-chat', fresh);
+    const title = event === 'assigned' ? 'Live chat assigned' : event === 'message' ? 'Live chat message' : event === 'status' ? 'Live chat status updated' : 'New live support chat';
     const embed = supportEmbed({
       title,
       color: event === 'message' ? 0x22c55e : 0x06b6d4,
       resource: fresh,
       description: message?.body || fresh.subject || 'Live chat started.',
       fields: [
+        { name: 'Ticket number', value: caseNumber('live-chat', fresh.id), inline: true },
         { name: 'Author', value: message ? `${message.authorName || 'Unknown'} (${message.senderRole || 'user'})` : userLine(fresh.owner), inline: false },
+        { name: 'Assigned to', value: fresh.assignedTo ? userLine(fresh.assignedTo) : (discord.assignedUserId ? `<@${discord.assignedUserId}>` : 'Unassigned'), inline: false },
         { name: 'Discord channel', value: discord.channelLink || 'Not created', inline: false }
       ]
     });
 
-    await postDiscordMessage(config, config.liveChatChannelId, { embeds: [embed], components: chatButtons(fresh.id) });
+    if (!discord.assignedUserId || event === 'created') {
+      await postDiscordMessage(config, config.liveChatChannelId, { embeds: [embed], components: chatButtons(fresh.id) });
+    }
+    if (closed) {
+      await clearResourceDiscordChannel(ctx.prisma, 'live-chat', fresh, config);
+      return;
+    }
     if (discord.channelId) {
       await postDiscordMessage(config, discord.channelId, { embeds: [embed], components: chatButtons(fresh.id) });
     }
@@ -629,6 +806,7 @@ const provisionDiscordServer = async ({ prisma, userFromRequest }, req, res) => 
     return;
   }
 
+  const botUser = await discordFetch(token, '/users/@me');
   const guildId = await resolveGuildId(token, config.guildId);
   const channels = await discordFetch(token, `/guilds/${guildId}/channels`);
   const ticketCategory = await ensureCategory(token, guildId, channels, String(config.ticketCategoryName || 'Tiwlo Tickets'));
@@ -682,6 +860,8 @@ const provisionDiscordServer = async ({ prisma, userFromRequest }, req, res) => 
   const nextConfig = {
     ...config,
     guildId,
+    botUserId: botUser?.id,
+    botUsername: botUser?.username,
     ticketCategoryId: ticketCategory.channel.id,
     liveChatCategoryId: liveCategory.channel.id,
     operationsCategoryId: opsCategory.channel.id
