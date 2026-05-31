@@ -29,6 +29,7 @@ import { fetchIntegrationsWithApi, getAuthToken, upsertIntegrationWithApi } from
 
 const DISCORD_KEY = 'discord-bot';
 const DISCORD_GROUP = 'communications';
+const DISCORD_BOT_PERMISSIONS = '398090038480';
 
 const permissionScopes = [
   'bot',
@@ -345,8 +346,7 @@ function safeConfig(value: any) {
 
 function inviteUrl(clientId: string) {
   if (!clientId.trim()) return '';
-  const permissions = '274878155840';
-  return `https://discord.com/oauth2/authorize?client_id=${encodeURIComponent(clientId.trim())}&permissions=${permissions}&scope=bot%20applications.commands`;
+  return `https://discord.com/oauth2/authorize?client_id=${encodeURIComponent(clientId.trim())}&permissions=${DISCORD_BOT_PERMISSIONS}&scope=bot%20applications.commands`;
 }
 
 export default function AdminDiscordBot() {
