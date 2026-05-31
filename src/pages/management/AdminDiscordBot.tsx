@@ -61,6 +61,7 @@ const channelFields = [
 const defaultConfig = {
   botToken: '',
   clientId: '',
+  publicKey: '',
   guildId: '',
   ticketCategoryName: 'Tiwlo Tickets',
   liveChatCategoryName: 'Tiwlo Live Chat',
@@ -360,7 +361,7 @@ export default function AdminDiscordBot() {
     setError('');
     setNotice('');
     try {
-      const connected = Boolean(config.botToken.trim() && config.clientId.trim() && config.guildId.trim());
+      const connected = Boolean(config.botToken.trim() && config.clientId.trim() && config.publicKey.trim() && config.guildId.trim());
       await upsertIntegrationWithApi({
         key: DISCORD_KEY,
         group: DISCORD_GROUP,
@@ -382,7 +383,7 @@ export default function AdminDiscordBot() {
     }
   };
 
-  const connected = status === 'active' && config.botToken && config.clientId && config.guildId;
+  const connected = status === 'active' && config.botToken && config.clientId && config.publicKey && config.guildId;
   const url = inviteUrl(config.clientId);
 
   return (
@@ -419,11 +420,12 @@ export default function AdminDiscordBot() {
             {[
               ['botToken', 'Bot token', 'Paste Discord bot token'],
               ['clientId', 'Application client ID', 'Discord application ID'],
+              ['publicKey', 'Application public key', 'Discord interactions public key'],
               ['guildId', 'Server / guild ID', 'Target Discord server ID'],
               ['ticketCategoryName', 'Ticket category', 'Temporary ticket channels category'],
               ['liveChatCategoryName', 'Live chat category', 'Temporary live chat channels category']
             ].map(([key, label, placeholder]) => (
-              <label key={key} className={key === 'botToken' ? 'space-y-2 md:col-span-2' : 'space-y-2'}>
+              <label key={key} className={key === 'botToken' || key === 'publicKey' ? 'space-y-2 md:col-span-2' : 'space-y-2'}>
                 <span className="text-[11px] font-bold uppercase tracking-widest text-gray-500">{label}</span>
                 <input
                   type={key === 'botToken' ? 'password' : 'text'}
@@ -444,7 +446,7 @@ export default function AdminDiscordBot() {
           <div className="space-y-3 p-5">
             <div className={`flex items-center gap-3 rounded border px-4 py-3 ${connected ? 'border-emerald-100 bg-emerald-50 text-emerald-700' : 'border-amber-100 bg-amber-50 text-amber-700'}`}>
               <Bot className="h-5 w-5" />
-              <span className="text-sm font-black">{connected ? 'Discord API connected' : 'Add bot token, client ID, and guild ID to connect'}</span>
+              <span className="text-sm font-black">{connected ? 'Discord API connected' : 'Add bot token, client ID, public key, and guild ID to connect'}</span>
             </div>
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               {permissionScopes.map((scope) => (

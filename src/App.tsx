@@ -43,6 +43,7 @@ const AppsPage = lazy(() => import('./pages/Apps'));
 const FunctionsPage = lazy(() => import('./pages/Functions'));
 const MarketplacePage = lazy(() => import('./pages/Marketplace'));
 const KubernetesPage = lazy(() => import('./pages/Kubernetes'));
+const LegalPage = lazy(() => import('./pages/LegalPage'));
 const CloudStorePage = lazy(() => import('./pages/CloudStore'));
 const StoreManagementPage = lazy(() => import('./pages/StoreManagement'));
 const StoreAdminDashboard = lazy(() => import('./cloudstore/storeadmin/StoreAdminDashboard'));
@@ -288,6 +289,8 @@ function AppContent({
             <Route path="/activity" element={<ActivityPage />} />
             <Route path="/alerts" element={<AlertsPage />} />
             <Route path="/support" element={<SupportPage />} />
+            <Route path="/terms" element={<LegalPage />} />
+            <Route path="/privacy" element={<LegalPage />} />
             <Route path="/firewalls" element={<FirewallsPage />} />
             <Route path="/apps" element={<AppsPage />} />
             <Route path="/functions" element={<FunctionsPage />} />
@@ -455,6 +458,8 @@ export default function App() {
           <Route path="/reset-password" element={<ResetPassword onLogin={handleLogin} />} />
           <Route path="/verify-email" element={<VerifyEmail onLogin={handleLogin} />} />
           <Route path="/email" element={<EmailPortal />} />
+          <Route path="/terms" element={<LegalPage />} />
+          <Route path="/privacy" element={<LegalPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
         </Suspense>

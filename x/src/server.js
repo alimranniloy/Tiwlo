@@ -23,6 +23,7 @@ import { streamSupportAiReply } from './modules/support/service.js';
 import { registerSystemToolRoutes, startBackupAutomation, startSslAutomation } from './modules/system-tools/service.js';
 import { registerTPanelRoutes } from './modules/tpanel/service.js';
 import { startPowerDnsAutomation } from './modules/powerdns/service.js';
+import { registerDiscordRoutes } from './modules/discord/service.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -38,6 +39,8 @@ await server.start();
 
 app.set('trust proxy', true);
 app.use(cors(createCorsOptionsDelegate()));
+
+registerDiscordRoutes(app, { prisma });
 
 app.post('/webhooks/stripe', express.raw({ type: 'application/json' }), async (req, res) => {
   try {
