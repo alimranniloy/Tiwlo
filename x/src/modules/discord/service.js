@@ -1,5 +1,12 @@
 import express from 'express';
 import { createPublicKey, verify } from 'node:crypto';
+import {
+  createIdentityVerificationRequest,
+  identityAppOrigin,
+  identityVerificationLink,
+  publicIdentityVerification,
+  reviewIdentityVerificationRequest
+} from '../identity-verification/core.js';
 
 const DISCORD_INTEGRATION_KEY = 'discord-bot';
 const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
@@ -118,6 +125,12 @@ const commandResponse = (name) => {
 
 const componentResponse = async (prisma, payload) => {
   const customId = String(payload.data?.custom_id || '');
+  if (customId.startsWith('tiwlo:identity:request:')) {
+    return sendIdentityVerificationFromDiscord(prisma, payload, customId);
+  }
+  if (customId.startsWith('tiwlo:identity:review:')) {
+    return reviewIdentityVerificationFromDiscord(prisma, payload, customId);
+  }
   const [, kind, action, id, value] = customId.split(':');
   if ((kind === 'ticket' || kind === 'chat') && action === 'assign' && id) {
     const discordUserId = payload.data?.values?.[0];
@@ -158,6 +171,99 @@ const componentResponse = async (prisma, payload) => {
     return { type: 4, data: { content: 'This Tiwlo action is not available for that record.', flags: 64 } };
   }
   return { type: 4, data: { content: 'Action received by Tiwlo.', flags: 64 } };
+};
+
+const sendIdentityVerificationFromDiscord = async (prisma, payload, customId) => {
+  const [, , , resourceKind, resourceId] = customId.split(':');
+  const model = resourceKind === 'ticket' ? prisma.supportTicket : resourceKind === 'chat' ? prisma.liveChatSession : null;
+  if (!model || !resourceId) {
+    return { type: 4, data: { content: 'Verification can only be sent from a support ticket or live chat.', flags: 64 } };
+  }
+
+  const resource = await model.findUnique({
+    where: { id: resourceId },
+    include: { owner: true, assignedTo: true, messages: { orderBy: { createdAt: 'asc' }, take: 20 } }
+  }).catch(() => null);
+  if (!resource) {
+    return { type: 4, data: { content: 'Tiwlo case was not found.', flags: 64 } };
+  }
+
+  const ownerId = String(resource.metadata?.accountUserId || resource.ownerId || '').trim();
+  if (!ownerId) {
+    return { type: 4, data: { content: 'This case does not have a linked Tiwlo user.', flags: 64 } };
+  }
+
+  const { request } = await createIdentityVerificationRequest(prisma, {
+    ownerId,
+    flow: 'account_recovery',
+    source: 'discord',
+    requestedById: payload.member?.user?.id || payload.user?.id || '',
+    supportTicketId: resourceKind === 'ticket' ? resourceId : '',
+    liveChatSessionId: resourceKind === 'chat' ? resourceId : ''
+  });
+
+  await prisma.auditLog.create({
+    data: {
+      action: 'discord_identity_verification_requested',
+      resource: 'identityVerification',
+      resourceId: request.id,
+      metadata: {
+        ownerId,
+        sourceKind: resourceKind,
+        sourceId: resourceId,
+        discordUserId: payload.member?.user?.id || payload.user?.id || null
+      }
+    }
+  }).catch(() => null);
+
+  const link = identityVerificationLink(request);
+  return {
+    type: 4,
+    data: {
+      content: `ID verification request sent for ${resource.owner?.email || ownerId}.\n${link}`,
+      flags: 64
+    }
+  };
+};
+
+const reviewIdentityVerificationFromDiscord = async (prisma, payload, customId) => {
+  const [, , , id, status] = customId.split(':');
+  if (!id || !status) {
+    return { type: 4, data: { content: 'Invalid verification review action.', flags: 64 } };
+  }
+  const discordUserId = payload.member?.user?.id || payload.user?.id || '';
+  const request = await reviewIdentityVerificationRequest(prisma, id, status, {
+    id: discordUserId,
+    name: payload.member?.nick || payload.member?.user?.global_name || payload.user?.global_name || payload.user?.username || 'Discord Admin',
+    email: ''
+  }, status === 'approved' ? 'Verified from Discord.' : 'Not verified from Discord.');
+
+  await prisma.auditLog.create({
+    data: {
+      action: 'discord_identity_verification_reviewed',
+      resource: 'identityVerification',
+      resourceId: id,
+      metadata: { status: request.status, discordUserId }
+    }
+  }).catch(() => null);
+  if (request.supportTicketId) {
+    await prisma.supportTicket.update({
+      where: { id: request.supportTicketId },
+      data: {
+        status: request.status === 'approved' ? 'resolved' : 'pending',
+        metadata: {
+          source: 'identity-verification',
+          identityVerificationId: request.id,
+          identityVerificationFlow: request.flow,
+          reviewStatus: request.status,
+          reviewedAt: new Date().toISOString()
+        }
+      }
+    }).catch(() => null);
+  }
+  await notifyDiscordIdentityVerificationEvent({ prisma }, 'reviewed', request, {});
+
+  return { type: 4, data: { content: `Identity verification marked ${request.status}.`, flags: 64 } };
 };
 
 const cleanChannelName = (value, fallback) => String(value || fallback || 'tiwlo')
@@ -565,22 +671,37 @@ const assignUserSelect = (kind, id) => ({
   }]
 });
 
-const ticketButtons = (ticketId) => [
+const isDisabledAccountCase = (resource) => {
+  const metadata = resource?.metadata || {};
+  const label = `${metadata.caseLabel || ''} ${metadata.label || ''} ${metadata.source || ''} ${resource?.subject || ''}`.toLowerCase();
+  return label.includes('disable account')
+    || label.includes('disabled account')
+    || label.includes('restricted-account')
+    || Boolean(metadata.accountUserId);
+};
+
+const identityRequestRow = (kind, id) => actionRow([
+  { label: 'Send ID Verification', style: 1, id: `tiwlo:identity:request:${kind}:${id}` }
+]);
+
+const ticketButtons = (ticketId, ticket = null) => [
   actionRow([
     { label: 'Open', style: 1, id: `tiwlo:ticket:status:${ticketId}:open` },
     { label: 'Solved', style: 3, id: `tiwlo:ticket:status:${ticketId}:resolved` },
     { label: 'Close', style: 2, id: `tiwlo:ticket:status:${ticketId}:closed` },
     { label: 'Delete', style: 4, id: `tiwlo:ticket:delete:${ticketId}` }
   ]),
+  ...(isDisabledAccountCase(ticket) ? [identityRequestRow('ticket', ticketId)] : []),
   assignUserSelect('ticket', ticketId)
 ];
 
-const chatButtons = (sessionId) => [
+const chatButtons = (sessionId, session = null) => [
   actionRow([
     { label: 'Open', style: 1, id: `tiwlo:chat:status:${sessionId}:open` },
     { label: 'Assigned', style: 3, id: `tiwlo:chat:status:${sessionId}:assigned` },
     { label: 'Close', style: 2, id: `tiwlo:chat:status:${sessionId}:closed` }
   ]),
+  ...(isDisabledAccountCase(session) ? [identityRequestRow('chat', sessionId)] : []),
   assignUserSelect('chat', sessionId)
 ];
 
@@ -636,14 +757,14 @@ export const notifyDiscordTicketEvent = async (ctx, event, ticket, message = nul
     });
 
     if (!discord.assignedUserId || event === 'created') {
-      await postDiscordMessage(config, config.ticketChannelId, { embeds: [embed], components: ticketButtons(fresh.id) });
+      await postDiscordMessage(config, config.ticketChannelId, { embeds: [embed], components: ticketButtons(fresh.id, fresh) });
     }
     if (closed) {
       await clearResourceDiscordChannel(ctx.prisma, 'ticket', fresh, config);
       return;
     }
     if (discord.channelId) {
-      await postDiscordMessage(config, discord.channelId, { embeds: [embed], components: ticketButtons(fresh.id) });
+      await postDiscordMessage(config, discord.channelId, { embeds: [embed], components: ticketButtons(fresh.id, fresh) });
     }
   } catch (error) {
     await updateDiscordHealth(ctx.prisma, { status: 'error', lastError: error.message, area: 'ticket' });
@@ -678,17 +799,73 @@ export const notifyDiscordLiveChatEvent = async (ctx, event, session, message = 
     });
 
     if (!discord.assignedUserId || event === 'created') {
-      await postDiscordMessage(config, config.liveChatChannelId, { embeds: [embed], components: chatButtons(fresh.id) });
+      await postDiscordMessage(config, config.liveChatChannelId, { embeds: [embed], components: chatButtons(fresh.id, fresh) });
     }
     if (closed) {
       await clearResourceDiscordChannel(ctx.prisma, 'live-chat', fresh, config);
       return;
     }
     if (discord.channelId) {
-      await postDiscordMessage(config, discord.channelId, { embeds: [embed], components: chatButtons(fresh.id) });
+      await postDiscordMessage(config, discord.channelId, { embeds: [embed], components: chatButtons(fresh.id, fresh) });
     }
   } catch (error) {
     await updateDiscordHealth(ctx.prisma, { status: 'error', lastError: error.message, area: 'live-chat' });
+  }
+};
+
+const identityReviewButtons = (request) => {
+  if (String(request?.status || '').toLowerCase() !== 'pending') return [];
+  return [
+    actionRow([
+      { label: 'Verified', style: 3, id: `tiwlo:identity:review:${request.id}:approved` },
+      { label: 'Not verified', style: 4, id: `tiwlo:identity:review:${request.id}:rejected` }
+    ])
+  ];
+};
+
+export const notifyDiscordIdentityVerificationEvent = async (ctx, event, request, extra = {}) => {
+  try {
+    const integration = await readDiscordIntegration(ctx.prisma);
+    if (!integration?.config?.idVerifiedChannelId) return null;
+    const fresh = await ctx.prisma.identityVerification.findUnique({
+      where: { id: request.id },
+      include: { owner: true }
+    });
+    if (!fresh) return null;
+
+    const payload = publicIdentityVerification(fresh, { includePayload: true }) || {};
+    const docs = Array.isArray(payload.payload?.documents) ? payload.payload.documents : [];
+    const title = event === 'reviewed'
+      ? `ID verification ${fresh.status}`
+      : fresh.flow === 'tiwlo_pay'
+        ? 'Tiwlo Pay ID verification'
+        : 'Disabled account ID verification';
+    const adminLink = `${identityAppOrigin()}/management/id-verifications?id=${encodeURIComponent(fresh.id)}`;
+    const color = fresh.status === 'approved' ? 0x22c55e : fresh.status === 'rejected' ? 0xef4444 : 0x0069ff;
+
+    await postDiscordMessage(integration.config, integration.config.idVerifiedChannelId, {
+      embeds: [{
+        title,
+        color,
+        description: truncate(event === 'reviewed'
+          ? `Review completed for ${fresh.owner?.email || fresh.ownerId}.`
+          : `Review submitted documents and live selfie for ${fresh.owner?.email || fresh.ownerId}.`),
+        fields: [
+          { name: 'Customer', value: userLine(fresh.owner), inline: false },
+          { name: 'Flow', value: String(fresh.flow || 'account_recovery'), inline: true },
+          { name: 'Status', value: String(fresh.status || 'pending'), inline: true },
+          { name: 'Documents', value: docs.length ? docs.map((item) => item.kind || item.name || 'document').join(', ') : 'Waiting for upload', inline: false },
+          { name: 'Admin preview', value: adminLink, inline: false },
+          { name: 'Support ticket', value: extra.ticket?.id || fresh.supportTicketId || 'Not linked', inline: true },
+          { name: 'Reason', value: extra.reason || fresh.review?.reason || '', inline: false }
+        ].filter((field) => field.value),
+        timestamp: new Date().toISOString(),
+        footer: { text: `Tiwlo verification ${fresh.id}` }
+      }],
+      components: identityReviewButtons(fresh)
+    });
+  } catch (error) {
+    await updateDiscordHealth(ctx.prisma, { status: 'error', lastError: error.message, area: 'identity-verification' });
   }
 };
 

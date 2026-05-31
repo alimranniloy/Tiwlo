@@ -240,7 +240,7 @@ const requestIp = (req) => {
 
 registerDiscordRoutes(app, { prisma, userFromRequest });
 
-app.use(express.json({ limit: '2mb' }));
+app.use(express.json({ limit: '20mb' }));
 
 const writeSse = (res, event) => {
   res.write(`data: ${JSON.stringify(event)}\n\n`);

@@ -86,6 +86,7 @@ export default function Sidebar({ user, isOpen, setIsOpen, onLogout }: SidebarPr
           { name: 'User Identities', icon: ShieldCheck, path: '/management/identity' },
           { name: 'Contact Groups', icon: Layers, path: '/management/contact-groups' },
           { name: 'Support Tickets', icon: LifeBuoy, path: '/management/support' },
+          { name: 'ID Reviews', icon: ShieldCheck, path: '/management/id-verifications' },
         ]
       },
       {

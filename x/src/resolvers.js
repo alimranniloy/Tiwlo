@@ -9,6 +9,7 @@ import { settingResolvers } from './modules/settings/resolvers.js';
 import { adminResolvers } from './modules/admin/resolvers.js';
 import { integrationResolvers } from './modules/integrations/resolvers.js';
 import { supportResolvers } from './modules/support/resolvers.js';
+import { identityVerificationResolvers } from './modules/identity-verification/resolvers.js';
 import { ecommerceResolvers } from './modules/ecommerce/resolvers.js';
 import { ispResolvers } from './modules/isp/resolvers.js';
 import { rbacResolvers } from './modules/rbac/resolvers.js';
@@ -32,6 +33,7 @@ export const resolvers = mergeResolvers(
   adminResolvers,
   integrationResolvers,
   supportResolvers,
+  identityVerificationResolvers,
   ecommerceResolvers,
   ispResolvers,
   hostingResolvers,

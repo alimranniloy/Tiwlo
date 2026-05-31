@@ -1,5 +1,7 @@
+import React from 'react';
 import { LifeBuoy, LogOut } from 'lucide-react';
 import SystemStatusPage from '../components/SystemStatusPage';
+import { fetchIdentityVerificationChallengeWithApi } from '../lib/tiwloApi';
 import { User } from '../types';
 
 interface BannedAccountProps {
@@ -18,6 +20,31 @@ function supportMessage(user: User) {
 }
 
 export default function BannedAccount({ user, onLogout }: BannedAccountProps) {
+  const [verificationMessage, setVerificationMessage] = React.useState('');
+
+  React.useEffect(() => {
+    let active = true;
+    const checkVerification = async () => {
+      try {
+        const challenge = await fetchIdentityVerificationChallengeWithApi('account_recovery');
+        if (!active) return;
+        if (challenge?.request?.id && ['requested', 'pending'].includes(String(challenge.request.status || '').toLowerCase())) {
+          window.location.assign(`/id-verification?token=${encodeURIComponent(challenge.request.token)}`);
+          return;
+        }
+        setVerificationMessage(challenge?.rejectedReason ? `Your ID was not verified. ${challenge.rejectedReason}` : '');
+      } catch {
+        if (active) setVerificationMessage('');
+      }
+    };
+    checkVerification();
+    const timer = window.setInterval(checkVerification, 10000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [user.id]);
+
   const openSupport = () => {
     const emit = () => {
       window.dispatchEvent(new CustomEvent('tiwlo:open-chat', {
@@ -45,6 +72,11 @@ export default function BannedAccount({ user, onLogout }: BannedAccountProps) {
 
   return (
     <SystemStatusPage variant="disabled" title="Account Disabled | Tiwlo">
+      {verificationMessage && (
+        <div className="mx-auto mb-4 max-w-lg rounded-md border border-red-100 bg-red-50 px-4 py-3 text-center text-[13px] font-bold text-red-700">
+          {verificationMessage}
+        </div>
+      )}
       <div className="flex flex-col gap-3 sm:flex-row sm:justify-center">
         <button
           onClick={openSupport}

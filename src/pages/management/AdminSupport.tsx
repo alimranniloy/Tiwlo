@@ -30,6 +30,7 @@ import {
   fetchSupportTicketWithApi,
   fetchSupportTicketsWithApi,
   fetchUsersForAdmin,
+  startIdentityVerificationWithApi,
   replySupportTicketWithApi,
   sendLiveChatMessageWithApi,
   updateLiveChatSessionStatusWithApi,
@@ -100,6 +101,15 @@ function aiBadge(item: any) {
   return <span className="inline-flex items-center gap-1 rounded border border-blue-100 bg-blue-50 px-2 py-0.5 text-[10px] font-black uppercase text-blue-700"><Bot className="h-3 w-3" /> AI</span>;
 }
 
+function isDisabledAccountCase(item: any) {
+  const metadata = item?.metadata || {};
+  const label = `${metadata.caseLabel || ''} ${metadata.label || ''} ${metadata.source || ''} ${item?.subject || ''}`.toLowerCase();
+  return label.includes('disable account')
+    || label.includes('disabled account')
+    || label.includes('restricted-account')
+    || Boolean(metadata.accountUserId);
+}
+
 export default function AdminSupport() {
   const currentUser = React.useMemo(getStoredUser, []);
   const [activeView, setActiveView] = React.useState<'tickets' | 'liveChat'>('tickets');
@@ -115,6 +125,7 @@ export default function AdminSupport() {
   const [chatLoading, setChatLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
   const [error, setError] = React.useState('');
+  const [notice, setNotice] = React.useState('');
   const [selectedTicket, setSelectedTicket] = React.useState<any | null>(null);
   const [selectedChat, setSelectedChat] = React.useState<any | null>(null);
   const [detailLoading, setDetailLoading] = React.useState(false);
@@ -335,6 +346,37 @@ export default function AdminSupport() {
     }
   };
 
+  const sendIdentityVerification = async (item: any, kind: 'ticket' | 'chat') => {
+    const ownerId = item?.metadata?.accountUserId || item?.ownerId;
+    if (!ownerId) {
+      setError('This support case does not have a linked account.');
+      return;
+    }
+    setSaving(true);
+    setError('');
+    setNotice('');
+    try {
+      const request = await startIdentityVerificationWithApi({
+        ownerId,
+        flow: 'account_recovery',
+        source: 'support',
+        supportTicketId: kind === 'ticket' ? item.id : undefined,
+        liveChatSessionId: kind === 'chat' ? item.id : undefined
+      });
+      setNotice(`ID verification request sent to ${item.owner?.email || ownerId}.`);
+      if (kind === 'ticket' && selectedTicket?.id === item.id) {
+        setSelectedTicket((current: any) => ({ ...(current || item), metadata: { ...(current?.metadata || item.metadata || {}), identityVerificationId: request.id } }));
+      }
+      if (kind === 'chat' && selectedChat?.id === item.id) {
+        setSelectedChat((current: any) => ({ ...(current || item), metadata: { ...(current?.metadata || item.metadata || {}), identityVerificationId: request.id } }));
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to send ID verification');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const openCount = tickets.filter((ticket) => ['open', 'pending'].includes(String(ticket.status).toLowerCase())).length;
   const resolvedCount = tickets.filter((ticket) => ['resolved', 'closed'].includes(String(ticket.status).toLowerCase())).length;
   const highCount = tickets.filter((ticket) => String(ticket.priority).toLowerCase() === 'high').length;
@@ -374,6 +416,13 @@ export default function AdminSupport() {
         <div className="flex items-center gap-2 rounded border border-red-100 bg-red-50 px-4 py-3 text-[13px] font-bold text-red-600">
           <AlertCircle className="h-4 w-4" />
           {error}
+        </div>
+      )}
+
+      {notice && (
+        <div className="flex items-center gap-2 rounded border border-emerald-100 bg-emerald-50 px-4 py-3 text-[13px] font-bold text-emerald-700">
+          <CheckCircle2 className="h-4 w-4" />
+          {notice}
         </div>
       )}
 
@@ -489,6 +538,9 @@ export default function AdminSupport() {
                     </td>
                     <td className="px-6 py-4 text-right">
                       <div className="flex items-center justify-end gap-2">
+                        {isDisabledAccountCase(ticket) && (
+                          <button onClick={(event) => { event.stopPropagation(); sendIdentityVerification(ticket, 'ticket'); }} className="rounded border border-blue-100 bg-blue-50 px-2 py-1 text-[10px] font-bold text-blue-700">ID verify</button>
+                        )}
                         {ticket.status !== 'pending' && (
                           <button onClick={(event) => { event.stopPropagation(); setTicketStatus(ticket.id, 'pending'); }} className="rounded border border-amber-100 bg-amber-50 px-2 py-1 text-[10px] font-bold text-amber-700">Pending</button>
                         )}
@@ -584,6 +636,11 @@ export default function AdminSupport() {
                   </select>
                 </label>
                 <div className="flex items-end gap-2">
+                  {isDisabledAccountCase(selectedTicket) && (
+                    <button onClick={() => sendIdentityVerification(selectedTicket, 'ticket')} disabled={saving} className="flex flex-1 items-center justify-center gap-2 rounded border border-blue-100 bg-blue-50 px-3 py-2 text-sm font-bold text-blue-700 disabled:opacity-60">
+                      <UserCheck className="h-4 w-4" /> Send ID Verification
+                    </button>
+                  )}
                   {currentUser?.id && (
                     <button onClick={() => assignTicket(selectedTicket.id, currentUser.id)} className="flex flex-1 items-center justify-center gap-2 rounded border border-blue-100 bg-blue-50 px-3 py-2 text-sm font-bold text-blue-700">
                       <UserCheck className="h-4 w-4" /> Assign to me
@@ -664,6 +721,11 @@ export default function AdminSupport() {
                   </select>
                 </label>
                 <div className="flex items-end gap-2">
+                  {isDisabledAccountCase(selectedChat) && (
+                    <button onClick={() => sendIdentityVerification(selectedChat, 'chat')} disabled={saving} className="flex flex-1 items-center justify-center gap-2 rounded border border-blue-100 bg-blue-50 px-3 py-2 text-sm font-bold text-blue-700 disabled:opacity-60">
+                      <UserCheck className="h-4 w-4" /> ID Verify
+                    </button>
+                  )}
                   {currentUser?.id && (
                     <button onClick={() => assignChat(selectedChat.id, currentUser.id)} className="flex flex-1 items-center justify-center gap-2 rounded border border-blue-100 bg-blue-50 px-3 py-2 text-sm font-bold text-blue-700">
                       <UserCheck className="h-4 w-4" /> Assign to me

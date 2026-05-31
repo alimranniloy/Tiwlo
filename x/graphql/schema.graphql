@@ -364,6 +364,42 @@ type LiveChatMessage {
   createdAt: String
 }
 
+type IdentityVerification {
+  id: ID!
+  ownerId: String!
+  owner: User
+  flow: String!
+  status: String!
+  token: String!
+  source: String
+  requestedById: String
+  supportTicketId: String
+  liveChatSessionId: String
+  tiwloPayProfileId: String
+  requirement: JSON
+  payload: JSON
+  review: JSON
+  mobileLink: String
+  expiresAt: String
+  submittedAt: String
+  reviewedAt: String
+  createdAt: String
+  updatedAt: String
+}
+
+type IdentityVerificationChallenge {
+  request: IdentityVerification
+  mobileOnly: Boolean!
+  mobileLink: String
+  rejectedReason: String
+  rejectedAt: String
+}
+
+type IdentityVerificationResult {
+  request: IdentityVerification!
+  message: String!
+}
+
 type SystemSetting {
   id: ID!
   scope: String!
@@ -1736,6 +1772,30 @@ input LiveChatMessageInput {
   attachments: JSON
 }
 
+input StartIdentityVerificationInput {
+  ownerId: ID
+  flow: String
+  source: String
+  supportTicketId: ID
+  liveChatSessionId: ID
+  tiwloPayProfileId: ID
+}
+
+input IdentityVerificationDocumentInput {
+  kind: String!
+  name: String
+  type: String
+  dataUrl: String!
+  captured: Boolean
+}
+
+input SubmitIdentityVerificationInput {
+  requestId: ID!
+  documents: [IdentityVerificationDocumentInput!]!
+  selfie: IdentityVerificationDocumentInput!
+  device: JSON
+}
+
 input UpsertSettingInput {
   scope: String!
   scopeId: String
@@ -2503,6 +2563,8 @@ type Query {
   supportTicket(id: ID!): SupportTicket
   liveChatSessions(status: String, assignedToId: ID, search: String, page: Int, limit: Int): [LiveChatSession!]!
   liveChatSession(id: ID!): LiveChatSession
+  identityVerificationChallenge(flow: String, token: String): IdentityVerificationChallenge!
+  identityVerifications(status: String, flow: String, ownerId: ID, limit: Int): [IdentityVerification!]!
   settings(scope: String!, scopeId: String): [SystemSetting!]!
   mailboxOverview(token: String!): MailboxOverview!
   auditLogs(resource: String, resourceId: String, action: String, page: Int, limit: Int): [AuditLog!]!
@@ -2616,6 +2678,9 @@ type Mutation {
   assignLiveChatSession(id: ID!, assigneeId: ID): LiveChatSession!
   updateLiveChatSessionStatus(id: ID!, status: String!): LiveChatSession!
   createTicketFromLiveChat(sessionId: ID!, subject: String): SupportTicket!
+  startIdentityVerification(input: StartIdentityVerificationInput!): IdentityVerification!
+  submitIdentityVerification(input: SubmitIdentityVerificationInput!): IdentityVerificationResult!
+  reviewIdentityVerification(id: ID!, status: String!, reason: String): IdentityVerification!
   upsertSetting(input: UpsertSettingInput!): SystemSetting!
   testSystemEmail(input: EmailTestInput!): EmailTestResult!
   upsertAdminModule(input: UpsertAdminModuleInput!): AdminModule!

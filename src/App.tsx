@@ -32,6 +32,7 @@ const SettingsPage = lazy(() => import('./pages/Settings'));
 const TeamPage = lazy(() => import('./pages/Team'));
 const BillingPage = lazy(() => import('./pages/Billing'));
 const TiwloPay = lazy(() => import('./pages/TiwloPay'));
+const IdentityVerification = lazy(() => import('./pages/IdentityVerification'));
 const TPanel = lazy(() => import('./pages/TPanel'));
 const APIPage = lazy(() => import('./pages/API'));
 const VolumesPage = lazy(() => import('./pages/Volumes'));
@@ -68,6 +69,7 @@ const AdminSecurity = lazy(() => import('./pages/management/AdminSecurity'));
 const AdminCore = lazy(() => import('./pages/management/AdminCore'));
 const AdminAiModel = lazy(() => import('./pages/management/AdminAiModel'));
 const AdminSupport = lazy(() => import('./pages/management/AdminSupport'));
+const AdminIdentityVerification = lazy(() => import('./pages/management/AdminIdentityVerification'));
 const AdminNotifications = lazy(() => import('./pages/management/AdminNotifications'));
 const AdminEmail = lazy(() => import('./pages/management/AdminEmail'));
 const AdminPlans = lazy(() => import('./pages/management/AdminPlans'));
@@ -179,6 +181,7 @@ function AppContent({
                      location.pathname.startsWith('/isp-billing/admin') ||
                      location.pathname.startsWith('/management/ecommerce') ||
                      location.pathname.startsWith('/management/isp') ||
+                     location.pathname.startsWith('/id-verification') ||
                      location.pathname.startsWith('/pay/') ||
                      location.pathname === '/email';
 
@@ -252,6 +255,7 @@ function AppContent({
                 <Route path="/management/backup" element={<AdminBackup />} />
                 <Route path="/management/ssl" element={<AdminSsl />} />
                 <Route path="/management/support" element={<AdminSupport />} />
+                <Route path="/management/id-verifications" element={<AdminIdentityVerification />} />
                 <Route path="/management/taxes" element={<AdminSectionRecords sectionKey="taxes" />} />
                 <Route path="/management/currencies" element={<AdminCurrencies />} />
                 <Route path="/management/store-products" element={<AdminStoreProducts />} />
@@ -310,6 +314,7 @@ function AppContent({
             <Route path="/team" element={<TeamPage user={user} />} />
             <Route path="/billing" element={<BillingPage />} />
             <Route path="/tiwlo-pay/*" element={serviceRoute(SERVICE_MODULE_KEYS.tiwloPay, <TiwloPay />, '/management/tiwlo-pay')} />
+            <Route path="/id-verification" element={<IdentityVerification user={user} onLogout={handleLogout} />} />
             <Route path="/tpanel" element={serviceRoute(SERVICE_MODULE_KEYS.tpanel, <TPanel />, '/management/tpanel')} />
             <Route path="/pay/:slug" element={<TiwloPayCheckout />} />
             <Route path="/api" element={<APIPage />} />
@@ -518,6 +523,7 @@ export default function App() {
           <Route path="/store/user/*" element={<StoreUserDashboard />} />
           <Route path="/login" element={<LoginPage onLogin={handleLogin} />} />
           <Route path="/signup" element={<SignupPage onSignup={handleLogin} />} />
+          <Route path="/id-verification" element={<LoginPage onLogin={handleLogin} />} />
           <Route path="/forgot-password" element={<ForgotPassword />} />
           <Route path="/reset-password" element={<ResetPassword onLogin={handleLogin} />} />
           <Route path="/verify-email" element={<VerifyEmail onLogin={handleLogin} />} />
@@ -535,7 +541,10 @@ export default function App() {
     return (
       <Router>
         <Suspense fallback={<RouteLoader />}>
-          <BannedAccount user={user} onLogout={handleLogout} />
+          <Routes>
+            <Route path="/id-verification" element={<IdentityVerification user={user} onLogout={handleLogout} />} />
+            <Route path="*" element={<BannedAccount user={user} onLogout={handleLogout} />} />
+          </Routes>
         </Suspense>
         <Suspense fallback={null}>
           <FloatingAIWidget />

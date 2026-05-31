@@ -1,5 +1,5 @@
 import React from 'react';
-import { Link as RouterLink, Navigate, NavLink, Route, Routes } from 'react-router-dom';
+import { Link as RouterLink, Navigate, NavLink, Route, Routes, useNavigate } from 'react-router-dom';
 import {
   Activity,
   AlertCircle,
@@ -40,7 +40,6 @@ import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YA
 import {
   createTiwloPayLinkWithApi,
   fetchTiwloPayOverviewWithApi,
-  requestTiwloPayVerificationWithApi,
   requestTiwloPayWithdrawalWithApi,
   rotateTiwloPayKeysWithApi,
   upsertTiwloPayProfileWithApi
@@ -170,6 +169,7 @@ function VerificationNotice({ isLive, status, verificationStatus }: { isLive: bo
 }
 
 export default function TiwloPay() {
+  const navigate = useNavigate();
   const [overview, setOverview] = React.useState<any | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
@@ -369,18 +369,7 @@ export default function TiwloPay() {
 
   const submitVerification = async (event: React.FormEvent) => {
     event.preventDefault();
-    setSaving(true);
-    setError('');
-    setNotice('');
-    try {
-      const result = await requestTiwloPayVerificationWithApi(verificationForm);
-      setNotice(result.message || 'ID verification submitted');
-      await loadOverview();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to submit ID verification');
-    } finally {
-      setSaving(false);
-    }
+    navigate('/id-verification?flow=tiwlo_pay');
   };
 
   const createLink = async (event: React.FormEvent) => {
@@ -914,69 +903,14 @@ export default function TiwloPay() {
       </section>
 
       <form onSubmit={submitVerification} className="rounded border border-[#DDE3EA] bg-white p-5">
-        <SectionTitle title="Submit ID verification" detail="This request goes to the administrator for review." icon={FileText} />
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          <label className="space-y-2">
-            <FieldLabel>Legal name</FieldLabel>
-            <input required value={verificationForm.legalName} onChange={(event) => setVerificationForm((current) => ({ ...current, legalName: event.target.value }))} className="w-full rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" />
-          </label>
-          <label className="space-y-2">
-            <FieldLabel>Business name</FieldLabel>
-            <input value={verificationForm.businessName} onChange={(event) => setVerificationForm((current) => ({ ...current, businessName: event.target.value }))} className="w-full rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" />
-          </label>
-          <label className="space-y-2">
-            <FieldLabel>Business type</FieldLabel>
-            <select value={verificationForm.businessType} onChange={(event) => setVerificationForm((current) => ({ ...current, businessType: event.target.value }))} className="w-full rounded border border-[#DDE3EA] px-3 py-2 text-sm font-bold outline-none focus:border-blue-500">
-              <option value="individual">Individual</option>
-              <option value="company">Company</option>
-              <option value="nonprofit">Nonprofit</option>
-              <option value="government">Government</option>
-            </select>
-          </label>
-          <label className="space-y-2">
-            <FieldLabel>Document type</FieldLabel>
-            <select value={verificationForm.documentType} onChange={(event) => setVerificationForm((current) => ({ ...current, documentType: event.target.value }))} className="w-full rounded border border-[#DDE3EA] px-3 py-2 text-sm font-bold outline-none focus:border-blue-500">
-              <option value="national_id">National ID</option>
-              <option value="passport">Passport</option>
-              <option value="drivers_license">Driver license</option>
-              <option value="trade_license">Trade license</option>
-            </select>
-          </label>
-          <label className="space-y-2">
-            <FieldLabel>Document number</FieldLabel>
-            <input required value={verificationForm.documentNumber} onChange={(event) => setVerificationForm((current) => ({ ...current, documentNumber: event.target.value }))} className="w-full rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" />
-          </label>
-          <label className="space-y-2">
-            <FieldLabel>Country</FieldLabel>
-            <input value={verificationForm.country} onChange={(event) => setVerificationForm((current) => ({ ...current, country: event.target.value }))} className="w-full rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" />
-          </label>
-          <label className="space-y-2 md:col-span-2">
-            <FieldLabel>Address</FieldLabel>
-            <input value={verificationForm.address} onChange={(event) => setVerificationForm((current) => ({ ...current, address: event.target.value }))} className="w-full rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" />
-          </label>
-          <label className="space-y-2">
-            <FieldLabel>Website</FieldLabel>
-            <input value={verificationForm.website} onChange={(event) => setVerificationForm((current) => ({ ...current, website: event.target.value }))} className="w-full rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="https://example.com" />
-          </label>
-          <label className="space-y-2">
-            <FieldLabel>Tax ID</FieldLabel>
-            <input value={verificationForm.taxId} onChange={(event) => setVerificationForm((current) => ({ ...current, taxId: event.target.value }))} className="w-full rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" />
-          </label>
-          <label className="space-y-2">
-            <FieldLabel>Contact email</FieldLabel>
-            <input type="email" value={verificationForm.contactEmail} onChange={(event) => setVerificationForm((current) => ({ ...current, contactEmail: event.target.value }))} className="w-full rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" />
-          </label>
-          <label className="space-y-2">
-            <FieldLabel>Contact phone</FieldLabel>
-            <input value={verificationForm.contactPhone} onChange={(event) => setVerificationForm((current) => ({ ...current, contactPhone: event.target.value }))} className="w-full rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" />
-          </label>
-          <label className="space-y-2 md:col-span-2">
-            <FieldLabel>Admin note</FieldLabel>
-            <textarea value={verificationForm.note} onChange={(event) => setVerificationForm((current) => ({ ...current, note: event.target.value }))} className="min-h-20 w-full rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="Business context, expected volume, or anything admin should know" />
-          </label>
+        <SectionTitle title="Submit ID verification" detail="ID card, license, bank statement, and live selfie are captured on the secure verification page." icon={FileText} />
+        <div className="rounded border border-blue-100 bg-blue-50 p-5">
+          <UserCheck className="h-8 w-8 text-[#0069ff]" />
+          <h3 className="mt-4 text-lg font-black text-[#111827]">Open mobile verification</h3>
+          <p className="mt-2 text-sm font-medium leading-6 text-[#4B5563]">Tiwlo Pay stays inactive until an administrator approves the submitted documents.</p>
         </div>
-        <button disabled={saving} className="mt-4 flex w-full items-center justify-center gap-2 rounded bg-[#0069ff] px-4 py-3 text-sm font-bold text-white hover:bg-[#0056cc] disabled:opacity-60">
-          <UserCheck className="h-4 w-4" /> {saving ? 'Submitting' : 'Submit for admin review'}
+        <button className="mt-4 flex w-full items-center justify-center gap-2 rounded bg-[#0069ff] px-4 py-3 text-sm font-bold text-white hover:bg-[#0056cc]">
+          <UserCheck className="h-4 w-4" /> Start ID verification
         </button>
       </form>
     </div>

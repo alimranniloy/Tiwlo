@@ -9,6 +9,7 @@ export * from './hosting';
 export * from './ecommerce';
 export * from './isp';
 export * from './support';
+export * from './identity-verification';
 export * from './ddos';
 export * from './ai-model';
 export * from './tiwlo-pay';
