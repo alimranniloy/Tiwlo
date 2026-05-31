@@ -586,6 +586,11 @@ const chatButtons = (sessionId) => [
 
 const userLine = (owner) => owner ? `${owner.name || 'Customer'} <${owner.email || 'no-email'}>` : 'Customer';
 
+const caseLabel = (resource) => {
+  const label = resource?.metadata?.caseLabel || resource?.metadata?.label || resource?.metadata?.source;
+  return label ? truncate(String(label), 120) : '';
+};
+
 const supportEmbed = ({ title, color, resource, description, fields = [] }) => ({
   title,
   description: truncate(description, 1800),
@@ -594,6 +599,7 @@ const supportEmbed = ({ title, color, resource, description, fields = [] }) => (
     { name: 'Customer', value: userLine(resource.owner), inline: false },
     { name: 'Status', value: String(resource.status || 'open'), inline: true },
     { name: 'Priority', value: String(resource.priority || 'normal'), inline: true },
+    { name: 'Label', value: caseLabel(resource), inline: true },
     ...fields.filter((field) => field.value)
   ].slice(0, 12),
   timestamp: new Date().toISOString(),

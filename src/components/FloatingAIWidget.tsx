@@ -30,6 +30,16 @@ type Message = {
   authorName?: string;
 };
 
+type OpenChatDetail = Record<string, unknown> & {
+  autoStart?: boolean;
+  requestedAgent?: boolean;
+  openedFrom?: string;
+  subject?: string;
+  priority?: string;
+  initialMessage?: string;
+  metadata?: Record<string, unknown>;
+};
+
 const normalizeText = (value: string) => value.trim().toLowerCase().replace(/\s+/g, ' ');
 
 const ticketNumberForSession = (id: string) => `LC-${String(id).slice(-6).toUpperCase()}`;
@@ -155,6 +165,7 @@ export default function FloatingAIWidget() {
   const [aiMode, setAiMode] = useState<'ai' | 'manual' | 'escalated'>('manual');
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const autoStartRef = useRef(false);
 
   const clearStoredSession = () => {
     localStorage.removeItem(CHAT_SESSION_KEY);
@@ -259,11 +270,23 @@ export default function FloatingAIWidget() {
     }
   };
 
-  const createChatSession = async (metadata: Record<string, unknown> = {}) => {
+  const createChatSession = async (metadata: OpenChatDetail = {}) => {
+    const {
+      metadata: extraMetadata,
+      initialMessage: rawInitialMessage,
+      subject: rawSubject,
+      priority: rawPriority,
+      ...caseMetadata
+    } = metadata;
+    const nestedMetadata = extraMetadata && typeof extraMetadata === 'object' ? extraMetadata : {};
+    const subject = String(rawSubject || 'Widget live chat');
+    const priority = String(rawPriority || (metadata.requestedAgent ? 'high' : 'normal'));
+    const initialMessage = String(rawInitialMessage || '').trim();
     const session = await startLiveChatWithApi({
-      subject: 'Widget live chat',
-      priority: metadata.requestedAgent ? 'high' : 'normal',
-      metadata: { source: 'floating-widget', ...metadata }
+      subject,
+      priority,
+      message: initialMessage || undefined,
+      metadata: { source: 'floating-widget', ...caseMetadata, ...nestedMetadata }
     });
     setSessionId(session.id);
     localStorage.setItem(CHAT_SESSION_KEY, session.id);
@@ -275,7 +298,7 @@ export default function FloatingAIWidget() {
     return session.id;
   };
 
-  const ensureChatSession = async (metadata: Record<string, unknown> = {}) => {
+  const ensureChatSession = async (metadata: OpenChatDetail = {}) => {
     const currentSessionId = sessionId || localStorage.getItem(CHAT_SESSION_KEY);
     if (currentSessionId) {
       try {
@@ -302,11 +325,26 @@ export default function FloatingAIWidget() {
     return createChatSession(metadata);
   };
 
-  const openPopup = async (metadata: Record<string, unknown> = {}) => {
+  const openPopup = async (metadata: OpenChatDetail = {}) => {
     setIsOpen(true);
     setShowBubble(false);
     localStorage.setItem('tiwlo_ai_popup_closed', 'true');
     setApiError('');
+    if (!metadata.autoStart) return;
+    if (autoStartRef.current) return;
+    autoStartRef.current = true;
+    setIsTyping(true);
+    try {
+      const id = await ensureChatSession(metadata);
+      setHasRequestedAgent(Boolean(metadata.requestedAgent));
+      await syncChatSession(id);
+      setApiError('');
+    } catch (err) {
+      setApiError(err instanceof Error ? err.message : 'Unable to open support chat');
+    } finally {
+      setIsTyping(false);
+      autoStartRef.current = false;
+    }
   };
 
   const closeCurrentChat = async () => {
@@ -421,8 +459,11 @@ export default function FloatingAIWidget() {
   };
 
   useEffect(() => {
-    const handler = () => {
-      void openPopup({ openedFrom: 'support-page' });
+    const handler = (event: Event) => {
+      const detail = event instanceof CustomEvent && event.detail && typeof event.detail === 'object'
+        ? event.detail
+        : {};
+      void openPopup({ openedFrom: 'support-page', ...detail });
     };
     window.addEventListener('tiwlo:open-chat', handler);
     return () => window.removeEventListener('tiwlo:open-chat', handler);

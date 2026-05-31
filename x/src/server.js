@@ -2,7 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import jwt from 'jsonwebtoken';
-import { readFileSync } from 'node:fs';
+import { createReadStream, existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { ApolloServer } from '@apollo/server';
@@ -28,6 +28,13 @@ import { registerDiscordRoutes } from './modules/discord/service.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const typeDefs = readFileSync(join(__dirname, '../graphql/schema.graphql'), 'utf8');
+const systemAssetDir = join(__dirname, '../private-assets/system-pages');
+const systemAssets = {
+  disabled: 'disabled.jpeg',
+  maintenance: 'maintenance.jpeg',
+  'not-found': 'not-found.jpeg',
+  404: 'not-found.jpeg'
+};
 
 const app = express();
 const port = Number(process.env.PORT || 4000);
@@ -105,6 +112,58 @@ app.get('/brand/icon.png', (_req, res) => {
   res.type('image/png');
   res.setHeader('Cache-Control', 'public, max-age=86400');
   res.sendFile(join(__dirname, '../../public/brand/icon.png'));
+});
+
+const setPrivateAssetHeaders = (res) => {
+  res.setHeader('Cache-Control', 'no-store, private, max-age=0');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('X-Robots-Tag', 'noindex, nofollow, noarchive, noimageindex');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+};
+
+const blockAssetPreview = (res) => {
+  setPrivateAssetHeaders(res);
+  res.status(404).type('text/plain; charset=utf-8').send('Not found');
+};
+
+app.get('/api/platform/status', async (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store, private, max-age=0');
+  try {
+    const setting = await prisma.systemSetting.findUnique({
+      where: { scope_scopeId_key: { scope: 'platform', scopeId: '', key: 'maintenance' } }
+    });
+    const value = setting?.value || {};
+    res.json({
+      maintenance: {
+        enabled: Boolean(value.enabled),
+        updatedAt: setting?.updatedAt || null
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ maintenance: { enabled: false }, error: error.message || 'Unable to read platform status' });
+  }
+});
+
+app.get('/api/system-assets/:asset', (req, res) => {
+  const key = String(req.params.asset || '').toLowerCase().replace(/\.(?:jpe?g|png|webp|svg)$/i, '');
+  const filename = systemAssets[key];
+  const fetchDest = String(req.headers['sec-fetch-dest'] || '').toLowerCase();
+  if (!filename || fetchDest === 'document') {
+    blockAssetPreview(res);
+    return;
+  }
+
+  const filePath = join(systemAssetDir, filename);
+  if (!existsSync(filePath)) {
+    blockAssetPreview(res);
+    return;
+  }
+
+  setPrivateAssetHeaders(res);
+  res.type('image/jpeg');
+  res.setHeader('Content-Disposition', `inline; filename="${key}.jpeg"`);
+  createReadStream(filePath).pipe(res);
 });
 
 const readAutomationToken = (req) => {

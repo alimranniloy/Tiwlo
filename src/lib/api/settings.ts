@@ -1,4 +1,23 @@
-import { graphQL, userFields } from './client';
+import { GRAPHQL_URL, graphQL, userFields } from './client';
+
+export type PlatformStatus = {
+  maintenance: {
+    enabled: boolean;
+    updatedAt?: string | null;
+  };
+};
+
+export async function fetchPlatformStatusWithApi(): Promise<PlatformStatus> {
+  const apiBase = GRAPHQL_URL.replace(/\/graphql\/?$/, '');
+  const response = await fetch(`${apiBase}/api/platform/status`, {
+    headers: { Accept: 'application/json' },
+    cache: 'no-store'
+  });
+  if (!response.ok) {
+    throw new Error(`Platform status request failed: ${response.status}`);
+  }
+  return response.json();
+}
 
 export async function fetchSettingsWithApi(scope: string, scopeId?: string) {
   const data = await graphQL<{ settings: any[] }>(

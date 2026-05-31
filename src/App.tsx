@@ -18,6 +18,8 @@ import VerifyEmail from './pages/VerifyEmail';
 import EmailPortal from './pages/EmailPortal';
 import LandingPage from './pages/LandingPage';
 import BannedAccount from './pages/BannedAccount';
+import MaintenancePage from './pages/Maintenance';
+import NotFoundPage from './pages/NotFound';
 import CompleteProfile from './pages/CompleteProfile';
 import StorefrontHost from './themes/StorefrontHost';
 import { AuraPreview } from './themes/aura';
@@ -87,7 +89,7 @@ const FloatingAIWidget = lazy(() => import('./components/FloatingAIWidget'));
 const ISPStorefront = lazy(() => import('./pages/isp/ISPStorefront'));
 const ISPAddRouter = lazy(() => import('./pages/isp/ISPAddRouter'));
 const ISPAdminRoot = lazy(() => import('./pages/isp/admin/ISPAdminRoot'));
-import { clearAuthToken, fetchAdminModules, fetchConsoleData, getAuthToken } from './lib/tiwloApi';
+import { clearAuthToken, fetchAdminModules, fetchConsoleData, fetchPlatformStatusWithApi, getAuthToken } from './lib/tiwloApi';
 import { getStorefrontHostContext } from './lib/storefrontHost';
 import { isProfileComplete } from './lib/countries';
 import { SERVICE_MODULE_GROUP, SERVICE_MODULE_KEYS, serviceEnabled } from './lib/serviceModules';
@@ -105,6 +107,10 @@ function RouteLoader() {
 
 function isRestrictedUser(user?: User | null) {
   return restrictedStatuses.has(String(user?.status || '').toLowerCase());
+}
+
+function isAdminRole(user?: User | null) {
+  return ['admin', 'super_admin'].includes(String(user?.role || '').toLowerCase());
 }
 
 function WelcomeScreen() {
@@ -314,7 +320,7 @@ function AppContent({
               localStorage.setItem('tiwlo_user', JSON.stringify(nextUser));
             }} />} />
             <Route path="/email" element={<EmailPortal />} />
-            <Route path="*" element={<Navigate to="/" replace />} />
+            <Route path="*" element={<NotFoundPage />} />
           </Routes>
           </Suspense>
         </main>
@@ -327,6 +333,10 @@ export default function App() {
   const storefrontHost = getStorefrontHostContext();
   const isEmailHost = typeof window !== 'undefined' && /^(?:tmail|email)\./.test(window.location.hostname.toLowerCase());
   const [showWelcome, setShowWelcome] = useState(false);
+  const [platformStatus, setPlatformStatus] = useState<{ loading: boolean; maintenance: boolean }>({
+    loading: true,
+    maintenance: false
+  });
 
   const [user, setUser] = useState<User | null>(() => {
     const saved = localStorage.getItem('tiwlo_user');
@@ -349,7 +359,29 @@ export default function App() {
   });
 
   useEffect(() => {
+    let isMounted = true;
+    const loadStatus = async () => {
+      try {
+        const status = await fetchPlatformStatusWithApi();
+        if (isMounted) {
+          setPlatformStatus({ loading: false, maintenance: Boolean(status.maintenance?.enabled) });
+        }
+      } catch {
+        if (isMounted) setPlatformStatus({ loading: false, maintenance: false });
+      }
+    };
+
+    loadStatus();
+    window.addEventListener('tiwlo:platform-status-refresh', loadStatus);
+    return () => {
+      isMounted = false;
+      window.removeEventListener('tiwlo:platform-status-refresh', loadStatus);
+    };
+  }, []);
+
+  useEffect(() => {
     if (!user) return;
+    if (platformStatus.maintenance && !isAdminRole(user)) return;
     if (isRestrictedUser(user)) {
       setDroplets([]);
       setDomains([]);
@@ -387,7 +419,7 @@ export default function App() {
       isMounted = false;
       window.removeEventListener('tiwlo:data-refresh', loadConsoleData);
     };
-  }, [user?.id]);
+  }, [user?.id, user?.role, platformStatus.maintenance]);
 
   useEffect(() => {
     if (!showWelcome) return undefined;
@@ -408,8 +440,29 @@ export default function App() {
     localStorage.removeItem('tiwlo_user');
   };
 
-  if (showWelcome && user && !isRestrictedUser(user)) {
+  if (platformStatus.loading) {
+    return null;
+  }
+
+  if (showWelcome && user && !isRestrictedUser(user) && (!platformStatus.maintenance || isAdminRole(user))) {
     return <WelcomeScreen />;
+  }
+
+  if (platformStatus.maintenance && !isAdminRole(user)) {
+    const maintenanceLoginHref = storefrontHost
+      ? `${window.location.protocol}//${storefrontHost.rootDomain}/login`
+      : '/login';
+
+    return (
+      <Router>
+        <Suspense fallback={<RouteLoader />}>
+        <Routes>
+          {!user && <Route path="/login" element={<LoginPage onLogin={handleLogin} maintenanceMode />} />}
+          <Route path="*" element={<MaintenancePage user={user} onLogout={handleLogout} loginHref={maintenanceLoginHref} />} />
+        </Routes>
+        </Suspense>
+      </Router>
+    );
   }
 
   if (isEmailHost) {
@@ -460,7 +513,7 @@ export default function App() {
           <Route path="/email" element={<EmailPortal />} />
           <Route path="/terms" element={<LegalPage />} />
           <Route path="/privacy" element={<LegalPage />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
+          <Route path="*" element={<NotFoundPage />} />
         </Routes>
         </Suspense>
       </Router>
@@ -472,6 +525,9 @@ export default function App() {
       <Router>
         <Suspense fallback={<RouteLoader />}>
           <BannedAccount user={user} onLogout={handleLogout} />
+        </Suspense>
+        <Suspense fallback={null}>
+          <FloatingAIWidget />
         </Suspense>
       </Router>
     );

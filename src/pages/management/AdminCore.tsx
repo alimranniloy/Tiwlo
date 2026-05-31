@@ -65,6 +65,7 @@ export default function AdminCore() {
         upsertSettingWithApi({ scope: 'platform', key: 'supportIntegration', value: { appId: supportAppId, chatWidget } })
       ]);
       setSaved(true);
+      window.dispatchEvent(new Event('tiwlo:platform-status-refresh'));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to save settings');
     }
@@ -169,7 +170,7 @@ export default function AdminCore() {
               <div className="flex flex-col gap-3 rounded-sm border border-[#e5e8ed] p-4 md:flex-row md:items-center md:justify-between">
                 <div>
                   <p className="text-sm font-black text-[#2e3d49]">Maintenance Mode</p>
-                  <p className="text-xs font-semibold text-[#64748b]">When active, non-admin users cannot spin up new resources.</p>
+                  <p className="text-xs font-semibold text-[#64748b]">When active, the full website shows maintenance mode and only admins can log in.</p>
                 </div>
                 <button onClick={() => setMaintenanceMode((value) => !value)} className={`relative h-7 w-12 rounded-full ${maintenanceMode ? 'bg-[#0069ff]' : 'bg-gray-200'}`}>
                   <span className={`absolute top-1 h-5 w-5 rounded-full bg-white transition-all ${maintenanceMode ? 'right-1' : 'left-1'}`}></span>

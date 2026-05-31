@@ -1,5 +1,5 @@
 import React from 'react';
-import { AlertCircle, CheckCircle2, Globe, Lock, LogIn, Save, Shield } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Globe, Lock, LogIn, Power, Save, Shield } from 'lucide-react';
 import { fetchSettingsWithApi, upsertSettingWithApi } from '../../lib/tiwloApi';
 
 export default function AdminSecurity() {
@@ -7,21 +7,24 @@ export default function AdminSecurity() {
   const [passwordComplexity, setPasswordComplexity] = React.useState(true);
   const [sessionTtl, setSessionTtl] = React.useState('24h');
   const [ipBlacklist, setIpBlacklist] = React.useState('');
+  const [maintenanceMode, setMaintenanceMode] = React.useState(false);
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
   const [error, setError] = React.useState('');
   const [saved, setSaved] = React.useState(false);
 
   React.useEffect(() => {
-    fetchSettingsWithApi('security')
-      .then((settings) => {
-        const byKey = Object.fromEntries(settings.map((setting) => [setting.key, setting.value]));
+    Promise.all([fetchSettingsWithApi('security'), fetchSettingsWithApi('platform')])
+      .then(([securitySettings, platformSettings]) => {
+        const byKey = Object.fromEntries(securitySettings.map((setting) => [setting.key, setting.value]));
+        const platformByKey = Object.fromEntries(platformSettings.map((setting) => [setting.key, setting.value]));
         const auth = (byKey.authenticationPolicy || {}) as any;
         const ip = (byKey.ipAccessControl || {}) as any;
         setRequire2fa(Boolean(auth.require2fa));
         setPasswordComplexity(auth.passwordComplexity !== false);
         setSessionTtl(String(auth.sessionTtl || '24h'));
         setIpBlacklist(Array.isArray(ip.blacklist) ? ip.blacklist.join(', ') : '');
+        setMaintenanceMode(Boolean((platformByKey.maintenance as any)?.enabled));
       })
       .catch((err) => setError(err instanceof Error ? err.message : 'Unable to load security settings'))
       .finally(() => setLoading(false));
@@ -42,9 +45,15 @@ export default function AdminSecurity() {
           scope: 'security',
           key: 'ipAccessControl',
           value: { blacklist: ipBlacklist.split(',').map((item) => item.trim()).filter(Boolean) }
+        }),
+        upsertSettingWithApi({
+          scope: 'platform',
+          key: 'maintenance',
+          value: { enabled: maintenanceMode }
         })
       ]);
       setSaved(true);
+      window.dispatchEvent(new Event('tiwlo:platform-status-refresh'));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to save security settings');
     } finally {
@@ -111,6 +120,22 @@ export default function AdminSecurity() {
                 </div>
               </>
             )}
+          </div>
+        </div>
+
+        <div className="overflow-hidden rounded-lg border border-[#e5e8ed] bg-white">
+          <div className="flex items-center gap-3 border-b border-[#f3f5f9] bg-[#f8f9fa] px-6 py-4">
+            <Power className="h-5 w-5 text-[#0069ff]" />
+            <h2 className="text-[14px] font-bold uppercase tracking-wide text-[#2e3d49]">Maintenance Mode</h2>
+          </div>
+          <div className="space-y-6 p-6">
+            <div className="flex items-center justify-between gap-5">
+              <div>
+                <h3 className="text-[14px] font-bold text-[#2e3d49]">Full Site Maintenance</h3>
+                <p className="text-[12px] text-gray-400">Users see the maintenance page. Admins can still sign in.</p>
+              </div>
+              <Toggle value={maintenanceMode} onChange={() => setMaintenanceMode((value) => !value)} />
+            </div>
           </div>
         </div>
 

@@ -8,9 +8,10 @@ import AuthCard, { AuthShell, authInputClass } from '../components/AuthCard';
 
 interface LoginProps {
   onLogin: (user: User) => void;
+  maintenanceMode?: boolean;
 }
 
-export default function LoginPage({ onLogin }: LoginProps) {
+export default function LoginPage({ onLogin, maintenanceMode = false }: LoginProps) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
@@ -40,7 +41,7 @@ export default function LoginPage({ onLogin }: LoginProps) {
           </button>
         )}
         footer={(
-          <p>
+          maintenanceMode ? null : <p>
             Don't have an account?
             <Link to="/signup" className="ml-1 font-normal text-[#1778f2] hover:underline">Sign up now</Link>
           </p>
