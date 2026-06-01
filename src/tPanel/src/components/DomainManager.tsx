@@ -19,10 +19,11 @@ import { DomainItem, DNSRecord, DNSRecordType } from "../types";
 interface DomainManagerProps {
   domains: DomainItem[];
   setDomains: Dispatch<SetStateAction<DomainItem[]>>;
+  onAccountUpdate?: (account: any) => void;
   addActivity: (category: "file" | "domain" | "node" | "db" | "email" | "ssl", message: string) => void;
 }
 
-export default function DomainManager({ domains, setDomains, addActivity }: DomainManagerProps) {
+export default function DomainManager({ domains, setDomains, onAccountUpdate, addActivity }: DomainManagerProps) {
   const [expandedDomainId, setExpandedDomainId] = useState<string | null>(domains[0]?.id || null);
   const [isAddingDomain, setIsAddingDomain] = useState(false);
 
@@ -49,62 +50,73 @@ export default function DomainManager({ domains, setDomains, addActivity }: Doma
   };
 
   // Add mapped domain/subdomain
-  const handleAddDomain = (e: FormEvent) => {
+  const authHeaders = () => {
+    const saved = JSON.parse(localStorage.getItem("tpanel_auth") || "null");
+    return {
+      Authorization: `Bearer ${saved?.token || ""}`,
+      "Content-Type": "application/json"
+    };
+  };
+
+  const handleAddDomain = async (e: FormEvent) => {
     e.preventDefault();
     if (!newDomainName.trim() || !newDocRoot.trim()) return;
 
     const sanitizedName = newDomainName.trim().toLowerCase().replace(/[^a-z0-9.-]/g, "");
     
-    // Check duplication
-    if (domains.some(d => d.domainName === sanitizedName)) {
-      alert("This domain maps to an existing web server configuration.");
-      return;
+    try {
+      const response = await fetch("/api/user/domains", {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({ domain: sanitizedName, documentRoot: newDocRoot.trim() })
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.ok) {
+        alert(result.message || "Unable to add this domain.");
+        return;
+      }
+      const newDomain = result.domain as DomainItem;
+      setDomains(prev => [newDomain, ...prev.filter((domain) => domain.domainName !== newDomain.domainName)]);
+      if (result.account) onAccountUpdate?.(result.account);
+      setExpandedDomainId(newDomain.id);
+      setIsAddingDomain(false);
+      addActivity("domain", `Mapped host domain: "${newDomain.domainName}" onto path ${newDomain.documentRoot}`);
+      setNewDomainName("");
+      setNewDocRoot("public_html");
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Unable to add this domain.");
     }
-
-    const defaultRecords: DNSRecord[] = [
-      { id: "dns-" + Math.random().toString(36).substr(2, 5), type: "A", name: "@", value: "192.168.32.99", ttl: 3600 },
-      { id: "dns-" + Math.random().toString(36).substr(2, 5), type: "CNAME", name: "www", value: sanitizedName, ttl: 3600 }
-    ];
-
-    const newDomain: DomainItem = {
-      id: "domain-" + Math.random().toString(36).substr(2, 9),
-      domainName: sanitizedName,
-      documentRoot: newDocRoot.trim(),
-      sslActive: false,
-      sslType: "None",
-      dnsRecords: defaultRecords
-    };
-
-    setDomains(prev => [...prev, newDomain]);
-    setExpandedDomainId(newDomain.id);
-    setIsAddingDomain(false);
-    addActivity("domain", `Mapped host domain: "${newDomain.domainName}" onto path /${newDomain.documentRoot}`);
-
-    // reset fields
-    setNewDomainName("");
-    setNewDocRoot("public_html");
   };
 
   // Issue Let's Encrypt certificate
-  const issueLetsEncrypt = (domainId: string, domainName: string) => {
+  const issueLetsEncrypt = async (domainId: string, domainName: string) => {
     setSslLoadingId(domainId);
     addActivity("ssl", `Initiating Let's Encrypt validation check for ${domainName}...`);
-
-    setTimeout(() => {
+    try {
+      const response = await fetch(`/api/user/domains/${encodeURIComponent(domainName)}/ssl`, {
+        method: "POST",
+        headers: authHeaders()
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.ok) throw new Error(result.message || "Unable to queue SSL.");
+      if (result.account) onAccountUpdate?.(result.account);
       setDomains(prev => prev.map(d => {
         if (d.id === domainId) {
           return {
             ...d,
-            sslActive: true,
+            sslActive: false,
             sslType: "Let's Encrypt",
-            sslExpiry: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString().substr(0, 10) // 90 days
+            sslExpiry: undefined
           };
         }
         return d;
       }));
+      addActivity("ssl", `SSL generation queued for: ${domainName}`);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Unable to queue SSL.");
+    } finally {
       setSslLoadingId(null);
-      addActivity("ssl", `SSL certificate signed and activated for: ${domainName}`);
-    }, 3000); // 3 second animation timer
+    }
   };
 
   // Add DNS Record to parent domain configuration
@@ -152,15 +164,29 @@ export default function DomainManager({ domains, setDomains, addActivity }: Doma
   };
 
   // Delete domain config entirely
-  const handleDeleteDomain = (id: string, name: string) => {
+  const handleDeleteDomain = async (id: string, name: string) => {
     if (domains.length <= 1) {
        alert("You must keep at least one default primary domain setup in the system.");
        return;
     }
     if (confirm(`Are you sure you want to completely remove "${name}" and its DNS zone setups?`)) {
-       setDomains(prev => prev.filter(d => d.id !== id));
-       addActivity("domain", `Terminated web host mapping for: "${name}"`);
-       setExpandedDomainId(null);
+       try {
+         const response = await fetch(`/api/user/domains/${encodeURIComponent(name)}`, {
+           method: "DELETE",
+           headers: authHeaders()
+         });
+         const result = await response.json().catch(() => ({}));
+         if (!response.ok || !result.ok) {
+           alert(result.message || "Unable to delete this domain.");
+           return;
+         }
+         if (result.account) onAccountUpdate?.(result.account);
+         setDomains(prev => prev.filter(d => d.id !== id));
+         addActivity("domain", `Terminated web host mapping for: "${name}"`);
+         setExpandedDomainId(null);
+       } catch (error) {
+         alert(error instanceof Error ? error.message : "Unable to delete this domain.");
+       }
     }
   };
 
@@ -267,6 +293,9 @@ export default function DomainManager({ domains, setDomains, addActivity }: Doma
       {expandedDomainId && domains.find(d => d.id === expandedDomainId) && (
         (() => {
           const dom = domains.find(d => d.id === expandedDomainId)!;
+          const resolvedIp = dom.dnsRecords.find((record) => record.type === "A" && (record.name === "@" || record.name === dom.domainName))?.value
+            || dom.dnsRecords.find((record) => record.type === "A")?.value
+            || "Waiting for server IP";
           return (
             <div className="bg-slate-900 border border-slate-850 p-5 rounded-xl space-y-6 shadow-md shadow-slate-950/20">
               <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between border-b border-slate-800 pb-3 gap-2">
@@ -278,7 +307,7 @@ export default function DomainManager({ domains, setDomains, addActivity }: Doma
                   <p className="text-[11px] text-slate-500 mt-1">Add, update or delete authoritative domain name entries for nameserver synchronization.</p>
                 </div>
                 <div className="text-[11px] bg-slate-950 px-2.5 py-1 text-slate-500 font-mono border border-slate-850 rounded">
-                  Resolved IP: <span className="text-slate-300 font-bold">192.168.32.99</span>
+                  Resolved IP: <span className="text-slate-300 font-bold">{resolvedIp}</span>
                 </div>
               </div>
 

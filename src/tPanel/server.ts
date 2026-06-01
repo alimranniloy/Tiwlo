@@ -371,6 +371,8 @@ function withAuditEvent(state: any, event: any) {
 function writeStarterSite(account: any) {
   const publicDir = path.join(account.homeDirectory, "public_html");
   fs.mkdirSync(publicDir, { recursive: true });
+  const indexHtml = path.join(publicDir, "index.html");
+  const indexPhp = path.join(publicDir, "index.php");
   if (account.runtime === "node") {
     fs.writeFileSync(path.join(publicDir, "package.json"), JSON.stringify({
       scripts: { start: "node server.js" },
@@ -383,26 +385,92 @@ app.get("/", (_req, res) => res.send("Welcome to ${account.domain} on tPanel Nod
 app.listen(port, "0.0.0.0", () => console.log("Node app listening on", port));
 `);
   } else if (account.runtime === "php") {
-    fs.writeFileSync(path.join(publicDir, "index.php"), `<?php
-$site = "${account.domain}";
-echo "<h1>Welcome to {$site}</h1><p>PHP hosting is ready on tPanel.</p>";
-`);
+    if (!fs.existsSync(indexHtml) && !fs.existsSync(indexPhp)) {
+      fs.writeFileSync(indexHtml, starterIndexHtml(account.domain));
+    }
     fs.writeFileSync(path.join(publicDir, ".user.ini"), `memory_limit=${account.phpMemoryMb || 256}M
 upload_max_filesize=${account.uploadLimitMb || 64}M
 post_max_size=${account.uploadLimitMb || 64}M
 `);
   } else {
-    fs.writeFileSync(path.join(publicDir, "index.html"), `<!doctype html>
-<html><head><meta charset="utf-8"><title>${account.domain}</title></head>
-<body><h1>${account.domain}</h1><p>Static hosting is ready on tPanel.</p></body></html>
-`);
+    if (!fs.existsSync(indexHtml) && !fs.existsSync(indexPhp)) {
+      fs.writeFileSync(indexHtml, starterIndexHtml(account.domain));
+    }
   }
+}
+
+function starterIndexHtml(domain: string) {
+  const safeDomain = htmlEscape(domain || "your website");
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>${safeDomain}</title>
+    <style>
+      body{margin:0;min-height:100vh;display:grid;place-items:center;background:#fff;color:#0f172a;font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+      main{width:min(92vw,680px);text-align:center;border:1px solid #e5e7eb;border-radius:8px;padding:44px 28px}
+      .logo{width:64px;height:64px;margin:0 auto 18px;border-radius:18px;background:#0069ff;color:white;display:grid;place-items:center;font-weight:900;font-size:24px}
+      h1{font-size:28px;margin:0 0 10px}
+      p{margin:0;color:#64748b;line-height:1.6}
+      code{background:#f1f5f9;border-radius:4px;padding:2px 6px;color:#0f172a}
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="logo">tP</div>
+      <h1>Thanks for installing tPanel</h1>
+      <p>${safeDomain} is connected to <code>public_html</code>. Delete this file and upload your website when you are ready.</p>
+    </main>
+  </body>
+</html>
+`;
 }
 
 function requestIp(req: express.Request) {
   const forwarded = req.headers["x-forwarded-for"];
   const value = Array.isArray(forwarded) ? forwarded[0] : forwarded;
-  return TPANEL_SERVER_IP || String(value || req.ip || req.socket.remoteAddress || "").replace(/^::ffff:/, "");
+  return String(value || req.ip || req.socket.remoteAddress || "").replace(/^::ffff:/, "");
+}
+
+function cleanIp(value: unknown) {
+  return String(value || "")
+    .replace(/^::ffff:/, "")
+    .replace(/[^a-fA-F0-9:.]/g, "")
+    .trim();
+}
+
+function configuredServerIp(req?: express.Request) {
+  const envIp = cleanIp(TPANEL_SERVER_IP || process.env.SERVER_IP || process.env.PUBLIC_IP);
+  if (envIp) return envIp;
+  const interfaces = os.networkInterfaces();
+  for (const entries of Object.values(interfaces)) {
+    for (const entry of entries || []) {
+      if (entry.family === "IPv4" && !entry.internal && !/^(10|127|169\.254|172\.(1[6-9]|2\d|3[0-1])|192\.168)\./.test(entry.address)) {
+        return entry.address;
+      }
+    }
+  }
+  return req ? cleanIp(requestIp(req)) : "";
+}
+
+async function detectServerIp(req?: express.Request) {
+  const configured = configuredServerIp(req);
+  if (configured && !/^(127|10|169\.254|172\.(1[6-9]|2\d|3[0-1])|192\.168)\./.test(configured)) return configured;
+  for (const endpoint of ["https://api.ipify.org", "https://ifconfig.me/ip"]) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 3500);
+    try {
+      const response = await fetch(endpoint, { signal: controller.signal });
+      const ip = cleanIp(await response.text());
+      if (response.ok && ip) return ip;
+    } catch {
+      // keep the local fallback
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  return configured;
 }
 
 function cleanDomain(value: unknown) {
@@ -417,7 +485,7 @@ function cleanDomain(value: unknown) {
 }
 
 function defaultDomainSettings(req?: express.Request) {
-  const serverIp = TPANEL_SERVER_IP || (req ? requestIp(req) : "") || "";
+  const serverIp = configuredServerIp(req);
   return {
     primaryDomain: "tiwlo.com",
     panelUrl: "https://tiwlo.com",
@@ -427,7 +495,7 @@ function defaultDomainSettings(req?: express.Request) {
     enableSsl: true,
     dnsRecords: [
       { type: "A", name: "@", value: serverIp || "SERVER_IP", ttl: 300 },
-      { type: "A", name: "www", value: serverIp || "SERVER_IP", ttl: 300 }
+      { type: "CNAME", name: "www", value: "tiwlo.com", ttl: 300 }
     ],
     ports: REQUIRED_PORTS
   };
@@ -446,10 +514,13 @@ function readDomainSettings(req?: express.Request) {
         primaryDomain,
         panelUrl: saved.panelUrl || `${saved.enableSsl === false ? "http" : "https"}://${primaryDomain}`,
         detectedServerIp,
-        dnsRecords: saved.dnsRecords || [
+        dnsRecords: (saved.dnsRecords || [
           { type: "A", name: "@", value: detectedServerIp || "SERVER_IP", ttl: 300 },
-          { type: "A", name: "www", value: detectedServerIp || "SERVER_IP", ttl: 300 }
-        ],
+          { type: "CNAME", name: "www", value: primaryDomain, ttl: 300 }
+        ]).map((record: any) => ({
+          ...record,
+          value: record.value === "SERVER_IP" ? (detectedServerIp || "SERVER_IP") : record.value
+        })),
         ports: REQUIRED_PORTS
       };
     }
@@ -467,28 +538,27 @@ function writeDomainSettings(settings: any) {
 function resolveAccountDomain(req: express.Request, username: string, requestedDomain: unknown) {
   const rawDomain = String(requestedDomain || "").trim();
   const cleaned = rawDomain ? cleanDomain(rawDomain) : "";
-  if (cleaned && cleaned.includes(".")) return cleaned;
-  const settings = readDomainSettings(req);
-  const baseDomain = cleanDomain(settings.primaryDomain || "tiwlo.com");
-  const label = sanitizeSlug(cleaned || username, username).replace(/[^a-z0-9-]/g, "").slice(0, 63) || username;
-  return `${label}.${baseDomain}`;
+  if (cleaned && cleaned.includes(".") && !cleaned.endsWith(".tpanel.local")) return cleaned;
+  return "";
 }
 
 function buildAccountProvisioning(req: express.Request, account: any) {
   const settings = readDomainSettings(req);
-  const serverIp = account.dedicatedIp || settings.detectedServerIp || requestIp(req) || "SERVER_IP";
+  const serverIp = account.dedicatedIp || settings.detectedServerIp || configuredServerIp(req) || "SERVER_IP";
   const primaryDomain = cleanDomain(settings.primaryDomain || "tiwlo.com");
   const autoSubdomain = account.domain.endsWith(`.${primaryDomain}`);
   const aliases = [`www.${account.domain}`];
   return {
     primaryDomain,
     autoSubdomain,
-    dnsRecords: [
-      { type: "A", host: account.domain, value: serverIp, ttl: 300, status: "ready" },
-      { type: "CNAME", host: aliases[0], value: account.domain, ttl: 300, status: "ready" },
-      { type: "A", host: `ftp.${account.domain}`, value: serverIp, ttl: 300, status: account.ftpEnabled ? "ready" : "disabled" },
-      { type: "A", host: `mail.${account.domain}`, value: serverIp, ttl: 300, status: account.emailEnabled ? "ready" : "disabled" }
-    ],
+    dnsRecords: domainDnsRecords(account.domain, serverIp, true).map((record) => ({
+      ...record,
+      status: record.host === `ftp.${account.domain}` && !account.ftpEnabled
+        ? "disabled"
+        : record.host === `mail.${account.domain}` && !account.emailEnabled
+          ? "disabled"
+          : record.status
+    })),
     ssl: {
       enabled: Boolean(account.sslEnabled),
       provider: "letsencrypt",
@@ -565,7 +635,7 @@ function accountNginxConfig(account: any) {
   const routes = [
     { serverNames: primaryNames, documentRoot: account.documentRoot },
     ...accountSubdomainRoutes(account).map((route: any) => ({
-      serverNames: [route.domain],
+      serverNames: [route.domain, ...(route.aliases || [])],
       documentRoot: route.documentRoot
     }))
   ].filter((route) => route.serverNames.length);
@@ -599,6 +669,57 @@ function uniqueCleanDomains(values: unknown[]) {
   return Array.from(new Set(values.map((value) => cleanDomain(value)).filter(Boolean)));
 }
 
+function allAccountDomains(account: any) {
+  return uniqueCleanDomains([
+    account.domain,
+    ...(account.provisioning?.vhost?.aliases || []),
+    ...((account.provisioning?.vhost?.subdomains || []).flatMap((route: any) => [route.domain, ...(route.aliases || [])]))
+  ]);
+}
+
+function domainInUse(state: any, domain: string, ignoreUsername = "") {
+  const clean = cleanDomain(domain);
+  if (!clean || !clean.includes(".")) return null;
+  return (state.accounts || []).find((account: any) => {
+    if (ignoreUsername && account.username === ignoreUsername) return false;
+    return allAccountDomains(account).includes(clean);
+  }) || null;
+}
+
+function domainDnsRecords(domain: string, serverIp: string, includeServiceRecords = true) {
+  const clean = cleanDomain(domain);
+  const records = [
+    { type: "A", host: clean, name: "@", value: serverIp || "SERVER_IP", ttl: 300, status: "ready" },
+    { type: "CNAME", host: `www.${clean}`, name: "www", value: clean, ttl: 300, status: "ready" }
+  ];
+  if (includeServiceRecords) {
+    records.push(
+      { type: "A", host: `ftp.${clean}`, name: "ftp", value: serverIp || "SERVER_IP", ttl: 300, status: "ready" },
+      { type: "A", host: `mail.${clean}`, name: "mail", value: serverIp || "SERVER_IP", ttl: 300, status: "ready" }
+    );
+  }
+  return records;
+}
+
+function domainItemFor(domain: string, documentRoot: string, account: any, serverIp: string) {
+  const clean = cleanDomain(domain);
+  const webPath = documentRoot.startsWith("/") ? documentRoot : `/${documentRoot}`;
+  return {
+    id: `dom-${Buffer.from(clean).toString("base64url")}`,
+    domainName: clean,
+    documentRoot: webPath,
+    sslActive: account.provisioning?.ssl?.status === "active",
+    sslType: account.sslEnabled === false ? "None" : "Let's Encrypt",
+    dnsRecords: domainDnsRecords(clean, serverIp, false).map((record, index) => ({
+      id: `dns-${Buffer.from(`${clean}-${record.name}-${index}`).toString("base64url")}`,
+      type: record.type,
+      name: record.name,
+      value: record.value,
+      ttl: record.ttl
+    }))
+  };
+}
+
 function toUnixPath(value: string) {
   return path.resolve(value).replace(/\\/g, "/");
 }
@@ -621,6 +742,7 @@ function accountSubdomainRoutes(account: any) {
   return routes
     .map((route: any) => ({
       domain: cleanDomain(route.domain),
+      aliases: uniqueCleanDomains(route.aliases || []),
       documentRoot: route.documentRoot ? path.resolve(route.documentRoot) : path.join(account.documentRoot, sanitizeSlug(route.prefix, "subdomain")),
       webPath: route.webPath || `/public_html/${sanitizeSlug(route.prefix, "subdomain")}`,
       sslEnabled: route.sslEnabled !== false
@@ -776,7 +898,7 @@ function applyAccountProvisioning(account: any) {
     const domains = uniqueCleanDomains([
       account.domain,
       ...(account.provisioning?.vhost?.aliases || []),
-      ...accountSubdomainRoutes(account).map((route: any) => route.domain)
+      ...accountSubdomainRoutes(account).flatMap((route: any) => [route.domain, ...(route.aliases || [])])
     ]);
     const args = [
       "--nginx",
@@ -820,14 +942,14 @@ async function verifyLicense(req: express.Request, options: { force?: boolean } 
     return { ok: false, status: "unlicensed", message: "TPANEL_LICENSE_KEY is missing. Run sudo tpanel-license-renew with a valid key, or reinstall from Tiwlo." };
   }
 
-  const cacheKey = `${TPANEL_LICENSE_KEY}:${TPANEL_SERVER_IP || requestIp(req)}`;
+  const cacheKey = `${TPANEL_LICENSE_KEY}:${configuredServerIp(req) || requestIp(req)}`;
   if (!options.force && licenseCache?.key === cacheKey && licenseCache.expiresAt > Date.now()) {
     return licenseCache.value;
   }
 
   const payload = {
     licenseKey: TPANEL_LICENSE_KEY,
-    serverIp: requestIp(req),
+    serverIp: configuredServerIp(req) || requestIp(req),
     fingerprint: process.env.TPANEL_SERVER_FINGERPRINT || process.env.COMPUTERNAME || process.env.HOSTNAME || "local",
     hostname: process.env.HOSTNAME || process.env.COMPUTERNAME || "tpanel",
     os: process.platform,
@@ -1437,6 +1559,15 @@ app.post("/api/user/subdomains", requireLicense, async (req, res) => {
   }
 
   const domain = `${prefix}.${parentDomain}`;
+  const state = readPanelState();
+  const existingOwner = domainInUse(state, domain, account.username);
+  if (existingOwner) {
+    res.status(409).json({ ok: false, message: "This domain is already in use on another tPanel account." });
+    return;
+  }
+  const settings = readDomainSettings(req);
+  const detectedServerIp = settings.autoDetectIp === false ? settings.detectedServerIp : await detectServerIp(req);
+  const routeServerIp = account.dedicatedIp || detectedServerIp || configuredServerIp(req) || "SERVER_IP";
   const documentRoot = ensureInside(account.homeDirectory, path.join(account.documentRoot, prefix));
   const webPath = `/public_html/${prefix}`;
 
@@ -1454,6 +1585,7 @@ echo "<h1>{$site}</h1><p>This subdomain is connected to ${webPath} on tPanel.</p
     const updated = updateStoredAccount(account.username, (current: any) => {
       const provisioning = current.provisioning || buildAccountProvisioning(req, current);
       const existingRoutes = Array.isArray(provisioning.vhost?.subdomains) ? provisioning.vhost.subdomains : [];
+      const serverIp = current.dedicatedIp || routeServerIp;
       const subdomains = [
         ...existingRoutes.filter((route: any) => cleanDomain(route.domain) !== domain),
         {
@@ -1468,13 +1600,7 @@ echo "<h1>{$site}</h1><p>This subdomain is connected to ${webPath} on tPanel.</p
       ];
       const dnsRecords = [
         ...(provisioning.dnsRecords || []).filter((record: any) => cleanDomain(record.host) !== domain),
-        {
-          type: "A",
-          host: domain,
-          value: current.dedicatedIp || readDomainSettings(req).detectedServerIp || requestIp(req) || "SERVER_IP",
-          ttl: 300,
-          status: "ready"
-        }
+        ...domainDnsRecords(domain, serverIp, false)
       ];
       return {
         ...current,
@@ -1503,24 +1629,182 @@ echo "<h1>{$site}</h1><p>This subdomain is connected to ${webPath} on tPanel.</p
 
     appendProvisioningLog(updated, `Subdomain ${domain} mapped to ${webPath}.`);
     applyAccountProvisioning(updated);
+    const serverIp = updated.dedicatedIp || routeServerIp;
     res.json({
       ok: true,
-      domain: {
-        id: `dom-${Buffer.from(domain).toString("base64url")}`,
-        domainName: domain,
-        documentRoot: webPath,
-        sslActive: updated.provisioning?.ssl?.status === "active",
-        sslType: updated.sslEnabled === false ? "None" : "Let's Encrypt",
-        dnsRecords: [
-          { id: `dns-${Buffer.from(domain).toString("base64url")}`, type: "A", name: "@", value: updated.dedicatedIp || readDomainSettings(req).detectedServerIp || requestIp(req) || "SERVER_IP", ttl: 300 }
-        ]
-      },
+      domain: domainItemFor(domain, webPath, updated, serverIp),
       account: publicAccount(updated),
       provisioningLog: readProvisioningLog(updated.username)
     });
   } catch (error: any) {
     res.status(500).json({ ok: false, message: error.message || "Unable to create subdomain." });
   }
+});
+
+app.post("/api/user/domains", requireLicense, async (req, res) => {
+  const account = requireUserAccount(req, res);
+  if (!account) return;
+  if (!normalizeAccountPermissions(account.permissions, account).domains) {
+    res.status(403).json({ ok: false, message: "Domain access is disabled for this account." });
+    return;
+  }
+
+  const domain = cleanDomain(req.body?.domain || req.body?.domainName);
+  if (!domain || !domain.includes(".") || domain.endsWith(".tpanel.local")) {
+    res.status(400).json({ ok: false, message: "Enter a real domain name, for example alzic.com." });
+    return;
+  }
+  const state = readPanelState();
+  const existingOwner = domainInUse(state, domain, account.username);
+  if (existingOwner) {
+    res.status(409).json({ ok: false, message: "This domain already in use. You can't add this domain here." });
+    return;
+  }
+  if (allAccountDomains(account).includes(domain)) {
+    res.status(409).json({ ok: false, message: "This domain is already added to this account." });
+    return;
+  }
+
+  const requestedRoot = String(req.body?.documentRoot || "public_html")
+    .replace(/^\/+/, "")
+    .replace(/\\/g, "/")
+    .replace(/\.\.+/g, ".")
+    .trim() || "public_html";
+  const documentRoot = ensureInside(account.homeDirectory, path.join(account.homeDirectory, requestedRoot));
+  const webPath = `/${path.relative(account.homeDirectory, documentRoot).replace(/\\/g, "/") || "public_html"}`;
+
+  try {
+    fs.mkdirSync(documentRoot, { recursive: true });
+    const indexHtml = path.join(documentRoot, "index.html");
+    const indexPhp = path.join(documentRoot, "index.php");
+    if (!fs.existsSync(indexHtml) && !fs.existsSync(indexPhp)) {
+      fs.writeFileSync(indexHtml, starterIndexHtml(domain));
+    }
+
+    const settings = readDomainSettings(req);
+    const detectedServerIp = settings.autoDetectIp === false ? settings.detectedServerIp : await detectServerIp(req);
+    const serverIp = account.dedicatedIp || detectedServerIp || configuredServerIp(req) || "SERVER_IP";
+    const updated = updateStoredAccount(account.username, (current: any) => {
+      const provisioning = current.provisioning || buildAccountProvisioning(req, current);
+      const existingRoutes = Array.isArray(provisioning.vhost?.subdomains) ? provisioning.vhost.subdomains : [];
+      const subdomains = [
+        ...existingRoutes.filter((route: any) => cleanDomain(route.domain) !== domain),
+        {
+          type: "addon_domain",
+          prefix: "",
+          domain,
+          aliases: [`www.${domain}`],
+          parentDomain: domain,
+          documentRoot,
+          webPath,
+          sslEnabled: current.sslEnabled !== false,
+          createdAt: new Date().toISOString()
+        }
+      ];
+      const dnsRecords = [
+        ...(provisioning.dnsRecords || []).filter((record: any) => {
+          const host = cleanDomain(record.host || record.value || record.name);
+          return ![domain, `www.${domain}`, `ftp.${domain}`, `mail.${domain}`].includes(host);
+        }),
+        ...domainDnsRecords(domain, serverIp, true)
+      ];
+      return {
+        ...current,
+        provisioning: {
+          ...provisioning,
+          dnsRecords,
+          ssl: {
+            ...(provisioning.ssl || {}),
+            status: current.sslEnabled !== false ? "queued" : "disabled",
+            requestedAt: new Date().toISOString()
+          },
+          vhost: {
+            ...(provisioning.vhost || {}),
+            subdomains,
+            status: "queued"
+          }
+        },
+        updatedAt: new Date().toISOString()
+      };
+    });
+
+    if (!updated) {
+      res.status(404).json({ ok: false, message: "Hosting account was not found." });
+      return;
+    }
+    appendProvisioningLog(updated, `Domain ${domain} mapped to ${webPath}.`);
+    applyAccountProvisioning(updated);
+    res.json({
+      ok: true,
+      domain: domainItemFor(domain, webPath, updated, serverIp),
+      account: publicAccount(updated),
+      provisioningLog: readProvisioningLog(updated.username)
+    });
+  } catch (error: any) {
+    res.status(500).json({ ok: false, message: error.message || "Unable to add domain." });
+  }
+});
+
+app.post("/api/user/domains/:domain/ssl", requireLicense, async (req, res) => {
+  const account = requireUserAccount(req, res);
+  if (!account) return;
+  const domain = cleanDomain(req.params.domain);
+  if (!allAccountDomains(account).includes(domain)) {
+    res.status(404).json({ ok: false, message: "Domain was not found on this account." });
+    return;
+  }
+  const updated = updateStoredAccount(account.username, (current: any) => ({
+    ...current,
+    sslEnabled: true,
+    provisioning: {
+      ...(current.provisioning || buildAccountProvisioning(req, current)),
+      ssl: {
+        ...(current.provisioning?.ssl || {}),
+        status: "queued",
+        requestedAt: new Date().toISOString()
+      }
+    },
+    updatedAt: new Date().toISOString()
+  }));
+  if (updated) {
+    appendProvisioningLog(updated, `SSL retry requested for ${domain}.`);
+    applyAccountProvisioning(updated);
+  }
+  res.json({ ok: true, account: updated ? publicAccount(updated) : publicAccount(account) });
+});
+
+app.delete("/api/user/domains/:domain", requireLicense, async (req, res) => {
+  const account = requireUserAccount(req, res);
+  if (!account) return;
+  const domain = cleanDomain(req.params.domain);
+  if (domain === cleanDomain(account.domain)) {
+    res.status(400).json({ ok: false, message: "Primary domain cannot be removed from this account." });
+    return;
+  }
+  const updated = updateStoredAccount(account.username, (current: any) => {
+    const provisioning = current.provisioning || buildAccountProvisioning(req, current);
+    return {
+      ...current,
+      provisioning: {
+        ...provisioning,
+        dnsRecords: (provisioning.dnsRecords || []).filter((record: any) => {
+          const host = cleanDomain(record.host || record.value || record.name);
+          return ![domain, `www.${domain}`, `ftp.${domain}`, `mail.${domain}`].includes(host);
+        }),
+        vhost: {
+          ...(provisioning.vhost || {}),
+          subdomains: (provisioning.vhost?.subdomains || []).filter((route: any) => cleanDomain(route.domain) !== domain),
+          status: "queued"
+        }
+      },
+      updatedAt: new Date().toISOString()
+    };
+  });
+  if (updated) {
+    appendProvisioningLog(updated, `Domain ${domain} removed.`);
+    applyAccountProvisioning(updated);
+  }
+  res.json({ ok: true, account: updated ? publicAccount(updated) : publicAccount(account) });
 });
 
 app.use("/api/panel", requireLicense, requireAdminSession);
@@ -1543,7 +1827,21 @@ app.get("/api/panel/summary", async (_req, res) => {
 });
 
 app.get("/api/panel/domain-settings", async (req, res) => {
-  res.json({ ok: true, settings: readDomainSettings(req) });
+  const current = readDomainSettings(req);
+  const detectedServerIp = current.autoDetectIp === false ? current.detectedServerIp : await detectServerIp(req);
+  const settings = {
+    ...current,
+    detectedServerIp,
+    dnsRecords: [
+      { type: "A", name: "@", value: detectedServerIp || "SERVER_IP", ttl: 300 },
+      { type: "CNAME", name: "www", value: current.primaryDomain, ttl: 300 }
+    ],
+    hostname: os.hostname()
+  };
+  if (current.autoDetectIp !== false && detectedServerIp && detectedServerIp !== current.detectedServerIp) {
+    writeDomainSettings(settings);
+  }
+  res.json({ ok: true, settings });
 });
 
 app.post("/api/panel/domain-settings", requireCapability("dns"), async (req, res) => {
@@ -1551,7 +1849,7 @@ app.post("/api/panel/domain-settings", requireCapability("dns"), async (req, res
   const primaryDomain = cleanDomain(req.body?.primaryDomain || current.primaryDomain);
   const detectedServerIp = req.body?.autoDetectIp === false
     ? String(req.body?.detectedServerIp || current.detectedServerIp || "")
-    : requestIp(req);
+    : await detectServerIp(req);
   const settings = {
     ...current,
     ...req.body,
@@ -1560,7 +1858,7 @@ app.post("/api/panel/domain-settings", requireCapability("dns"), async (req, res
     detectedServerIp,
     dnsRecords: [
       { type: "A", name: "@", value: detectedServerIp || "SERVER_IP", ttl: 300 },
-      { type: "A", name: "www", value: detectedServerIp || "SERVER_IP", ttl: 300 }
+      { type: "CNAME", name: "www", value: primaryDomain, ttl: 300 }
     ],
     ports: REQUIRED_PORTS,
     updatedAt: new Date().toISOString()
@@ -1574,10 +1872,11 @@ app.get("/api/panel/system-status", async (req, res) => {
   const portSet = new Set(ports);
   const allowedSet = new Set(firewall.allowedPorts);
   const settings = readDomainSettings(req);
+  const detectedServerIp = settings.autoDetectIp === false ? settings.detectedServerIp : await detectServerIp(req);
   res.json({
     ok: true,
     hostname: os.hostname(),
-    detectedServerIp: settings.detectedServerIp || requestIp(req),
+    detectedServerIp: detectedServerIp || settings.detectedServerIp || configuredServerIp(req),
     domain: settings.primaryDomain,
     panelUrl: settings.panelUrl,
     firewall,
@@ -1673,7 +1972,7 @@ app.post("/api/panel/packages", requireCapability("packages"), (req, res) => {
   res.json({ ok: true, package: pkg, packages });
 });
 
-app.post("/api/panel/accounts", requireCapability("accounts"), (req, res) => {
+app.post("/api/panel/accounts", requireCapability("accounts"), async (req, res) => {
   const state = readPanelState();
   const username = sanitizeSlug(req.body?.username, "account").replace(/[^a-z0-9_]/g, "").slice(0, 16);
   const domain = resolveAccountDomain(req, username, req.body?.domain);
@@ -1684,6 +1983,15 @@ app.post("/api/panel/accounts", requireCapability("accounts"), (req, res) => {
   }
   if (password.length < 8) {
     res.status(400).json({ ok: false, message: "Account password must be at least 8 characters." });
+    return;
+  }
+  if (!domain) {
+    res.status(400).json({ ok: false, message: "A real domain name is required. Auto tpanel.local subdomains are disabled." });
+    return;
+  }
+  const existingDomainOwner = domainInUse(state, domain);
+  if (existingDomainOwner) {
+    res.status(409).json({ ok: false, message: "This domain already in use. You can't add this domain here." });
     return;
   }
   if (state.accounts.some((account: any) => account.username === username || account.domain === domain)) {
@@ -1716,6 +2024,21 @@ app.post("/api/panel/accounts", requireCapability("accounts"), (req, res) => {
   const packages = selectedPackage.id
     ? [selectedPackage, ...state.packages.filter((pkg: any) => pkg.id !== selectedPackage.id)]
     : state.packages;
+  const currentSettings = readDomainSettings(req);
+  if (currentSettings.autoDetectIp !== false) {
+    const detectedServerIp = await detectServerIp(req);
+    if (detectedServerIp && detectedServerIp !== currentSettings.detectedServerIp) {
+      writeDomainSettings({
+        ...currentSettings,
+        detectedServerIp,
+        dnsRecords: [
+          { type: "A", name: "@", value: detectedServerIp, ttl: 300 },
+          { type: "CNAME", name: "www", value: currentSettings.primaryDomain, ttl: 300 }
+        ],
+        updatedAt: new Date().toISOString()
+      });
+    }
+  }
   const homeDirectory = path.join(ACCOUNT_BASE_DIR, username);
   const account: any = {
     id: `acct-${Date.now().toString(36)}`,

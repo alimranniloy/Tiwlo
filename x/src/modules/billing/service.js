@@ -208,10 +208,12 @@ const deploymentNodeIdForResource = (pendingResource) => {
 };
 
 const cleanTPanelUsername = (value) => String(value || '').trim().toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 16);
+const isRealDomainName = (value) => /^(?!-)(?:[a-z0-9-]{1,63}\.)+[a-z]{2,63}$/i.test(String(value || '').trim())
+  && !String(value || '').trim().toLowerCase().endsWith('.tpanel.local');
 const accountDomainFor = (account, username) => {
   const raw = String(account?.domain || account?.hostname || '').trim().toLowerCase();
   if (raw && raw.includes('.')) return raw;
-  return `${username}.tpanel.local`;
+  return '';
 };
 
 const sanitizeResourceMetadata = (metadata = {}) => {
@@ -295,6 +297,9 @@ const provisionTPanelAccountForResource = async (tx, ownerId, pendingResource, r
   }
 
   const domain = accountDomainFor(accountInput, username);
+  if (!isRealDomainName(domain)) {
+    throw new AppError('A real domain name is required before creating a tPanel droplet. Auto tpanel.local subdomains are disabled.', 'BAD_USER_INPUT');
+  }
   const remoteAvailability = await checkTPanelNodeUsername(node, username, domain);
   if (!remoteAvailability.available) {
     throw new AppError('This tPanel username is already used on the selected server. Choose another username.', 'CONFLICT');

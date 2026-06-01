@@ -137,26 +137,38 @@ const TAB_PERMISSION_MAP: Record<string, string> = {
   copilot: "copilot"
 };
 
+const dnsRecordsForDomain = (account: any, domainName: string): any[] => {
+  const domain = String(domainName || "").toLowerCase();
+  const records = Array.isArray(account.provisioning?.dnsRecords) ? account.provisioning.dnsRecords : [];
+  const matched = records.filter((record: any) => {
+    const host = String(record.host || "").toLowerCase();
+    return host === domain || host.endsWith(`.${domain}`);
+  });
+  const source = matched.length ? matched : [{ type: "A", host: domain, name: "@", value: account.provisioning?.detectedServerIp || "SERVER_IP", ttl: 300 }];
+  return source.map((record: any, index: number) => {
+    const host = String(record.host || record.name || domain).toLowerCase();
+    const name = record.name || (host === domain ? "@" : host.replace(`.${domain}`, ""));
+    return {
+      id: `dns-${index}-${host || "record"}`,
+      type: record.type || "A",
+      name,
+      value: record.value || "",
+      ttl: Number(record.ttl || 300)
+    };
+  });
+};
+
 const domainsFromAccount = (account: any): DomainItem[] => {
   if (!account?.domain) return [];
   const sslActive = account.provisioning?.ssl?.status === "active";
   const sslType = account.sslEnabled === false ? "None" : "Let's Encrypt";
-  const dnsRecords = Array.isArray(account.provisioning?.dnsRecords)
-    ? account.provisioning.dnsRecords.map((record: any, index: number) => ({
-      id: `dns-${index}-${record.host || record.name || "record"}`,
-      type: record.type || "A",
-      name: record.host === account.domain ? "@" : String(record.host || record.name || "@").replace(`.${account.domain}`, ""),
-      value: record.value || "",
-      ttl: Number(record.ttl || 300)
-    }))
-    : [{ id: "dns-main", type: "A", name: "@", value: "SERVER_IP", ttl: 300 }];
   const primary: DomainItem = {
     id: `dom-${account.domain}`,
     domainName: account.domain,
     documentRoot: "/public_html",
     sslActive,
     sslType,
-    dnsRecords
+    dnsRecords: dnsRecordsForDomain(account, account.domain)
   };
   const subdomains = Array.isArray(account.provisioning?.vhost?.subdomains)
     ? account.provisioning.vhost.subdomains.map((route: any) => ({
@@ -165,7 +177,7 @@ const domainsFromAccount = (account: any): DomainItem[] => {
       documentRoot: route.webPath || "/public_html",
       sslActive,
       sslType,
-      dnsRecords: [{ id: `dns-${route.domain}`, type: "A", name: "@", value: "SERVER_IP", ttl: 300 }]
+      dnsRecords: dnsRecordsForDomain(account, route.domain)
     }))
     : [];
   return [primary, ...subdomains];
@@ -226,6 +238,13 @@ export default function App() {
     setIsAdmin(false);
     setCurrentAccount(null);
     window.history.replaceState(null, "", "/login");
+  };
+
+  const handleAccountUpdate = (account: any) => {
+    if (!account) return;
+    setCurrentAccount(account);
+    setStoredAuthAccount(account);
+    setDomains((current) => mergeAccountDomains(current, account));
   };
 
   // Dynamic Day/Night Mode: default to light as requested
@@ -773,6 +792,7 @@ export default function App() {
             <DomainManager 
               domains={domains} 
               setDomains={setDomains} 
+              onAccountUpdate={handleAccountUpdate}
               addActivity={addActivity}
             />
           )}

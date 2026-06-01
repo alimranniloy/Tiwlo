@@ -76,8 +76,12 @@ function flagUrl(countryCode?: string | null) {
 
 function accountDomain(hostname: string, username: string) {
   const cleanHost = hostname.trim().toLowerCase();
-  if (cleanHost.includes('.')) return cleanHost;
-  return `${username.trim().toLowerCase() || cleanHost || 'account'}.tpanel.local`;
+  return cleanHost;
+}
+
+function isValidDomainName(value: string) {
+  const domain = value.trim().toLowerCase();
+  return /^(?!-)(?:[a-z0-9-]{1,63}\.)+[a-z]{2,63}$/.test(domain) && !domain.endsWith('.tpanel.local');
 }
 
 export default function CreateDroplet() {
@@ -85,7 +89,7 @@ export default function CreateDroplet() {
   const [selectedModule, setSelectedModule] = useState('tpanel');
   const [selectedNodeId, setSelectedNodeId] = useState('');
   const [selectedPlan, setSelectedPlan] = useState('');
-  const [hostname, setHostname] = useState('tiwlo-server-01');
+  const [hostname, setHostname] = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [plans, setPlans] = useState<CloudPlan[]>([]);
@@ -196,7 +200,11 @@ export default function CreateDroplet() {
       return;
     }
     if (!hostname.trim()) {
-      setError('Hostname is required before creating a droplet.');
+      setError('Domain name is required before creating a droplet.');
+      return;
+    }
+    if (!isValidDomainName(hostname)) {
+      setError('Domain must be a real domain name like example.com. Auto tpanel.local subdomains are disabled.');
       return;
     }
     if (!username.trim()) {
@@ -561,12 +569,13 @@ export default function CreateDroplet() {
             </label>
           </div>
           <label className="space-y-2">
-            <span className="block text-[12px] font-bold text-[#2e3d49]">Hostname</span>
-            <input
-              value={hostname}
-              onChange={(event) => setHostname(event.target.value)}
-              className="w-full rounded-sm border border-[#e5e8ed] bg-[#f8f9fa] px-4 py-2.5 text-[14px] outline-none focus:border-[#0069ff]"
-            />
+              <span className="block text-[12px] font-bold text-[#2e3d49]">Domain name</span>
+              <input
+                value={hostname}
+                onChange={(event) => setHostname(event.target.value)}
+                placeholder="example.com"
+                className="w-full rounded-sm border border-[#e5e8ed] bg-[#f8f9fa] px-4 py-2.5 text-[14px] outline-none focus:border-[#0069ff]"
+              />
           </label>
         </div>
       </section>
