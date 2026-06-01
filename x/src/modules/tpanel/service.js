@@ -215,6 +215,7 @@ export const requiredServerPackages = [
   'nginx', 'apache2', 'php', 'php-fpm', 'php-cli', 'php-mysql', 'php-pgsql',
   'php-curl', 'php-gd', 'php-mbstring', 'php-xml', 'php-zip', 'php-bcmath',
   'php-intl', 'php-soap', 'php-imagick', 'php-redis', 'php-opcache',
+  'php-sqlite3', 'php-gmp', 'php-ldap', 'php-imap', 'php-readline',
   'mariadb-server', 'mariadb-client', 'mysql-server', 'mysql-client',
   'postgresql', 'postgresql-contrib', 'redis-server', 'memcached', 'nodejs',
   'npm', 'pm2', 'python3', 'python3-pip', 'python3-venv', 'python3-dev',
@@ -2625,6 +2626,18 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 . /etc/tpanel/agent.env
+if command -v apt-get >/dev/null 2>&1; then
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update -y
+  apt-get install -y php-fpm php-cli php-common php-mysql php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache php-imagick php-redis php-gmp php-ldap php-imap php-readline zip unzip || true
+elif command -v dnf >/dev/null 2>&1; then
+  dnf install -y php-fpm php-cli php-common php-mysqlnd php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache php-pecl-imagick php-pecl-redis php-gmp php-ldap php-imap php-readline zip unzip || true
+elif command -v yum >/dev/null 2>&1; then
+  yum install -y php-fpm php-cli php-common php-mysqlnd php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache php-pecl-imagick php-pecl-redis php-gmp php-ldap php-imap php-readline zip unzip || true
+fi
+for svc in $(systemctl list-unit-files --type=service 'php*-fpm.service' 2>/dev/null | awk '/php.*-fpm\.service/ {print $1}'); do
+  systemctl enable --now "$svc" >/dev/null 2>&1 || true
+done
 cd "$SOURCE_DIR"
 git pull --ff-only
 cd "$APP_DIR"

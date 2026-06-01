@@ -854,6 +854,8 @@ export default function App() {
               domains={domains}
               setDomains={setDomains}
               addActivity={addActivity}
+              account={currentAccount}
+              onAccountUpdate={handleAccountUpdate}
             />
           )}
 

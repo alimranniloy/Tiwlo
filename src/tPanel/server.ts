@@ -80,20 +80,20 @@ const REQUIRED_PORTS = [
 
 const HOSTING_STACK_PACKAGES = {
   apt: [
-    "nginx", "certbot", "python3-certbot-nginx", "php-fpm", "php-cli", "php-mysql", "php-curl", "php-zip", "php-mbstring",
-    "php-xml", "php-gd", "php-intl", "php-bcmath", "php-soap", "php-opcache", "mariadb-server", "pdns-server", "pdns-backend-mysql", "dnsutils",
+    "nginx", "certbot", "python3-certbot-nginx", "php-fpm", "php-cli", "php-common", "php-mysql", "php-pgsql", "php-sqlite3", "php-curl", "php-zip", "php-mbstring",
+    "php-xml", "php-gd", "php-intl", "php-bcmath", "php-soap", "php-opcache", "php-imagick", "php-redis", "php-gmp", "php-ldap", "php-imap", "php-readline", "mariadb-server", "pdns-server", "pdns-backend-mysql", "dnsutils",
     "postfix", "dovecot-core", "dovecot-imapd", "dovecot-pop3d", "opendkim", "opendkim-tools", "rspamd", "mailutils", "libsasl2-modules",
     "zip", "unzip", "tar", "rsync", "logrotate", "cron", "acl"
   ],
   dnf: [
-    "nginx", "certbot", "python3-certbot-nginx", "php-fpm", "php-cli", "php-mysqlnd", "php-curl", "php-zip", "php-mbstring",
-    "php-xml", "php-gd", "php-intl", "php-bcmath", "php-soap", "php-opcache", "mariadb-server", "pdns", "pdns-backend-mysql", "bind-utils",
+    "nginx", "certbot", "python3-certbot-nginx", "php-fpm", "php-cli", "php-common", "php-mysqlnd", "php-pgsql", "php-sqlite3", "php-curl", "php-zip", "php-mbstring",
+    "php-xml", "php-gd", "php-intl", "php-bcmath", "php-soap", "php-opcache", "php-pecl-imagick", "php-pecl-redis", "php-gmp", "php-ldap", "php-imap", "php-readline", "mariadb-server", "pdns", "pdns-backend-mysql", "bind-utils",
     "postfix", "dovecot", "opendkim", "opendkim-tools", "rspamd", "mailx", "cyrus-sasl", "cyrus-sasl-plain",
     "zip", "unzip", "tar", "rsync", "logrotate", "cronie", "acl"
   ],
   yum: [
-    "nginx", "certbot", "python3-certbot-nginx", "php-fpm", "php-cli", "php-mysqlnd", "php-curl", "php-zip", "php-mbstring",
-    "php-xml", "php-gd", "php-intl", "php-bcmath", "php-soap", "php-opcache", "mariadb-server", "pdns", "pdns-backend-mysql", "bind-utils",
+    "nginx", "certbot", "python3-certbot-nginx", "php-fpm", "php-cli", "php-common", "php-mysqlnd", "php-pgsql", "php-sqlite3", "php-curl", "php-zip", "php-mbstring",
+    "php-xml", "php-gd", "php-intl", "php-bcmath", "php-soap", "php-opcache", "php-pecl-imagick", "php-pecl-redis", "php-gmp", "php-ldap", "php-imap", "php-readline", "mariadb-server", "pdns", "pdns-backend-mysql", "bind-utils",
     "postfix", "dovecot", "opendkim", "opendkim-tools", "rspamd", "mailx", "cyrus-sasl", "cyrus-sasl-plain",
     "zip", "unzip", "tar", "rsync", "logrotate", "cronie", "acl"
   ]
@@ -108,6 +108,45 @@ const HOSTING_STACK_CHECKS = [
   { id: "mail", label: "Mail Stack", command: "postfix", services: ["postfix", "dovecot"], packageNames: { apt: "postfix", dnf: "postfix", yum: "postfix" } },
   { id: "node", label: "Node.js Runtime", command: "node", services: [], packageNames: { apt: "nodejs", dnf: "nodejs", yum: "nodejs" } }
 ];
+
+const DEFAULT_PHP_VERSION = "8.3";
+const DEFAULT_PHP_EXTENSIONS = [
+  "bcmath", "bz2", "calendar", "ctype", "curl", "dom", "exif", "fileinfo", "ftp", "gd",
+  "gettext", "gmp", "iconv", "imagick", "intl", "mbstring", "mysqli", "mysqlnd", "opcache",
+  "pcntl", "pdo", "pdo_mysql", "pdo_pgsql", "pdo_sqlite", "pgsql", "phar", "posix", "readline",
+  "redis", "session", "shmop", "simplexml", "soap", "sockets", "sodium", "sqlite3", "tokenizer",
+  "xml", "xmlreader", "xmlwriter", "xsl", "zip", "zlib"
+];
+const DEFAULT_SELECTED_PHP_EXTENSIONS = [
+  "bcmath", "curl", "dom", "fileinfo", "gd", "intl", "mbstring", "mysqli", "mysqlnd",
+  "opcache", "pdo", "pdo_mysql", "simplexml", "soap", "xml", "xmlreader", "xmlwriter", "zip"
+];
+const PHP_EXTENSION_PACKAGES: Record<string, string> = {
+  bcmath: "bcmath",
+  bz2: "bz2",
+  curl: "curl",
+  gd: "gd",
+  gmp: "gmp",
+  imagick: "imagick",
+  imap: "imap",
+  intl: "intl",
+  ldap: "ldap",
+  mbstring: "mbstring",
+  mysqli: "mysql",
+  mysqlnd: "mysql",
+  opcache: "opcache",
+  pdo_mysql: "mysql",
+  pdo_pgsql: "pgsql",
+  pdo_sqlite: "sqlite3",
+  pgsql: "pgsql",
+  redis: "redis",
+  soap: "soap",
+  sqlite3: "sqlite3",
+  xsl: "xsl",
+  zip: "zip"
+};
+let phpVersionCache: { at: number; versions: string[] } | null = null;
+const phpExtensionCache = new Map<string, { at: number; extensions: string[] }>();
 
 app.use(express.json({ limit: "25mb" }));
 
@@ -322,6 +361,8 @@ function publicAccount(account: any) {
   safe.passwordSet = Boolean(account?.passwordSet || account?.passwordHash);
   safe.permissionProfile = normalizePermissionProfile(safe.permissionProfile);
   safe.permissions = normalizeAccountPermissions(account?.permissions, account);
+  safe.phpSettings = phpSettingsForAccount(account || {});
+  safe.phpVersion = safe.phpSettings.version;
   return safe;
 }
 
@@ -389,10 +430,7 @@ app.listen(port, "0.0.0.0", () => console.log("Node app listening on", port));
     if (!fs.existsSync(indexHtml) && !fs.existsSync(indexPhp)) {
       fs.writeFileSync(indexHtml, starterIndexHtml(account.domain));
     }
-    fs.writeFileSync(path.join(publicDir, ".user.ini"), `memory_limit=${account.phpMemoryMb || 256}M
-upload_max_filesize=${account.uploadLimitMb || 64}M
-post_max_size=${account.uploadLimitMb || 64}M
-`);
+    writePhpUserIni(account);
   } else {
     if (!fs.existsSync(indexHtml) && !fs.existsSync(indexPhp)) {
       fs.writeFileSync(indexHtml, starterIndexHtml(account.domain));
@@ -576,6 +614,7 @@ function buildAccountProvisioning(req: express.Request, account: any) {
       documentRoot: account.documentRoot,
       runtime: account.runtime,
       phpVersion: account.phpVersion,
+      phpSettings: phpSettingsForAccount(account),
       nodeVersion: account.nodeVersion,
       nodePort: account.nodePort
     }
@@ -907,8 +946,281 @@ function accountSubdomainRoutes(account: any) {
     .filter((route: any) => route.domain && route.domain !== cleanDomain(account.domain));
 }
 
+function normalizePhpVersion(value: unknown, fallback = DEFAULT_PHP_VERSION) {
+  const match = String(value || "").match(/^[0-9]+\.[0-9]+/);
+  return match ? match[0] : fallback;
+}
+
+function sortPhpVersions(versions: string[]) {
+  return Array.from(new Set(versions.map((item) => normalizePhpVersion(item)).filter(Boolean)))
+    .sort((a, b) => Number(b.split(".")[0]) - Number(a.split(".")[0]) || Number(b.split(".")[1]) - Number(a.split(".")[1]));
+}
+
+function commandExistsSync(command: string) {
+  if (process.platform === "win32") return false;
+  try {
+    execFileSync("sh", ["-lc", `command -v '${command.replace(/'/g, "'\\''")}' >/dev/null 2>&1`], { stdio: "ignore", timeout: 10000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function installedPhpVersions() {
+  if (phpVersionCache && Date.now() - phpVersionCache.at < 60000) return phpVersionCache.versions;
+  if (process.platform === "win32") return [DEFAULT_PHP_VERSION];
+  const versions: string[] = [];
+  try {
+    if (fs.existsSync("/etc/php")) {
+      for (const entry of fs.readdirSync("/etc/php", { withFileTypes: true })) {
+        if (entry.isDirectory() && /^\d+\.\d+$/.test(entry.name) && fs.existsSync(`/etc/php/${entry.name}/fpm`)) versions.push(entry.name);
+      }
+    }
+  } catch {
+    // keep probing
+  }
+  try {
+    if (fs.existsSync("/run/php")) {
+      for (const entry of fs.readdirSync("/run/php")) {
+        const match = entry.match(/^php(\d+\.\d+)-fpm\.sock$/);
+        if (match) versions.push(match[1]);
+      }
+    }
+  } catch {
+    // keep probing
+  }
+  try {
+    const version = execFileSync("php", ["-r", "echo PHP_MAJOR_VERSION.'.'.PHP_MINOR_VERSION;"], { encoding: "utf8", timeout: 10000 }).trim();
+    if (version) versions.push(version);
+  } catch {
+    // php cli may not be installed yet
+  }
+  const detected = sortPhpVersions(versions.length ? versions : [DEFAULT_PHP_VERSION]);
+  phpVersionCache = { at: Date.now(), versions: detected };
+  return detected;
+}
+
+function effectivePhpVersion(account: any, requested = account?.phpVersion) {
+  const preferred = normalizePhpVersion(requested || account?.phpSettings?.version || DEFAULT_PHP_VERSION);
+  const installed = installedPhpVersions();
+  return installed.includes(preferred) ? preferred : installed[0] || preferred;
+}
+
+function phpFpmService(version: string) {
+  return `php${normalizePhpVersion(version)}-fpm`;
+}
+
+function globalPhpFpmSocket(version: string) {
+  return `/run/php/php${normalizePhpVersion(version)}-fpm.sock`;
+}
+
+function accountPhpPoolName(account: any, version = account?.phpVersion) {
+  return `tpanel-${sanitizeSlug(account?.username, "account")}-php${normalizePhpVersion(version)}`;
+}
+
+function accountPhpFpmSocket(account: any, version = account?.phpVersion) {
+  return `/run/php/${accountPhpPoolName(account, version)}.sock`;
+}
+
 function phpFpmSocket(account: any) {
-  return `/run/php/php${String(account.phpVersion || "8.3").replace(/[^0-9.]/g, "")}-fpm.sock`;
+  const version = effectivePhpVersion(account);
+  return account?.username ? accountPhpFpmSocket(account, version) : globalPhpFpmSocket(version);
+}
+
+function phpCliCommand(version: string) {
+  const specific = `php${normalizePhpVersion(version)}`;
+  return commandExistsSync(specific) ? specific : "php";
+}
+
+function installedPhpExtensions(version: string) {
+  const cleanVersion = normalizePhpVersion(version);
+  const cached = phpExtensionCache.get(cleanVersion);
+  if (cached && Date.now() - cached.at < 60000) return cached.extensions;
+  if (process.platform === "win32") return DEFAULT_PHP_EXTENSIONS;
+  try {
+    const output = execFileSync(phpCliCommand(cleanVersion), ["-m"], { encoding: "utf8", timeout: 15000 });
+    const extensions = Array.from(new Set(output.split(/\r?\n/).map((item) => item.trim().toLowerCase()).filter(Boolean)));
+    phpExtensionCache.set(cleanVersion, { at: Date.now(), extensions });
+    return extensions;
+  } catch {
+    return [];
+  }
+}
+
+function normalizePhpExtensionSelection(input: any) {
+  const raw = Array.isArray(input)
+    ? input
+    : input && typeof input === "object"
+      ? Object.entries(input).filter(([, enabled]) => Boolean(enabled)).map(([key]) => key)
+      : DEFAULT_SELECTED_PHP_EXTENSIONS;
+  const catalog = new Set(DEFAULT_PHP_EXTENSIONS);
+  const selected = raw.map((item: any) => String(item).toLowerCase().trim()).filter((item: string) => catalog.has(item));
+  return Array.from(new Set(selected.length ? selected : DEFAULT_SELECTED_PHP_EXTENSIONS));
+}
+
+function safePhpIniValue(value: unknown, fallback: string) {
+  const clean = String(value || fallback).trim().replace(/[^0-9A-Za-z_.:-]/g, "").slice(0, 24);
+  return clean || fallback;
+}
+
+function normalizePhpIni(input: any = {}, account: any = {}) {
+  const upload = safePhpIniValue(input.upload_max_filesize || account.phpSettings?.ini?.upload_max_filesize, `${account.uploadLimitMb || 128}M`);
+  return {
+    memory_limit: safePhpIniValue(input.memory_limit || account.phpSettings?.ini?.memory_limit, `${account.phpMemoryMb || 256}M`),
+    upload_max_filesize: upload,
+    post_max_size: safePhpIniValue(input.post_max_size || account.phpSettings?.ini?.post_max_size, upload),
+    max_execution_time: safePhpIniValue(input.max_execution_time || account.phpSettings?.ini?.max_execution_time, "120"),
+    max_input_vars: safePhpIniValue(input.max_input_vars || account.phpSettings?.ini?.max_input_vars, "3000")
+  };
+}
+
+function phpSettingsForAccount(account: any) {
+  const version = normalizePhpVersion(account?.phpSettings?.version || account?.phpVersion || DEFAULT_PHP_VERSION);
+  return {
+    version,
+    effectiveVersion: effectivePhpVersion(account, version),
+    extensions: normalizePhpExtensionSelection(account?.phpSettings?.extensions),
+    ini: normalizePhpIni(account?.phpSettings?.ini, account)
+  };
+}
+
+function writePhpUserIni(account: any) {
+  const settings = phpSettingsForAccount(account);
+  const publicDir = path.resolve(account.documentRoot || path.join(account.homeDirectory, "public_html"));
+  fs.mkdirSync(publicDir, { recursive: true });
+  fs.writeFileSync(path.join(publicDir, ".user.ini"), [
+    `memory_limit=${settings.ini.memory_limit}`,
+    `upload_max_filesize=${settings.ini.upload_max_filesize}`,
+    `post_max_size=${settings.ini.post_max_size}`,
+    `max_execution_time=${settings.ini.max_execution_time}`,
+    `max_input_vars=${settings.ini.max_input_vars}`,
+    "log_errors=On",
+    "display_errors=Off"
+  ].join("\n") + "\n");
+}
+
+function webRuntimeUser() {
+  if (process.platform === "win32") return "www-data";
+  for (const user of ["www-data", "nginx", "apache"]) {
+    try {
+      execFileSync("id", ["-u", user], { stdio: "ignore", timeout: 10000 });
+      return user;
+    } catch {
+      // try next runtime user
+    }
+  }
+  return "www-data";
+}
+
+function ensureSystemAccountUser(account: any) {
+  if (process.platform === "win32") return;
+  const username = sanitizeSlug(account.username, "account").replace(/[^a-z0-9_-]/g, "").slice(0, 31);
+  if (!/^[a-z_][a-z0-9_-]{2,30}$/.test(username)) throw new Error("Invalid Linux username for PHP isolation.");
+  const home = path.resolve(account.homeDirectory);
+  try {
+    execFileSync("id", ["-u", username], { stdio: "ignore", timeout: 10000 });
+  } catch {
+    fs.mkdirSync(path.dirname(home), { recursive: true });
+    if (fs.existsSync(home)) execFileSync("useradd", ["-d", home, "-s", "/bin/bash", username], { timeout: 120000 });
+    else execFileSync("useradd", ["-m", "-d", home, "-s", "/bin/bash", username], { timeout: 120000 });
+  }
+  fs.mkdirSync(path.join(home, "public_html"), { recursive: true });
+}
+
+function ensureAccountPhpPool(account: any) {
+  if (process.platform === "win32" || account.runtime === "node") return null;
+  const version = effectivePhpVersion(account);
+  const confDir = `/etc/php/${version}/fpm/pool.d`;
+  if (!fs.existsSync(confDir)) {
+    throw new Error(`PHP-FPM ${version} is not installed. Install PHP ${version} FPM and extensions, then apply again.`);
+  }
+  ensureSystemAccountUser(account);
+  writePhpUserIni({ ...account, phpVersion: version });
+  const username = sanitizeSlug(account.username, "account").replace(/[^a-z0-9_-]/g, "").slice(0, 31);
+  const home = path.resolve(account.homeDirectory);
+  const docRoot = path.resolve(account.documentRoot || path.join(home, "public_html"));
+  const logsDir = path.join(home, "logs");
+  const sessionDir = path.join(home, ".sessions");
+  fs.mkdirSync(logsDir, { recursive: true });
+  fs.mkdirSync(sessionDir, { recursive: true });
+  const runtimeUser = webRuntimeUser();
+  const settings = phpSettingsForAccount({ ...account, phpVersion: version });
+  const poolName = accountPhpPoolName(account, version);
+  const socket = accountPhpFpmSocket(account, version);
+  const poolConfig = `[${poolName}]
+user = ${username}
+group = ${username}
+listen = ${socket}
+listen.owner = ${runtimeUser}
+listen.group = ${runtimeUser}
+listen.mode = 0660
+pm = ondemand
+pm.max_children = 10
+pm.process_idle_timeout = 20s
+pm.max_requests = 500
+chdir = ${toUnixPath(docRoot)}
+php_admin_value[open_basedir] = ${toUnixPath(home)}:/tmp:/usr/share/php
+php_admin_value[error_log] = ${toUnixPath(path.join(logsDir, "php-error.log"))}
+php_admin_flag[log_errors] = on
+php_value[session.save_path] = ${toUnixPath(sessionDir)}
+php_value[memory_limit] = ${settings.ini.memory_limit}
+php_value[upload_max_filesize] = ${settings.ini.upload_max_filesize}
+php_value[post_max_size] = ${settings.ini.post_max_size}
+php_value[max_execution_time] = ${settings.ini.max_execution_time}
+php_value[max_input_vars] = ${settings.ini.max_input_vars}
+`;
+  fs.writeFileSync(path.join(confDir, `${poolName}.conf`), poolConfig);
+  try {
+    execFileSync("chown", ["-R", `${username}:${username}`, logsDir, sessionDir], { timeout: 120000 });
+    execFileSync("chmod", ["700", sessionDir], { timeout: 30000 });
+  } catch {
+    // pool can still start if ownership normalization is skipped
+  }
+  execFileSync("systemctl", ["restart", phpFpmService(version)], { timeout: 120000 });
+  return { version, socket, poolName };
+}
+
+function phpErrorLogPath(account: any) {
+  return path.join(path.resolve(account.homeDirectory), "logs", "php-error.log");
+}
+
+function tailTextFile(filePath: string, maxLines = 80) {
+  try {
+    if (!fs.existsSync(filePath)) return "";
+    return fs.readFileSync(filePath, "utf8").split(/\r?\n/).slice(-maxLines).join("\n").trim();
+  } catch {
+    return "";
+  }
+}
+
+function phpSettingsPayload(account: any, extra: any = {}) {
+  const settings = phpSettingsForAccount(account);
+  const installedVersions = installedPhpVersions();
+  const installedExtensions = installedPhpExtensions(settings.effectiveVersion);
+  const installedSet = new Set(installedExtensions);
+  const selectedSet = new Set(settings.extensions);
+  const catalog = DEFAULT_PHP_EXTENSIONS.map((name) => ({
+    name,
+    installed: installedSet.has(name.toLowerCase()),
+    selected: selectedSet.has(name)
+  }));
+  return {
+    ok: true,
+    ...extra,
+    settings,
+    installedVersions,
+    extensions: catalog,
+    missingExtensions: settings.extensions.filter((name: string) => !installedSet.has(name)),
+    fpm: {
+      service: phpFpmService(settings.effectiveVersion),
+      socket: accountPhpFpmSocket(account, settings.effectiveVersion),
+      pool: accountPhpPoolName(account, settings.effectiveVersion)
+    },
+    diagnostics: {
+      phpErrorLog: tailTextFile(phpErrorLogPath(account)),
+      provisioningLog: readProvisioningLog(account.username, 20)
+    }
+  };
 }
 
 function nginxContentBlock(account: any, documentRoot: string) {
@@ -1019,6 +1331,13 @@ function applyAccountProvisioning(account: any) {
   const enabledPath = `/etc/nginx/sites-enabled/${siteName}.conf`;
   ensureWebIngress(account);
   ensureWebReadableAccount(account);
+  try {
+    if (account.runtime === "php") ensureAccountPhpPool(account);
+  } catch (error: any) {
+    appendProvisioningLog(account, `PHP-FPM pool failed: ${error.message}`);
+    patchAccountProvisioning(account, { vhost: { status: "failed", message: error.message }, ssl: { status: "blocked" } });
+    return;
+  }
   removePanelProxyForDomain(account.domain);
   patchAccountProvisioning(account, {
     vhost: { status: "configuring", lastRunAt: new Date().toISOString() },
@@ -1778,6 +2097,72 @@ async function packageManager(): Promise<keyof typeof HOSTING_STACK_PACKAGES | n
   return null;
 }
 
+function phpPackageNames(manager: keyof typeof HOSTING_STACK_PACKAGES, version: string, extensions: string[]) {
+  const selectedPackages = Array.from(new Set(extensions.map((extension) => PHP_EXTENSION_PACKAGES[extension]).filter(Boolean)));
+  if (manager === "apt") {
+    const prefix = `php${normalizePhpVersion(version)}`;
+    return Array.from(new Set([
+      `${prefix}-fpm`, `${prefix}-cli`, `${prefix}-common`, `${prefix}-mysql`,
+      `${prefix}-curl`, `${prefix}-mbstring`, `${prefix}-xml`, `${prefix}-zip`, `${prefix}-opcache`,
+      ...selectedPackages.map((pkg) => `${prefix}-${pkg}`)
+    ]));
+  }
+  return Array.from(new Set([
+    "php-fpm", "php-cli", "php-common", "php-mysqlnd", "php-curl", "php-mbstring", "php-xml", "php-zip", "php-opcache",
+    ...selectedPackages.map((pkg) => pkg === "redis" ? "php-pecl-redis" : pkg === "imagick" ? "php-pecl-imagick" : `php-${pkg}`)
+  ]));
+}
+
+function genericPhpPackageNames(manager: keyof typeof HOSTING_STACK_PACKAGES, extensions: string[]) {
+  const selectedPackages = Array.from(new Set(extensions.map((extension) => PHP_EXTENSION_PACKAGES[extension]).filter(Boolean)));
+  if (manager === "apt") {
+    return Array.from(new Set([
+      "php-fpm", "php-cli", "php-common", "php-mysql", "php-curl", "php-mbstring", "php-xml", "php-zip", "php-opcache",
+      ...selectedPackages.map((pkg) => `php-${pkg}`)
+    ]));
+  }
+  return phpPackageNames(manager, DEFAULT_PHP_VERSION, extensions);
+}
+
+async function installPhpRuntimePackages(version: string, extensions: string[]) {
+  if (process.platform === "win32") return "";
+  const manager = await packageManager();
+  if (!manager) return "No supported package manager was detected.";
+  const packages = phpPackageNames(manager, version, extensions);
+  const quoted = packages.map((item) => `'${item.replace(/'/g, "'\\''")}'`).join(" ");
+  const command = manager === "apt"
+    ? `export DEBIAN_FRONTEND=noninteractive; apt-get update -y && apt-get install -y ${quoted}`
+    : `${manager} install -y ${quoted}`;
+  try {
+    const { stdout, stderr } = await execFileAsync("sh", ["-lc", command], { timeout: 900000, maxBuffer: 4 * 1024 * 1024 });
+    phpVersionCache = null;
+    phpExtensionCache.clear();
+    return `${stdout || ""}${stderr || ""}`.trim();
+  } catch (error: any) {
+    if (manager !== "apt") throw error;
+    const fallback = genericPhpPackageNames(manager, extensions);
+    const fallbackQuoted = fallback.map((item) => `'${item.replace(/'/g, "'\\''")}'`).join(" ");
+    const { stdout, stderr } = await execFileAsync("sh", ["-lc", `export DEBIAN_FRONTEND=noninteractive; apt-get update -y && apt-get install -y ${fallbackQuoted}`], { timeout: 900000, maxBuffer: 4 * 1024 * 1024 });
+    phpVersionCache = null;
+    phpExtensionCache.clear();
+    return `${error.stdout || ""}${error.stderr || ""}\n${stdout || ""}${stderr || ""}`.trim();
+  }
+}
+
+async function enablePhpExtensions(version: string, extensions: string[]) {
+  if (process.platform === "win32" || !commandExistsSync("phpenmod")) return "";
+  const selected = extensions.map((item) => PHP_EXTENSION_PACKAGES[item] || item).filter(Boolean);
+  if (!selected.length) return "";
+  const quoted = Array.from(new Set(selected)).map((item) => `'${String(item).replace(/'/g, "'\\''")}'`).join(" ");
+  try {
+    const { stdout, stderr } = await execFileAsync("sh", ["-lc", `phpenmod -v '${normalizePhpVersion(version)}' ${quoted} >/dev/null 2>&1 || true; systemctl restart '${phpFpmService(version)}'`], { timeout: 180000, maxBuffer: 1024 * 1024 });
+    phpExtensionCache.delete(normalizePhpVersion(version));
+    return `${stdout || ""}${stderr || ""}`.trim();
+  } catch (error: any) {
+    return `${error.stdout || ""}${error.stderr || error.message || ""}`.trim();
+  }
+}
+
 async function hostingStackStatus() {
   const manager = await packageManager();
   const checks = await Promise.all(HOSTING_STACK_CHECKS.map(async (check) => {
@@ -2019,6 +2404,71 @@ app.get("/api/user/summary", requireLicense, async (req, res) => {
     provisioningLog: readProvisioningLog(account.username),
     permissions: normalizeAccountPermissions(account.permissions, account)
   });
+});
+
+app.get("/api/user/php-settings", requireLicense, async (req, res) => {
+  const account = requireUserAccount(req, res);
+  if (!account) return;
+  if (!normalizeAccountPermissions(account.permissions, account).php) {
+    res.status(403).json({ ok: false, message: "PHP controls are disabled for this account." });
+    return;
+  }
+  res.json(phpSettingsPayload(account));
+});
+
+app.post("/api/user/php-settings", requireLicense, async (req, res) => {
+  const account = requireUserAccount(req, res);
+  if (!account) return;
+  if (!normalizeAccountPermissions(account.permissions, account).php) {
+    res.status(403).json({ ok: false, message: "PHP controls are disabled for this account." });
+    return;
+  }
+  try {
+    const requestedVersion = normalizePhpVersion(req.body?.phpVersion || req.body?.version || account.phpVersion || DEFAULT_PHP_VERSION);
+    const requestedExtensions = normalizePhpExtensionSelection(req.body?.extensions);
+    const requestedIni = normalizePhpIni(req.body?.ini || req.body?.phpIni || {}, account);
+    let installOutput = "";
+    if (req.body?.autoInstall !== false) {
+      installOutput = await installPhpRuntimePackages(requestedVersion, requestedExtensions);
+      installOutput += `\n${await enablePhpExtensions(requestedVersion, requestedExtensions)}`;
+    }
+    const updated = updateStoredAccount(account.username, (current: any) => {
+      const next = {
+        ...current,
+        runtime: "php",
+        phpVersion: requestedVersion,
+        phpSettings: {
+          version: requestedVersion,
+          extensions: requestedExtensions,
+          ini: requestedIni,
+          updatedAt: new Date().toISOString()
+        },
+        provisioning: {
+          ...(current.provisioning || buildAccountProvisioning(req, current)),
+          vhost: {
+            ...((current.provisioning || {}).vhost || {}),
+            status: "queued",
+            phpVersion: requestedVersion,
+            phpSettings: { version: requestedVersion, extensions: requestedExtensions, ini: requestedIni }
+          }
+        },
+        updatedAt: new Date().toISOString()
+      };
+      return next;
+    });
+    if (!updated) {
+      res.status(404).json({ ok: false, message: "Hosting account was not found." });
+      return;
+    }
+    writePhpUserIni(updated);
+    applyAccountProvisioning(updated);
+    res.json(phpSettingsPayload(updated, {
+      account: publicAccount(updated),
+      installOutput: installOutput.trim()
+    }));
+  } catch (error: any) {
+    res.status(500).json({ ok: false, message: error.message || "Unable to apply PHP settings." });
+  }
 });
 
 app.get("/api/user/files", requireLicense, async (req, res) => {
@@ -2878,6 +3328,12 @@ app.post("/api/panel/accounts", requireCapability("accounts"), async (req, res) 
     packageName: selectedPackage.name,
     runtime: ["php", "node", "static"].includes(String(req.body?.runtime)) ? String(req.body?.runtime) : "php",
     phpVersion: String(req.body?.phpVersion || "8.3"),
+    phpSettings: {
+      version: String(req.body?.phpVersion || "8.3"),
+      extensions: DEFAULT_SELECTED_PHP_EXTENSIONS,
+      ini: normalizePhpIni({}, { phpMemoryMb: req.body?.phpMemoryMb, uploadLimitMb: req.body?.uploadLimitMb }),
+      updatedAt: new Date().toISOString()
+    },
     nodeVersion: String(req.body?.nodeVersion || "20"),
     nodePort: Number(req.body?.nodePort || 3000),
     quotaMb: Number(req.body?.quotaMb || selectedPackage.quotaMb),

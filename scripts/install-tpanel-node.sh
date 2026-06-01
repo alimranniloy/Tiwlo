@@ -148,11 +148,11 @@ step "Installing runtime packages"
 if have apt-get; then
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -y
-  apt-get install -y git curl wget ca-certificates openssl xz-utils nginx ufw certbot python3 python3-certbot-nginx build-essential php-fpm php-cli php-mysql php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache mariadb-server pdns-server pdns-backend-mysql dnsutils postfix dovecot-core dovecot-imapd dovecot-pop3d opendkim opendkim-tools rspamd mailutils libsasl2-modules zip unzip tar rsync logrotate cron acl || true
+  apt-get install -y git curl wget ca-certificates openssl xz-utils nginx ufw certbot python3 python3-certbot-nginx build-essential php-fpm php-cli php-common php-mysql php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache php-imagick php-redis php-gmp php-ldap php-imap php-readline mariadb-server pdns-server pdns-backend-mysql dnsutils postfix dovecot-core dovecot-imapd dovecot-pop3d opendkim opendkim-tools rspamd mailutils libsasl2-modules zip unzip tar rsync logrotate cron acl || true
 elif have dnf; then
-  dnf install -y git curl wget ca-certificates openssl xz nginx firewalld certbot python3 python3-certbot-nginx gcc gcc-c++ make php-fpm php-cli php-mysqlnd php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache mariadb-server pdns pdns-backend-mysql bind-utils postfix dovecot opendkim opendkim-tools rspamd mailx cyrus-sasl cyrus-sasl-plain zip unzip tar rsync logrotate cronie acl || true
+  dnf install -y git curl wget ca-certificates openssl xz nginx firewalld certbot python3 python3-certbot-nginx gcc gcc-c++ make php-fpm php-cli php-common php-mysqlnd php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache php-pecl-imagick php-pecl-redis php-gmp php-ldap php-imap php-readline mariadb-server pdns pdns-backend-mysql bind-utils postfix dovecot opendkim opendkim-tools rspamd mailx cyrus-sasl cyrus-sasl-plain zip unzip tar rsync logrotate cronie acl || true
 elif have yum; then
-  yum install -y git curl wget ca-certificates openssl xz nginx firewalld certbot python3 python3-certbot-nginx gcc gcc-c++ make php-fpm php-cli php-mysqlnd php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache mariadb-server pdns pdns-backend-mysql bind-utils postfix dovecot opendkim opendkim-tools rspamd mailx cyrus-sasl cyrus-sasl-plain zip unzip tar rsync logrotate cronie acl || true
+  yum install -y git curl wget ca-certificates openssl xz nginx firewalld certbot python3 python3-certbot-nginx gcc gcc-c++ make php-fpm php-cli php-common php-mysqlnd php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache php-pecl-imagick php-pecl-redis php-gmp php-ldap php-imap php-readline mariadb-server pdns pdns-backend-mysql bind-utils postfix dovecot opendkim opendkim-tools rspamd mailx cyrus-sasl cyrus-sasl-plain zip unzip tar rsync logrotate cronie acl || true
 else
   echo "Unsupported Linux package manager. Install git, curl, xz, and nginx, then rerun."
   exit 1
@@ -365,6 +365,21 @@ fi
 . /etc/tpanel/agent.env
 export PATH="${NODE_BIN_DIR:-/usr/local/bin}:$PATH"
 NPM_BIN="${NPM_BIN:-npm}"
+install_runtime_packages() {
+  if command -v apt-get >/dev/null 2>&1; then
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -y
+    apt-get install -y php-fpm php-cli php-common php-mysql php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache php-imagick php-redis php-gmp php-ldap php-imap php-readline zip unzip || true
+  elif command -v dnf >/dev/null 2>&1; then
+    dnf install -y php-fpm php-cli php-common php-mysqlnd php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache php-pecl-imagick php-pecl-redis php-gmp php-ldap php-imap php-readline zip unzip || true
+  elif command -v yum >/dev/null 2>&1; then
+    yum install -y php-fpm php-cli php-common php-mysqlnd php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache php-pecl-imagick php-pecl-redis php-gmp php-ldap php-imap php-readline zip unzip || true
+  fi
+  for svc in $(systemctl list-unit-files --type=service 'php*-fpm.service' 2>/dev/null | awk '/php.*-fpm\.service/ {print $1}'); do
+    systemctl enable --now "$svc" >/dev/null 2>&1 || true
+  done
+}
+install_runtime_packages
 git -C "$SOURCE_DIR" pull --ff-only
 cd "$APP_DIR"
 install_app_dependencies() {

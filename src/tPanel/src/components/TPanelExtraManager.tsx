@@ -40,9 +40,11 @@ interface TPanelExtraManagerProps {
   domains: DomainItem[];
   setDomains: Dispatch<SetStateAction<DomainItem[]>>;
   addActivity: (category: "file" | "domain" | "node" | "db" | "email" | "ssl", message: string) => void;
+  account?: any;
+  onAccountUpdate?: (account: any) => void;
 }
 
-export default function TPanelExtraManager({ activeTab, domains, setDomains, addActivity }: TPanelExtraManagerProps) {
+export default function TPanelExtraManager({ activeTab, domains, setDomains, addActivity, account, onAccountUpdate }: TPanelExtraManagerProps) {
   // PERSISTED STATES
   const getPersisted = <T,>(key: string, def: T): T => {
     try {
@@ -136,18 +138,36 @@ export default function TPanelExtraManager({ activeTab, domains, setDomains, add
   });
 
   // 11. PHP Selector
-  const [selectedPhpVersion, setSelectedPhpVersion] = useState(() => getPersisted("php_version", "8.2"));
-  const [phpExtensions, setPhpExtensions] = useState(() => getPersisted("php_ext", {
-    imagick: true,
-    redis: true,
-    opcache: true,
-    xdebug: false,
-    sqlite3: true,
-    mysqli: true,
+  const [selectedPhpVersion, setSelectedPhpVersion] = useState(() => account?.phpSettings?.version || account?.phpVersion || getPersisted("php_version", "8.3"));
+  const [phpExtensions, setPhpExtensions] = useState<Record<string, boolean>>(() => getPersisted("php_ext", {
+    bcmath: true,
     curl: true,
-    fileinfo: true
+    dom: true,
+    fileinfo: true,
+    gd: true,
+    intl: true,
+    mbstring: true,
+    mysqli: true,
+    mysqlnd: true,
+    opcache: true,
+    pdo: true,
+    pdo_mysql: true,
+    redis: true,
+    simplexml: true,
+    soap: true,
+    xml: true,
+    zip: true
   }));
-  const [phpIniLimit, setPhpIniLimit] = useState("512M");
+  const [phpIniLimit, setPhpIniLimit] = useState(account?.phpSettings?.ini?.memory_limit || "256M");
+  const [phpUploadLimit, setPhpUploadLimit] = useState(account?.phpSettings?.ini?.upload_max_filesize || "128M");
+  const [phpPostLimit, setPhpPostLimit] = useState(account?.phpSettings?.ini?.post_max_size || "128M");
+  const [phpMaxExecution, setPhpMaxExecution] = useState(account?.phpSettings?.ini?.max_execution_time || "120");
+  const [phpMaxInputVars, setPhpMaxInputVars] = useState(account?.phpSettings?.ini?.max_input_vars || "3000");
+  const [phpAvailableVersions, setPhpAvailableVersions] = useState<string[]>([]);
+  const [phpExtensionRows, setPhpExtensionRows] = useState<Array<{ name: string; installed: boolean; selected: boolean }>>([]);
+  const [phpDiagnostics, setPhpDiagnostics] = useState<any>(null);
+  const [phpStatusMessage, setPhpStatusMessage] = useState("");
+  const [isSavingPhpSettings, setIsSavingPhpSettings] = useState(false);
 
   // 12. Ruby manager
   const [rubyApps, setRubyApps] = useState(() => getPersisted("ruby_apps", [
@@ -197,6 +217,91 @@ export default function TPanelExtraManager({ activeTab, domains, setDomains, add
     if (!selectedDNSDomain && domains[0]?.domainName) setSelectedDNSDomain(domains[0].domainName);
     if (!selectedSubDomain && domains[0]?.domainName) setSelectedSubDomain(domains[0].domainName);
   }, [domains, selectedDNSDomain, selectedSubDomain]);
+
+  const authToken = () => {
+    try {
+      return JSON.parse(localStorage.getItem("tpanel_auth") || "null")?.token || "";
+    } catch {
+      return "";
+    }
+  };
+
+  const hydratePhpSettings = (data: any) => {
+    const settings = data?.settings || {};
+    const ini = settings.ini || {};
+    if (settings.version) setSelectedPhpVersion(settings.version);
+    if (ini.memory_limit) setPhpIniLimit(ini.memory_limit);
+    if (ini.upload_max_filesize) setPhpUploadLimit(ini.upload_max_filesize);
+    if (ini.post_max_size) setPhpPostLimit(ini.post_max_size);
+    if (ini.max_execution_time) setPhpMaxExecution(ini.max_execution_time);
+    if (ini.max_input_vars) setPhpMaxInputVars(ini.max_input_vars);
+    if (Array.isArray(data.installedVersions)) setPhpAvailableVersions(data.installedVersions);
+    if (Array.isArray(data.extensions)) {
+      setPhpExtensionRows(data.extensions);
+      setPhpExtensions(Object.fromEntries(data.extensions.map((item: any) => [item.name, Boolean(item.selected)])));
+    }
+    setPhpDiagnostics(data.diagnostics || null);
+    if (data.account && onAccountUpdate) onAccountUpdate(data.account);
+  };
+
+  const loadPhpSettings = async () => {
+    const token = authToken();
+    if (!token) return;
+    const response = await fetch("/api/user/php-settings", {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.ok) throw new Error(data.message || "Unable to load PHP settings.");
+    hydratePhpSettings(data);
+  };
+
+  const applyPhpSettings = async () => {
+    const token = authToken();
+    if (!token) {
+      setPhpStatusMessage("User session expired. Log in again.");
+      return;
+    }
+    setIsSavingPhpSettings(true);
+    setPhpStatusMessage("Applying PHP runtime...");
+    try {
+      const response = await fetch("/api/user/php-settings", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          phpVersion: selectedPhpVersion,
+          extensions: phpExtensions,
+          ini: {
+            memory_limit: phpIniLimit,
+            upload_max_filesize: phpUploadLimit,
+            post_max_size: phpPostLimit,
+            max_execution_time: phpMaxExecution,
+            max_input_vars: phpMaxInputVars
+          },
+          autoInstall: true
+        })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.ok) throw new Error(data.message || "Unable to apply PHP settings.");
+      hydratePhpSettings(data);
+      const missing = Array.isArray(data.missingExtensions) && data.missingExtensions.length
+        ? ` Missing: ${data.missingExtensions.join(", ")}.`
+        : "";
+      setPhpStatusMessage(`PHP ${data.settings?.effectiveVersion || selectedPhpVersion} applied for this account.${missing}`);
+      addActivity("node", `PHP runtime applied: ${data.settings?.effectiveVersion || selectedPhpVersion}`);
+    } catch (error) {
+      setPhpStatusMessage(error instanceof Error ? error.message : "Unable to apply PHP settings.");
+    } finally {
+      setIsSavingPhpSettings(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab !== "phpversion") return;
+    loadPhpSettings().catch((error) => setPhpStatusMessage(error instanceof Error ? error.message : "Unable to load PHP settings."));
+  }, [activeTab, account?.username]);
 
   // Terminal scroll helper
   useEffect(() => {
@@ -1479,50 +1584,71 @@ export default function TPanelExtraManager({ activeTab, domains, setDomains, add
               </div>
             </div>
 
-            <div className="flex items-center gap-4 bg-slate-950 border border-slate-700 p-4 rounded-xl mb-6 justify-between">
+            <div className="grid grid-cols-1 gap-4 bg-slate-950 border border-slate-700 p-4 rounded-xl mb-6 md:grid-cols-[1fr_auto_auto] md:items-center">
               <div>
-                <span className="block text-xs text-slate-400">Active server thread running PHP version:</span>
-                <span className="text-lg font-mono font-bold text-slate-100">PHP Version {selectedPhpVersion}</span>
+                <span className="block text-xs text-slate-400">Account runtime:</span>
+                <span className="text-lg font-mono font-bold text-slate-100">
+                  PHP {selectedPhpVersion}
+                  {account?.domain ? <span className="ml-2 text-xs font-semibold text-slate-500">for {account.domain}</span> : null}
+                </span>
+                {phpDiagnostics?.phpErrorLog ? (
+                  <p className="mt-1 text-[11px] text-amber-400">Recent PHP error log detected below.</p>
+                ) : (
+                  <p className="mt-1 text-[11px] text-emerald-400">Per-account PHP-FPM pool will be used after apply.</p>
+                )}
               </div>
               <select
                 value={selectedPhpVersion}
-                onChange={(e) => {
-                  setSelectedPhpVersion(e.target.value);
-                  addActivity("node", `PHP server compilation thread changed to v${e.target.value}`);
-                }}
+                onChange={(e) => setSelectedPhpVersion(e.target.value)}
                 className="bg-slate-900 border border-slate-700 rounded-xl px-4 py-2 text-xs text-slate-100"
               >
-                <option value="8.3">PHP 8.3 (Stable)</option>
-                <option value="8.2">PHP 8.2 (Default)</option>
-                <option value="8.1">PHP 8.1</option>
-                <option value="8.0">PHP 8.0</option>
-                <option value="7.4">PHP 7.4 (Developer Legacy)</option>
+                {(phpAvailableVersions.length ? phpAvailableVersions : ["8.3", "8.2", "8.1", "8.0", "7.4"]).map((version) => (
+                  <option key={version} value={version}>PHP {version}</option>
+                ))}
               </select>
+              <button
+                type="button"
+                onClick={applyPhpSettings}
+                disabled={isSavingPhpSettings}
+                className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-bold text-white transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isSavingPhpSettings ? "Applying..." : "Apply"}
+              </button>
             </div>
 
             {/* Extensions Selector */}
-            <span className="text-[10px] uppercase font-bold text-slate-450 tracking-wider">Active PHP Extension Modules</span>
+            <span className="text-[10px] uppercase font-bold text-slate-450 tracking-wider">PHP extension modules</span>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3">
-              {Object.keys(phpExtensions).map((extKey) => (
+              {(phpExtensionRows.length ? phpExtensionRows : Object.keys(phpExtensions).map((name) => ({ name, installed: true, selected: phpExtensions[name] }))).map((row) => (
+                (() => {
+                  const extKey = row.name;
+                  const checked = Boolean(phpExtensions[extKey]);
+                  return (
                 <div key={extKey} className="flex items-center justify-between bg-slate-950 border border-slate-700 p-3 rounded-xl">
-                  <span className="text-xs font-mono text-slate-100">{extKey}</span>
+                  <span className="text-xs font-mono text-slate-100">
+                    {extKey}
+                    <span className={`ml-1 text-[9px] ${row.installed ? "text-emerald-400" : "text-amber-400"}`}>
+                      {row.installed ? "installed" : "missing"}
+                    </span>
+                  </span>
                   <input
                     type="checkbox"
-                    checked={(phpExtensions as any)[extKey]}
+                    checked={checked}
                     onChange={(e) => {
                       const next = { ...phpExtensions, [extKey]: e.target.checked };
                       setPhpExtensions(next);
-                      addActivity("node", `PHP extension compiler status updated: ${extKey} set to ${e.target.checked}`);
                     }}
                     className="w-4 h-4 text-indigo-600 border-slate-700 bg-slate-900 focus:ring-0 rounded"
                   />
                 </div>
+                  );
+                })()
               ))}
             </div>
 
             {/* php.ini overrides */}
             <div className="mt-8 bg-slate-950 border border-slate-700 rounded-xl p-4">
-              <h3 className="text-xs font-semibold text-slate-200 mb-3">php.ini system memory configuration</h3>
+              <h3 className="text-xs font-semibold text-slate-200 mb-3">Account php.ini overrides</h3>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div>
                   <span className="block text-[11px] text-slate-500">memory_limit</span>
@@ -1533,7 +1659,53 @@ export default function TPanelExtraManager({ activeTab, domains, setDomains, add
                     className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-xs text-slate-100"
                   />
                 </div>
+                <div>
+                  <span className="block text-[11px] text-slate-500">upload_max_filesize</span>
+                  <input
+                    type="text"
+                    value={phpUploadLimit}
+                    onChange={(e) => setPhpUploadLimit(e.target.value)}
+                    className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-xs text-slate-100"
+                  />
+                </div>
+                <div>
+                  <span className="block text-[11px] text-slate-500">post_max_size</span>
+                  <input
+                    type="text"
+                    value={phpPostLimit}
+                    onChange={(e) => setPhpPostLimit(e.target.value)}
+                    className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-xs text-slate-100"
+                  />
+                </div>
+                <div>
+                  <span className="block text-[11px] text-slate-500">max_execution_time</span>
+                  <input
+                    type="text"
+                    value={phpMaxExecution}
+                    onChange={(e) => setPhpMaxExecution(e.target.value)}
+                    className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-xs text-slate-100"
+                  />
+                </div>
+                <div>
+                  <span className="block text-[11px] text-slate-500">max_input_vars</span>
+                  <input
+                    type="text"
+                    value={phpMaxInputVars}
+                    onChange={(e) => setPhpMaxInputVars(e.target.value)}
+                    className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-xs text-slate-100"
+                  />
+                </div>
               </div>
+              {phpStatusMessage && (
+                <div className="mt-4 rounded-lg border border-slate-700 bg-slate-900 p-3 text-xs font-semibold text-slate-200">
+                  {phpStatusMessage}
+                </div>
+              )}
+              {phpDiagnostics?.phpErrorLog && (
+                <pre className="mt-4 max-h-48 overflow-auto rounded-lg border border-amber-500/20 bg-amber-950/20 p-3 text-[11px] text-amber-100">
+                  {phpDiagnostics.phpErrorLog}
+                </pre>
+              )}
             </div>
           </div>
         </div>
