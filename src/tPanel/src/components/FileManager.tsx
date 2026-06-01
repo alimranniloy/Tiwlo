@@ -229,8 +229,19 @@ export default function FileManager({ files, setFiles, addActivity, openAiWithPr
       },
       body: JSON.stringify(payload)
     });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok || !data.ok) throw new Error(data.message || "File operation failed.");
+    const responseText = await response.text();
+    let data: any = {};
+    try {
+      data = responseText ? JSON.parse(responseText) : {};
+    } catch {
+      data = {};
+    }
+    if (!response.ok || !data.ok) {
+      const fallbackMessage = responseText && !responseText.trim().startsWith("<")
+        ? responseText.slice(0, 240)
+        : `File operation failed (${response.status}).`;
+      throw new Error(data.message || fallbackMessage);
+    }
     if (Array.isArray(data.files)) setFiles(data.files);
     return data;
   };

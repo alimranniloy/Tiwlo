@@ -179,8 +179,12 @@ fi
 
 cd "$APP_DIR"
 install_app_dependencies() {
-  rm -rf node_modules package-lock.json
-  "$NPM_BIN" install --include=optional
+  rm -rf node_modules
+  if [ -f package-lock.json ]; then
+    "$NPM_BIN" ci --include=optional
+  else
+    "$NPM_BIN" install --include=optional
+  fi
 }
 
 step "Installing application dependencies"
@@ -364,8 +368,12 @@ NPM_BIN="${NPM_BIN:-npm}"
 git -C "$SOURCE_DIR" pull --ff-only
 cd "$APP_DIR"
 install_app_dependencies() {
-  rm -rf node_modules package-lock.json
-  "$NPM_BIN" install --include=optional
+  rm -rf node_modules
+  if [ -f package-lock.json ]; then
+    "$NPM_BIN" ci --include=optional
+  else
+    "$NPM_BIN" install --include=optional
+  fi
 }
 install_app_dependencies
 if ! "$NPM_BIN" run build; then

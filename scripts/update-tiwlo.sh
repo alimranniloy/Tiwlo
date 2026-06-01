@@ -797,8 +797,16 @@ if [ -n "${API_BASE_URL:-}" ]; then
 fi
 
 echo "Installing dependencies..."
-npm install
-npm --prefix x install
+if [ -f package-lock.json ]; then
+  npm ci
+else
+  npm install
+fi
+if [ -f x/package-lock.json ]; then
+  npm --prefix x ci
+else
+  npm --prefix x install
+fi
 
 echo "Preparing Prisma without deleting data..."
 npm --prefix x run db:generate
@@ -808,7 +816,11 @@ node "$ROOT/x/scripts/sync-mailboxes.mjs" || true
 echo "Building frontend..."
 npm run build
 if [ -d "$ROOT/src/tPanel" ]; then
-  npm --prefix src/tPanel install
+  if [ -f src/tPanel/package-lock.json ]; then
+    npm --prefix src/tPanel ci
+  else
+    npm --prefix src/tPanel install
+  fi
   npm --prefix src/tPanel run build
 fi
 

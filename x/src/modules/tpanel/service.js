@@ -2004,7 +2004,11 @@ fi
 echo "Clone done"
 
 cd "$APP_DIR"
-npm install
+if [ -f package-lock.json ]; then
+  npm ci --include=optional
+else
+  npm install --include=optional
+fi
 npm run build
 
 mkdir -p /etc/tpanel /var/lib/tpanel /var/log/tpanel
@@ -2624,7 +2628,11 @@ fi
 cd "$SOURCE_DIR"
 git pull --ff-only
 cd "$APP_DIR"
-npm install
+if [ -f package-lock.json ]; then
+  npm ci --include=optional
+else
+  npm install --include=optional
+fi
 npm run build
 systemctl restart tpanel
 echo "tPanel updated. Database and user data were not removed."

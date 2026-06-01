@@ -1322,7 +1322,7 @@ function applyAccountFileOwnership(account: any, targetPath: string) {
 
 async function finalizeExtractedFiles(account: any, targetPath: string) {
   if (process.platform === "win32" || !account?.username) return;
-  await execFileAsync("chown", ["-R", `${account.username}:${account.username}`, targetPath], { timeout: 300000 });
+  await execFileAsync("chown", ["-R", account.username, targetPath], { timeout: 300000 }).catch(() => undefined);
   await execFileAsync("sh", ["-lc", `
 chmod -R u+rwX,go+rX "$TARGET_PATH" >/dev/null 2>&1 || true
 find "$TARGET_PATH" -type f \\( -name ".env" -o -name "*.key" -o -name "*.pem" -o -name "id_rsa" \\) -exec chmod 600 {} + >/dev/null 2>&1 || true
