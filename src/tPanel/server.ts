@@ -2240,13 +2240,14 @@ app.post("/api/panel/accounts/:username/provision", requireCapability("accounts"
 
 app.post("/api/panel/accounts/:username/:action", requireCapability("accounts"), (req, res) => {
   const action = String(req.params.action || "");
-  const allowed = new Set(["suspend", "unsuspend", "terminate"]);
+  const deleteActions = new Set(["terminate", "delete", "permanent-delete"]);
+  const allowed = new Set(["suspend", "unsuspend", ...deleteActions]);
   if (!allowed.has(action)) {
     res.status(400).json({ ok: false, message: "Unsupported account action." });
     return;
   }
   const state = readPanelState();
-  if (action === "terminate") {
+  if (deleteActions.has(action)) {
     const deleted = hardDeleteAccount(state, req.params.username, actorFromRequest(req));
     if (!deleted.account) {
       res.status(404).json({ ok: false, message: "Account not found." });
@@ -2283,7 +2284,7 @@ app.post("/api/panel/accounts/:username/:action", requireCapability("accounts"),
     action: `account.${action}`,
     target: req.params.username,
     message: `${req.params.username} ${action} command completed.`,
-    severity: action === "terminate" ? "danger" : "warning"
+    severity: "warning"
   }));
   res.json({ ok: true, account: publicAccount(updatedAccount), accounts: accounts.map(publicAccount) });
 });

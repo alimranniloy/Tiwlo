@@ -713,12 +713,24 @@ export default function AdminPanel({ onLogout }: AdminPanelProps) {
   const runAccountAction = async (username: string, action: string) => {
     setPanelNotice("");
     setPanelError("");
+    if (["terminate", "delete", "permanent-delete"].includes(action)) {
+      const confirmed = window.confirm(`Permanently delete ${username}? This removes the account, hosted files, domains, DNS, SSL/vhost data, and provisioning records.`);
+      if (!confirmed) return;
+    }
     try {
       const response = await fetch(`/api/panel/accounts/${username}/${action}`, { method: "POST", headers: authHeaders() });
       const data = await response.json();
       if (!response.ok || !data.ok) throw new Error(data.message || "Account action failed.");
       setHostingState((current: any) => ({ ...current, accounts: data.accounts }));
-      setPanelNotice(`${username} ${action} command completed.`);
+      setProvisioningState((current: any) => ({
+        ...current,
+        accounts: action === "delete" || action === "terminate" || action === "permanent-delete"
+          ? (current.accounts || []).filter((account: any) => account.username !== username)
+          : current.accounts
+      }));
+      setPanelNotice(["terminate", "delete", "permanent-delete"].includes(action)
+        ? `${username} permanently deleted with domains, DNS, SSL, and hosted files.`
+        : `${username} ${action} command completed.`);
       loadAudit().catch(() => null);
     } catch (error: any) {
       setPanelError(error.message || "Account action failed.");
@@ -951,7 +963,7 @@ export default function AdminPanel({ onLogout }: AdminPanelProps) {
 
         {/* Dynamic Content View */}
         <div className="flex-1 overflow-y-auto p-4 md:p-8 custom-scrollbar">
-          <div className="max-w-7xl mx-auto space-y-8">
+          <div className="w-full max-w-none mx-auto space-y-8">
             
             {!currentModule ? (
               <>
@@ -1649,117 +1661,152 @@ function AccountList({ accounts, provisioningAccounts = [], onAction, onPassword
   const provisioningByUser = new Map((provisioningAccounts || []).map((account: any) => [account.username, account]));
 
   return (
-    <div className="w-full max-w-6xl text-left space-y-5">
-      <div>
-        <h1 className="text-3xl font-black text-slate-100 tracking-tight">List Accounts</h1>
-        <p className="text-sm text-slate-500 mt-2">Manage hosting accounts, user login passwords, document roots, runtimes, quotas, DNS, SSL, and suspension state.</p>
+    <div className="w-full text-left space-y-5">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+        <div className="min-w-0">
+          <h1 className="text-3xl font-black text-slate-100 tracking-tight">List Accounts</h1>
+          <p className="text-sm text-slate-500 mt-2 max-w-3xl">Manage accounts, domains, DNS, SSL, permissions, passwords, and permanent deletion without horizontal clipping.</p>
+        </div>
+        <div className="grid grid-cols-3 gap-2 text-center text-xs">
+          <div className="rounded-lg border border-slate-800 bg-slate-950 px-4 py-2">
+            <p className="text-[10px] font-black uppercase text-slate-500">Total</p>
+            <p className="text-lg font-black text-slate-100">{accounts.length}</p>
+          </div>
+          <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-4 py-2">
+            <p className="text-[10px] font-black uppercase text-emerald-300">Active</p>
+            <p className="text-lg font-black text-emerald-200">{accounts.filter((account: any) => account.status === "active").length}</p>
+          </div>
+          <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 px-4 py-2">
+            <p className="text-[10px] font-black uppercase text-amber-300">Paused</p>
+            <p className="text-lg font-black text-amber-200">{accounts.filter((account: any) => account.status === "suspended").length}</p>
+          </div>
+        </div>
       </div>
-      <div className="overflow-hidden rounded-lg border border-slate-800 bg-slate-950/40">
-        <table className="w-full min-w-[1320px] text-xs">
-          <thead className="bg-slate-900 text-slate-500 uppercase">
-            <tr>
-              <th className="p-3 text-left">Domain</th>
-              <th className="p-3 text-left">User</th>
-              <th className="p-3 text-left">Package</th>
-              <th className="p-3 text-left">Runtime</th>
-              <th className="p-3 text-left">Provision</th>
-              <th className="p-3 text-left">Quota</th>
-              <th className="p-3 text-left">Status</th>
-              <th className="p-3 text-left">Access</th>
-              <th className="p-3 text-left">Password</th>
-              <th className="p-3 text-left">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {accounts.length === 0 ? (
-              <tr><td colSpan={10} className="p-6 text-center text-slate-500 font-bold">No accounts created yet.</td></tr>
-            ) : accounts.map((account: any) => {
-              const provision = (provisioningByUser.get(account.username) as any) || account;
-              const vhostStatus = provision.provisioning?.vhost?.status || "queued";
-              const sslStatus = provision.provisioning?.ssl?.status || (account.sslEnabled ? "queued" : "disabled");
-              return (
-              <tr key={account.id} className="border-t border-slate-800 text-slate-300 align-top">
-                <td className="p-3 font-black text-slate-100">
-                  <div>{account.domain}</div>
-                  <div className="mt-1 text-[10px] font-bold text-slate-500">{account.documentRoot}</div>
-                </td>
-                <td className="p-3 font-mono">{account.username}</td>
-                <td className="p-3">{account.packageName}</td>
-                <td className="p-3 uppercase font-bold">{account.runtime}</td>
-                <td className="p-3">
-                  <div className="flex flex-col gap-1 text-[10px] font-bold">
-                    <span className={provision.provisioning?.autoSubdomain ? "text-emerald-400" : "text-slate-400"}>
-                      {provision.provisioning?.autoSubdomain ? "Auto subdomain" : "Domain"}
-                    </span>
-                    <span className={statusTone(vhostStatus)}>Vhost {vhostStatus}</span>
-                    <span className={statusTone(sslStatus)}>
-                      SSL {sslStatus}
-                    </span>
+      {accounts.length === 0 ? (
+        <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-10 text-center text-sm font-bold text-slate-500">No accounts created yet.</div>
+      ) : (
+        <div className="grid grid-cols-1 gap-4">
+          {accounts.map((account: any) => {
+            const provision = (provisioningByUser.get(account.username) as any) || account;
+            const vhostStatus = provision.provisioning?.vhost?.status || "queued";
+            const sslStatus = provision.provisioning?.ssl?.status || (account.sslEnabled ? "queued" : "disabled");
+            const routeDomains = [
+              account.domain,
+              ...(provision.provisioning?.vhost?.aliases || []),
+              ...((provision.provisioning?.vhost?.subdomains || []).flatMap((route: any) => [route.domain, ...(route.aliases || [])]))
+            ].filter(Boolean);
+            const latestLogs = (provision.provisioningLog || []).slice(-2);
+            return (
+              <section key={account.id || account.username} className="rounded-xl border border-slate-800 bg-slate-950/50 p-4 shadow-none">
+                <div className="grid grid-cols-1 gap-4 2xl:grid-cols-[minmax(280px,1.35fr)_minmax(220px,0.8fr)_minmax(320px,1fr)_minmax(300px,0.95fr)]">
+                  <div className="min-w-0 space-y-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className={`rounded border px-2 py-1 text-[10px] font-black uppercase ${account.status === "active" ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-300" : account.status === "suspended" ? "border-amber-500/20 bg-amber-500/10 text-amber-300" : "border-rose-500/20 bg-rose-500/10 text-rose-300"}`}>{account.status}</span>
+                      <span className="rounded border border-slate-800 bg-slate-900 px-2 py-1 text-[10px] font-black uppercase text-slate-400">{account.runtime || "php"}</span>
+                      <span className="rounded border border-slate-800 bg-slate-900 px-2 py-1 text-[10px] font-black uppercase text-slate-400">{account.packageName || "Package"}</span>
+                    </div>
+                    <div>
+                      <h2 className="break-all text-lg font-black text-slate-100">{account.domain}</h2>
+                      <p className="mt-1 break-all font-mono text-[11px] font-bold text-slate-500">{account.documentRoot}</p>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {routeDomains.slice(0, 6).map((domain: string) => (
+                        <span key={domain} className="max-w-full break-all rounded border border-slate-800 bg-slate-900 px-2 py-1 text-[10px] font-bold text-slate-300">{domain}</span>
+                      ))}
+                    </div>
                   </div>
-                </td>
-                <td className="p-3">{account.quotaMb} MB / {account.bandwidthGb} GB</td>
-                <td className={`p-3 font-black ${account.status === "active" ? "text-emerald-400" : account.status === "suspended" ? "text-amber-400" : "text-rose-400"}`}>{account.status}</td>
-                <td className="p-3">
-                  <div className="mb-2">
+
+                  <div className="grid grid-cols-2 gap-3 text-xs sm:grid-cols-4 2xl:grid-cols-2">
+                    <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-3">
+                      <p className="text-[10px] font-black uppercase text-slate-500">Username</p>
+                      <p className="mt-1 break-all font-mono font-black text-slate-100">{account.username}</p>
+                    </div>
+                    <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-3">
+                      <p className="text-[10px] font-black uppercase text-slate-500">Quota</p>
+                      <p className="mt-1 font-black text-slate-100">{account.quotaMb} MB</p>
+                    </div>
+                    <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-3">
+                      <p className="text-[10px] font-black uppercase text-slate-500">Bandwidth</p>
+                      <p className="mt-1 font-black text-slate-100">{account.bandwidthGb} GB</p>
+                    </div>
+                    <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-3">
+                      <p className="text-[10px] font-black uppercase text-slate-500">Provision</p>
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        <span className={statusTone(vhostStatus)}>Vhost {vhostStatus}</span>
+                        <span className={statusTone(sslStatus)}>SSL {sslStatus}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="min-w-0 space-y-3">
                     <select
                       value={account.permissionProfile || "standard"}
                       onChange={(event) => onPermission(account.username, {}, event.target.value)}
-                      className="w-full min-w-[230px] rounded border border-slate-800 bg-slate-900 px-2 py-1 text-[10px] font-bold text-slate-100 outline-none focus:border-[#0069ff]"
+                      className="w-full rounded border border-slate-800 bg-slate-900 px-3 py-2 text-xs font-bold text-slate-100 outline-none focus:border-[#0069ff]"
                     >
                       {ACCOUNT_PERMISSION_PROFILES.map((profile) => <option key={profile.id} value={profile.id}>{profile.label}</option>)}
                     </select>
+                    <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3 xl:grid-cols-4">
+                      {ACCOUNT_PERMISSION_ITEMS.slice(0, 16).map(([key, label]) => {
+                        const enabled = account.permissions?.[key] !== false;
+                        return (
+                          <button
+                            key={key}
+                            onClick={() => onPermission(account.username, { [key]: !enabled })}
+                            className={`min-h-8 rounded border px-2 py-1 text-[9px] font-black uppercase leading-tight ${enabled ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-300" : "border-slate-800 bg-slate-950 text-slate-600"}`}
+                            title={`${enabled ? "Disable" : "Enable"} ${label}`}
+                          >
+                            {label}
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
-                  <div className="grid grid-cols-3 gap-1 min-w-[230px]">
-                    {ACCOUNT_PERMISSION_ITEMS.slice(0, 15).map(([key, label]) => {
-                      const enabled = account.permissions?.[key] !== false;
-                      return (
-                        <button
-                          key={key}
-                          onClick={() => onPermission(account.username, { [key]: !enabled })}
-                          className={`rounded border px-1.5 py-1 text-[9px] font-black uppercase ${enabled ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-300" : "border-slate-800 bg-slate-950 text-slate-600"}`}
-                          title={`${enabled ? "Disable" : "Enable"} ${label}`}
-                        >
-                          {label}
-                        </button>
-                      );
-                    })}
+
+                  <div className="min-w-0 space-y-3">
+                    <div className="grid grid-cols-[1fr_auto] gap-2">
+                      <input
+                        type="password"
+                        value={passwords[account.username] || ""}
+                        onChange={(event) => setPasswords((current) => ({ ...current, [account.username]: event.target.value }))}
+                        placeholder={account.passwordSet ? "Reset password" : "Set password"}
+                        className="min-w-0 rounded border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100 outline-none focus:border-[#0069ff]"
+                      />
+                      <button
+                        onClick={() => {
+                          onPassword(account.username, passwords[account.username] || "");
+                          setPasswords((current) => ({ ...current, [account.username]: "" }));
+                        }}
+                        className="inline-flex items-center gap-1.5 rounded border border-[#0069ff]/40 px-3 py-2 text-xs font-black text-[#66a3ff] hover:bg-[#0069ff]/10"
+                      >
+                        <Lock className="h-3.5 w-3.5" /> Save
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                      <button onClick={() => onProvision(account.username)} className="inline-flex items-center justify-center gap-1.5 rounded border border-[#0069ff]/30 px-3 py-2 text-xs font-black text-[#66a3ff] hover:bg-[#0069ff]/10">
+                        <RefreshCw className="h-3.5 w-3.5" /> Retry SSL
+                      </button>
+                      <button onClick={() => onAction(account.username, account.status === "suspended" ? "unsuspend" : "suspend")} className="inline-flex items-center justify-center gap-1.5 rounded border border-slate-700 px-3 py-2 text-xs font-black text-slate-200 hover:bg-slate-800">
+                        <ShieldCheck className="h-3.5 w-3.5" /> {account.status === "suspended" ? "Unsuspend" : "Suspend"}
+                      </button>
+                      <button onClick={() => onAction(account.username, "delete")} className="inline-flex items-center justify-center gap-1.5 rounded border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs font-black text-rose-300 hover:bg-rose-500/20" title="Permanently delete account, files, domains, DNS, SSL, and provisioning records">
+                        <Trash2 className="h-3.5 w-3.5" /> Permanently Delete
+                      </button>
+                    </div>
+                    {latestLogs.length > 0 && (
+                      <div className="space-y-1 rounded-lg border border-slate-800 bg-slate-900/50 p-3">
+                        {latestLogs.map((line: string) => (
+                          <p key={line} className="truncate text-[10px] font-bold text-slate-500">{line}</p>
+                        ))}
+                      </div>
+                    )}
                   </div>
-                </td>
-                <td className="p-3">
-                  <div className="flex gap-2">
-                    <input
-                      type="password"
-                      value={passwords[account.username] || ""}
-                      onChange={(event) => setPasswords((current) => ({ ...current, [account.username]: event.target.value }))}
-                      placeholder={account.passwordSet ? "Reset password" : "Set password"}
-                      className="w-36 rounded border border-slate-800 bg-slate-900 px-2 py-1 text-xs text-slate-100 outline-none focus:border-[#0069ff]"
-                    />
-                    <button
-                      onClick={() => {
-                        onPassword(account.username, passwords[account.username] || "");
-                        setPasswords((current) => ({ ...current, [account.username]: "" }));
-                      }}
-                      className="rounded border border-[#0069ff]/40 px-2 py-1 font-black text-[#66a3ff] hover:bg-[#0069ff]/10"
-                    >
-                      Save
-                    </button>
-                  </div>
-                </td>
-                <td className="p-3">
-                  <div className="flex flex-wrap gap-2">
-                    <button onClick={() => onProvision(account.username)} className="px-2 py-1 rounded border border-[#0069ff]/30 text-[#66a3ff] hover:bg-[#0069ff]/10">Retry SSL</button>
-                    <button onClick={() => onAction(account.username, account.status === "suspended" ? "unsuspend" : "suspend")} className="px-2 py-1 rounded border border-slate-700 text-slate-200 hover:bg-slate-800">{account.status === "suspended" ? "Unsuspend" : "Suspend"}</button>
-                    <button onClick={() => onAction(account.username, "terminate")} className="px-2 py-1 rounded border border-rose-500/30 text-rose-300 hover:bg-rose-500/10">Terminate</button>
-                  </div>
-                  {(provision.provisioningLog || []).slice(-2).map((line: string) => (
-                    <div key={line} className="mt-2 max-w-[240px] truncate text-[10px] text-slate-500">{line}</div>
-                  ))}
-                </td>
-              </tr>
-            )})}
-          </tbody>
-        </table>
-      </div>
+                </div>
+              </section>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
