@@ -43,30 +43,73 @@ export const identityVerificationRequirement = (flow = 'account_recovery') => {
   };
 };
 
-export const identityAppOrigin = () => (
-  clean(process.env.APP_URL)
-  || clean(process.env.FRONTEND_URL)
-  || clean(process.env.PUBLIC_APP_URL)
-  || clean(process.env.CLIENT_URL)
-  || 'http://localhost:3000'
-).replace(/\/+$/, '');
+const isLocalOrigin = (value = '') => /\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0)(?::\d+)?(?:\/|$)/i.test(String(value || ''));
 
-export const identityVerificationLink = (request) => {
+const normalizeOrigin = (value = '') => {
+  const text = clean(value).replace(/\/+$/, '');
+  if (!text || isLocalOrigin(text)) return '';
+  return /^https?:\/\//i.test(text) ? text : `https://${text}`;
+};
+
+export const identityAppOrigin = () => (
+  normalizeOrigin(process.env.FRONTEND_ORIGIN)
+  || normalizeOrigin(process.env.PUBLIC_APP_URL)
+  || normalizeOrigin(process.env.CLIENT_URL)
+  || normalizeOrigin(process.env.APP_URL)
+  || 'https://tiwlo.com'
+);
+
+export const identityAppOriginFor = async (prisma) => {
+  const envOrigin = normalizeOrigin(process.env.FRONTEND_ORIGIN)
+    || normalizeOrigin(process.env.PUBLIC_APP_URL)
+    || normalizeOrigin(process.env.CLIENT_URL)
+    || normalizeOrigin(process.env.APP_URL);
+  if (envOrigin) return envOrigin;
+  const setting = await prisma?.systemSetting?.findUnique({
+    where: { scope_scopeId_key: { scope: 'platform', scopeId: '', key: 'powerDnsConfig' } }
+  }).catch(() => null);
+  const domain = normalizeOrigin(setting?.value?.primaryDomain || process.env.TIWLO_DOMAIN || process.env.APP_DOMAIN);
+  return domain || 'https://tiwlo.com';
+};
+
+export const identityAppBrandFor = async (prisma) => {
+  const [systemEmail, branding] = await Promise.all([
+    prisma?.systemSetting?.findUnique({
+      where: { scope_scopeId_key: { scope: 'platform', scopeId: '', key: 'systemEmail' } }
+    }).catch(() => null),
+    prisma?.systemSetting?.findUnique({
+      where: { scope_scopeId_key: { scope: 'platform', scopeId: '', key: 'branding' } }
+    }).catch(() => null)
+  ]);
+  const brand = clean(
+    systemEmail?.value?.fromName
+    || systemEmail?.value?.brandName
+    || branding?.value?.siteName
+    || branding?.value?.appName
+    || branding?.value?.brandName
+    || branding?.value?.name
+  );
+  if (brand) return brand;
+  const origin = await identityAppOriginFor(prisma);
+  return origin.replace(/^https?:\/\//i, '');
+};
+
+export const identityVerificationLink = (request, origin = identityAppOrigin()) => {
   const token = encodeURIComponent(String(request?.token || ''));
-  return `${identityAppOrigin()}/id-verification?token=${token}`;
+  return `${normalizeOrigin(origin) || identityAppOrigin()}/id-verification?token=${token}`;
 };
 
 export const identityVerificationInclude = {
   owner: true
 };
 
-export const publicIdentityVerification = (request, { includePayload = false } = {}) => {
+export const publicIdentityVerification = (request, { includePayload = false, origin = identityAppOrigin() } = {}) => {
   if (!request) return null;
   const payload = includePayload ? request.payload : redactPayload(request.payload);
   return {
     ...request,
     payload,
-    mobileLink: identityVerificationLink(request)
+    mobileLink: identityVerificationLink(request, origin)
   };
 };
 

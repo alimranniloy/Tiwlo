@@ -2,7 +2,8 @@ import express from 'express';
 import { createPublicKey, verify } from 'node:crypto';
 import {
   createIdentityVerificationRequest,
-  identityAppOrigin,
+  identityAppBrandFor,
+  identityAppOriginFor,
   identityVerificationLink,
   publicIdentityVerification,
   reviewIdentityVerificationRequest
@@ -216,11 +217,15 @@ const sendIdentityVerificationFromDiscord = async (prisma, payload, customId) =>
     }
   }).catch(() => null);
 
-  const link = identityVerificationLink(request);
+  const [origin, brandName] = await Promise.all([
+    identityAppOriginFor(prisma),
+    identityAppBrandFor(prisma)
+  ]);
+  const link = identityVerificationLink(request, origin);
   return {
     type: 4,
     data: {
-      content: `ID verification request sent for ${resource.owner?.email || ownerId}.\n${link}`,
+      content: `${brandName} ID verification request sent for ${resource.owner?.email || ownerId}.\n${link}`,
       flags: 64
     }
   };
@@ -840,7 +845,12 @@ export const notifyDiscordIdentityVerificationEvent = async (ctx, event, request
       : fresh.flow === 'tiwlo_pay'
         ? 'Tiwlo Pay ID verification'
         : 'Disabled account ID verification';
-    const adminLink = `${identityAppOrigin()}/management/id-verifications?id=${encodeURIComponent(fresh.id)}`;
+    const [origin, brandName] = await Promise.all([
+      identityAppOriginFor(ctx.prisma),
+      identityAppBrandFor(ctx.prisma)
+    ]);
+    const adminLink = `${origin}/management/id-verifications?id=${encodeURIComponent(fresh.id)}`;
+    const siteName = origin.replace(/^https?:\/\//i, '');
     const color = fresh.status === 'approved' ? 0x22c55e : fresh.status === 'rejected' ? 0xef4444 : 0x0069ff;
 
     await postDiscordMessage(integration.config, integration.config.idVerifiedChannelId, {
@@ -851,6 +861,7 @@ export const notifyDiscordIdentityVerificationEvent = async (ctx, event, request
           ? `Review completed for ${fresh.owner?.email || fresh.ownerId}.`
           : `Review submitted documents and live selfie for ${fresh.owner?.email || fresh.ownerId}.`),
         fields: [
+          { name: 'Website', value: `${brandName} (${siteName})`, inline: true },
           { name: 'Customer', value: userLine(fresh.owner), inline: false },
           { name: 'Flow', value: String(fresh.flow || 'account_recovery'), inline: true },
           { name: 'Status', value: String(fresh.status || 'pending'), inline: true },
@@ -860,7 +871,7 @@ export const notifyDiscordIdentityVerificationEvent = async (ctx, event, request
           { name: 'Reason', value: extra.reason || fresh.review?.reason || '', inline: false }
         ].filter((field) => field.value),
         timestamp: new Date().toISOString(),
-        footer: { text: `Tiwlo verification ${fresh.id}` }
+        footer: { text: `${brandName} verification ${fresh.id}` }
       }],
       components: identityReviewButtons(fresh)
     });

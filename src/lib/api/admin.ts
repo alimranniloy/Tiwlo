@@ -107,6 +107,14 @@ export async function fetchUsersForAdmin(search?: string) {
         role
         status
         credits
+        phone
+        mobileCountryCode
+        country
+        addressLine1
+        city
+        state
+        postalCode
+        billingName
         createdAt
         updatedAt
         securitySummary
@@ -147,6 +155,14 @@ export async function updateUserWithApi(input: Record<string, unknown>) {
         role
         status
         credits
+        phone
+        mobileCountryCode
+        country
+        addressLine1
+        city
+        state
+        postalCode
+        billingName
         createdAt
         updatedAt
         securitySummary

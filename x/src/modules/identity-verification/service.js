@@ -8,6 +8,7 @@ import {
   findActiveIdentityVerificationRequest,
   findLatestRejectedIdentityVerification,
   hasVirtualCameraSignal,
+  identityAppOriginFor,
   identityVerificationInclude,
   identityVerificationLink,
   identityVerificationRequirement,
@@ -175,10 +176,11 @@ export const identityVerificationChallenge = async (ctx, args = {}) => {
   }
 
   const rejected = await findLatestRejectedIdentityVerification(ctx.prisma, actor.id, flow);
+  const origin = await identityAppOriginFor(ctx.prisma);
   return toApi({
-    request: publicIdentityVerification(request),
+    request: publicIdentityVerification(request, { origin }),
     mobileOnly: true,
-    mobileLink: request ? identityVerificationLink(request) : '',
+    mobileLink: request ? identityVerificationLink(request, origin) : '',
     rejectedReason: rejected?.review?.reason || '',
     rejectedAt: rejected?.reviewedAt || null
   });
@@ -197,7 +199,8 @@ export const listIdentityVerifications = async (ctx, args = {}) => {
     orderBy: { updatedAt: 'desc' },
     take: Math.min(Number(args.limit || 40), 100)
   });
-  return toApi(rows.map((row) => publicIdentityVerification(row, { includePayload: true })));
+  const origin = await identityAppOriginFor(ctx.prisma);
+  return toApi(rows.map((row) => publicIdentityVerification(row, { includePayload: true, origin })));
 };
 
 export const startIdentityVerification = async (ctx, input = {}) => {
@@ -230,7 +233,7 @@ export const startIdentityVerification = async (ctx, input = {}) => {
     source: input.source || ''
   });
 
-  return toApi(publicIdentityVerification(request));
+  return toApi(publicIdentityVerification(request, { origin: await identityAppOriginFor(ctx.prisma) }));
 };
 
 export const submitIdentityVerification = async (ctx, input = {}) => {
@@ -299,7 +302,7 @@ export const submitIdentityVerification = async (ctx, input = {}) => {
   await notifyDiscordIdentityVerificationEvent(ctx, 'submitted', linked, { ticket });
 
   return toApi({
-    request: publicIdentityVerification(linked),
+    request: publicIdentityVerification(linked, { origin: await identityAppOriginFor(ctx.prisma) }),
     message: 'ID verification submitted. An administrator will review it shortly.'
   });
 };
@@ -332,5 +335,5 @@ export const reviewIdentityVerification = async (ctx, id, status, reason = '') =
   });
   await notifyDiscordIdentityVerificationEvent(ctx, 'reviewed', request, { reason });
 
-  return toApi(publicIdentityVerification(request, { includePayload: true }));
+  return toApi(publicIdentityVerification(request, { includePayload: true, origin: await identityAppOriginFor(ctx.prisma) }));
 };

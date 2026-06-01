@@ -27,6 +27,7 @@ import {
   updateUserWithApi
 } from '../../lib/tiwloApi';
 import { useActionConfirmation } from '../../components/ActionConfirmation';
+import { COUNTRIES, countryByCode } from '../../lib/countries';
 
 const roles = ['super_admin', 'admin', 'manager', 'staff', 'user', 'store_owner', 'store_customer', 'isp_admin'];
 const statuses = ['active', 'pending', 'suspended', 'banned', 'blocked', 'disabled'];
@@ -63,6 +64,7 @@ export default function UserManagement() {
   const [directoryTab, setDirectoryTab] = useState<'platform' | 'ecommerce' | 'isp'>('platform');
   const [searchTerm, setSearchTerm] = useState('');
   const [users, setUsers] = useState<any[]>([]);
+  const [countryFilter, setCountryFilter] = useState('');
   const [storeGroups, setStoreGroups] = useState<any[]>([]);
   const [selectedStore, setSelectedStore] = useState<any | null>(null);
   const [storeCustomers, setStoreCustomers] = useState<any[]>([]);
@@ -76,13 +78,16 @@ export default function UserManagement() {
   const [detailsUser, setDetailsUser] = useState<any | null>(null);
   const { confirmDelete, confirmEdit } = useActionConfirmation();
 
-  const mappedUsers = useMemo(() => users.map((item) => ({
-    ...item,
-    plan: planFromRole(item.role),
-    statusLabel: String(item.status || 'active').replace(/^\w/, (char) => char.toUpperCase()),
-    joined: formatDate(item.createdAt),
-    spend: `$${Number(item.credits || 0).toFixed(2)}`
-  })), [users]);
+  const mappedUsers = useMemo(() => users
+    .filter((item) => !countryFilter || String(item.country || '').toUpperCase() === countryFilter)
+    .map((item) => ({
+      ...item,
+      countryInfo: countryByCode(item.country),
+      plan: planFromRole(item.role),
+      statusLabel: String(item.status || 'active').replace(/^\w/, (char) => char.toUpperCase()),
+      joined: formatDate(item.createdAt),
+      spend: `$${Number(item.credits || 0).toFixed(2)}`
+    })), [countryFilter, users]);
 
   const loadUsers = async () => {
     setLoading(true);
@@ -184,8 +189,8 @@ export default function UserManagement() {
           ...ispClients.map((client) => [client.id, client.name, client.username, client.email, client.phone, client.package?.name || client.packageId, client.balance, client.status])
         ]
         : [
-          ['id', 'name', 'email', 'role', 'status', 'credits', 'createdAt'],
-          ...users.map((user) => [user.id, user.name, user.email, user.role, user.status, user.credits, user.createdAt])
+          ['id', 'name', 'email', 'country', 'mobileCountryCode', 'phone', 'role', 'status', 'credits', 'createdAt'],
+          ...mappedUsers.map((user) => [user.id, user.name, user.email, user.country, user.mobileCountryCode, user.phone, user.role, user.status, user.credits, user.createdAt])
         ];
 
     const csv = rows
@@ -227,7 +232,10 @@ export default function UserManagement() {
         email: editing.email,
         role: editing.role,
         status: editing.status,
-        credits: Number(editing.credits || 0)
+        credits: Number(editing.credits || 0),
+        country: editing.country,
+        mobileCountryCode: editing.mobileCountryCode || countryByCode(editing.country).dialCode,
+        phone: editing.phone
       });
       setUsers((current) => current.map((user) => (user.id === updated.id ? updated : user)));
       setEditing(null);
@@ -534,6 +542,17 @@ export default function UserManagement() {
               className="w-full bg-white border border-[#e5e8ed] rounded px-10 py-2 text-[14px] focus:outline-none focus:border-[#0069ff] transition-colors"
             />
           </div>
+          <select
+            value={countryFilter}
+            onChange={(event) => setCountryFilter(event.target.value)}
+            className="rounded border border-[#e5e8ed] bg-white px-3 py-2 text-[13px] font-bold text-[#4a4a4a] outline-none focus:border-[#0069ff]"
+            aria-label="Filter users by country"
+          >
+            <option value="">All countries</option>
+            {COUNTRIES.map((country) => (
+              <option key={country.code} value={country.code}>{country.flag} {country.name}</option>
+            ))}
+          </select>
           <p className="text-[12px] font-bold text-gray-400 uppercase tracking-wider">{mappedUsers.length} Total Users</p>
         </div>
 
@@ -572,6 +591,11 @@ export default function UserManagement() {
                           <Mail className="h-3 w-3" />
                           {u.email}
                         </div>
+                        <p className="mt-1 flex items-center gap-1.5 text-[11px] font-bold text-gray-500">
+                          <span className="text-sm leading-none">{u.countryInfo.flag}</span>
+                          <span>{u.countryInfo.name}</span>
+                          {u.mobileCountryCode && <span className="font-mono text-gray-400">{u.mobileCountryCode}</span>}
+                        </p>
                       </div>
                     </div>
                   </td>
@@ -730,6 +754,35 @@ export default function UserManagement() {
               <label className="space-y-1">
                 <span className="text-[11px] font-bold uppercase tracking-wider text-[#4a4a4a]">Email</span>
                 <input value={editing.email || ''} onChange={(e) => setEditing({ ...editing, email: e.target.value })} className="w-full rounded border border-[#e5e8ed] px-3 py-2 text-[13px] outline-none focus:border-[#0069ff]" />
+              </label>
+              <label className="space-y-1">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-[#4a4a4a]">Country</span>
+                <select
+                  value={editing.country || 'BD'}
+                  onChange={(e) => {
+                    const country = countryByCode(e.target.value);
+                    setEditing({ ...editing, country: country.code, mobileCountryCode: country.dialCode });
+                  }}
+                  className="w-full rounded border border-[#e5e8ed] px-3 py-2 text-[13px] font-bold outline-none focus:border-[#0069ff]"
+                >
+                  {COUNTRIES.map((country) => <option key={country.code} value={country.code}>{country.flag} {country.name}</option>)}
+                </select>
+              </label>
+              <label className="space-y-1">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-[#4a4a4a]">Mobile</span>
+                <div className="grid grid-cols-[92px_1fr] overflow-hidden rounded border border-[#e5e8ed] focus-within:border-[#0069ff]">
+                  <select
+                    value={editing.country || 'BD'}
+                    onChange={(e) => {
+                      const country = countryByCode(e.target.value);
+                      setEditing({ ...editing, country: country.code, mobileCountryCode: country.dialCode });
+                    }}
+                    className="border-r border-[#e5e8ed] bg-gray-50 px-2 py-2 text-[12px] font-black outline-none"
+                  >
+                    {COUNTRIES.map((country) => <option key={country.code} value={country.code}>{country.flag} {country.dialCode}</option>)}
+                  </select>
+                  <input value={editing.phone || ''} onChange={(e) => setEditing({ ...editing, phone: e.target.value })} className="w-full px-3 py-2 text-[13px] outline-none" />
+                </div>
               </label>
               <label className="space-y-1">
                 <span className="text-[11px] font-bold uppercase tracking-wider text-[#4a4a4a]">Role</span>

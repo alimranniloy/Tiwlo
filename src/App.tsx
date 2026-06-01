@@ -444,12 +444,18 @@ export default function App() {
   }, [showWelcome]);
 
   const handleLogin = (authenticatedUser: User) => {
+    if (typeof window !== 'undefined') {
+      window.history.replaceState(null, '', '/');
+    }
     setUser(authenticatedUser);
     localStorage.setItem('tiwlo_user', JSON.stringify(authenticatedUser));
     setShowWelcome(true);
   };
 
   const handleLogout = () => {
+    if (typeof window !== 'undefined') {
+      window.history.replaceState(null, '', '/');
+    }
     setUser(null);
     setShowWelcome(false);
     clearAuthToken();

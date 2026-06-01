@@ -14,6 +14,9 @@ type SystemShieldConfig = {
   blockDuplicatePhone: boolean;
   matchRestrictedOnly: boolean;
   vpnDetection: boolean;
+  cloudProviderSignals: boolean;
+  countryMismatchDetection: boolean;
+  emailSimilarity: boolean;
   disableOnVpnOnly: boolean;
 };
 
@@ -26,6 +29,9 @@ const DEFAULT_SYSTEM_SHIELD: SystemShieldConfig = {
   blockDuplicatePhone: true,
   matchRestrictedOnly: true,
   vpnDetection: true,
+  cloudProviderSignals: true,
+  countryMismatchDetection: true,
+  emailSimilarity: true,
   disableOnVpnOnly: false
 };
 
@@ -248,6 +254,24 @@ export default function AdminCore() {
                   desc="Proxy chains, datacenter headers, and unusual network ranges add risk."
                   checked={systemShield.vpnDetection}
                   onChange={(value) => setShieldValue('vpnDetection', value)}
+                />
+                <ToggleRow
+                  title="Cloud ASN Intelligence"
+                  desc="Azure, AWS, Google Cloud, DigitalOcean, Hetzner, OVH, and similar hosting networks add risk."
+                  checked={systemShield.cloudProviderSignals}
+                  onChange={(value) => setShieldValue('cloudProviderSignals', value)}
+                />
+                <ToggleRow
+                  title="Country Mismatch"
+                  desc="Compares selected signup country with browser/header country telemetry."
+                  checked={systemShield.countryMismatchDetection}
+                  onChange={(value) => setShieldValue('countryMismatchDetection', value)}
+                />
+                <ToggleRow
+                  title="Email Similarity"
+                  desc="Flags similar email usernames against restricted accounts."
+                  checked={systemShield.emailSimilarity}
+                  onChange={(value) => setShieldValue('emailSimilarity', value)}
                 />
                 <ToggleRow
                   title="Disable On VPN Alone"

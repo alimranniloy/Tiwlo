@@ -118,6 +118,53 @@ export function countryByCode(code?: string) {
   return COUNTRIES.find((country) => country.code === String(code || '').toUpperCase()) || COUNTRIES.find((country) => country.code === 'BD') || COUNTRIES[0];
 }
 
+const TIMEZONE_COUNTRY_HINTS: Record<string, string> = {
+  'Asia/Dhaka': 'BD',
+  'Asia/Kolkata': 'IN',
+  'Asia/Calcutta': 'IN',
+  'Asia/Karachi': 'PK',
+  'Asia/Kathmandu': 'NP',
+  'Asia/Colombo': 'LK',
+  'Asia/Dubai': 'AE',
+  'Asia/Riyadh': 'SA',
+  'Asia/Singapore': 'SG',
+  'Asia/Kuala_Lumpur': 'MY',
+  'Asia/Jakarta': 'ID',
+  'Asia/Bangkok': 'TH',
+  'Asia/Manila': 'PH',
+  'Asia/Tokyo': 'JP',
+  'Asia/Seoul': 'KR',
+  'Europe/London': 'GB',
+  'Europe/Berlin': 'DE',
+  'Europe/Paris': 'FR',
+  'Europe/Rome': 'IT',
+  'Europe/Madrid': 'ES',
+  'America/New_York': 'US',
+  'America/Chicago': 'US',
+  'America/Denver': 'US',
+  'America/Los_Angeles': 'US',
+  'America/Toronto': 'CA',
+  'Australia/Sydney': 'AU'
+};
+
+export function detectBrowserCountryCode(fallback = 'BD') {
+  if (typeof navigator !== 'undefined') {
+    const locales = [navigator.language, ...(navigator.languages || [])].filter(Boolean);
+    for (const locale of locales) {
+      const region = String(locale).match(/[-_]([A-Z]{2})\b/i)?.[1]?.toUpperCase();
+      if (region && COUNTRIES.some((country) => country.code === region)) return region;
+    }
+  }
+  try {
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+    const hinted = TIMEZONE_COUNTRY_HINTS[timezone];
+    if (hinted) return hinted;
+  } catch {
+    return countryByCode(fallback).code;
+  }
+  return countryByCode(fallback).code;
+}
+
 export function normalizePhoneDigits(phone: string) {
   return String(phone || '').replace(/\D/g, '');
 }

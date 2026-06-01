@@ -1,5 +1,6 @@
 import { User } from '../../types';
 import { graphQL, setAuthToken, userFields } from './client';
+import { detectBrowserCountryCode } from '../countries';
 
 function deviceMetadata() {
   if (typeof window === 'undefined' || typeof navigator === 'undefined') {
@@ -17,7 +18,8 @@ function deviceMetadata() {
     deviceMemory: (navigator as Navigator & { deviceMemory?: number }).deviceMemory || 0,
     maxTouchPoints: navigator.maxTouchPoints || 0,
     screen: screenText,
-    userAgent: navigator.userAgent || ''
+    userAgent: navigator.userAgent || '',
+    country: detectBrowserCountryCode('')
   };
   const deviceFingerprint = [
     metadata.userAgent,

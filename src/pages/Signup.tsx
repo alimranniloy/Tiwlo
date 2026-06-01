@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom';
 import { User as UserType } from '../types';
 import { signupWithApi } from '../lib/tiwloApi';
 import BrandLogo from '../components/BrandLogo';
-import { COUNTRIES, countryByCode, phoneValidationMessage } from '../lib/countries';
+import { COUNTRIES, countryByCode, detectBrowserCountryCode, phoneValidationMessage } from '../lib/countries';
 import AuthCard, { AuthShell } from '../components/AuthCard';
 
 interface SignupProps {
@@ -59,7 +59,7 @@ function Field({
 
 export default function SignupPage({ onSignup }: SignupProps) {
   const [step, setStep] = useState(1);
-  const [form, setForm] = useState<SignupForm>(initialForm);
+  const [form, setForm] = useState<SignupForm>(() => ({ ...initialForm, country: detectBrowserCountryCode(initialForm.country) }));
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const selectedCountry = useMemo(() => countryByCode(form.country), [form.country]);
@@ -177,9 +177,25 @@ export default function SignupPage({ onSignup }: SignupProps) {
                     ))}
                   </select>
                 </label>
-                <Field label="Mobile Number" icon={Phone}>
-                  <input required type="tel" value={form.phone} onChange={(e) => setValue('phone', e.target.value)} placeholder={form.country === 'BD' ? '1712345678' : 'Mobile number'} className="w-full rounded-sm border border-gray-200 bg-white px-4 py-3 pl-12 text-sm font-medium outline-none transition-all focus:border-blue-600" />
-                </Field>
+                <label className="space-y-1.5">
+                  <span className="ml-1 text-[10px] font-bold uppercase tracking-wider text-[#4a4a4a] md:text-xs">Mobile Number</span>
+                  <div className="grid grid-cols-[118px_1fr] overflow-hidden rounded-sm border border-gray-200 bg-white focus-within:border-blue-600">
+                    <select
+                      value={form.country}
+                      onChange={(e) => setValue('country', e.target.value)}
+                      className="border-r border-gray-200 bg-gray-50 px-2 py-3 text-sm font-black outline-none"
+                      aria-label="Mobile country code"
+                    >
+                      {COUNTRIES.map((country) => (
+                        <option key={country.code} value={country.code}>{country.flag} {country.dialCode}</option>
+                      ))}
+                    </select>
+                    <div className="relative">
+                      <Phone className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                      <input required type="tel" value={form.phone} onChange={(e) => setValue('phone', e.target.value)} placeholder={form.country === 'BD' ? '1712345678' : 'Mobile number'} className="w-full bg-white px-4 py-3 pl-12 text-sm font-medium outline-none" />
+                    </div>
+                  </div>
+                </label>
                 <Field label="Address" icon={MapPin}>
                   <input required type="text" value={form.addressLine1} onChange={(e) => setValue('addressLine1', e.target.value)} placeholder="Street address" className="w-full rounded-sm border border-gray-200 bg-white px-4 py-3 pl-12 text-sm font-medium outline-none transition-all focus:border-blue-600" />
                 </Field>

@@ -13,6 +13,9 @@ const DEFAULT_SYSTEM_SHIELD = {
   blockDuplicatePhone: true,
   matchRestrictedOnly: true,
   vpnDetection: true,
+  cloudProviderSignals: true,
+  countryMismatchDetection: true,
+  emailSimilarity: true,
   disableOnVpnOnly: false,
   riskThreshold: 80,
   weights: {
@@ -25,6 +28,8 @@ const DEFAULT_SYSTEM_SHIELD = {
     sameBillingName: 55,
     sameName: 45,
     sameAddress: 35,
+    emailSimilarity: 40,
+    countryMismatch: 35,
     vpnOrProxy: 25
   }
 };
@@ -46,6 +51,8 @@ const normAddress = (value) => normText(value)
   .replace(/\b(road|rd|street|st|avenue|ave|house|holding|flat|apt|apartment)\b/g, '')
   .replace(/\s+/g, ' ')
   .trim();
+
+const emailLocal = (value) => lower(value).split('@')[0] || '';
 
 const tokenOverlap = (left, right) => {
   const leftTokens = new Set(normText(left).split(/\s+/).filter((part) => part.length > 1));
@@ -131,7 +138,8 @@ const networkRiskFromHeaders = (ctx, policy) => {
 
   const asn = String(headers['x-asn'] || headers['cf-asn'] || headers['x-vercel-ip-asn'] || '').toLowerCase();
   const org = String(headers['x-as-organization'] || headers['cf-as-organization'] || headers['x-vercel-ip-as-organization'] || '').toLowerCase();
-  if (/(hosting|cloud|datacenter|data center|vpn|proxy|tor|colo|server)/i.test(`${asn} ${org}`)) {
+  const providerText = `${asn} ${org}`;
+  if (policy.cloudProviderSignals && /(amazon|aws|azure|microsoft|google cloud|gcp|digitalocean|linode|akamai|oracle|ovh|hetzner|vultr|hosting|cloud|datacenter|data center|vpn|proxy|tor|colo|server)/i.test(providerText)) {
     reasons.push('datacenter_or_proxy_asn');
   }
 
@@ -157,7 +165,8 @@ const candidateUsers = async (prisma, userId, policy) => {
       billingName: true,
       addressLine1: true,
       city: true,
-      postalCode: true
+      postalCode: true,
+      country: true
     }
   });
 };
@@ -263,6 +272,23 @@ export const analyzeSignupShield = async (ctx, user, input, deviceSession) => {
   const networkRisk = networkRiskFromHeaders(ctx, policy);
   if (networkRisk) {
     addSignal(signals, 'vpn_or_proxy', 'VPN/proxy/datacenter network signal', weights.vpnOrProxy, null, networkRisk);
+  }
+
+  if (policy.countryMismatchDetection && input.country && deviceSession?.country && lower(input.country) !== lower(deviceSession.country)) {
+    addSignal(signals, 'country_mismatch', 'Signup country does not match detected device country', weights.countryMismatch, null, {
+      selectedCountry: input.country,
+      detectedCountry: deviceSession.country
+    });
+  }
+
+  if (policy.emailSimilarity) {
+    const newLocal = emailLocal(input.email);
+    candidates.forEach((candidate) => {
+      const oldLocal = emailLocal(candidate.email);
+      if (newLocal.length > 3 && oldLocal.length > 3 && (newLocal === oldLocal || tokenOverlap(newLocal, oldLocal) >= 0.72)) {
+        addSignal(signals, 'email_similarity', 'Similar email username as restricted account', weights.emailSimilarity, candidate);
+      }
+    });
   }
 
   const strongestByKey = new Map();
