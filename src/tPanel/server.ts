@@ -3,7 +3,7 @@ import path from "path";
 import os from "os";
 import fs from "fs";
 import { createHmac, randomBytes, scryptSync, timingSafeEqual } from "crypto";
-import { execFile } from "child_process";
+import { execFile, execFileSync } from "child_process";
 import { promisify } from "util";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
@@ -701,6 +701,109 @@ function removeAccountProvisioningArtifacts(account: any) {
   if (home) removeIfExists(home);
 }
 
+function runLocalShell(command: string, timeout = 30000) {
+  if (process.platform === "win32") return "";
+  try {
+    return execFileSync("sh", ["-lc", command], { encoding: "utf8", timeout, stdio: ["ignore", "pipe", "pipe"] }).trim();
+  } catch (error: any) {
+    return `${error.stdout || ""}${error.stderr || error.message || ""}`.trim();
+  }
+}
+
+function ensureWebIngress(account?: any) {
+  const output = runLocalShell(`
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl enable --now nginx >/dev/null 2>&1 || true
+fi
+if command -v ufw >/dev/null 2>&1; then
+  ufw allow 80/tcp >/dev/null 2>&1 || true
+  ufw allow 443/tcp >/dev/null 2>&1 || true
+fi
+if command -v firewall-cmd >/dev/null 2>&1; then
+  firewall-cmd --permanent --add-service=http >/dev/null 2>&1 || true
+  firewall-cmd --permanent --add-service=https >/dev/null 2>&1 || true
+  firewall-cmd --reload >/dev/null 2>&1 || true
+fi
+if command -v iptables >/dev/null 2>&1; then
+  iptables -C INPUT -p tcp --dport 80 -j ACCEPT >/dev/null 2>&1 || iptables -I INPUT -p tcp --dport 80 -j ACCEPT >/dev/null 2>&1 || true
+  iptables -C INPUT -p tcp --dport 443 -j ACCEPT >/dev/null 2>&1 || iptables -I INPUT -p tcp --dport 443 -j ACCEPT >/dev/null 2>&1 || true
+fi
+`, 45000);
+  if (account && output) appendProvisioningLog(account, `Web ingress check: ${output.slice(-500)}`);
+}
+
+function reloadNginx() {
+  if (process.platform === "win32") return;
+  execFile("nginx", ["-t"], { timeout: 30000 }, (nginxError) => {
+    if (!nginxError) {
+      execFile("systemctl", ["reload", "nginx"], { timeout: 30000 }, () => undefined);
+    }
+  });
+}
+
+function removePanelProxyForDomain(domain: string) {
+  if (process.platform === "win32") return;
+  const clean = cleanDomain(domain);
+  const candidates = [
+    { available: "/etc/nginx/sites-available/tpanel-panel.conf", enabled: "/etc/nginx/sites-enabled/tpanel-panel.conf" },
+    { available: "/etc/nginx/sites-available/tpanel.conf", enabled: "/etc/nginx/sites-enabled/tpanel.conf" }
+  ];
+  let changed = false;
+  for (const candidate of candidates) {
+    const raw = fs.existsSync(candidate.available) ? fs.readFileSync(candidate.available, "utf8") : "";
+    if (raw.includes(`server_name ${clean} www.${clean};`) || raw.includes(`server_name ${clean};`)) {
+      removeIfExists(candidate.enabled);
+      removeIfExists(candidate.available);
+      changed = true;
+    }
+  }
+  if (changed) reloadNginx();
+}
+
+function applyPanelDomainProxy(settings: any) {
+  if (process.platform === "win32") return;
+  const domain = cleanDomain(settings.primaryDomain);
+  if (!domain || domain === "tiwlo.com") return;
+  const state = readPanelState();
+  if (domainInUse(state, domain)) {
+    removePanelProxyForDomain(domain);
+    return;
+  }
+
+  ensureWebIngress();
+  const availablePath = "/etc/nginx/sites-available/tpanel-panel.conf";
+  const enabledPath = "/etc/nginx/sites-enabled/tpanel-panel.conf";
+  const proxyPort = Number(process.env.PORT || PORT || 2086);
+  const conf = `server {
+    listen 80;
+    server_name ${domain} www.${domain};
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:${proxyPort};
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+`;
+  try {
+    fs.mkdirSync("/etc/nginx/sites-available", { recursive: true });
+    fs.mkdirSync("/etc/nginx/sites-enabled", { recursive: true });
+    fs.writeFileSync(availablePath, conf);
+    if (fs.existsSync(enabledPath)) fs.unlinkSync(enabledPath);
+    fs.symlinkSync(availablePath, enabledPath);
+    reloadNginx();
+  } catch {
+    // domain settings should still save even if nginx is not installed yet
+  }
+}
+
 function hardDeleteAccount(state: any, username: string, actor: string) {
   const account = (state.accounts || []).find((item: any) => item.username === username);
   if (!account) return { account: null, state };
@@ -910,6 +1013,8 @@ function applyAccountProvisioning(account: any) {
   const siteName = `tpanel-${account.username}`;
   const availablePath = `/etc/nginx/sites-available/${siteName}.conf`;
   const enabledPath = `/etc/nginx/sites-enabled/${siteName}.conf`;
+  ensureWebIngress(account);
+  removePanelProxyForDomain(account.domain);
   patchAccountProvisioning(account, {
     vhost: { status: "configuring", lastRunAt: new Date().toISOString() },
     ssl: { status: account.sslEnabled ? "queued" : "disabled", lastRunAt: new Date().toISOString() }
@@ -989,6 +1094,33 @@ function applyAccountProvisioning(account: any) {
       });
     });
   });
+}
+
+function activePanelAccounts(state = readPanelState()) {
+  return (state.accounts || []).filter((account: any) => !TERMINAL_ACCOUNT_STATUSES.has(String(account.status || "").toLowerCase()));
+}
+
+function reconcileWebRouting() {
+  if (process.platform === "win32") return;
+  const state = readPanelState();
+  const accounts = activePanelAccounts(state);
+  if (accounts.length) ensureWebIngress();
+
+  let changed = false;
+  for (const account of accounts) {
+    removePanelProxyForDomain(account.domain);
+    const siteName = `tpanel-${account.username}`;
+    const availablePath = `/etc/nginx/sites-available/${siteName}.conf`;
+    const enabledPath = `/etc/nginx/sites-enabled/${siteName}.conf`;
+    const sslMissing = account.sslEnabled !== false && !accountSslPaths(account).ready;
+    if (!fs.existsSync(availablePath) || !fs.existsSync(enabledPath) || sslMissing) {
+      applyAccountProvisioning(account);
+      changed = true;
+    }
+  }
+
+  applyPanelDomainProxy(readDomainSettings());
+  if (!changed) reloadNginx();
 }
 
 async function verifyLicense(req: express.Request, options: { force?: boolean } = {}) {
@@ -1918,6 +2050,7 @@ app.post("/api/panel/domain-settings", requireCapability("dns"), async (req, res
     updatedAt: new Date().toISOString()
   };
   writeDomainSettings(settings);
+  applyPanelDomainProxy(settings);
   res.json({ ok: true, settings });
 });
 
@@ -1973,7 +2106,7 @@ app.post("/api/panel/hosting-stack/install", requireCapability("software"), asyn
     ? `export DEBIAN_FRONTEND=noninteractive; apt-get update -y && apt-get install -y ${quoted}`
     : `${manager} install -y ${quoted}`;
   try {
-    const { stdout, stderr } = await execFileAsync("sh", ["-lc", `${installCommand}; systemctl enable --now nginx >/dev/null 2>&1 || true; systemctl enable --now mariadb >/dev/null 2>&1 || systemctl enable --now mysql >/dev/null 2>&1 || true; systemctl enable --now postfix >/dev/null 2>&1 || true; systemctl enable --now dovecot >/dev/null 2>&1 || true; systemctl enable --now opendkim >/dev/null 2>&1 || true; systemctl enable --now rspamd >/dev/null 2>&1 || true; for svc in $(systemctl list-unit-files --type=service 'php*-fpm.service' 2>/dev/null | awk '/php.*-fpm\\.service/ {print $1}'); do systemctl enable --now "$svc" >/dev/null 2>&1 || true; done`], { timeout: 900000 });
+    const { stdout, stderr } = await execFileAsync("sh", ["-lc", `${installCommand}; systemctl enable --now nginx >/dev/null 2>&1 || true; systemctl enable --now mariadb >/dev/null 2>&1 || systemctl enable --now mysql >/dev/null 2>&1 || true; systemctl enable --now postfix >/dev/null 2>&1 || true; systemctl enable --now dovecot >/dev/null 2>&1 || true; systemctl enable --now opendkim >/dev/null 2>&1 || true; systemctl enable --now rspamd >/dev/null 2>&1 || true; if command -v ufw >/dev/null 2>&1; then ufw allow 80/tcp >/dev/null 2>&1 || true; ufw allow 443/tcp >/dev/null 2>&1 || true; fi; if command -v firewall-cmd >/dev/null 2>&1; then firewall-cmd --permanent --add-service=http >/dev/null 2>&1 || true; firewall-cmd --permanent --add-service=https >/dev/null 2>&1 || true; firewall-cmd --reload >/dev/null 2>&1 || true; fi; for svc in $(systemctl list-unit-files --type=service 'php*-fpm.service' 2>/dev/null | awk '/php.*-fpm\\.service/ {print $1}'); do systemctl enable --now "$svc" >/dev/null 2>&1 || true; done`], { timeout: 900000 });
     res.json({ ok: true, packages, output: `${stdout || ""}${stderr || ""}`.trim(), stack: await hostingStackStatus() });
   } catch (error: any) {
     res.status(500).json({ ok: false, packages, message: error.message || "Package installation failed.", output: `${error.stdout || ""}${error.stderr || ""}`.trim() });
@@ -2422,6 +2555,8 @@ app.post("/api/ai", async (req, res) => {
 
 // Port and server launch
 async function run() {
+  reconcileWebRouting();
+
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { middlewareMode: true },

@@ -2139,9 +2139,106 @@ def run(args, cwd=None, timeout=900):
         raise RuntimeError("Command failed: " + " ".join(args) + "\\n" + output[-2000:])
     return output[-4000:]
 
+def run_sh(command, timeout=120):
+    return run(["sh", "-lc", command], timeout=timeout)
+
 def safe_name(value, fallback="item"):
     value = re.sub(r"[^a-zA-Z0-9_.-]", "", str(value or ""))
     return value[:64] or fallback
+
+def clean_domain(value, fallback="tiwlo.com"):
+    value = str(value or fallback).lower()
+    value = re.sub(r"^https?://", "", value)
+    value = re.sub(r"/.*$", "", value)
+    value = re.sub(r":\\d+$", "", value)
+    value = re.sub(r"[^a-z0-9.-]", "", value)
+    value = re.sub(r"^\\.+|\\.+$", "", value)
+    return value or fallback
+
+def ensure_web_ingress():
+    return run_sh("""
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl enable --now nginx >/dev/null 2>&1 || true
+fi
+if command -v ufw >/dev/null 2>&1; then
+  ufw allow 80/tcp >/dev/null 2>&1 || true
+  ufw allow 443/tcp >/dev/null 2>&1 || true
+fi
+if command -v firewall-cmd >/dev/null 2>&1; then
+  firewall-cmd --permanent --add-service=http >/dev/null 2>&1 || true
+  firewall-cmd --permanent --add-service=https >/dev/null 2>&1 || true
+  firewall-cmd --reload >/dev/null 2>&1 || true
+fi
+if command -v iptables >/dev/null 2>&1; then
+  iptables -C INPUT -p tcp --dport 80 -j ACCEPT >/dev/null 2>&1 || iptables -I INPUT -p tcp --dport 80 -j ACCEPT >/dev/null 2>&1 || true
+  iptables -C INPUT -p tcp --dport 443 -j ACCEPT >/dev/null 2>&1 || iptables -I INPUT -p tcp --dport 443 -j ACCEPT >/dev/null 2>&1 || true
+fi
+""", timeout=180)
+
+def reload_nginx():
+    if not shutil.which("nginx"):
+        return
+    run(["nginx", "-t"], timeout=60)
+    run(["systemctl", "reload", "nginx"], timeout=120)
+
+def local_account_domains(account):
+    domains = [clean_domain(account.get("domain"), "")]
+    provisioning = account.get("provisioning") or {}
+    vhost = provisioning.get("vhost") or {}
+    domains += [clean_domain(item, "") for item in (vhost.get("aliases") or [])]
+    for route in (vhost.get("subdomains") or []):
+        domains.append(clean_domain(route.get("domain"), ""))
+        domains += [clean_domain(item, "") for item in (route.get("aliases") or [])]
+    return {item for item in domains if "." in item}
+
+def domain_owned_by_account(domain):
+    state_path = pathlib.Path("/etc/tpanel/hosting-state.json")
+    if not state_path.exists():
+        return False
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8") or "{}")
+    except Exception:
+        return False
+    clean = clean_domain(domain, "")
+    for account in state.get("accounts") or []:
+        status = str(account.get("status") or "").lower()
+        if status in {"terminated", "deleted", "destroyed"}:
+            continue
+        if clean in local_account_domains(account):
+            return True
+    return False
+
+def remove_panel_proxy_for_domain(domain):
+    clean = clean_domain(domain, "")
+    changed = False
+    for name in ("tpanel-panel.conf", "tpanel.conf"):
+        available = pathlib.Path("/etc/nginx/sites-available") / name
+        enabled = pathlib.Path("/etc/nginx/sites-enabled") / name
+        raw = available.read_text(encoding="utf-8") if available.exists() else ""
+        if ("server_name " + clean + " www." + clean + ";") in raw or ("server_name " + clean + ";") in raw:
+            for target in (enabled, available):
+                try:
+                    if target.exists() or target.is_symlink():
+                        target.unlink()
+                        changed = True
+                except FileNotFoundError:
+                    pass
+    if changed:
+        reload_nginx()
+
+def remove_legacy_panel_proxy_for_domain(domain):
+    clean = clean_domain(domain, "")
+    available = pathlib.Path("/etc/nginx/sites-available/tpanel.conf")
+    enabled = pathlib.Path("/etc/nginx/sites-enabled/tpanel.conf")
+    raw = available.read_text(encoding="utf-8") if available.exists() else ""
+    if ("server_name " + clean + " www." + clean + ";") not in raw and ("server_name " + clean + ";") not in raw:
+        return
+    for target in (enabled, available):
+        try:
+            if target.exists() or target.is_symlink():
+                target.unlink()
+        except FileNotFoundError:
+            pass
 
 def safe_account(account):
     username = safe_name(account.get("username", ""), "account").lower()
@@ -2310,12 +2407,21 @@ def handle_domain_settings(task):
     raw = task.get("payload") or {}
     settings = raw.get("domainSettings") or {}
     write_json("/etc/tpanel/domain-settings.json", settings)
-    domain = safe_name(settings.get("primaryDomain"), "tiwlo.com")
+    domain = clean_domain(settings.get("primaryDomain"), "tiwlo.com")
     port = CONFIG.get("TPANEL_PORT", "2086")
+    ensure_web_ingress()
+    if domain_owned_by_account(domain):
+        remove_panel_proxy_for_domain(domain)
+        return {"domain": domain, "settingsPath": "/etc/tpanel/domain-settings.json", "panelProxy": "removed_for_hosted_domain"}
     if domain != "tiwlo.com" and shutil.which("nginx"):
+        remove_legacy_panel_proxy_for_domain(domain)
         conf = f"""server {{
     listen 80;
     server_name {domain} www.{domain};
+
+    location /.well-known/acme-challenge/ {{
+        root /var/www/html;
+    }}
 
     location / {{
         proxy_pass http://127.0.0.1:{port};
@@ -2328,15 +2434,14 @@ def handle_domain_settings(task):
 }}
 """
         pathlib.Path("/etc/nginx/sites-available").mkdir(parents=True, exist_ok=True)
-        pathlib.Path("/etc/nginx/sites-available/tpanel.conf").write_text(conf, encoding="utf-8")
-        enabled = pathlib.Path("/etc/nginx/sites-enabled/tpanel.conf")
+        pathlib.Path("/etc/nginx/sites-available/tpanel-panel.conf").write_text(conf, encoding="utf-8")
+        enabled = pathlib.Path("/etc/nginx/sites-enabled/tpanel-panel.conf")
         enabled.parent.mkdir(parents=True, exist_ok=True)
         if enabled.exists() or enabled.is_symlink():
             enabled.unlink()
-        enabled.symlink_to("/etc/nginx/sites-available/tpanel.conf")
-        run(["nginx", "-t"], timeout=60)
-        run(["systemctl", "reload", "nginx"], timeout=120)
-    return {"domain": domain, "settingsPath": "/etc/tpanel/domain-settings.json"}
+        enabled.symlink_to("/etc/nginx/sites-available/tpanel-panel.conf")
+        reload_nginx()
+    return {"domain": domain, "settingsPath": "/etc/tpanel/domain-settings.json", "panelProxy": "configured"}
 
 def handle_update(task):
     run(["git", "-C", SOURCE_DIR, "pull", "--ff-only"], timeout=600)
@@ -2547,11 +2652,28 @@ if command -v ufw >/dev/null 2>&1; then
   ufw allow "$TPANEL_PORT/tcp" >/dev/null 2>&1 || true
 fi
 
+if command -v firewall-cmd >/dev/null 2>&1; then
+  firewall-cmd --permanent --add-service=http >/dev/null 2>&1 || true
+  firewall-cmd --permanent --add-service=https >/dev/null 2>&1 || true
+  firewall-cmd --permanent --add-port="$TPANEL_PORT/tcp" >/dev/null 2>&1 || true
+  firewall-cmd --reload >/dev/null 2>&1 || true
+fi
+
+if command -v iptables >/dev/null 2>&1; then
+  iptables -C INPUT -p tcp --dport 80 -j ACCEPT >/dev/null 2>&1 || iptables -I INPUT -p tcp --dport 80 -j ACCEPT >/dev/null 2>&1 || true
+  iptables -C INPUT -p tcp --dport 443 -j ACCEPT >/dev/null 2>&1 || iptables -I INPUT -p tcp --dport 443 -j ACCEPT >/dev/null 2>&1 || true
+fi
+
 if command -v nginx >/dev/null 2>&1 && [ -n "$TPANEL_DOMAIN" ] && [ "$TPANEL_DOMAIN" != "tiwlo.com" ]; then
-  cat >/etc/nginx/sites-available/tpanel.conf <<NGINX
+  systemctl enable --now nginx >/dev/null 2>&1 || true
+  cat >/etc/nginx/sites-available/tpanel-panel.conf <<NGINX
 server {
     listen 80;
     server_name $TPANEL_DOMAIN www.$TPANEL_DOMAIN;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
 
     location / {
         proxy_pass http://127.0.0.1:$TPANEL_PORT;
@@ -2563,7 +2685,10 @@ server {
     }
 }
 NGINX
-  ln -sf /etc/nginx/sites-available/tpanel.conf /etc/nginx/sites-enabled/tpanel.conf
+  if grep -q "server_name $TPANEL_DOMAIN www.$TPANEL_DOMAIN;" /etc/nginx/sites-available/tpanel.conf 2>/dev/null; then
+    rm -f /etc/nginx/sites-enabled/tpanel.conf /etc/nginx/sites-available/tpanel.conf
+  fi
+  ln -sf /etc/nginx/sites-available/tpanel-panel.conf /etc/nginx/sites-enabled/tpanel-panel.conf
   nginx -t && systemctl reload nginx || true
   if command -v certbot >/dev/null 2>&1 && getent hosts "$TPANEL_DOMAIN" | grep -q "$SERVER_IP"; then
     certbot --nginx -d "$TPANEL_DOMAIN" -d "www.$TPANEL_DOMAIN" --non-interactive --agree-tos -m "admin@$TPANEL_DOMAIN" || true
