@@ -162,6 +162,18 @@ function defaultPortFor(panel: string, currentPort?: string) {
   return currentPort || '22';
 }
 
+function isTPanel(panel: string) {
+  return String(panel || '').toLowerCase() === 'tpanel';
+}
+
+function tPanelNameForIp(ip: string) {
+  return ip ? `tPanel ${ip}` : 'tPanel Server';
+}
+
+function nextTPanelName(currentName: string, ip: string) {
+  return !currentName || /^tPanel(?: Server| \d| [a-f0-9:.]+)$/i.test(currentName) ? tPanelNameForIp(ip) : currentName;
+}
+
 function statusTone(status: string) {
   const value = String(status || '').toLowerCase();
   if (value === 'active' || value === 'provisioned') return 'border-green-100 bg-green-50 text-green-700';
@@ -412,33 +424,37 @@ export default function WhmHostingModule() {
     setSaving(true);
     setError('');
     try {
+      const tPanelMode = isTPanel(nodeForm.panel);
+      const serverIp = nodeForm.ip.trim();
       await upsertHostingComputeNodeWithApi({
         id: nodeForm.id || undefined,
-        name: nodeForm.name,
-        hostname: nodeForm.hostname,
-        ip: nodeForm.ip,
+        name: tPanelMode ? nextTPanelName(nodeForm.name, serverIp) : nodeForm.name,
+        hostname: tPanelMode ? serverIp : nodeForm.hostname,
+        ip: serverIp,
         panel: nodeForm.panel,
-        port: Number(nodeForm.port || 2087),
+        port: Number(nodeForm.port || (tPanelMode ? 2086 : 2087)),
         sshPort: Number(nodeForm.sshPort || 22),
         username: nodeForm.username,
         rootPassword: nodeForm.rootPassword || undefined,
-        apiToken: nodeForm.apiToken || undefined,
-        accessHash: nodeForm.accessHash || undefined,
-        licenseKey: nodeForm.licenseKey || undefined,
-        agentToken: nodeForm.agentToken || undefined,
-        nameservers: splitNameservers(nodeForm.nameservers),
+        apiToken: tPanelMode ? undefined : (nodeForm.apiToken || undefined),
+        accessHash: tPanelMode ? undefined : (nodeForm.accessHash || undefined),
+        licenseKey: tPanelMode ? undefined : (nodeForm.licenseKey || undefined),
+        agentToken: tPanelMode ? undefined : (nodeForm.agentToken || undefined),
+        nameservers: tPanelMode ? [] : splitNameservers(nodeForm.nameservers),
         maxAccounts: Number(nodeForm.maxAccounts || 0),
         activeAccounts: Number(nodeForm.activeAccounts || 0),
-        status: nodeForm.status,
+        status: tPanelMode ? 'active' : nodeForm.status,
         monthlyCost: Number(nodeForm.monthlyCost || 0),
-        location: nodeForm.location,
+        location: tPanelMode ? undefined : nodeForm.location,
         metadata: {
           source: 'whm_hosting_module',
-          provider: nodeForm.panel === 'tpanel' ? 'tpanel' : 'hosting',
+          provider: tPanelMode ? 'tpanel' : 'hosting',
           ssl: Number(nodeForm.port) === 2087,
           sshPort: Number(nodeForm.sshPort || 22),
-          licenseKey: nodeForm.licenseKey || '',
-          agentToken: nodeForm.agentToken || ''
+          ...(tPanelMode ? { licenseInstalled: true } : {
+            licenseKey: nodeForm.licenseKey || '',
+            agentToken: nodeForm.agentToken || ''
+          })
         }
       });
       setModal(null);
@@ -867,27 +883,64 @@ export default function WhmHostingModule() {
       {modal === 'node' && (
         <Modal title={nodeForm.id ? 'Edit Compute Node' : 'Add Compute Node'} onClose={() => setModal(null)}>
           <form onSubmit={saveNode} className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <FormInput required label="Server Name" value={nodeForm.name} onChange={(value) => setNodeForm({ ...nodeForm, name: value })} placeholder="Hosting Node 01" />
-            <FormInput required label="Hostname" value={nodeForm.hostname} onChange={(value) => setNodeForm({ ...nodeForm, hostname: value })} placeholder="server.example.com" />
-            <FormInput required label="IP Address" value={nodeForm.ip} onChange={(value) => setNodeForm({ ...nodeForm, ip: value })} placeholder="192.0.2.10" />
-            <FormSelect label="Panel / Module" value={nodeForm.panel} onChange={(value) => setNodeForm({ ...nodeForm, panel: value, port: defaultPortFor(value, nodeForm.port) })} options={panels.map((item) => ({ value: item, label: panelLabel(item) }))} />
-            <FormInput label="Panel Port" value={nodeForm.port} onChange={(value) => setNodeForm({ ...nodeForm, port: value })} type="number" />
-            <FormInput label="SSH Port" value={nodeForm.sshPort} onChange={(value) => setNodeForm({ ...nodeForm, sshPort: value })} type="number" />
-            <FormInput required label="Root / Admin Username" value={nodeForm.username} onChange={(value) => setNodeForm({ ...nodeForm, username: value })} />
-            <FormInput label="Root Password" value={nodeForm.rootPassword} onChange={(value) => setNodeForm({ ...nodeForm, rootPassword: value })} type="password" placeholder={nodeForm.id ? 'Leave blank to keep existing password' : 'Server root password'} />
-            <FormInput label="API Token" value={nodeForm.apiToken} onChange={(value) => setNodeForm({ ...nodeForm, apiToken: value })} type="password" />
-            <FormInput label="Access Hash" value={nodeForm.accessHash} onChange={(value) => setNodeForm({ ...nodeForm, accessHash: value })} type="password" />
-            <FormInput label="tPanel License Key" value={nodeForm.licenseKey} onChange={(value) => setNodeForm({ ...nodeForm, licenseKey: value })} />
-            <FormInput label="tPanel Agent Token" value={nodeForm.agentToken} onChange={(value) => setNodeForm({ ...nodeForm, agentToken: value })} type="password" />
-            <FormInput label="Max Accounts" value={nodeForm.maxAccounts} onChange={(value) => setNodeForm({ ...nodeForm, maxAccounts: value })} type="number" />
-            <FormInput label="Active Accounts" value={nodeForm.activeAccounts} onChange={(value) => setNodeForm({ ...nodeForm, activeAccounts: value })} type="number" />
-            <FormInput label="Monthly Cost" value={nodeForm.monthlyCost} onChange={(value) => setNodeForm({ ...nodeForm, monthlyCost: value })} type="number" />
-            <FormInput label="Location" value={nodeForm.location} onChange={(value) => setNodeForm({ ...nodeForm, location: value })} />
-            <FormSelect label="Server Status" value={nodeForm.status} onChange={(value) => setNodeForm({ ...nodeForm, status: value })} options={['active', 'inactive', 'maintenance', 'error'].map((item) => ({ value: item, label: item }))} />
-            <label className="space-y-1.5 md:col-span-2">
-              <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Nameservers</span>
-              <textarea value={nodeForm.nameservers} onChange={(event) => setNodeForm({ ...nodeForm, nameservers: event.target.value })} rows={2} className="w-full rounded border border-gray-200 px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="ns1.example.com, ns2.example.com" />
-            </label>
+            <FormSelect
+              label="Panel / Module"
+              value={nodeForm.panel}
+              onChange={(value) => {
+                const tPanelMode = isTPanel(value);
+                setNodeForm({
+                  ...nodeForm,
+                  panel: value,
+                  port: defaultPortFor(value, nodeForm.port),
+                  hostname: tPanelMode ? nodeForm.ip : nodeForm.hostname,
+                  name: tPanelMode ? nextTPanelName(nodeForm.name, nodeForm.ip) : nodeForm.name,
+                  apiToken: tPanelMode ? '' : nodeForm.apiToken,
+                  accessHash: tPanelMode ? '' : nodeForm.accessHash,
+                  licenseKey: tPanelMode ? '' : nodeForm.licenseKey,
+                  agentToken: tPanelMode ? '' : nodeForm.agentToken,
+                  nameservers: tPanelMode ? '' : nodeForm.nameservers,
+                  location: tPanelMode ? 'Global' : nodeForm.location
+                });
+              }}
+              options={panels.map((item) => ({ value: item, label: panelLabel(item) }))}
+            />
+            {isTPanel(nodeForm.panel) ? (
+              <>
+                <FormInput required label="IP Address" value={nodeForm.ip} onChange={(value) => setNodeForm({ ...nodeForm, ip: value, hostname: value, name: nextTPanelName(nodeForm.name, value), location: 'Global' })} placeholder="192.0.2.10" />
+                <FormInput label="Panel Login Port" value={nodeForm.port} onChange={(value) => setNodeForm({ ...nodeForm, port: value })} type="number" />
+                <FormInput required label="tPanel Username" value={nodeForm.username} onChange={(value) => setNodeForm({ ...nodeForm, username: value })} />
+                <FormInput label="tPanel Password" value={nodeForm.rootPassword} onChange={(value) => setNodeForm({ ...nodeForm, rootPassword: value })} type="password" placeholder={nodeForm.id ? 'Leave blank to keep existing password' : 'Panel password'} />
+                <FormInput label="Max Accounts" value={nodeForm.maxAccounts} onChange={(value) => setNodeForm({ ...nodeForm, maxAccounts: value })} type="number" />
+                <FormInput label="Monthly Cost" value={nodeForm.monthlyCost} onChange={(value) => setNodeForm({ ...nodeForm, monthlyCost: value })} type="number" />
+                <label className="space-y-1.5 md:col-span-2">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Location (Auto)</span>
+                  <input readOnly value={nodeForm.location && nodeForm.location !== 'Global' ? nodeForm.location : 'Auto from server IP'} className="w-full rounded border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-bold text-gray-500 outline-none" />
+                </label>
+              </>
+            ) : (
+              <>
+                <FormInput required label="Server Name" value={nodeForm.name} onChange={(value) => setNodeForm({ ...nodeForm, name: value })} placeholder="Hosting Node 01" />
+                <FormInput required label="Hostname" value={nodeForm.hostname} onChange={(value) => setNodeForm({ ...nodeForm, hostname: value })} placeholder="server.example.com" />
+                <FormInput required label="IP Address" value={nodeForm.ip} onChange={(value) => setNodeForm({ ...nodeForm, ip: value })} placeholder="192.0.2.10" />
+                <FormInput label="Panel Port" value={nodeForm.port} onChange={(value) => setNodeForm({ ...nodeForm, port: value })} type="number" />
+                <FormInput label="SSH Port" value={nodeForm.sshPort} onChange={(value) => setNodeForm({ ...nodeForm, sshPort: value })} type="number" />
+                <FormInput required label="Root / Admin Username" value={nodeForm.username} onChange={(value) => setNodeForm({ ...nodeForm, username: value })} />
+                <FormInput label="Root Password" value={nodeForm.rootPassword} onChange={(value) => setNodeForm({ ...nodeForm, rootPassword: value })} type="password" placeholder={nodeForm.id ? 'Leave blank to keep existing password' : 'Server root password'} />
+                <FormInput label="API Token" value={nodeForm.apiToken} onChange={(value) => setNodeForm({ ...nodeForm, apiToken: value })} type="password" />
+                <FormInput label="Access Hash" value={nodeForm.accessHash} onChange={(value) => setNodeForm({ ...nodeForm, accessHash: value })} type="password" />
+                <FormInput label="tPanel License Key" value={nodeForm.licenseKey} onChange={(value) => setNodeForm({ ...nodeForm, licenseKey: value })} />
+                <FormInput label="tPanel Agent Token" value={nodeForm.agentToken} onChange={(value) => setNodeForm({ ...nodeForm, agentToken: value })} type="password" />
+                <FormInput label="Max Accounts" value={nodeForm.maxAccounts} onChange={(value) => setNodeForm({ ...nodeForm, maxAccounts: value })} type="number" />
+                <FormInput label="Active Accounts" value={nodeForm.activeAccounts} onChange={(value) => setNodeForm({ ...nodeForm, activeAccounts: value })} type="number" />
+                <FormInput label="Monthly Cost" value={nodeForm.monthlyCost} onChange={(value) => setNodeForm({ ...nodeForm, monthlyCost: value })} type="number" />
+                <FormInput label="Location" value={nodeForm.location} onChange={(value) => setNodeForm({ ...nodeForm, location: value })} />
+                <FormSelect label="Server Status" value={nodeForm.status} onChange={(value) => setNodeForm({ ...nodeForm, status: value })} options={['active', 'inactive', 'maintenance', 'error'].map((item) => ({ value: item, label: item }))} />
+                <label className="space-y-1.5 md:col-span-2">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Nameservers</span>
+                  <textarea value={nodeForm.nameservers} onChange={(event) => setNodeForm({ ...nodeForm, nameservers: event.target.value })} rows={2} className="w-full rounded border border-gray-200 px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="ns1.example.com, ns2.example.com" />
+                </label>
+              </>
+            )}
             <ModalActions saving={saving} onClose={() => setModal(null)} />
           </form>
         </Modal>

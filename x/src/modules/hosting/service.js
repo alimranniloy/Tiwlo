@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import geoip from 'geoip-lite';
 import { getActor, isAdmin } from '../../core/auth.js';
 import { AppError } from '../../core/errors.js';
 import { slugify, toApi } from '../../core/format.js';
@@ -16,6 +17,12 @@ const normalizeRows = (rows) => toApi(rows || []);
 const first = (rows) => normalizeRows(rows)[0] || null;
 
 const hasWhmCredentials = (node) => Boolean(node?.apiToken || node?.accessHash);
+
+const locationFromIp = (ip, fallback = 'Global') => {
+  const cleanIp = text(ip).replace(/^::ffff:/i, '');
+  const geo = cleanIp ? geoip.lookup(cleanIp) : null;
+  return [geo?.city, geo?.region, geo?.country].filter(Boolean).join(', ') || text(fallback || 'Global', 'Global');
+};
 
 const buildWhmAuthHeader = (node) => {
   const username = text(node?.username || 'root');
@@ -107,6 +114,10 @@ export const ensureHostingTables = async (prisma) => {
     )
   `);
   await prisma.$executeRawUnsafe('ALTER TABLE "HostingComputeNode" ADD COLUMN IF NOT EXISTS "passwordSecret" TEXT');
+  await prisma.$executeRawUnsafe('ALTER TABLE "HostingComputeNode" ALTER COLUMN "createdAt" SET DEFAULT CURRENT_TIMESTAMP');
+  await prisma.$executeRawUnsafe('ALTER TABLE "HostingComputeNode" ALTER COLUMN "updatedAt" SET DEFAULT CURRENT_TIMESTAMP');
+  await prisma.$executeRawUnsafe('UPDATE "HostingComputeNode" SET "createdAt" = CURRENT_TIMESTAMP WHERE "createdAt" IS NULL');
+  await prisma.$executeRawUnsafe('UPDATE "HostingComputeNode" SET "updatedAt" = COALESCE("createdAt", CURRENT_TIMESTAMP) WHERE "updatedAt" IS NULL');
   await prisma.$executeRawUnsafe('CREATE INDEX IF NOT EXISTS "HostingComputeNode_panel_status_idx" ON "HostingComputeNode" ("panel", "status")');
 
   await prisma.$executeRawUnsafe(`
@@ -203,30 +214,43 @@ export const listComputeNodes = async (ctx, { status, panel, search } = {}) => {
 export const upsertComputeNode = async (ctx, input) => {
   await ensureHostingTables(ctx.prisma);
   const id = input.id || randomUUID();
+  const panel = text(input.panel || 'whm').toLowerCase();
+  const ip = text(input.ip || input.hostname);
+  const hostname = text(input.hostname || ip);
+  const autoName = panel === 'tpanel' && ip ? `tPanel ${ip}` : '';
+  const requestedLocation = text(input.location);
+  const autoLocation = locationFromIp(ip, requestedLocation || 'Global');
   const payload = {
-    name: text(input.name),
-    hostname: text(input.hostname || input.ip),
-    ip: text(input.ip || input.hostname),
-    panel: text(input.panel || 'whm').toLowerCase(),
-    port: integer(input.port || 2087, 2087),
+    name: text(input.name || autoName),
+    hostname,
+    ip,
+    panel,
+    port: integer(input.port || (panel === 'tpanel' ? 2086 : 2087), panel === 'tpanel' ? 2086 : 2087),
     username: text(input.username || 'root'),
     passwordSecret: input.password || input.rootPassword ? String(input.password || input.rootPassword) : null,
-    apiToken: input.apiToken ? String(input.apiToken) : null,
-    accessHash: input.accessHash ? String(input.accessHash) : null,
-    nameservers: input.nameservers || [],
+    apiToken: panel === 'tpanel' ? null : (input.apiToken ? String(input.apiToken) : null),
+    accessHash: panel === 'tpanel' ? null : (input.accessHash ? String(input.accessHash) : null),
+    nameservers: panel === 'tpanel' ? [] : (input.nameservers || []),
     maxAccounts: integer(input.maxAccounts, 0),
     activeAccounts: integer(input.activeAccounts, 0),
     status: text(input.status || 'active'),
     monthlyCost: number(input.monthlyCost, 0),
-    location: input.location ? String(input.location) : null,
+    location: requestedLocation && requestedLocation !== 'Global' ? requestedLocation : autoLocation,
     metadata: {
       ...(input.metadata || {}),
       sshPort: integer(input.sshPort || input.metadata?.sshPort || 22, 22),
-      licenseKey: text(input.licenseKey || input.metadata?.licenseKey || ''),
-      agentToken: text(input.agentToken || input.metadata?.agentToken || '')
+      locationSource: requestedLocation && requestedLocation !== 'Global' ? 'manual' : 'geoip-lite',
+      geoIpLocation: autoLocation,
+      ...(panel === 'tpanel' ? { licenseInstalled: true } : {
+        licenseKey: text(input.licenseKey || input.metadata?.licenseKey || ''),
+        agentToken: text(input.agentToken || input.metadata?.agentToken || '')
+      })
     }
   };
 
+  if (payload.panel === 'tpanel' && !payload.ip) {
+    throw new AppError('IP address is required to connect a tPanel server', 'BAD_USER_INPUT');
+  }
   if (!payload.name || !payload.hostname || !payload.ip) {
     throw new AppError('Server name, hostname, and IP are required', 'BAD_USER_INPUT');
   }
@@ -250,8 +274,8 @@ export const upsertComputeNode = async (ctx, input) => {
     : await ctx.prisma.$queryRawUnsafe(`
         INSERT INTO "HostingComputeNode"
           ("id", "name", "hostname", "ip", "panel", "port", "username", "passwordSecret", "apiToken", "accessHash",
-           "nameservers", "maxAccounts", "activeAccounts", "status", "monthlyCost", "location", "metadata")
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, CAST($11 AS jsonb), $12, $13, $14, $15, $16, CAST($17 AS jsonb))
+           "nameservers", "maxAccounts", "activeAccounts", "status", "monthlyCost", "location", "metadata", "createdAt", "updatedAt")
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, CAST($11 AS jsonb), $12, $13, $14, $15, $16, CAST($17 AS jsonb), CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         RETURNING *
       `, id, payload.name, payload.hostname, payload.ip, payload.panel, payload.port, payload.username,
       payload.passwordSecret, payload.apiToken, payload.accessHash, json(payload.nameservers, []), payload.maxAccounts, payload.activeAccounts,
