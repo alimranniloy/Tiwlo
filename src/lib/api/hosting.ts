@@ -118,6 +118,7 @@ export async function fetchCloudDeploymentNodesWithApi(search?: string) {
         port
         maxAccounts
         activeAccounts
+        remainingAccounts
         location
         status
         metadata

@@ -144,7 +144,18 @@ export const updateResourceStatus = async (ctx, id, status) => {
 export const deleteResource = async (ctx, id) => {
   const current = await ctx.prisma.cloudResource.findUnique({ where: { id } });
   await canManageOwnerResource(ctx, current.ownerId);
-  await ctx.prisma.cloudResource.delete({ where: { id } });
+  const deploymentNodeId = String(current?.metadata?.deploymentNode?.id || '').trim();
+  await ctx.prisma.$transaction(async (tx) => {
+    await tx.cloudResource.delete({ where: { id } });
+    if (current?.type === 'droplet' && deploymentNodeId) {
+      await tx.$executeRawUnsafe(`
+        UPDATE "HostingComputeNode"
+        SET "activeAccounts" = GREATEST("activeAccounts" - 1, 0),
+            "updatedAt" = CURRENT_TIMESTAMP
+        WHERE "id" = $1
+      `, deploymentNodeId);
+    }
+  });
   await writeAudit(ctx, 'delete_resource', 'cloudResource', id);
   return true;
 };

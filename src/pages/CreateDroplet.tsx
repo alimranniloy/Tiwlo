@@ -15,13 +15,6 @@ import {
 } from '../lib/tiwloApi';
 import { OrderCompleteSummary, TowerOrderLoader, type OrderSummary } from '../components/SetupLoader';
 
-const DISTRIBUTIONS = [
-  { id: 'ubuntu-22-04', name: 'Ubuntu', version: '22.04 LTS x64', color: 'bg-orange-500' },
-  { id: 'ubuntu-24-04', name: 'Ubuntu', version: '24.04 LTS x64', color: 'bg-orange-600' },
-  { id: 'debian-12', name: 'Debian', version: '12 x64', color: 'bg-red-600' },
-  { id: 'rocky-9', name: 'Rocky Linux', version: '9 x64', color: 'bg-green-600' }
-];
-
 type CloudPlan = {
   id: string;
   code: string;
@@ -40,6 +33,7 @@ type CloudDeploymentNode = {
   port: number;
   maxAccounts: number;
   activeAccounts: number;
+  remainingAccounts?: number;
   location?: string | null;
   status: string;
   metadata?: Record<string, unknown> | null;
@@ -68,10 +62,9 @@ function featureList(plan: CloudPlan) {
 
 export default function CreateDroplet() {
   const navigate = useNavigate();
-  const [selectedDist, setSelectedDist] = useState(DISTRIBUTIONS[0].id);
   const [selectedNodeId, setSelectedNodeId] = useState('');
   const [selectedPlan, setSelectedPlan] = useState('');
-  const [hostname, setHostname] = useState('ubuntu-server-01');
+  const [hostname, setHostname] = useState('tiwlo-server-01');
   const [username, setUsername] = useState('root');
   const [password, setPassword] = useState('');
   const [plans, setPlans] = useState<CloudPlan[]>([]);
@@ -91,7 +84,11 @@ export default function CreateDroplet() {
 
     fetchCloudDeploymentNodesWithApi()
       .then((records) => {
-        const activeNodes = (records || []).filter((node: CloudDeploymentNode) => node.status === 'active' && node.ip);
+        const activeNodes = (records || []).filter((node: CloudDeploymentNode) => (
+          node.status === 'active' &&
+          node.ip &&
+          (!Number(node.maxAccounts || 0) || Number(node.activeAccounts || 0) < Number(node.maxAccounts || 0))
+        ));
         setNodes(activeNodes);
         setSelectedNodeId(activeNodes[0]?.id || '');
       })
@@ -149,7 +146,6 @@ export default function CreateDroplet() {
     setIsLoading(true);
     setError('');
 
-    const distribution = DISTRIBUTIONS.find((item) => item.id === selectedDist) || DISTRIBUTIONS[0];
     const cpu = limitValue(selectedPlanRecord, 'cpu', fallbackLimits.cpu);
     const ram = limitValue(selectedPlanRecord, 'ram', fallbackLimits.ram);
     const disk = limitValue(selectedPlanRecord, 'disk', fallbackLimits.disk);
@@ -166,7 +162,7 @@ export default function CreateDroplet() {
           region: `${selectedNode.location || 'Global'} / ${selectedNode.ip}`,
           specs: `${ram} / ${cpu} / ${disk} Disk`,
           ip: selectedNode.ip,
-          image: `${distribution.name} ${distribution.version}`,
+          image: 'tPanel managed deployment',
           plan: selectedPlanRecord.code,
           cpu,
           ram,
@@ -255,7 +251,7 @@ export default function CreateDroplet() {
           </button>
           <div>
             <h1 className="text-xl font-bold tracking-tight text-[#2e3d49]">Create Droplet</h1>
-            <p className="text-[12px] text-[#4a4a4a]">Credit billed compute with package data from administrator plans.</p>
+            <p className="text-[12px] text-[#4a4a4a]">Credit billed tPanel deployment from administrator server regions.</p>
           </div>
         </div>
         <div className="flex items-center justify-between gap-4 md:justify-end">
@@ -294,36 +290,10 @@ export default function CreateDroplet() {
       )}
 
       <section className="space-y-3">
-        <StepTitle number="1" title="Choose an image" />
-        <div className="overflow-hidden rounded-sm border border-[#e5e8ed] bg-white">
-          <div className="grid grid-cols-2 gap-3 p-5 sm:grid-cols-4">
-            {DISTRIBUTIONS.map((dist) => (
-              <button
-                key={dist.id}
-                onClick={() => setSelectedDist(dist.id)}
-                className={`relative rounded-sm border p-4 text-center transition-all ${
-                  selectedDist === dist.id
-                    ? 'border-[#0069ff] bg-[#f3f7ff] ring-1 ring-[#0069ff]'
-                    : 'border-[#e5e8ed] bg-white hover:border-[#0069ff]'
-                }`}
-                id={`dist-${dist.id}`}
-              >
-                <div className={`mx-auto mb-2 flex h-10 w-10 items-center justify-center rounded-sm ${dist.color} text-sm font-bold text-white`}>
-                  {dist.name.charAt(0)}
-                </div>
-                <p className="text-[13px] font-bold text-[#2e3d49]">{dist.name}</p>
-                <p className="mt-0.5 text-[11px] text-gray-500">{dist.version}</p>
-              </button>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      <section className="space-y-3">
-        <StepTitle number="2" title="Choose package size" />
+        <StepTitle number="1" title="Choose package size" />
         <div className="overflow-hidden rounded-sm border border-[#e5e8ed] bg-white">
           <div className="border-b border-[#f3f5f9] bg-[#f8f9fa] px-5 py-3">
-            <p className="text-[12px] font-bold text-[#2e3d49]">Cloud plans from Hosting Account Module</p>
+            <p className="text-[12px] font-bold text-[#2e3d49]">Size packages from Administrator tPanel</p>
           </div>
           <div className="p-5">
             {plansLoading ? (
@@ -381,7 +351,7 @@ export default function CreateDroplet() {
       </section>
 
       <section className="space-y-3">
-        <StepTitle number="3" title="Choose deployment server" />
+        <StepTitle number="2" title="Select tPanel server location" />
         <div className="rounded-sm border border-[#e5e8ed] bg-white p-5">
           {nodesLoading ? (
             <div className="rounded-sm border border-[#e5e8ed] bg-[#f8f9fa] px-4 py-5 text-[13px] font-bold text-[#4a4a4a]">
@@ -397,7 +367,7 @@ export default function CreateDroplet() {
                 <button
                   key={node.id}
                   onClick={() => setSelectedNodeId(node.id)}
-                  className={`flex items-center justify-between gap-4 rounded-sm border p-4 text-left transition-all ${
+                  className={`rounded-sm border p-4 text-left transition-all ${
                     selectedNodeId === node.id
                       ? 'border-[#0069ff] bg-[#f3f7ff] ring-1 ring-[#0069ff]'
                       : 'border-[#e5e8ed] bg-white hover:border-[#0069ff]'
@@ -405,10 +375,9 @@ export default function CreateDroplet() {
                   id={`node-${node.id}`}
                 >
                   <span className="min-w-0">
-                    <span className="block font-mono text-sm font-black text-[#2e3d49]">{node.ip}</span>
-                    <span className="mt-1 block truncate text-[12px] font-bold text-gray-500">{node.location || 'Global'}</span>
+                    <span className="block truncate text-[14px] font-black text-[#2e3d49]">{node.location || 'Global'}</span>
+                    <span className="mt-1 block font-mono text-[12px] font-bold text-gray-500">{node.ip}</span>
                   </span>
-                  <span className="shrink-0 rounded-sm border border-[#e5e8ed] px-2 py-1 text-[10px] font-black uppercase text-[#0069ff]">{node.panel}</span>
                 </button>
               ))}
             </div>
@@ -417,13 +386,13 @@ export default function CreateDroplet() {
       </section>
 
       <section className="space-y-3">
-        <StepTitle number="4" title="Authentication" />
+        <StepTitle number="3" title="Authentication" />
         <div className="space-y-5 rounded-sm border border-[#e5e8ed] bg-white p-5">
           <div className="flex items-start gap-3 rounded-sm border border-[#d8e6ff] bg-[#f3f7ff] px-4 py-3">
             <Lock className="mt-0.5 h-4 w-4 text-[#0069ff]" />
             <div>
               <p className="text-[13px] font-bold text-[#2e3d49]">Password login required</p>
-              <p className="text-[12px] text-[#4a4a4a]">WHM/tPanel managed installs do not need SSH key selection here. Username and password are required before deployment.</p>
+              <p className="text-[12px] text-[#4a4a4a]">Selected tPanel server will receive this deployment after billing is confirmed.</p>
             </div>
           </div>
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -463,9 +432,9 @@ export default function CreateDroplet() {
 
       <section className="flex flex-col gap-6 rounded-sm bg-[#031b4e] p-6 text-white md:flex-row md:items-center md:justify-between">
         <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
-          <RecapItem label="Image" value={`${DISTRIBUTIONS.find((item) => item.id === selectedDist)?.name || ''} ${DISTRIBUTIONS.find((item) => item.id === selectedDist)?.version || ''}`} />
           <RecapItem label="Package" value={selectedPlanRecord ? `${limitValue(selectedPlanRecord, 'ram', fallbackLimits.ram)} / ${limitValue(selectedPlanRecord, 'cpu', fallbackLimits.cpu)}` : 'No plan'} />
-          <RecapItem label="Server" value={selectedNode ? `${selectedNode.ip} / ${selectedNode.location || 'Global'}` : 'No server'} />
+          <RecapItem label="Location" value={selectedNode ? selectedNode.location || 'Global' : 'No server'} />
+          <RecapItem label="IP" value={selectedNode?.ip || 'No server'} />
         </div>
         <div className="flex w-full items-center gap-5 border-t border-white/10 pt-5 md:w-auto md:border-t-0 md:pt-0">
           <div className="text-right">

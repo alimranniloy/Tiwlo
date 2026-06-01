@@ -1035,6 +1035,7 @@ type CloudDeploymentNode {
   port: Int!
   maxAccounts: Int!
   activeAccounts: Int!
+  remainingAccounts: Int!
   location: String
   status: String!
   metadata: JSON

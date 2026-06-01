@@ -197,11 +197,61 @@ const usageForResource = (resource, now = new Date()) => {
   };
 };
 
+const deploymentNodeIdForResource = (pendingResource) => {
+  if (String(pendingResource?.type || 'droplet').toLowerCase() !== 'droplet') return '';
+  return String(pendingResource?.metadata?.deploymentNode?.id || '').trim();
+};
+
+const activeDropletCountForNode = async (tx, nodeId) => {
+  const rows = await tx.$queryRawUnsafe(`
+    SELECT COUNT(*)::int AS "count"
+    FROM "CloudResource"
+    WHERE "type" = 'droplet'
+      AND "status" NOT IN ('deleted', 'destroyed', 'archived')
+      AND "metadata"->'deploymentNode'->>'id' = $1
+  `, nodeId);
+  return Number(rows?.[0]?.count || 0);
+};
+
+const reserveDeploymentNodeCapacity = async (tx, pendingResource) => {
+  const nodeId = deploymentNodeIdForResource(pendingResource);
+  if (!nodeId) return;
+
+  const rows = await tx.$queryRawUnsafe(`
+    SELECT "id", "panel", "status", "maxAccounts", "activeAccounts"
+    FROM "HostingComputeNode"
+    WHERE "id" = $1
+    FOR UPDATE
+  `, nodeId);
+  const node = rows?.[0];
+  if (!node || node.status !== 'active') {
+    throw new AppError('Selected tPanel server is not active anymore. Choose another location.', 'RESOURCE_EXHAUSTED');
+  }
+  if (!['tpanel', 'hosting-panel'].includes(String(node.panel || '').toLowerCase())) {
+    throw new AppError('Selected server is not a tPanel deployment node.', 'BAD_USER_INPUT');
+  }
+
+  const cloudAccounts = await activeDropletCountForNode(tx, nodeId);
+  const usedAccounts = Math.max(Number(node.activeAccounts || 0), cloudAccounts);
+  const maxAccounts = Number(node.maxAccounts || 0);
+  if (maxAccounts > 0 && usedAccounts >= maxAccounts) {
+    throw new AppError('Selected tPanel server account limit is full. Choose another location.', 'RESOURCE_EXHAUSTED');
+  }
+
+  await tx.$executeRawUnsafe(`
+    UPDATE "HostingComputeNode"
+    SET "activeAccounts" = GREATEST("activeAccounts", $2) + 1,
+        "updatedAt" = CURRENT_TIMESTAMP
+    WHERE "id" = $1
+  `, nodeId, usedAccounts);
+};
+
 const createBillingResource = async (tx, ownerId, pendingResource, invoice, paidAt = new Date()) => {
   const metadata = pendingResource.metadata || {};
   const billing = pendingResource.billing || {};
   const monthlyCost = Number(pendingResource.monthlyCost || billing.monthlyCost || 0);
   const hourlyRate = roundMoney(Number(billing.hourlyRate || hourlyRateFor(monthlyCost)));
+  await reserveDeploymentNodeCapacity(tx, pendingResource);
   return tx.cloudResource.create({
     data: {
       ownerId,
@@ -1040,23 +1090,26 @@ export const createCloudResourceOrder = async (ctx, input) => {
   const initialCharge = roundMoney(input.initialCharge || resourceInput.metadata?.billing?.initialCharge || Math.max(hourlyRate, 0.01));
 
   if (monthlyCost <= 0 || initialCharge <= 0) {
-    const resource = await ctx.prisma.cloudResource.create({
-      data: {
-        ownerId: actor.id,
-        type: resourceInput.type,
-        name: resourceInput.name,
-        ip: resourceInput.ip || (autoIpResourceTypes.has(resourceInput.type) ? randomIp() : null),
-        status: 'active',
-        region: resourceInput.region,
-        specs: resourceInput.specs,
-        image: resourceInput.image,
-        plan: resourceInput.plan,
-        cpu: resourceInput.cpu,
-        ram: resourceInput.ram,
-        disk: resourceInput.disk,
-        monthlyCost,
-        metadata: resourceInput.metadata || {}
-      }
+    const resource = await ctx.prisma.$transaction(async (tx) => {
+      await reserveDeploymentNodeCapacity(tx, resourceInput);
+      return tx.cloudResource.create({
+        data: {
+          ownerId: actor.id,
+          type: resourceInput.type,
+          name: resourceInput.name,
+          ip: resourceInput.ip || (autoIpResourceTypes.has(resourceInput.type) ? randomIp() : null),
+          status: 'active',
+          region: resourceInput.region,
+          specs: resourceInput.specs,
+          image: resourceInput.image,
+          plan: resourceInput.plan,
+          cpu: resourceInput.cpu,
+          ram: resourceInput.ram,
+          disk: resourceInput.disk,
+          monthlyCost,
+          metadata: resourceInput.metadata || {}
+        }
+      });
     });
     await writeAudit(ctx, 'create_free_cloud_order', 'cloudResource', resource.id);
     return checkoutResponse(ctx, {

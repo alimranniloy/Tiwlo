@@ -214,12 +214,29 @@ export const listComputeNodes = async (ctx, { status, panel, search } = {}) => {
 export const listCloudDeploymentNodes = async (ctx, { search } = {}) => {
   await ensureHostingTables(ctx.prisma);
   const rows = await ctx.prisma.$queryRawUnsafe(`
-    SELECT "id", "name", "ip", "panel", "port", "maxAccounts", "activeAccounts", "location", "status", "metadata"
-    FROM "HostingComputeNode"
-    WHERE "status" = 'active'
-      AND ("maxAccounts" = 0 OR "activeAccounts" < "maxAccounts")
-      AND "panel" IN ('tpanel', 'hosting-panel', 'droplet')
-    ORDER BY "activeAccounts" ASC, "createdAt" ASC
+    WITH cloud_usage AS (
+      SELECT
+        "metadata"->'deploymentNode'->>'id' AS "nodeId",
+        COUNT(*)::int AS "resourceAccounts"
+      FROM "CloudResource"
+      WHERE "type" = 'droplet'
+        AND "status" NOT IN ('deleted', 'destroyed', 'archived')
+        AND "metadata"->'deploymentNode'->>'id' IS NOT NULL
+      GROUP BY "metadata"->'deploymentNode'->>'id'
+    )
+    SELECT
+      n."id", n."name", n."ip", n."panel", n."port", n."maxAccounts", n."location", n."status", n."metadata",
+      GREATEST(n."activeAccounts", COALESCE(u."resourceAccounts", 0))::int AS "activeAccounts",
+      CASE
+        WHEN n."maxAccounts" = 0 THEN 0
+        ELSE GREATEST(n."maxAccounts" - GREATEST(n."activeAccounts", COALESCE(u."resourceAccounts", 0)), 0)::int
+      END AS "remainingAccounts"
+    FROM "HostingComputeNode" n
+    LEFT JOIN cloud_usage u ON u."nodeId" = n."id"
+    WHERE n."status" = 'active'
+      AND (n."maxAccounts" = 0 OR GREATEST(n."activeAccounts", COALESCE(u."resourceAccounts", 0)) < n."maxAccounts")
+      AND n."panel" IN ('tpanel', 'hosting-panel')
+    ORDER BY GREATEST(n."activeAccounts", COALESCE(u."resourceAccounts", 0)) ASC, n."createdAt" ASC
   `);
   return filterSearch(normalizeRows(rows), search, ['name', 'ip', 'location', 'panel']).map((node) => ({
     id: node.id,
@@ -229,6 +246,7 @@ export const listCloudDeploymentNodes = async (ctx, { search } = {}) => {
     port: node.port,
     maxAccounts: node.maxAccounts,
     activeAccounts: node.activeAccounts,
+    remainingAccounts: node.remainingAccounts,
     location: node.location || node.metadata?.geoIpLocation || locationFromIp(node.ip),
     status: node.status,
     metadata: {
