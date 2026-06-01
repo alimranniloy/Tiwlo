@@ -5,6 +5,7 @@ import { AppError } from '../../core/errors.js';
 import { slugify, toApi } from '../../core/format.js';
 import { writeAudit } from '../../core/audit.js';
 import { ensureOwnerHasCredit } from '../billing/creditAutomation.js';
+import { ensureTPanelTables } from '../tpanel/service.js';
 
 const json = (value, fallback) => JSON.stringify(value ?? fallback);
 const number = (value, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback;
@@ -18,11 +19,17 @@ const first = (rows) => normalizeRows(rows)[0] || null;
 
 const hasWhmCredentials = (node) => Boolean(node?.apiToken || node?.accessHash);
 
-const locationFromIp = (ip, fallback = 'Global') => {
+const geoDetailsFromIp = (ip, fallback = 'Global') => {
   const cleanIp = text(ip).replace(/^::ffff:/i, '');
   const geo = cleanIp ? geoip.lookup(cleanIp) : null;
-  return [geo?.city, geo?.region, geo?.country].filter(Boolean).join(', ') || text(fallback || 'Global', 'Global');
+  return {
+    location: [geo?.city, geo?.region, geo?.country].filter(Boolean).join(', ') || text(fallback || 'Global', 'Global'),
+    countryCode: geo?.country || ''
+  };
 };
+
+const locationFromIp = (ip, fallback = 'Global') => geoDetailsFromIp(ip, fallback).location;
+const moduleFromPanel = (panel) => ['tpanel', 'hosting-panel'].includes(text(panel).toLowerCase()) ? 'tpanel' : text(panel).toLowerCase();
 
 const buildWhmAuthHeader = (node) => {
   const username = text(node?.username || 'root');
@@ -211,7 +218,7 @@ export const listComputeNodes = async (ctx, { status, panel, search } = {}) => {
     .filter((node) => !panel || node.panel === panel);
 };
 
-export const listCloudDeploymentNodes = async (ctx, { search } = {}) => {
+export const listCloudDeploymentNodes = async (ctx, { search, module } = {}) => {
   await ensureHostingTables(ctx.prisma);
   const rows = await ctx.prisma.$queryRawUnsafe(`
     WITH cloud_usage AS (
@@ -238,22 +245,93 @@ export const listCloudDeploymentNodes = async (ctx, { search } = {}) => {
       AND n."panel" IN ('tpanel', 'hosting-panel')
     ORDER BY GREATEST(n."activeAccounts", COALESCE(u."resourceAccounts", 0)) ASC, n."createdAt" ASC
   `);
-  return filterSearch(normalizeRows(rows), search, ['name', 'ip', 'location', 'panel']).map((node) => ({
-    id: node.id,
-    name: node.name,
-    ip: node.ip,
-    panel: node.panel,
-    port: node.port,
-    maxAccounts: node.maxAccounts,
-    activeAccounts: node.activeAccounts,
-    remainingAccounts: node.remainingAccounts,
-    location: node.location || node.metadata?.geoIpLocation || locationFromIp(node.ip),
-    status: node.status,
-    metadata: {
-      provider: node.metadata?.provider || node.panel,
-      locationSource: node.metadata?.locationSource || ''
-    }
-  }));
+  const requestedModule = text(module).toLowerCase();
+  return filterSearch(normalizeRows(rows), search, ['name', 'ip', 'location', 'panel'])
+    .map((node) => {
+      const geo = geoDetailsFromIp(node.ip, node.location || node.metadata?.geoIpLocation || 'Global');
+      const itemModule = moduleFromPanel(node.panel);
+      return {
+        id: node.id,
+        name: node.name,
+        module: itemModule,
+        ip: node.ip,
+        panel: node.panel,
+        port: node.port,
+        maxAccounts: node.maxAccounts,
+        activeAccounts: node.activeAccounts,
+        remainingAccounts: node.remainingAccounts,
+        location: node.location || node.metadata?.geoIpLocation || geo.location,
+        countryCode: node.metadata?.countryCode || geo.countryCode,
+        status: node.status,
+        metadata: {
+          provider: node.metadata?.provider || itemModule,
+          locationSource: node.metadata?.locationSource || '',
+          countryCode: node.metadata?.countryCode || geo.countryCode
+        }
+      };
+    })
+    .filter((node) => !requestedModule || node.module === requestedModule);
+};
+
+const cleanTPanelUsername = (value) => text(value).toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 16);
+
+export const checkTPanelUsernameAvailability = async (ctx, { username, nodeId, module } = {}) => {
+  await ensureHostingTables(ctx.prisma);
+  await ensureTPanelTables(ctx.prisma);
+  const clean = cleanTPanelUsername(username);
+  if (!clean || clean.length < 3) {
+    return {
+      username: clean,
+      available: false,
+      message: 'Username must be at least 3 characters and use letters, numbers, or underscore.',
+      suggestions: []
+    };
+  }
+
+  const moduleName = text(module || 'tpanel').toLowerCase();
+  if (moduleName && moduleName !== 'tpanel') {
+    return {
+      username: clean,
+      available: false,
+      message: 'Username availability check is currently available for tPanel deployments only.',
+      suggestions: []
+    };
+  }
+
+  const node = nodeId ? await findRecord(ctx.prisma, 'HostingComputeNode', nodeId) : null;
+  if (nodeId && (!node || moduleFromPanel(node.panel) !== 'tpanel' || !nodeHasCapacity(node))) {
+    return {
+      username: clean,
+      available: false,
+      message: 'Selected tPanel location is not available anymore. Choose another location.',
+      suggestions: []
+    };
+  }
+
+  const existing = first(await ctx.prisma.$queryRawUnsafe(`
+    SELECT "id", "username"
+    FROM "TPanelManagedAccount"
+    WHERE LOWER("username") = $1
+      AND "status" NOT IN ('terminated', 'deleted')
+    LIMIT 1
+  `, clean));
+  if (!existing) {
+    return {
+      username: clean,
+      available: true,
+      message: 'Username is available.',
+      suggestions: []
+    };
+  }
+
+  const suffix = Date.now().toString(36).slice(-4);
+  const base = clean.slice(0, 11);
+  return {
+    username: clean,
+    available: false,
+    message: 'This username is already used on a tPanel account. Choose another username.',
+    suggestions: [`${base}${suffix}`.slice(0, 16), `${base}_app`.slice(0, 16), `${base}_web`.slice(0, 16)]
+  };
 };
 
 export const upsertComputeNode = async (ctx, input) => {

@@ -10,10 +10,17 @@ import {
   BarChart2,
   Terminal,
   ExternalLink,
-  Activity
+  Activity,
+  KeyRound,
+  X
 } from 'lucide-react';
 import { Droplet } from '../types';
-import { deleteDropletWithApi, updateDropletStatusWithApi } from '../lib/tiwloApi';
+import {
+  changeTPanelResourcePasswordWithApi,
+  createTPanelResourceLoginWithApi,
+  deleteDropletWithApi,
+  updateDropletStatusWithApi
+} from '../lib/tiwloApi';
 import { useActionConfirmation } from '../components/ActionConfirmation';
 
 interface DropletsProps {
@@ -24,6 +31,9 @@ interface DropletsProps {
 export default function DropletsPage({ droplets, setDroplets }: DropletsProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [error, setError] = useState('');
+  const [selectedDroplet, setSelectedDroplet] = useState<Droplet | null>(null);
+  const [newPassword, setNewPassword] = useState('');
+  const [actionLoading, setActionLoading] = useState('');
   const { confirmDelete } = useActionConfirmation();
 
   const deleteDroplet = async (id: string) => {
@@ -48,10 +58,48 @@ export default function DropletsPage({ droplets, setDroplets }: DropletsProps) {
     const nextStatus = target?.status === 'active' ? 'off' : 'active';
 
     try {
+      setActionLoading(`power:${id}`);
       const updated = await updateDropletStatusWithApi(id, nextStatus);
       setDroplets(droplets.map(d => d.id === id ? updated : d));
+      setSelectedDroplet((current) => current?.id === id ? updated : current);
     } catch {
       setError('Unable to update droplet status from the API.');
+    } finally {
+      setActionLoading('');
+    }
+  };
+
+  const isTPanelDroplet = (droplet: Droplet) => Boolean((droplet.metadata as any)?.tpanelAccount || (droplet.metadata as any)?.deploymentNode?.module === 'tpanel');
+  const tPanelAccount = (droplet?: Droplet | null) => (droplet?.metadata as any)?.tpanelAccount || null;
+
+  const openTPanelLogin = async (droplet: Droplet) => {
+    try {
+      setActionLoading(`login:${droplet.id}`);
+      const login = await createTPanelResourceLoginWithApi(droplet.id);
+      window.open(login.url, '_blank', 'noopener,noreferrer');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to open tPanel login.');
+    } finally {
+      setActionLoading('');
+    }
+  };
+
+  const changePassword = async () => {
+    if (!selectedDroplet) return;
+    if (newPassword.length < 8) {
+      setError('New password must be at least 8 characters.');
+      return;
+    }
+    try {
+      setActionLoading(`password:${selectedDroplet.id}`);
+      const updated = await changeTPanelResourcePasswordWithApi(selectedDroplet.id, newPassword);
+      setDroplets(droplets.map(d => d.id === selectedDroplet.id ? updated : d));
+      setSelectedDroplet(updated);
+      setNewPassword('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to queue password change.');
+    } finally {
+      setActionLoading('');
     }
   };
 
@@ -135,6 +183,12 @@ export default function DropletsPage({ droplets, setDroplets }: DropletsProps) {
                     </td>
                     <td className="px-6 py-4">
                       <div className="flex flex-col gap-2">
+                        <button
+                          onClick={() => setSelectedDroplet(droplet)}
+                          className="mb-1 w-fit rounded border border-[#d8e6ff] bg-[#f3f7ff] px-2 py-1 text-[11px] font-bold text-[#0069ff] hover:bg-white"
+                        >
+                          {droplet.plan || 'Package'} portal
+                        </button>
                         <div className="flex items-center gap-2">
                             <span className="text-[11px] font-bold text-gray-400 uppercase w-7 font-mono">CPU</span>
                             <div className="w-16 h-1 w-24 bg-[#e5e8ed] rounded-full overflow-hidden">
@@ -165,7 +219,17 @@ export default function DropletsPage({ droplets, setDroplets }: DropletsProps) {
                          >
                            <Power className="h-4.5 w-4.5" />
                          </button>
-                         <button className="p-2 text-gray-400 hover:text-[#0069ff] hover:bg-[#f3f5f9] rounded transition-all" title="Access Console">
+                         {isTPanelDroplet(droplet) && (
+                          <button
+                            onClick={() => openTPanelLogin(droplet)}
+                            disabled={actionLoading === `login:${droplet.id}`}
+                            className="p-2 text-[#0069ff] hover:bg-[#f3f5f9] rounded transition-all disabled:opacity-50"
+                            title="tPanel Login"
+                          >
+                            <ExternalLink className="h-4.5 w-4.5" />
+                          </button>
+                         )}
+                         <button onClick={() => setSelectedDroplet(droplet)} className="p-2 text-gray-400 hover:text-[#0069ff] hover:bg-[#f3f5f9] rounded transition-all" title="Access Console">
                            <Terminal className="h-4.5 w-4.5" />
                          </button>
                          <div className="w-px h-4 bg-[#e5e8ed] mx-1"></div>
@@ -185,6 +249,84 @@ export default function DropletsPage({ droplets, setDroplets }: DropletsProps) {
           </div>
         )}
       </div>
+
+      {selectedDroplet && (
+        <div className="fixed inset-0 z-50 flex items-end justify-end bg-black/30 p-0 md:p-6" onClick={() => setSelectedDroplet(null)}>
+          <section className="h-full w-full overflow-y-auto bg-white p-6 shadow-xl md:h-auto md:max-h-[calc(100vh-48px)] md:max-w-xl md:rounded" onClick={(event) => event.stopPropagation()}>
+            <div className="mb-5 flex items-start justify-between gap-4 border-b border-[#e5e8ed] pb-4">
+              <div>
+                <p className="text-[11px] font-black uppercase tracking-widest text-[#0069ff]">Resource portal</p>
+                <h2 className="mt-1 text-xl font-black text-[#2e3d49]">{selectedDroplet.name}</h2>
+                <p className="mt-1 text-[12px] font-bold text-gray-500">{selectedDroplet.region}</p>
+              </div>
+              <button onClick={() => setSelectedDroplet(null)} className="rounded border border-[#e5e8ed] p-2 text-gray-500 hover:bg-[#f3f5f9]">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 text-[12px]">
+              {[
+                ['Status', selectedDroplet.status === 'active' ? 'Running' : 'Off'],
+                ['Package', selectedDroplet.plan || 'Default'],
+                ['IPv4', selectedDroplet.ip],
+                ['IPv6', (selectedDroplet.metadata as any)?.ipv6 || 'Included on request'],
+                ['CPU', selectedDroplet.cpu || '-'],
+                ['RAM', selectedDroplet.ram || '-'],
+                ['Disk', selectedDroplet.disk || '-'],
+                ['Account', tPanelAccount(selectedDroplet)?.username || 'Pending']
+              ].map(([label, value]) => (
+                <div key={label} className="rounded border border-[#e5e8ed] bg-[#f8f9fa] p-3">
+                  <p className="text-[10px] font-black uppercase text-gray-400">{label}</p>
+                  <p className="mt-1 break-words font-bold text-[#2e3d49]">{value}</p>
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {isTPanelDroplet(selectedDroplet) && (
+                <button
+                  onClick={() => openTPanelLogin(selectedDroplet)}
+                  className="flex items-center justify-center gap-2 rounded bg-[#0069ff] px-4 py-3 text-[13px] font-bold text-white hover:bg-[#0056cc]"
+                >
+                  <ExternalLink className="h-4 w-4" /> tPanel Login
+                </button>
+              )}
+              <button
+                onClick={() => toggleStatus(selectedDroplet.id)}
+                disabled={actionLoading === `power:${selectedDroplet.id}`}
+                className="flex items-center justify-center gap-2 rounded border border-[#e5e8ed] px-4 py-3 text-[13px] font-bold text-[#2e3d49] hover:bg-[#f3f5f9] disabled:opacity-60"
+              >
+                <Power className="h-4 w-4" /> {selectedDroplet.status === 'active' ? 'Turn Off Account' : 'Turn On Account'}
+              </button>
+            </div>
+
+            {isTPanelDroplet(selectedDroplet) && (
+              <div className="mt-5 rounded border border-[#e5e8ed] p-4">
+                <div className="mb-3 flex items-center gap-2">
+                  <KeyRound className="h-4 w-4 text-[#0069ff]" />
+                  <h3 className="text-[13px] font-black uppercase text-[#2e3d49]">Change tPanel password</h3>
+                </div>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <input
+                    type="password"
+                    value={newPassword}
+                    onChange={(event) => setNewPassword(event.target.value)}
+                    placeholder="New password"
+                    className="flex-1 rounded border border-[#e5e8ed] px-3 py-2 text-sm outline-none focus:border-[#0069ff]"
+                  />
+                  <button
+                    onClick={changePassword}
+                    disabled={actionLoading === `password:${selectedDroplet.id}`}
+                    className="rounded bg-[#2e3d49] px-4 py-2 text-[12px] font-bold text-white hover:bg-[#1f2933] disabled:opacity-60"
+                  >
+                    Update
+                  </button>
+                </div>
+              </div>
+            )}
+          </section>
+        </div>
+      )}
     </div>
   );
 }

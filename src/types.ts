@@ -5,6 +5,13 @@ export interface Droplet {
   status: 'active' | 'off' | 'restarting';
   region: string;
   specs: string;
+  image?: string;
+  plan?: string;
+  cpu?: string;
+  ram?: string;
+  disk?: string;
+  monthlyCost?: number;
+  metadata?: Record<string, any> | null;
   createdAt: string;
 }
 

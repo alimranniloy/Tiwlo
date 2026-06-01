@@ -107,12 +107,13 @@ export async function fetchHostingComputeNodesWithApi(search?: string) {
   return data.hostingComputeNodes;
 }
 
-export async function fetchCloudDeploymentNodesWithApi(search?: string) {
+export async function fetchCloudDeploymentNodesWithApi(search?: string, module?: string) {
   const data = await graphQL<{ cloudDeploymentNodes: any[] }>(
-    `query CloudDeploymentNodes($search: String) {
-      cloudDeploymentNodes(search: $search) {
+    `query CloudDeploymentNodes($search: String, $module: String) {
+      cloudDeploymentNodes(search: $search, module: $module) {
         id
         name
+        module
         ip
         panel
         port
@@ -120,14 +121,31 @@ export async function fetchCloudDeploymentNodesWithApi(search?: string) {
         activeAccounts
         remainingAccounts
         location
+        countryCode
         status
         metadata
       }
     }`,
-    { search }
+    { search, module }
   );
 
   return data.cloudDeploymentNodes;
+}
+
+export async function checkTPanelUsernameAvailabilityWithApi(username: string, nodeId?: string, module = 'tpanel') {
+  const data = await graphQL<{ tPanelUsernameAvailability: any }>(
+    `query TPanelUsernameAvailability($username: String!, $nodeId: ID, $module: String) {
+      tPanelUsernameAvailability(username: $username, nodeId: $nodeId, module: $module) {
+        username
+        available
+        message
+        suggestions
+      }
+    }`,
+    { username, nodeId, module }
+  );
+
+  return data.tPanelUsernameAvailability;
 }
 
 export async function upsertHostingComputeNodeWithApi(input: Record<string, unknown>) {

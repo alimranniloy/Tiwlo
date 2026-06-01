@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { getActor, isAdmin, ownerWhere } from '../../core/auth.js';
 import { randomIp, removeUndefined, toApi } from '../../core/format.js';
 import { writeAudit } from '../../core/audit.js';
@@ -202,6 +203,23 @@ const deploymentNodeIdForResource = (pendingResource) => {
   return String(pendingResource?.metadata?.deploymentNode?.id || '').trim();
 };
 
+const cleanTPanelUsername = (value) => String(value || '').trim().toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 16);
+const accountDomainFor = (account, username) => {
+  const raw = String(account?.domain || account?.hostname || '').trim().toLowerCase();
+  if (raw && raw.includes('.')) return raw;
+  return `${username}.tpanel.local`;
+};
+
+const sanitizeResourceMetadata = (metadata = {}) => {
+  const account = metadata?.tpanelAccount || null;
+  if (!account) return metadata || {};
+  const { password: _password, ...safeAccount } = account;
+  return {
+    ...metadata,
+    tpanelAccount: safeAccount
+  };
+};
+
 const activeDropletCountForNode = async (tx, nodeId) => {
   const rows = await tx.$queryRawUnsafe(`
     SELECT COUNT(*)::int AS "count"
@@ -246,13 +264,109 @@ const reserveDeploymentNodeCapacity = async (tx, pendingResource) => {
   `, nodeId, usedAccounts);
 };
 
+const findTPanelLicenseForNode = async (tx, pendingResource) => {
+  const nodeId = deploymentNodeIdForResource(pendingResource);
+  if (!nodeId) return null;
+  try {
+    const rows = await tx.$queryRawUnsafe(`
+      SELECT l.*
+      FROM "TPanelLicense" l
+      LEFT JOIN "HostingComputeNode" n ON n."ip" = l."serverIp"
+      WHERE n."id" = $1
+        AND l."status" NOT IN ('deleted', 'cancelled', 'revoked')
+      ORDER BY
+        CASE WHEN l."status" = 'active' THEN 0 ELSE 1 END,
+        l."createdAt" DESC
+      LIMIT 1
+    `, nodeId);
+    return rows?.[0] || null;
+  } catch {
+    return null;
+  }
+};
+
+const queueTPanelAccountTask = async (tx, { licenseId, accountId, action, payload, requestedById, priority = 10 }) => {
+  const id = randomUUID();
+  await tx.$executeRawUnsafe(`
+    INSERT INTO "TPanelRemoteTask"
+      ("id", "licenseId", "accountId", "action", "status", "priority", "payload", "requestedById", "queuedAt", "createdAt", "updatedAt")
+    VALUES ($1, $2, $3, $4, 'queued', $5, CAST($6 AS jsonb), $7, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+  `, id, licenseId, accountId || null, action, priority, JSON.stringify(payload || {}), requestedById || null);
+  return id;
+};
+
+const provisionTPanelAccountForResource = async (tx, ownerId, pendingResource, resource) => {
+  const accountInput = pendingResource?.metadata?.tpanelAccount || null;
+  if (!accountInput || String(pendingResource?.type || '').toLowerCase() !== 'droplet') return null;
+
+  const license = await findTPanelLicenseForNode(tx, pendingResource);
+  const username = cleanTPanelUsername(accountInput.username);
+  const password = String(accountInput.password || '');
+  if (!license || !username || password.length < 8) {
+    return {
+      status: license ? 'pending_credentials' : 'pending_license_link',
+      username,
+      domain: accountDomainFor(accountInput, username || 'account'),
+      message: license ? 'tPanel account credentials are incomplete.' : 'No active tPanel license is linked with this deployment node yet.'
+    };
+  }
+
+  const existing = await tx.$queryRawUnsafe(`
+    SELECT "id", "username"
+    FROM "TPanelManagedAccount"
+    WHERE LOWER("username") = $1
+      AND "status" NOT IN ('terminated', 'deleted')
+    LIMIT 1
+  `, username);
+  if (existing?.length) {
+    throw new AppError('This tPanel username was just taken. Choose another username.', 'CONFLICT');
+  }
+
+  const owner = await tx.user.findUnique({ where: { id: ownerId } }).catch(() => null);
+  const id = randomUUID();
+  const domain = accountDomainFor(accountInput, username);
+  const limits = accountInput.limits || {};
+  const metadata = {
+    ...(accountInput.metadata || {}),
+    cloudResourceId: resource.id,
+    createdFrom: 'cloud_droplet',
+    plan: pendingResource.plan || '',
+    specs: pendingResource.specs || ''
+  };
+  const accountRows = await tx.$queryRawUnsafe(`
+    INSERT INTO "TPanelManagedAccount"
+      ("id", "licenseId", "packageId", "username", "domain", "contactEmail", "ownerName",
+       "status", "ipAddress", "homeDirectory", "limits", "usage", "metadata", "createdAt", "updatedAt")
+    VALUES ($1, $2, NULL, $3, $4, $5, $6, 'queued', $7, $8, CAST($9 AS jsonb), '{}'::jsonb, CAST($10 AS jsonb), CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    RETURNING *
+  `, id, license.id, username, domain, owner?.email || accountInput.contactEmail || null, owner?.name || accountInput.ownerName || null,
+    license.serverIp || pendingResource.ip || null, `/home/${username}`, JSON.stringify(limits || {}), JSON.stringify(metadata));
+  const account = accountRows?.[0] || { id, licenseId: license.id, username, domain };
+  await queueTPanelAccountTask(tx, {
+    licenseId: license.id,
+    accountId: account.id,
+    action: 'create_account',
+    requestedById: ownerId,
+    payload: { account, package: null, password },
+    priority: 10
+  });
+  return {
+    id: account.id,
+    licenseId: license.id,
+    username,
+    domain,
+    status: 'queued',
+    panelUrl: `http://${license.serverIp || pendingResource.ip}:${pendingResource?.metadata?.deploymentNode?.port || 2086}/login?username=${encodeURIComponent(username)}`
+  };
+};
+
 const createBillingResource = async (tx, ownerId, pendingResource, invoice, paidAt = new Date()) => {
-  const metadata = pendingResource.metadata || {};
+  const metadata = sanitizeResourceMetadata(pendingResource.metadata || {});
   const billing = pendingResource.billing || {};
   const monthlyCost = Number(pendingResource.monthlyCost || billing.monthlyCost || 0);
   const hourlyRate = roundMoney(Number(billing.hourlyRate || hourlyRateFor(monthlyCost)));
   await reserveDeploymentNodeCapacity(tx, pendingResource);
-  return tx.cloudResource.create({
+  const resource = await tx.cloudResource.create({
     data: {
       ownerId,
       type: pendingResource.type || 'droplet',
@@ -279,6 +393,20 @@ const createBillingResource = async (tx, ownerId, pendingResource, invoice, paid
           monthlyCap: monthlyCost,
           initialInvoiceId: invoice.id,
           initialCharge: Number(invoice.amount || 0)
+        }
+      }
+    }
+  });
+  const tpanelAccount = await provisionTPanelAccountForResource(tx, ownerId, pendingResource, resource);
+  if (!tpanelAccount) return resource;
+  return tx.cloudResource.update({
+    where: { id: resource.id },
+    data: {
+      metadata: {
+        ...(resource.metadata || {}),
+        tpanelAccount: {
+          ...((resource.metadata || {}).tpanelAccount || {}),
+          ...tpanelAccount
         }
       }
     }
@@ -1090,27 +1218,10 @@ export const createCloudResourceOrder = async (ctx, input) => {
   const initialCharge = roundMoney(input.initialCharge || resourceInput.metadata?.billing?.initialCharge || Math.max(hourlyRate, 0.01));
 
   if (monthlyCost <= 0 || initialCharge <= 0) {
-    const resource = await ctx.prisma.$transaction(async (tx) => {
-      await reserveDeploymentNodeCapacity(tx, resourceInput);
-      return tx.cloudResource.create({
-        data: {
-          ownerId: actor.id,
-          type: resourceInput.type,
-          name: resourceInput.name,
-          ip: resourceInput.ip || (autoIpResourceTypes.has(resourceInput.type) ? randomIp() : null),
-          status: 'active',
-          region: resourceInput.region,
-          specs: resourceInput.specs,
-          image: resourceInput.image,
-          plan: resourceInput.plan,
-          cpu: resourceInput.cpu,
-          ram: resourceInput.ram,
-          disk: resourceInput.disk,
-          monthlyCost,
-          metadata: resourceInput.metadata || {}
-        }
-      });
-    });
+    const resource = await ctx.prisma.$transaction((tx) => createBillingResource(tx, actor.id, {
+      ...resourceInput,
+      billing: { monthlyCost, hourlyRate, initialCharge }
+    }, { id: null, amount: 0 }, new Date()));
     await writeAudit(ctx, 'create_free_cloud_order', 'cloudResource', resource.id);
     return checkoutResponse(ctx, {
       status: 'paid',

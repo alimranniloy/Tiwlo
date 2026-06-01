@@ -3,11 +3,13 @@ import {
   ArrowLeft,
   ChevronRight,
   Lock,
+  Server,
   User,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import {
   createCloudResourceOrderWithApi,
+  checkTPanelUsernameAvailabilityWithApi,
   fetchBillingOverviewWithApi,
   fetchCloudDeploymentNodesWithApi,
   fetchPlansWithApi,
@@ -28,6 +30,7 @@ type CloudPlan = {
 type CloudDeploymentNode = {
   id: string;
   name: string;
+  module: string;
   ip: string;
   panel: string;
   port: number;
@@ -35,6 +38,7 @@ type CloudDeploymentNode = {
   activeAccounts: number;
   remainingAccounts?: number;
   location?: string | null;
+  countryCode?: string | null;
   status: string;
   metadata?: Record<string, unknown> | null;
 };
@@ -60,12 +64,29 @@ function featureList(plan: CloudPlan) {
   return [];
 }
 
+function moduleLabel(module: string) {
+  if (module === 'tpanel') return 'tPanel';
+  return module ? module.replace(/(^|-)([a-z])/g, (_match, prefix, letter) => `${prefix ? ' ' : ''}${letter.toUpperCase()}`) : 'Module';
+}
+
+function flagUrl(countryCode?: string | null) {
+  const code = String(countryCode || '').trim().toLowerCase();
+  return /^[a-z]{2}$/.test(code) ? `https://flagcdn.com/w40/${code}.png` : '';
+}
+
+function accountDomain(hostname: string, username: string) {
+  const cleanHost = hostname.trim().toLowerCase();
+  if (cleanHost.includes('.')) return cleanHost;
+  return `${username.trim().toLowerCase() || cleanHost || 'account'}.tpanel.local`;
+}
+
 export default function CreateDroplet() {
   const navigate = useNavigate();
+  const [selectedModule, setSelectedModule] = useState('tpanel');
   const [selectedNodeId, setSelectedNodeId] = useState('');
   const [selectedPlan, setSelectedPlan] = useState('');
   const [hostname, setHostname] = useState('tiwlo-server-01');
-  const [username, setUsername] = useState('root');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [plans, setPlans] = useState<CloudPlan[]>([]);
   const [nodes, setNodes] = useState<CloudDeploymentNode[]>([]);
@@ -75,6 +96,8 @@ export default function CreateDroplet() {
   const [isLoading, setIsLoading] = useState(false);
   const [orderPhase, setOrderPhase] = useState<'form' | 'loading' | 'complete'>('form');
   const [orderSummary, setOrderSummary] = useState<OrderSummary | null>(null);
+  const [usernameCheck, setUsernameCheck] = useState<any | null>(null);
+  const [usernameChecking, setUsernameChecking] = useState(false);
   const [error, setError] = useState('');
 
   React.useEffect(() => {
@@ -90,6 +113,7 @@ export default function CreateDroplet() {
           (!Number(node.maxAccounts || 0) || Number(node.activeAccounts || 0) < Number(node.maxAccounts || 0))
         ));
         setNodes(activeNodes);
+        setSelectedModule(activeNodes[0]?.module || 'tpanel');
         setSelectedNodeId(activeNodes[0]?.id || '');
       })
       .catch((err) => {
@@ -111,11 +135,56 @@ export default function CreateDroplet() {
       .finally(() => setPlansLoading(false));
   }, []);
 
+  const modules = React.useMemo(() => {
+    const map = new Map<string, { key: string; count: number; countryCode?: string | null }>();
+    nodes.forEach((node) => {
+      const key = node.module || 'tpanel';
+      const current = map.get(key) || { key, count: 0, countryCode: node.countryCode };
+      map.set(key, { ...current, count: current.count + 1, countryCode: current.countryCode || node.countryCode });
+    });
+    return Array.from(map.values());
+  }, [nodes]);
+  const moduleNodes = React.useMemo(() => nodes.filter((node) => (node.module || 'tpanel') === selectedModule), [nodes, selectedModule]);
+  React.useEffect(() => {
+    if (moduleNodes.length > 0 && !moduleNodes.some((node) => node.id === selectedNodeId)) {
+      setSelectedNodeId(moduleNodes[0].id);
+    }
+    if (moduleNodes.length === 0) {
+      setSelectedNodeId('');
+    }
+  }, [moduleNodes, selectedNodeId]);
+
   const selectedPlanRecord = plans.find((plan) => plan.code === selectedPlan) || plans[0] || null;
-  const selectedNode = nodes.find((node) => node.id === selectedNodeId) || nodes[0] || null;
+  const selectedNode = moduleNodes.find((node) => node.id === selectedNodeId) || moduleNodes[0] || null;
   const selectedHourly = hourlyPrice(Number(selectedPlanRecord?.price || 0));
   const creditBalance = Number(billingOverview?.credits || 0);
   const creditEmpty = Boolean(billingOverview) && creditBalance <= 0;
+
+  React.useEffect(() => {
+    const clean = username.trim();
+    if (!clean || clean.length < 3 || !selectedNode?.id) {
+      setUsernameCheck(null);
+      return;
+    }
+    let cancelled = false;
+    setUsernameChecking(true);
+    const timer = window.setTimeout(() => {
+      checkTPanelUsernameAvailabilityWithApi(clean, selectedNode.id, selectedModule)
+        .then((result) => {
+          if (!cancelled) setUsernameCheck(result);
+        })
+        .catch((err) => {
+          if (!cancelled) setUsernameCheck({ available: false, message: err instanceof Error ? err.message : 'Unable to check username.' });
+        })
+        .finally(() => {
+          if (!cancelled) setUsernameChecking(false);
+        });
+    }, 450);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [username, selectedNode?.id, selectedModule]);
 
   const handleCreate = async () => {
     if (!selectedPlanRecord) {
@@ -132,6 +201,10 @@ export default function CreateDroplet() {
     }
     if (!username.trim()) {
       setError('Username is required before creating a droplet.');
+      return;
+    }
+    if (usernameCheck && usernameCheck.available === false) {
+      setError(usernameCheck.message || 'Choose another tPanel username.');
       return;
     }
     if (password.length < 8) {
@@ -159,7 +232,7 @@ export default function CreateDroplet() {
         resource: {
           type: 'droplet',
           name: hostname.trim(),
-          region: `${selectedNode.location || 'Global'} / ${selectedNode.ip}`,
+          region: selectedNode.location || 'Global',
           specs: `${ram} / ${cpu} / ${disk} Disk`,
           ip: selectedNode.ip,
           image: 'tPanel managed deployment',
@@ -183,9 +256,20 @@ export default function CreateDroplet() {
               id: selectedNode.id,
               ip: selectedNode.ip,
               name: selectedNode.name,
+              module: selectedNode.module,
               panel: selectedNode.panel,
               port: selectedNode.port,
-              location: selectedNode.location || 'Global'
+              location: selectedNode.location || 'Global',
+              countryCode: selectedNode.countryCode || ''
+            },
+            tpanelAccount: {
+              module: selectedModule,
+              username: username.trim().toLowerCase(),
+              password,
+              domain: accountDomain(hostname, username),
+              limits: selectedPlanRecord.limits || {},
+              packageCode: selectedPlanRecord.code,
+              packageName: selectedPlanRecord.name
             }
           }
         }
@@ -225,8 +309,9 @@ export default function CreateDroplet() {
         messages={[
           'Setting up your droplet',
           'Checking credit balance',
-          'Preparing the selected image',
+          'Preparing the selected module',
           'Reserving compute capacity',
+          'Checking tPanel username',
           'Creating invoice details',
           'Finalizing deployment'
         ]}
@@ -290,7 +375,44 @@ export default function CreateDroplet() {
       )}
 
       <section className="space-y-3">
-        <StepTitle number="1" title="Choose package size" />
+        <StepTitle number="1" title="Choose module" />
+        <div className="rounded-sm border border-[#e5e8ed] bg-white p-5">
+          {nodesLoading ? (
+            <div className="rounded-sm border border-[#e5e8ed] bg-[#f8f9fa] px-4 py-5 text-[13px] font-bold text-[#4a4a4a]">
+              Loading available modules...
+            </div>
+          ) : modules.length === 0 ? (
+            <div className="rounded-sm border border-amber-200 bg-amber-50 px-4 py-5 text-[13px] font-bold text-amber-700">
+              No active deployment module is available.
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {modules.map((module) => (
+                <button
+                  key={module.key}
+                  onClick={() => setSelectedModule(module.key)}
+                  className={`flex items-center gap-4 rounded-sm border p-4 text-left transition-all ${
+                    selectedModule === module.key
+                      ? 'border-[#0069ff] bg-[#f3f7ff] ring-1 ring-[#0069ff]'
+                      : 'border-[#e5e8ed] bg-white hover:border-[#0069ff]'
+                  }`}
+                >
+                  <span className="grid h-10 w-10 place-items-center rounded-sm bg-[#eef5ff] text-[#0069ff]">
+                    <Server className="h-5 w-5" />
+                  </span>
+                  <span>
+                    <span className="block text-[14px] font-black text-[#2e3d49]">{moduleLabel(module.key)}</span>
+                    <span className="mt-1 block text-[12px] font-bold text-gray-500">{module.count} location{module.count === 1 ? '' : 's'} available</span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </section>
+
+      <section className="space-y-3">
+        <StepTitle number="2" title="Choose package size" />
         <div className="overflow-hidden rounded-sm border border-[#e5e8ed] bg-white">
           <div className="border-b border-[#f3f5f9] bg-[#f8f9fa] px-5 py-3">
             <p className="text-[12px] font-bold text-[#2e3d49]">Size packages from Administrator tPanel</p>
@@ -351,19 +473,21 @@ export default function CreateDroplet() {
       </section>
 
       <section className="space-y-3">
-        <StepTitle number="2" title="Select tPanel server location" />
+        <StepTitle number="3" title={`Select ${moduleLabel(selectedModule)} server location`} />
         <div className="rounded-sm border border-[#e5e8ed] bg-white p-5">
           {nodesLoading ? (
             <div className="rounded-sm border border-[#e5e8ed] bg-[#f8f9fa] px-4 py-5 text-[13px] font-bold text-[#4a4a4a]">
               Loading connected servers...
             </div>
-          ) : nodes.length === 0 ? (
+          ) : moduleNodes.length === 0 ? (
             <div className="rounded-sm border border-amber-200 bg-amber-50 px-4 py-5 text-[13px] font-bold text-amber-700">
-              No active tPanel server is connected. Add a compute node from Administrator Hosting Account Module first.
+              No active {moduleLabel(selectedModule)} location is connected. Add a compute node from Administrator Hosting Account Module first.
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-              {nodes.map((node) => (
+              {moduleNodes.map((node) => {
+                const flag = flagUrl(node.countryCode);
+                return (
                 <button
                   key={node.id}
                   onClick={() => setSelectedNodeId(node.id)}
@@ -374,19 +498,22 @@ export default function CreateDroplet() {
                   }`}
                   id={`node-${node.id}`}
                 >
-                  <span className="min-w-0">
-                    <span className="block truncate text-[14px] font-black text-[#2e3d49]">{node.location || 'Global'}</span>
-                    <span className="mt-1 block font-mono text-[12px] font-bold text-gray-500">{node.ip}</span>
+                  <span className="flex min-w-0 items-center gap-3">
+                    {flag ? <img src={flag} alt={node.countryCode || ''} className="h-7 w-10 rounded-sm border border-[#e5e8ed] object-cover" /> : <span className="h-7 w-10 rounded-sm border border-[#e5e8ed] bg-[#f3f5f9]" />}
+                    <span>
+                      <span className="block truncate text-[14px] font-black text-[#2e3d49]">{node.location || 'Global'}</span>
+                      <span className="mt-1 block text-[11px] font-bold uppercase text-gray-400">{node.countryCode || 'Global'}</span>
+                    </span>
                   </span>
                 </button>
-              ))}
+              );})}
             </div>
           )}
         </div>
       </section>
 
       <section className="space-y-3">
-        <StepTitle number="3" title="Authentication" />
+        <StepTitle number="4" title="Authentication" />
         <div className="space-y-5 rounded-sm border border-[#e5e8ed] bg-white p-5">
           <div className="flex items-start gap-3 rounded-sm border border-[#d8e6ff] bg-[#f3f7ff] px-4 py-3">
             <Lock className="mt-0.5 h-4 w-4 text-[#0069ff]" />
@@ -403,10 +530,24 @@ export default function CreateDroplet() {
                 <input
                   value={username}
                   onChange={(event) => setUsername(event.target.value)}
-                  placeholder="root"
+                  placeholder="account username"
                   className="w-full bg-transparent py-2.5 text-[14px] outline-none"
                 />
               </div>
+              {(usernameChecking || usernameCheck) && (
+                <p className={`text-[11px] font-bold ${usernameCheck?.available ? 'text-emerald-600' : 'text-amber-600'}`}>
+                  {usernameChecking ? 'Checking username...' : usernameCheck?.message}
+                </p>
+              )}
+              {usernameCheck?.suggestions?.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {usernameCheck.suggestions.map((item: string) => (
+                    <button key={item} type="button" onClick={() => setUsername(item)} className="rounded-sm border border-[#d8e6ff] px-2 py-1 text-[11px] font-bold text-[#0069ff]">
+                      {item}
+                    </button>
+                  ))}
+                </div>
+              )}
             </label>
             <label className="space-y-2">
               <span className="block text-[12px] font-bold text-[#2e3d49]">Password</span>
@@ -432,9 +573,9 @@ export default function CreateDroplet() {
 
       <section className="flex flex-col gap-6 rounded-sm bg-[#031b4e] p-6 text-white md:flex-row md:items-center md:justify-between">
         <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
+          <RecapItem label="Module" value={moduleLabel(selectedModule)} />
           <RecapItem label="Package" value={selectedPlanRecord ? `${limitValue(selectedPlanRecord, 'ram', fallbackLimits.ram)} / ${limitValue(selectedPlanRecord, 'cpu', fallbackLimits.cpu)}` : 'No plan'} />
           <RecapItem label="Location" value={selectedNode ? selectedNode.location || 'Global' : 'No server'} />
-          <RecapItem label="IP" value={selectedNode?.ip || 'No server'} />
         </div>
         <div className="flex w-full items-center gap-5 border-t border-white/10 pt-5 md:w-auto md:border-t-0 md:pt-0">
           <div className="text-right">

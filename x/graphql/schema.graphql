@@ -1030,6 +1030,7 @@ type HostingComputeNode {
 type CloudDeploymentNode {
   id: ID!
   name: String!
+  module: String!
   ip: String!
   panel: String!
   port: Int!
@@ -1037,8 +1038,23 @@ type CloudDeploymentNode {
   activeAccounts: Int!
   remainingAccounts: Int!
   location: String
+  countryCode: String
   status: String!
   metadata: JSON
+}
+
+type TPanelUsernameAvailability {
+  username: String!
+  available: Boolean!
+  message: String!
+  suggestions: [String!]!
+}
+
+type TPanelResourceLogin {
+  url: String!
+  username: String!
+  accountId: String
+  message: String!
 }
 
 type HostingProductGroup {
@@ -2628,7 +2644,8 @@ type Query {
   ispAdminRecords(siteId: ID!, section: String!): [IspAdminRecord!]!
 
   hostingComputeNodes(status: String, panel: String, search: String): [HostingComputeNode!]!
-  cloudDeploymentNodes(search: String): [CloudDeploymentNode!]!
+  cloudDeploymentNodes(search: String, module: String): [CloudDeploymentNode!]!
+  tPanelUsernameAvailability(username: String!, nodeId: ID, module: String): TPanelUsernameAvailability!
   hostingProductGroups(status: String, search: String): [HostingProductGroup!]!
   hostingProducts(groupId: ID, status: String, module: String, search: String): [HostingProduct!]!
   hostingPackages(productId: ID, status: String, search: String): [HostingPackage!]!
@@ -2672,6 +2689,8 @@ type Mutation {
   createCloudResourceOrder(input: CreateCloudResourceOrderInput!): CheckoutSession!
   updateResourceStatus(id: ID!, status: String!): CloudResource!
   deleteCloudResource(id: ID!): Boolean!
+  createTPanelResourceLogin(id: ID!): TPanelResourceLogin!
+  changeTPanelResourcePassword(id: ID!, password: String!): CloudResource!
   upsertPlan(input: UpsertPlanInput!): Plan!
   deletePlan(id: ID!): Boolean!
   registerDomain(input: RegisterDomainInput!): Domain!

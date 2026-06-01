@@ -281,6 +281,33 @@ export async function updateDropletStatusWithApi(id: string, status: Droplet['st
   return resourceToDroplet(data.updateResourceStatus);
 }
 
+export async function createTPanelResourceLoginWithApi(id: string) {
+  const data = await graphQL<{ createTPanelResourceLogin: { url: string; username: string; accountId?: string; message: string } }>(
+    `mutation CreateTPanelResourceLogin($id: ID!) {
+      createTPanelResourceLogin(id: $id) {
+        url
+        username
+        accountId
+        message
+      }
+    }`,
+    { id }
+  );
+
+  return data.createTPanelResourceLogin;
+}
+
+export async function changeTPanelResourcePasswordWithApi(id: string, password: string) {
+  const data = await graphQL<{ changeTPanelResourcePassword: any }>(
+    `mutation ChangeTPanelResourcePassword($id: ID!, $password: String!) {
+      changeTPanelResourcePassword(id: $id, password: $password) { ${resourceFields} }
+    }`,
+    { id, password }
+  );
+
+  return resourceToDroplet(data.changeTPanelResourcePassword);
+}
+
 export async function deleteDropletWithApi(id: string) {
   await graphQL<{ deleteCloudResource: boolean }>(
     `mutation DeleteResource($id: ID!) {

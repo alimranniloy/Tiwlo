@@ -20,6 +20,7 @@ const TASK_ACTIONS = new Set([
   'suspend_account',
   'unsuspend_account',
   'terminate_account',
+  'change_account_password',
   'change_package',
   'delete_package',
   'sync_dns_zone',
@@ -2131,17 +2132,64 @@ def write_json(path, data):
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
 
+def local_tpanel_base():
+    return "http://127.0.0.1:" + str(CONFIG.get("TPANEL_PORT", "2086")).strip()
+
+def local_tpanel_admin_token():
+    password_path = pathlib.Path("/root/tpanel-admin-password.txt")
+    password = password_path.read_text(encoding="utf-8").strip() if password_path.exists() else CONFIG.get("TPANEL_ADMIN_PASSWORD", "")
+    if not password:
+        return ""
+    payload_data = json.dumps({"username": "admin", "password": password}).encode("utf-8")
+    req = urllib.request.Request(local_tpanel_base() + "/api/auth/login", data=payload_data, method="POST", headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=30) as response:
+        result = json.loads(response.read().decode("utf-8") or "{}")
+    return result.get("token") or ""
+
+def local_tpanel_post(path, data):
+    token = local_tpanel_admin_token()
+    if not token:
+        raise RuntimeError("Local tPanel admin token is unavailable")
+    payload_data = json.dumps(data or {}).encode("utf-8")
+    req = urllib.request.Request(
+        local_tpanel_base() + path,
+        data=payload_data,
+        method="POST",
+        headers={"Content-Type": "application/json", "Authorization": "Bearer " + token}
+    )
+    with urllib.request.urlopen(req, timeout=60) as response:
+        return json.loads(response.read().decode("utf-8") or "{}")
+
 def handle_create_account(task):
     task_payload = task.get("payload") or {}
     account = task_payload.get("account") or {}
     username, home, domain = safe_account(account)
+    password = task_payload.get("password")
+    try:
+        if password:
+            result = local_tpanel_post("/api/panel/accounts", {
+                "username": username,
+                "domain": domain,
+                "password": str(password),
+                "displayName": account.get("ownerName") or domain,
+                "ownerEmail": account.get("contactEmail") or "",
+                "contactEmail": account.get("contactEmail") or "",
+                "quotaMb": (account.get("limits") or {}).get("diskMB") or (account.get("limits") or {}).get("disk") or 1024,
+                "bandwidthGb": (account.get("limits") or {}).get("bandwidthGB") or 100,
+                "shellAccess": True
+            })
+            if result.get("ok"):
+                return {"username": username, "domain": domain, "home": home, "localPanel": True}
+    except Exception as exc:
+        pathlib.Path(LOG_FILE).parent.mkdir(parents=True, exist_ok=True)
+        with open(LOG_FILE, "a", encoding="utf-8") as log:
+            log.write("local account API fallback for " + username + ": " + str(exc) + "\\n")
     if shutil.which("id") and subprocess.run(["id", "-u", username], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode != 0:
         run(["useradd", "-m", "-d", home, "-s", "/bin/bash", username], timeout=120)
     pathlib.Path(home, "public_html").mkdir(parents=True, exist_ok=True)
     index = pathlib.Path(home, "public_html", "index.html")
     if not index.exists():
         index.write_text("<h1>Welcome to tPanel Pro By Tiwlo</h1>\\n", encoding="utf-8")
-    password = task_payload.get("password")
     if password:
         subprocess.run(["chpasswd"], input=username + ":" + str(password), text=True, check=True, timeout=60)
     shutil.chown(home, user=username, group=username)
@@ -2151,6 +2199,15 @@ def handle_create_account(task):
 def handle_account_status(task, status):
     account = (task.get("payload") or {}).get("account") or {}
     username, home, domain = safe_account(account)
+    try:
+        action = "unsuspend" if status == "active" else "suspend" if status == "suspended" else "terminate"
+        result = local_tpanel_post("/api/panel/accounts/" + username + "/" + action, {})
+        if result.get("ok"):
+            return {"username": username, "domain": domain, "status": status, "localPanel": True}
+    except Exception as exc:
+        pathlib.Path(LOG_FILE).parent.mkdir(parents=True, exist_ok=True)
+        with open(LOG_FILE, "a", encoding="utf-8") as log:
+            log.write("local account status fallback for " + username + ": " + str(exc) + "\\n")
     public_html = pathlib.Path(home, "public_html")
     if status == "suspended":
         pathlib.Path(home, ".tpanel_suspended").write_text("suspended\\n", encoding="utf-8")
@@ -2171,6 +2228,24 @@ def handle_account_status(task, status):
         if shutil.which("usermod"):
             subprocess.run(["usermod", "-L", username], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return {"username": username, "domain": domain, "status": status}
+
+def handle_account_password(task):
+    task_payload = task.get("payload") or {}
+    account = task_payload.get("account") or {}
+    username, home, domain = safe_account(account)
+    password = task_payload.get("password")
+    if not password or len(str(password)) < 8:
+        raise ValueError("Password must be at least 8 characters")
+    try:
+        result = local_tpanel_post("/api/panel/accounts/" + username + "/password", {"password": str(password)})
+        if result.get("ok"):
+            return {"username": username, "domain": domain, "passwordUpdated": True, "localPanel": True}
+    except Exception as exc:
+        pathlib.Path(LOG_FILE).parent.mkdir(parents=True, exist_ok=True)
+        with open(LOG_FILE, "a", encoding="utf-8") as log:
+            log.write("local password API fallback for " + username + ": " + str(exc) + "\\n")
+    subprocess.run(["chpasswd"], input=username + ":" + str(password), text=True, check=True, timeout=60)
+    return {"username": username, "domain": domain, "passwordUpdated": True}
 
 def handle_service(task, action):
     raw = task.get("payload") or {}
@@ -2260,6 +2335,7 @@ def handle_package_delete(task):
 
 HANDLERS = {
     "create_account": handle_create_account,
+    "change_account_password": handle_account_password,
     "change_package": handle_package_upsert,
     "delete_package": handle_package_delete,
     "suspend_account": lambda task: handle_account_status(task, "suspended"),

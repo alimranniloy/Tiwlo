@@ -12,6 +12,14 @@ export const cloudResolvers = {
     createCloudResource: async (_, { input }, ctx) => service.createResource(ctx, await requireAuth(ctx), input),
     updateResourceStatus: (_, { id, status }, ctx) => service.updateResourceStatus(ctx, id, status),
     deleteCloudResource: (_, { id }, ctx) => service.deleteResource(ctx, id),
+    createTPanelResourceLogin: async (_, { id }, ctx) => {
+      await requireAuth(ctx);
+      return service.createTPanelResourceLogin(ctx, id);
+    },
+    changeTPanelResourcePassword: async (_, { id, password }, ctx) => {
+      await requireAuth(ctx);
+      return service.changeTPanelResourcePassword(ctx, id, password);
+    },
     upsertPlan: async (_, { input }, ctx) => {
       await requireAdmin(ctx);
       return service.upsertPlan(ctx, input);

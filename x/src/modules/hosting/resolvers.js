@@ -11,6 +11,10 @@ export const hostingResolvers = {
       await requireAuth(ctx);
       return service.listCloudDeploymentNodes(ctx, args);
     },
+    tPanelUsernameAvailability: async (_, args, ctx) => {
+      await requireAuth(ctx);
+      return service.checkTPanelUsernameAvailability(ctx, args);
+    },
     hostingProductGroups: async (_, args, ctx) => {
       await requireAdmin(ctx);
       return service.listProductGroups(ctx, args);

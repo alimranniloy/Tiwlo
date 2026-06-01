@@ -19,7 +19,13 @@ const AppleIcon = () => (
 );
 
 export default function LoginPage({ onLogin }: LoginPageProps) {
-  const [username, setUsername] = useState("");
+  const [username, setUsername] = useState(() => {
+    try {
+      return new URLSearchParams(window.location.search).get("username") || "";
+    } catch {
+      return "";
+    }
+  });
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);

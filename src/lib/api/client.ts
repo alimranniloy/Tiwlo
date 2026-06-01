@@ -159,6 +159,13 @@ export function resourceToDroplet(resource: any): Droplet {
     status: resource.status === 'off' || resource.status === 'restarting' ? resource.status : 'active',
     region: resource.region,
     specs: resource.specs,
+    image: resource.image,
+    plan: resource.plan,
+    cpu: resource.cpu,
+    ram: resource.ram,
+    disk: resource.disk,
+    monthlyCost: resource.monthlyCost,
+    metadata: resource.metadata || null,
     createdAt: relativeDate(resource.createdAt)
   };
 }
