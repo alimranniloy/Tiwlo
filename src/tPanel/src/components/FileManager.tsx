@@ -218,6 +218,16 @@ export default function FileManager({ files, setFiles, addActivity, openAiWithPr
     return id !== "root-dir";
   });
 
+  const mergeServerListing = (incoming: unknown, scopeParentId: string = currentFolderId) => {
+    if (!Array.isArray(incoming)) return;
+    const normalized = incoming.filter(Boolean) as VirtualItem[];
+    const incomingIds = new Set(normalized.map((item) => item.id));
+    setFiles((previous) => [
+      ...previous.filter((item) => item.parentId !== scopeParentId && !incomingIds.has(item.id)),
+      ...normalized
+    ]);
+  };
+
   const apiJson = async (path: string, payload: Record<string, unknown>) => {
     const token = authToken();
     if (!token) throw new Error("User session expired. Log in again.");
@@ -242,9 +252,39 @@ export default function FileManager({ files, setFiles, addActivity, openAiWithPr
         : `File operation failed (${response.status}).`;
       throw new Error(data.message || fallbackMessage);
     }
-    if (Array.isArray(data.files)) setFiles(data.files);
+    if (Array.isArray(data.files)) mergeServerListing(data.files, String(data.scopeParentId || currentFolderId));
     return data;
   };
+
+  const loadFolder = async (folderId: string) => {
+    const token = authToken();
+    if (!token) return;
+    const params = new URLSearchParams({
+      parentId: folderId,
+      parentPath: itemPath(folderId)
+    });
+    const response = await fetch(`/api/user/files?${params.toString()}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.ok) throw new Error(data.message || "Unable to load folder.");
+    mergeServerListing(data.files, String(data.scopeParentId || folderId));
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    setActiveOperation((current) => current || "Loading folder...");
+    loadFolder(currentFolderId)
+      .catch((error) => {
+        if (!cancelled) setOperationError(error instanceof Error ? error.message : "Unable to load folder.");
+      })
+      .finally(() => {
+        if (!cancelled) setActiveOperation((current) => current === "Loading folder..." ? "" : current);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [currentFolderId]);
 
   const runFileOperation = async (label: string, operation: () => Promise<any>, successMessage?: string) => {
     setOperationError("");
@@ -378,7 +418,7 @@ export default function FileManager({ files, setFiles, addActivity, openAiWithPr
       const ids = descendantIds(selectedIds);
       await runFileOperation(
         "Deleting selected files...",
-        () => apiJson("/api/user/files/delete", { ids }),
+        () => apiJson("/api/user/files/delete", { ids, parentId: currentFolderId, parentPath: currentFolderPath() }),
         `Deleted ${selectedIds.length} selected item(s) from server storage`
       );
     }
@@ -637,20 +677,30 @@ export default function FileManager({ files, setFiles, addActivity, openAiWithPr
     if (confirm(`Are you sure you want to permanently delete "${name}"?`)) {
       await runFileOperation(
         "Deleting item...",
-        () => apiJson("/api/user/files/delete", { ids: descendantIds([id]) }),
+        () => apiJson("/api/user/files/delete", { ids: descendantIds([id]), parentId: currentFolderId, parentPath: currentFolderPath() }),
         `Deleted "${name}" from server storage`
       );
     }
   };
 
   // Start Editing
-  const openEditor = (file: VirtualItem) => {
-    if (file.content === undefined && file.size > 262144) {
-      setOperationError(`${file.name} is a large or binary file. Download it or use Extract/Move/Copy actions instead of editing as text.`);
-      return;
+  const openEditor = async (file: VirtualItem) => {
+    setOperationError("");
+    setActiveOperation("Opening file...");
+    try {
+      const data = await apiJson("/api/user/files/read", {
+        id: file.id,
+        path: itemPath(file.id)
+      });
+      const content = String(data.content ?? "");
+      setEditingFile({ ...file, content });
+      setEditorContent(content);
+      setFiles((previous) => previous.map((item) => item.id === file.id ? { ...item, content } : item));
+    } catch (error) {
+      setOperationError(error instanceof Error ? error.message : "Unable to open file.");
+    } finally {
+      setActiveOperation("");
     }
-    setEditingFile(file);
-    setEditorContent(file.content || "");
   };
 
   // Save File content
@@ -731,7 +781,7 @@ export default function FileManager({ files, setFiles, addActivity, openAiWithPr
           xhr.onerror = () => reject(new Error(`Upload failed for ${file.name}`));
           xhr.send(file);
         });
-        if (Array.isArray(data.files)) setFiles(data.files);
+        if (Array.isArray(data.files)) mergeServerListing(data.files, String(data.scopeParentId || currentFolderId));
         addActivity("file", `Uploaded ${file.name} to ${getCurrentFolder().name}`);
       }
     } catch (error) {

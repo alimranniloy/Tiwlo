@@ -358,8 +358,7 @@ export default function App() {
   const [emails, setEmails] = useState<EmailAccount[]>(() => getPersistedState("emails", []));
   const [serverStats, setServerStats] = useState<ServerStats>(() => getPersistedState("serverStats", emptyServerStats));
   const [activities, setActivities] = useState<RecentActivity[]>(() => getPersistedState("activities", []));
-  const [serverFilesReady, setServerFilesReady] = useState(false);
-  const skipNextServerFileWrite = useRef(false);
+  const [, setServerFilesReady] = useState(false);
   const reconciledSubdomains = useRef<Set<string>>(new Set());
 
   useEffect(() => {
@@ -500,7 +499,6 @@ export default function App() {
           if (mounted) setServerFilesReady(false);
           return;
         }
-        skipNextServerFileWrite.current = true;
         setFiles(normalizeFiles(data.files));
         setServerFilesReady(true);
       } catch {
@@ -547,31 +545,6 @@ export default function App() {
   useEffect(() => {
     persistScopedState("files", files);
   }, [files, storageScope]);
-
-  useEffect(() => {
-    if (!isLoggedIn || isAdmin || !currentAccount || !serverFilesReady) return;
-    if (skipNextServerFileWrite.current) {
-      skipNextServerFileWrite.current = false;
-      return;
-    }
-    const timer = window.setTimeout(async () => {
-      try {
-        const saved = JSON.parse(localStorage.getItem("tpanel_auth") || "null");
-        if (!saved?.token) return;
-        await fetch("/api/user/files", {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${saved.token}`,
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({ files })
-        });
-      } catch {
-        // File edits stay in local state; the next save attempt can retry.
-      }
-    }, 900);
-    return () => window.clearTimeout(timer);
-  }, [currentAccount?.username, files, isAdmin, isLoggedIn, serverFilesReady]);
 
   useEffect(() => {
     persistScopedState("domains", domains);
