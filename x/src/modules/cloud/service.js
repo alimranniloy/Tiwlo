@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { canManageOwnerResource, isAdmin, ownerWhere } from '../../core/auth.js';
 import { randomIp, removeUndefined, toApi } from '../../core/format.js';
 import { writeAudit } from '../../core/audit.js';
@@ -8,7 +8,9 @@ import { chargeProvisioningCredit, requireProvisioningCredit } from '../billing/
 import { AppError } from '../../core/errors.js';
 import {
   changeTPanelNodeAccountPassword,
+  createTPanelNodeAccount,
   createTPanelNodeSsoUrl,
+  findTPanelNodeAccount,
   updateTPanelNodeAccountStatus
 } from '../tpanel/nodeApi.js';
 
@@ -33,6 +35,31 @@ const queueLegacyTPanelTask = async (tx, { account, action, requestedById, paylo
     VALUES ($1, $2, $3, $4, 'queued', $5, CAST($6 AS jsonb), $7, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
   `, randomUUID(), account.licenseId, account.id, action, priority, JSON.stringify(payload), requestedById || null);
   return true;
+};
+
+const ensureTPanelLoginAccountReady = async (node, resource, account) => {
+  if (resource.status !== 'active') {
+    throw new AppError('Turn on this droplet before opening tPanel login.', 'BAD_USER_INPUT');
+  }
+  let remoteAccount = await findTPanelNodeAccount(node, account);
+  if (!remoteAccount) {
+    remoteAccount = await createTPanelNodeAccount(node, {
+      username: account.username,
+      password: randomBytes(18).toString('base64url'),
+      domain: account.domain,
+      limits: account.limits || {},
+      packageCode: account.packageCode || resource.plan || '',
+      packageName: account.packageName || resource.plan || '',
+      displayName: resource.name || account.domain || account.username,
+      permissionProfile: account.permissionProfile || 'developer',
+      shellAccess: account.shellAccess !== false
+    });
+  }
+  if (String(remoteAccount.status || '').toLowerCase() !== 'active') {
+    await updateTPanelNodeAccountStatus(node, remoteAccount, 'active');
+    return { ...remoteAccount, status: 'active' };
+  }
+  return remoteAccount;
 };
 
 export const listPlans = async (ctx, product) => toApi(await ctx.prisma.plan.findMany({
@@ -273,7 +300,7 @@ export const createTPanelResourceLogin = async (ctx, id) => {
   const fallbackHost = String(metadataNode.ip || current.ip || '').trim();
   const fallbackPort = Number(metadataNode.port || 2086);
   const url = node
-    ? createTPanelNodeSsoUrl(node, account)
+    ? createTPanelNodeSsoUrl(node, await ensureTPanelLoginAccountReady(node, current, account), { allowActivate: true })
     : (account.panelUrl || (fallbackHost ? `http://${fallbackHost}:${fallbackPort}/login?username=${encodeURIComponent(username)}` : ''));
   if (!url) {
     throw new AppError('This resource is not linked with an active tPanel server anymore.', 'BAD_USER_INPUT');

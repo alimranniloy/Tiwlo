@@ -80,6 +80,22 @@ export const listTPanelNodeAccounts = async (node) => {
 
 const cleanUsername = (value) => text(value).toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 16);
 
+const parseSize = (value, unit) => {
+  if (value === undefined || value === null || value === '') return 0;
+  if (Number.isFinite(Number(value))) return Number(value);
+  const raw = text(value).toLowerCase().replace(/,/g, '');
+  const amount = Number(raw.match(/[\d.]+/)?.[0] || 0);
+  if (!amount) return 0;
+  if (unit === 'mb') {
+    if (raw.includes('tb')) return Math.round(amount * 1024 * 1024);
+    if (raw.includes('gb')) return Math.round(amount * 1024);
+    return Math.round(amount);
+  }
+  if (raw.includes('tb')) return Math.round(amount * 1024);
+  if (raw.includes('mb')) return Math.max(1, Math.round(amount / 1024));
+  return Math.round(amount);
+};
+
 export const checkTPanelNodeUsername = async (node, username, domain = '') => {
   const clean = cleanUsername(username);
   const requestedDomain = text(domain).toLowerCase();
@@ -104,6 +120,10 @@ export const createTPanelNodeAccount = async (node, input = {}) => {
   }
 
   const limits = input.limits || {};
+  const quotaMb = Number(limits.quotaMb || limits.diskMB || limits.diskMb || 0)
+    || parseSize(limits.disk || limits.diskGb || limits.diskGB, 'mb');
+  const bandwidthGb = Number(limits.bandwidthGb || limits.bandwidthGB || 0)
+    || parseSize(limits.bandwidth || limits.transfer || limits.transferGb, 'gb');
   const result = await callTPanelNodeApi(node, '/api/panel/accounts', {
     method: 'POST',
     body: {
@@ -114,18 +134,32 @@ export const createTPanelNodeAccount = async (node, input = {}) => {
       ownerEmail: text(input.ownerEmail || input.contactEmail),
       contactEmail: text(input.contactEmail || input.ownerEmail),
       packageId: text(input.packageId || input.packageCode),
+      packageName: text(input.packageName || input.planName),
       runtime: text(input.runtime || 'php'),
       permissionProfile: text(input.permissionProfile || 'developer'),
       shellAccess: input.shellAccess !== false,
-      quotaMb: Number(limits.quotaMb || limits.diskMB || limits.diskMb || 0) || undefined,
-      bandwidthGb: Number(limits.bandwidthGb || limits.bandwidthGB || 0) || undefined,
+      quotaMb: quotaMb || undefined,
+      bandwidthGb: bandwidthGb || undefined,
       maxDomains: Number(limits.domains || limits.maxDomains || 0) || undefined,
       maxDatabases: Number(limits.databases || limits.maxDatabases || 0) || undefined,
       maxEmailAccounts: Number(limits.emailAccounts || limits.maxEmailAccounts || 0) || undefined,
-      maxNodeApps: Number(limits.nodeApps || limits.maxNodeApps || 0) || undefined
+      maxNodeApps: Number(limits.nodeApps || limits.maxNodeApps || 0) || undefined,
+      cloudPlan: {
+        code: text(input.packageCode || input.planCode || input.packageId),
+        name: text(input.packageName || input.planName),
+        limits
+      }
     }
   });
   return result?.account || result;
+};
+
+export const findTPanelNodeAccount = async (node, account) => {
+  const username = cleanUsername(account?.username || account);
+  const domain = text(account?.domain).toLowerCase();
+  const accounts = await listTPanelNodeAccounts(node);
+  return accounts.find((item) => text(item.username).toLowerCase() === username
+    || (domain && text(item.domain).toLowerCase() === domain)) || null;
 };
 
 export const updateTPanelNodeAccountStatus = async (node, account, status) => {
@@ -152,7 +186,7 @@ export const changeTPanelNodeAccountPassword = async (node, account, password) =
   });
 };
 
-export const createTPanelNodeSsoUrl = (node, account) => {
+export const createTPanelNodeSsoUrl = (node, account, options = {}) => {
   const username = cleanUsername(account?.username || account);
   if (!username) throw new AppError('tPanel account username is missing.', 'BAD_USER_INPUT');
   const baseUrl = tPanelNodeBaseUrl(node);
@@ -160,6 +194,8 @@ export const createTPanelNodeSsoUrl = (node, account) => {
   if (!secret) return `${baseUrl}/login?username=${encodeURIComponent(username)}`;
   const payload = Buffer.from(JSON.stringify({
     username,
+    domain: text(account?.domain),
+    allowActivate: Boolean(options.allowActivate),
     exp: Date.now() + 5 * 60 * 1000,
     nonce: randomBytes(12).toString('hex')
   })).toString('base64url');

@@ -273,6 +273,14 @@ function scriptSafeJson(value: unknown) {
   return JSON.stringify(value).replace(/</g, "\\u003c");
 }
 
+function htmlEscape(value: unknown) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
 function sanitizeSlug(value: unknown, fallback = "site") {
   return String(value || fallback)
     .toLowerCase()
@@ -1260,15 +1268,44 @@ app.get("/sso", async (req, res) => {
       return;
     }
     const ticket = verifySsoPayload(String(req.query.token || ""));
-    const username = String(ticket?.username || "");
+    const username = String(ticket?.username || "").toLowerCase();
+    const domain = String(ticket?.domain || "").toLowerCase();
     if (!username) {
       res.status(401).type("html").send("<html><body style=\"font-family:system-ui;padding:32px\"><h2>Login link expired</h2><p>Open tPanel again from Tiwlo dashboard.</p></body></html>");
       return;
     }
     const state = readPanelState();
-    const account = state.accounts.find((item: any) => item.username === username || item.domain === username);
-    if (!account || account.status !== "active") {
-      res.status(403).type("html").send("<html><body style=\"font-family:system-ui;padding:32px\"><h2>Account is not active</h2><p>Contact the server administrator.</p></body></html>");
+    let account = state.accounts.find((item: any) => item.username === username || item.domain === username || (domain && item.domain === domain));
+    if (!account) {
+      res.status(404).type("html").send(`<html><body style="font-family:system-ui;padding:32px"><h2>Account not found</h2><p>${htmlEscape(username)} is not available on this tPanel server. Open the correct droplet from Tiwlo dashboard.</p></body></html>`);
+      return;
+    }
+    const accountStatus = String(account.status || "").toLowerCase();
+    if (accountStatus !== "active" && ticket?.allowActivate && !["terminated", "deleted"].includes(accountStatus)) {
+      account = updateStoredAccount(account.username, (current: any) => {
+        const updated = {
+          ...current,
+          status: "active",
+          updatedAt: new Date().toISOString()
+        };
+        if (updated.provisioning) {
+          updated.provisioning = {
+            ...updated.provisioning,
+            ssl: { ...(updated.provisioning.ssl || {}), status: updated.provisioning.ssl?.status === "paused" ? "queued" : updated.provisioning.ssl?.status || "queued" },
+            vhost: { ...(updated.provisioning.vhost || {}), status: updated.provisioning.vhost?.status === "disabled" ? "queued" : updated.provisioning.vhost?.status || "queued" }
+          };
+        }
+        return updated;
+      }) || account;
+      writePanelState(withAuditEvent(readPanelState(), {
+        actor: "tiwlo-sso",
+        action: "account.sso.activated",
+        target: account.username,
+        message: `Account ${account.username} reactivated by a signed Tiwlo SSO login.`
+      }));
+    }
+    if (account.status !== "active") {
+      res.status(403).type("html").send(`<html><body style="font-family:system-ui;padding:32px"><h2>Account is ${htmlEscape(account.status)}</h2><p>Turn on this droplet from Tiwlo dashboard, then open tPanel again.</p></body></html>`);
       return;
     }
     const token = createSession("user", account);
@@ -1653,7 +1690,32 @@ app.post("/api/panel/accounts", requireCapability("accounts"), (req, res) => {
     res.status(409).json({ ok: false, message: "An account with this username or domain already exists." });
     return;
   }
-  const selectedPackage = state.packages.find((pkg: any) => pkg.id === req.body?.packageId) || state.packages[0] || DEFAULT_PACKAGES[0];
+  const packageId = String(req.body?.packageId || "").trim();
+  const packageName = String(req.body?.packageName || req.body?.cloudPlan?.name || "").trim();
+  const existingPackage = state.packages.find((pkg: any) => pkg.id === packageId)
+    || state.packages.find((pkg: any) => packageName && String(pkg.name || "").toLowerCase() === packageName.toLowerCase());
+  const basePackage = existingPackage || state.packages[0] || DEFAULT_PACKAGES[0];
+  const numberOr = (value: any, fallback: number) => {
+    const next = Number(value);
+    return Number.isFinite(next) && next > 0 ? next : fallback;
+  };
+  const selectedPackage = packageName || req.body?.quotaMb || req.body?.bandwidthGb
+    ? {
+      ...basePackage,
+      id: packageId || basePackage.id || sanitizeSlug(packageName || `pkg-${Date.now()}`, "package"),
+      name: packageName || basePackage.name,
+      quotaMb: numberOr(req.body?.quotaMb, basePackage.quotaMb || 1024),
+      bandwidthGb: numberOr(req.body?.bandwidthGb, basePackage.bandwidthGb || 100),
+      domains: numberOr(req.body?.maxDomains, basePackage.domains || 1),
+      emailAccounts: numberOr(req.body?.maxEmailAccounts, basePackage.emailAccounts || 10),
+      databases: numberOr(req.body?.maxDatabases, basePackage.databases || 5),
+      ftpAccounts: numberOr(req.body?.ftpAccounts, basePackage.ftpAccounts || 5),
+      nodeApps: numberOr(req.body?.maxNodeApps, basePackage.nodeApps || 1)
+    }
+    : basePackage;
+  const packages = selectedPackage.id
+    ? [selectedPackage, ...state.packages.filter((pkg: any) => pkg.id !== selectedPackage.id)]
+    : state.packages;
   const homeDirectory = path.join(ACCOUNT_BASE_DIR, username);
   const account: any = {
     id: `acct-${Date.now().toString(36)}`,
@@ -1694,7 +1756,7 @@ app.post("/api/panel/accounts", requireCapability("accounts"), (req, res) => {
   try {
     writeStarterSite(account);
     writeAccountProvisioningPlan(account);
-    writePanelState(withAuditEvent({ ...state, accounts: [account, ...state.accounts] }, {
+    writePanelState(withAuditEvent({ ...state, packages, accounts: [account, ...state.accounts] }, {
       actor: actorFromRequest(req),
       action: "account.created",
       target: username,
@@ -1807,6 +1869,7 @@ app.post("/api/panel/accounts/:username/:action", requireCapability("accounts"),
     return;
   }
   const state = readPanelState();
+  let updatedAccount: any = null;
   const accounts = state.accounts.map((account: any) => {
     if (account.username !== req.params.username) return account;
     const updated = {
@@ -1822,8 +1885,13 @@ app.post("/api/panel/accounts/:username/:action", requireCapability("accounts"),
       };
       writeAccountProvisioningPlan(updated);
     }
+    updatedAccount = updated;
     return updated;
   });
+  if (!updatedAccount) {
+    res.status(404).json({ ok: false, message: "Account not found." });
+    return;
+  }
   writePanelState(withAuditEvent({ ...state, accounts }, {
     actor: actorFromRequest(req),
     action: `account.${action}`,
@@ -1831,7 +1899,7 @@ app.post("/api/panel/accounts/:username/:action", requireCapability("accounts"),
     message: `${req.params.username} ${action} command completed.`,
     severity: action === "terminate" ? "danger" : "warning"
   }));
-  res.json({ ok: true, accounts: accounts.map(publicAccount) });
+  res.json({ ok: true, account: publicAccount(updatedAccount), accounts: accounts.map(publicAccount) });
 });
 
 app.get("/api/panel/update-status", async (req, res) => {
