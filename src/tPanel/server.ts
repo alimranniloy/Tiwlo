@@ -1315,6 +1315,10 @@ function uniquePath(targetPath: string) {
   throw new Error("Could not find an available file name in this folder.");
 }
 
+function fileModeString(stat: fs.Stats) {
+  return `0${(stat.mode & 0o777).toString(8).padStart(3, "0")}`;
+}
+
 function applyAccountFileOwnership(account: any, targetPath: string) {
   if (process.platform === "win32" || !account?.username) return;
   execFile("chown", ["-R", `${account.username}:${account.username}`, targetPath], { timeout: 120000 }, () => undefined);
@@ -1403,9 +1407,13 @@ function virtualPathForItem(itemsById: Map<string, any>, item: any): string[] {
   return [...virtualPathForItem(itemsById, parent), safeVirtualName(item.name)];
 }
 
+const FILE_MANAGER_MAX_ITEMS = 50000;
+const FILE_MANAGER_MAX_DEPTH = 32;
+
 function readAccountFiles(account: any) {
   const baseDir = path.resolve(account.homeDirectory);
-  const ignoredEntries = new Set(["node_modules", ".git", ".cache", ".tpanel-tmp", ".tpanel_suspended"]);
+  const ignoredEntries = new Set([".tpanel-tmp", ".tpanel_suspended"]);
+  fs.mkdirSync(path.join(baseDir, "public_html"), { recursive: true });
   const rootItem = {
     id: "root-dir",
     name: "/",
@@ -1416,29 +1424,41 @@ function readAccountFiles(account: any) {
     permissions: "0755"
   };
   const items: any[] = [rootItem];
-  let count = 1;
+  const queue: Array<{ currentPath: string; parentId: string; depth: number }> = [{ currentPath: baseDir, parentId: "root-dir", depth: 0 }];
 
-  const walk = (currentPath: string, parentId: string, depth: number) => {
-    if (depth > 8 || count > 700 || !fs.existsSync(currentPath)) return;
-    const entries = fs.readdirSync(currentPath, { withFileTypes: true })
-      .filter((entry) => !ignoredEntries.has(entry.name))
-      .sort((a, b) => Number(b.isDirectory()) - Number(a.isDirectory()) || a.name.localeCompare(b.name));
+  for (let queueIndex = 0; queueIndex < queue.length && items.length < FILE_MANAGER_MAX_ITEMS; queueIndex += 1) {
+    const { currentPath, parentId, depth } = queue[queueIndex];
+    if (depth > FILE_MANAGER_MAX_DEPTH || !fs.existsSync(currentPath)) continue;
+    let entries: fs.Dirent[] = [];
+    try {
+      entries = fs.readdirSync(currentPath, { withFileTypes: true })
+        .filter((entry) => !ignoredEntries.has(entry.name))
+        .sort((a, b) => Number(b.isDirectory()) - Number(a.isDirectory()) || a.name.localeCompare(b.name));
+    } catch {
+      continue;
+    }
     for (const entry of entries) {
-      if (count > 700) break;
+      if (items.length >= FILE_MANAGER_MAX_ITEMS) break;
       const filePath = ensureInside(baseDir, path.join(currentPath, entry.name));
-      const stat = fs.statSync(filePath);
+      let stat: fs.Stats;
+      try {
+        stat = fs.lstatSync(filePath);
+      } catch {
+        continue;
+      }
+      const isDirectory = stat.isDirectory();
       const relative = path.relative(baseDir, filePath).replace(/\\/g, "/");
-      const id = relative ? `fs-${Buffer.from(relative).toString("base64url")}` : "root-dir";
+      const id = virtualIdForRelative(relative);
       const item: any = {
         id,
         name: entry.name,
-        type: entry.isDirectory() ? "directory" : "file",
+        type: isDirectory ? "directory" : "file",
         parentId,
         size: stat.size,
         updatedAt: stat.mtime.toISOString().replace("T", " ").substring(0, 19),
-        permissions: entry.isDirectory() ? "0755" : "0644"
+        permissions: fileModeString(stat)
       };
-      if (!entry.isDirectory() && stat.size <= 262144 && isEditableTextFile(entry.name)) {
+      if (!isDirectory && stat.size <= 262144 && isEditableTextFile(entry.name)) {
         try {
           item.content = fs.readFileSync(filePath, "utf8");
         } catch {
@@ -1446,13 +1466,10 @@ function readAccountFiles(account: any) {
         }
       }
       items.push(item);
-      count += 1;
-      if (entry.isDirectory()) walk(filePath, id, depth + 1);
+      if (isDirectory) queue.push({ currentPath: filePath, parentId: id, depth: depth + 1 });
     }
-  };
+  }
 
-  fs.mkdirSync(path.join(baseDir, "public_html"), { recursive: true });
-  walk(baseDir, "root-dir", 0);
   return items;
 }
 
@@ -2179,15 +2196,17 @@ app.post("/api/user/files/extract", requireLicense, async (req, res) => {
     const destinationBase = body.targetFolderId || body.targetPath
       ? accountFolderFromVirtual(account, body.targetFolderId || "root-dir", body.targetPath || "")
       : path.dirname(archivePath);
-    const folderName = `${path.basename(archivePath, path.extname(archivePath))}_extracted`;
+    const folderName = safeVirtualName(path.basename(archivePath, path.extname(archivePath)), "archive");
     const targetDir = uniquePath(ensureInside(account.homeDirectory, path.join(destinationBase, folderName)));
     try {
       fs.mkdirSync(targetDir, { recursive: true });
       await execFileAsync("unzip", ["-qq", archivePath, "-d", targetDir], { timeout: timeoutForBytes(archiveInfo.uncompressedBytes), maxBuffer: 1024 * 1024 });
       await ensureAccountStorageAvailable(account, 0, "Archive extraction");
       await finalizeExtractedFiles(account, targetDir);
+      const relative = path.relative(path.resolve(account.homeDirectory), targetDir).replace(/\\/g, "/");
       res.json(fileOperationResponse(account, {
         extractedTo: path.basename(targetDir),
+        itemId: virtualIdForRelative(relative),
         entries: archiveInfo.entries,
         extractedBytes: archiveInfo.uncompressedBytes
       }));
