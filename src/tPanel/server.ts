@@ -83,19 +83,19 @@ const HOSTING_STACK_PACKAGES = {
     "nginx", "certbot", "python3-certbot-nginx", "php-fpm", "php-cli", "php-mysql", "php-curl", "php-zip", "php-mbstring",
     "php-xml", "php-gd", "php-intl", "php-bcmath", "php-soap", "php-opcache", "mariadb-server", "pdns-server", "pdns-backend-mysql", "dnsutils",
     "postfix", "dovecot-core", "dovecot-imapd", "dovecot-pop3d", "opendkim", "opendkim-tools", "rspamd", "mailutils", "libsasl2-modules",
-    "unzip", "tar", "rsync", "logrotate", "cron", "acl"
+    "zip", "unzip", "tar", "rsync", "logrotate", "cron", "acl"
   ],
   dnf: [
     "nginx", "certbot", "python3-certbot-nginx", "php-fpm", "php-cli", "php-mysqlnd", "php-curl", "php-zip", "php-mbstring",
     "php-xml", "php-gd", "php-intl", "php-bcmath", "php-soap", "php-opcache", "mariadb-server", "pdns", "pdns-backend-mysql", "bind-utils",
     "postfix", "dovecot", "opendkim", "opendkim-tools", "rspamd", "mailx", "cyrus-sasl", "cyrus-sasl-plain",
-    "unzip", "tar", "rsync", "logrotate", "cronie", "acl"
+    "zip", "unzip", "tar", "rsync", "logrotate", "cronie", "acl"
   ],
   yum: [
     "nginx", "certbot", "python3-certbot-nginx", "php-fpm", "php-cli", "php-mysqlnd", "php-curl", "php-zip", "php-mbstring",
     "php-xml", "php-gd", "php-intl", "php-bcmath", "php-soap", "php-opcache", "mariadb-server", "pdns", "pdns-backend-mysql", "bind-utils",
     "postfix", "dovecot", "opendkim", "opendkim-tools", "rspamd", "mailx", "cyrus-sasl", "cyrus-sasl-plain",
-    "unzip", "tar", "rsync", "logrotate", "cronie", "acl"
+    "zip", "unzip", "tar", "rsync", "logrotate", "cronie", "acl"
   ]
 };
 
@@ -109,7 +109,7 @@ const HOSTING_STACK_CHECKS = [
   { id: "node", label: "Node.js Runtime", command: "node", services: [], packageNames: { apt: "nodejs", dnf: "nodejs", yum: "nodejs" } }
 ];
 
-app.use(express.json());
+app.use(express.json({ limit: "25mb" }));
 
 const DEFAULT_PACKAGES = [
   { id: "pkg-starter", name: "Starter", quotaMb: 1024, bandwidthGb: 25, domains: 1, emailAccounts: 5, databases: 2, ftpAccounts: 2, nodeApps: 1 },
@@ -1233,6 +1233,14 @@ function requireUserAccount(req: express.Request, res: express.Response) {
   return account;
 }
 
+function ensureFileManagerAccess(req: express.Request, res: express.Response, account: any) {
+  if (!normalizeAccountPermissions(account.permissions, account).files) {
+    res.status(403).json({ ok: false, message: "File Manager access is disabled for this account." });
+    return false;
+  }
+  return true;
+}
+
 function safeVirtualName(name: unknown, fallback = "item") {
   const cleaned = String(name || fallback)
     .replace(/[\\/:*?"<>|]/g, "-")
@@ -1240,6 +1248,19 @@ function safeVirtualName(name: unknown, fallback = "item") {
     .replace(/^\.+$/, "")
     .trim();
   return cleaned || fallback;
+}
+
+function safeRelativePath(value: unknown) {
+  const raw = String(value || "")
+    .replace(/\\/g, "/")
+    .replace(/^\/+/, "")
+    .replace(/\/+$/, "");
+  if (!raw) return "";
+  const segments = raw.split("/").filter(Boolean).map((segment) => safeVirtualName(segment, ""));
+  if (segments.some((segment) => !segment || segment === "." || segment === "..")) {
+    throw new Error("Blocked unsafe file path.");
+  }
+  return segments.join("/");
 }
 
 function ensureInside(baseDir: string, targetPath: string) {
@@ -1251,6 +1272,54 @@ function ensureInside(baseDir: string, targetPath: string) {
   return target;
 }
 
+function virtualIdForRelative(relativePath: string) {
+  const clean = relativePath.replace(/\\/g, "/").replace(/^\/+/, "");
+  return clean ? `fs-${Buffer.from(clean).toString("base64url")}` : "root-dir";
+}
+
+function relativePathFromVirtualId(itemId: unknown) {
+  const id = String(itemId || "");
+  if (!id || id === "root-dir") return "";
+  if (id === "public-html-dir") return "public_html";
+  if (!id.startsWith("fs-")) return "";
+  try {
+    return safeRelativePath(Buffer.from(id.slice(3), "base64url").toString("utf8"));
+  } catch {
+    return "";
+  }
+}
+
+function accountPathFromVirtual(account: any, itemId: unknown, fallbackRelative = "") {
+  const baseDir = path.resolve(account.homeDirectory);
+  const relative = relativePathFromVirtualId(itemId) || safeRelativePath(fallbackRelative);
+  return ensureInside(baseDir, path.join(baseDir, relative));
+}
+
+function accountFolderFromVirtual(account: any, folderId: unknown, fallbackRelative = "") {
+  const folderPath = accountPathFromVirtual(account, folderId, fallbackRelative);
+  fs.mkdirSync(folderPath, { recursive: true });
+  const stat = fs.statSync(folderPath);
+  if (!stat.isDirectory()) throw new Error("Selected destination is not a folder.");
+  return folderPath;
+}
+
+function uniquePath(targetPath: string) {
+  if (!fs.existsSync(targetPath)) return targetPath;
+  const dir = path.dirname(targetPath);
+  const ext = path.extname(targetPath);
+  const base = path.basename(targetPath, ext);
+  for (let index = 1; index < 500; index += 1) {
+    const candidate = path.join(dir, `${base}-${index}${ext}`);
+    if (!fs.existsSync(candidate)) return candidate;
+  }
+  throw new Error("Could not find an available file name in this folder.");
+}
+
+function applyAccountFileOwnership(account: any, targetPath: string) {
+  if (process.platform === "win32" || !account?.username) return;
+  execFile("chown", ["-R", `${account.username}:${account.username}`, targetPath], { timeout: 120000 }, () => undefined);
+}
+
 function virtualPathForItem(itemsById: Map<string, any>, item: any): string[] {
   if (!item || item.id === "root-dir" || item.parentId === null) return [];
   const parent = itemsById.get(item.parentId);
@@ -1259,6 +1328,7 @@ function virtualPathForItem(itemsById: Map<string, any>, item: any): string[] {
 
 function readAccountFiles(account: any) {
   const baseDir = path.resolve(account.homeDirectory);
+  const ignoredEntries = new Set(["node_modules", ".git", ".cache", ".tpanel-tmp", ".tpanel_suspended"]);
   const rootItem = {
     id: "root-dir",
     name: "/",
@@ -1274,7 +1344,7 @@ function readAccountFiles(account: any) {
   const walk = (currentPath: string, parentId: string, depth: number) => {
     if (depth > 8 || count > 700 || !fs.existsSync(currentPath)) return;
     const entries = fs.readdirSync(currentPath, { withFileTypes: true })
-      .filter((entry) => !["node_modules", ".git", ".cache"].includes(entry.name))
+      .filter((entry) => !ignoredEntries.has(entry.name))
       .sort((a, b) => Number(b.isDirectory()) - Number(a.isDirectory()) || a.name.localeCompare(b.name));
     for (const entry of entries) {
       if (count > 700) break;
@@ -1291,7 +1361,7 @@ function readAccountFiles(account: any) {
         updatedAt: stat.mtime.toISOString().replace("T", " ").substring(0, 19),
         permissions: entry.isDirectory() ? "0755" : "0644"
       };
-      if (!entry.isDirectory() && stat.size <= 262144) {
+      if (!entry.isDirectory() && stat.size <= 262144 && isEditableTextFile(entry.name)) {
         try {
           item.content = fs.readFileSync(filePath, "utf8");
         } catch {
@@ -1325,6 +1395,7 @@ function writeVirtualFilesToAccount(account: any, items: any[]) {
 
   for (const item of files) {
     if (!item.parentId) continue;
+    if (!Object.prototype.hasOwnProperty.call(item, "content")) continue;
     const filePath = ensureInside(baseDir, path.join(baseDir, ...virtualPathForItem(itemsById, item)));
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, String(item.content ?? ""));
@@ -1332,6 +1403,61 @@ function writeVirtualFilesToAccount(account: any, items: any[]) {
 
   fs.mkdirSync(path.join(baseDir, "public_html"), { recursive: true });
   return readAccountFiles(account);
+}
+
+function fileOperationResponse(account: any, extra: any = {}) {
+  return { ok: true, ...extra, files: readAccountFiles(account) };
+}
+
+function parseFileOperationBody(req: express.Request) {
+  return req.body && typeof req.body === "object" ? req.body : {};
+}
+
+function ensureZipEntriesSafe(entries: string[]) {
+  for (const entry of entries) {
+    const normalized = entry.replace(/\\/g, "/");
+    if (!normalized || normalized.startsWith("/") || normalized.includes("../") || normalized === ".." || /^[a-zA-Z]:/.test(normalized)) {
+      throw new Error("Archive contains an unsafe path and was not extracted.");
+    }
+  }
+}
+
+async function zipEntryList(zipPath: string) {
+  try {
+    const { stdout } = await execFileAsync("zipinfo", ["-1", zipPath], { timeout: 30000 });
+    return stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  } catch {
+    const { stdout } = await execFileAsync("unzip", ["-Z", "-1", zipPath], { timeout: 30000 });
+    return stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  }
+}
+
+function sourcePathsForIds(account: any, ids: unknown[]) {
+  const baseDir = path.resolve(account.homeDirectory);
+  return Array.from(new Set((Array.isArray(ids) ? ids : []).map((id) => accountPathFromVirtual(account, id)).filter((itemPath) => itemPath !== baseDir)));
+}
+
+function copyRecursive(sourcePath: string, destinationPath: string) {
+  const stat = fs.statSync(sourcePath);
+  if (stat.isDirectory()) {
+    fs.cpSync(sourcePath, destinationPath, { recursive: true, force: false, errorOnExist: true });
+  } else {
+    fs.copyFileSync(sourcePath, destinationPath);
+  }
+}
+
+function moveRecursive(sourcePath: string, destinationPath: string) {
+  try {
+    fs.renameSync(sourcePath, destinationPath);
+  } catch {
+    copyRecursive(sourcePath, destinationPath);
+    fs.rmSync(sourcePath, { recursive: true, force: true });
+  }
+}
+
+function isEditableTextFile(fileName: string) {
+  return /\.(txt|md|html?|css|js|mjs|cjs|ts|tsx|jsx|json|xml|svg|php|py|rb|go|rs|java|c|cpp|h|hpp|sh|bash|env|ini|conf|config|yml|yaml|sql|log)$/i.test(fileName)
+    || /^(\.htaccess|\.env|robots\.txt)$/i.test(fileName);
 }
 
 function hasCapability(req: express.Request, capability: string) {
@@ -1706,15 +1832,226 @@ app.get("/api/user/files", requireLicense, async (req, res) => {
 app.post("/api/user/files", requireLicense, async (req, res) => {
   const account = requireUserAccount(req, res);
   if (!account) return;
-  if (!normalizeAccountPermissions(account.permissions, account).files) {
-    res.status(403).json({ ok: false, message: "File Manager access is disabled for this account." });
-    return;
-  }
+  if (!ensureFileManagerAccess(req, res, account)) return;
   try {
     const files = writeVirtualFilesToAccount(account, req.body?.files || []);
     res.json({ ok: true, files });
   } catch (error: any) {
     res.status(500).json({ ok: false, message: error.message || "Unable to write account files." });
+  }
+});
+
+app.post("/api/user/files/upload", requireLicense, express.raw({ type: "application/octet-stream", limit: "1024mb" }), async (req, res) => {
+  const account = requireUserAccount(req, res);
+  if (!account) return;
+  if (!ensureFileManagerAccess(req, res, account)) return;
+  try {
+    const rawName = decodeURIComponent(String(req.headers["x-tpanel-file-name"] || "upload.bin"));
+    const parentId = String(req.headers["x-tpanel-parent-id"] || "root-dir");
+    const parentPath = decodeURIComponent(String(req.headers["x-tpanel-parent-path"] || ""));
+    const parentDir = accountFolderFromVirtual(account, parentId, parentPath);
+    const fileName = safeVirtualName(rawName, "upload.bin");
+    const targetPath = uniquePath(ensureInside(account.homeDirectory, path.join(parentDir, fileName)));
+    const payload = Buffer.isBuffer(req.body) ? req.body : Buffer.from(req.body || "");
+    fs.writeFileSync(targetPath, payload);
+    applyAccountFileOwnership(account, targetPath);
+    res.json(fileOperationResponse(account, { uploaded: path.basename(targetPath), size: payload.length }));
+  } catch (error: any) {
+    res.status(500).json({ ok: false, message: error.message || "Unable to upload file." });
+  }
+});
+
+app.post("/api/user/files/create", requireLicense, async (req, res) => {
+  const account = requireUserAccount(req, res);
+  if (!account) return;
+  if (!ensureFileManagerAccess(req, res, account)) return;
+  try {
+    const body = parseFileOperationBody(req);
+    const parentDir = accountFolderFromVirtual(account, body.parentId || "root-dir", body.parentPath || "");
+    const name = safeVirtualName(body.name, body.type === "directory" ? "new-folder" : "new-file.txt");
+    const targetPath = uniquePath(ensureInside(account.homeDirectory, path.join(parentDir, name)));
+    if (body.type === "directory") {
+      fs.mkdirSync(targetPath, { recursive: true });
+    } else {
+      fs.writeFileSync(targetPath, String(body.content || ""));
+    }
+    applyAccountFileOwnership(account, targetPath);
+    const relative = path.relative(path.resolve(account.homeDirectory), targetPath).replace(/\\/g, "/");
+    res.json(fileOperationResponse(account, { itemId: virtualIdForRelative(relative), name: path.basename(targetPath) }));
+  } catch (error: any) {
+    res.status(500).json({ ok: false, message: error.message || "Unable to create item." });
+  }
+});
+
+app.post("/api/user/files/save", requireLicense, async (req, res) => {
+  const account = requireUserAccount(req, res);
+  if (!account) return;
+  if (!ensureFileManagerAccess(req, res, account)) return;
+  try {
+    const body = parseFileOperationBody(req);
+    const targetPath = accountPathFromVirtual(account, body.id, body.path || "");
+    if (!fs.existsSync(targetPath) || fs.statSync(targetPath).isDirectory()) {
+      res.status(404).json({ ok: false, message: "File was not found." });
+      return;
+    }
+    fs.writeFileSync(targetPath, String(body.content ?? ""));
+    applyAccountFileOwnership(account, targetPath);
+    res.json(fileOperationResponse(account, { saved: path.basename(targetPath) }));
+  } catch (error: any) {
+    res.status(500).json({ ok: false, message: error.message || "Unable to save file." });
+  }
+});
+
+app.post("/api/user/files/rename", requireLicense, async (req, res) => {
+  const account = requireUserAccount(req, res);
+  if (!account) return;
+  if (!ensureFileManagerAccess(req, res, account)) return;
+  try {
+    const body = parseFileOperationBody(req);
+    const sourcePath = accountPathFromVirtual(account, body.id, body.path || "");
+    if (!fs.existsSync(sourcePath)) {
+      res.status(404).json({ ok: false, message: "Item was not found." });
+      return;
+    }
+    const nextName = safeVirtualName(body.name, path.basename(sourcePath));
+    const requestedTarget = ensureInside(account.homeDirectory, path.join(path.dirname(sourcePath), nextName));
+    const targetPath = path.resolve(sourcePath) === path.resolve(requestedTarget) ? requestedTarget : uniquePath(requestedTarget);
+    if (path.resolve(sourcePath) !== path.resolve(targetPath)) {
+      fs.renameSync(sourcePath, targetPath);
+      applyAccountFileOwnership(account, targetPath);
+    }
+    res.json(fileOperationResponse(account, { renamed: path.basename(targetPath) }));
+  } catch (error: any) {
+    res.status(500).json({ ok: false, message: error.message || "Unable to rename item." });
+  }
+});
+
+app.post("/api/user/files/chmod", requireLicense, async (req, res) => {
+  const account = requireUserAccount(req, res);
+  if (!account) return;
+  if (!ensureFileManagerAccess(req, res, account)) return;
+  try {
+    const body = parseFileOperationBody(req);
+    const targetPath = accountPathFromVirtual(account, body.id, body.path || "");
+    const modeText = String(body.permissions || "").replace(/^0/, "");
+    if (!/^[0-7]{3}$/.test(modeText)) throw new Error("Use a valid chmod value like 0644 or 0755.");
+    fs.chmodSync(targetPath, parseInt(modeText, 8));
+    res.json(fileOperationResponse(account, { permissions: `0${modeText}` }));
+  } catch (error: any) {
+    res.status(500).json({ ok: false, message: error.message || "Unable to change permissions." });
+  }
+});
+
+app.post("/api/user/files/delete", requireLicense, async (req, res) => {
+  const account = requireUserAccount(req, res);
+  if (!account) return;
+  if (!ensureFileManagerAccess(req, res, account)) return;
+  try {
+    const paths = sourcePathsForIds(account, parseFileOperationBody(req).ids || []);
+    for (const targetPath of paths.sort((a, b) => b.length - a.length)) {
+      if (fs.existsSync(targetPath)) fs.rmSync(targetPath, { recursive: true, force: true });
+    }
+    fs.mkdirSync(path.join(account.homeDirectory, "public_html"), { recursive: true });
+    res.json(fileOperationResponse(account, { deleted: paths.length }));
+  } catch (error: any) {
+    res.status(500).json({ ok: false, message: error.message || "Unable to delete item." });
+  }
+});
+
+app.post("/api/user/files/copy", requireLicense, async (req, res) => {
+  const account = requireUserAccount(req, res);
+  if (!account) return;
+  if (!ensureFileManagerAccess(req, res, account)) return;
+  try {
+    const body = parseFileOperationBody(req);
+    const destinationDir = accountFolderFromVirtual(account, body.targetFolderId || "root-dir", body.targetPath || "");
+    const sources = sourcePathsForIds(account, body.ids || []);
+    for (const sourcePath of sources) {
+      if (!fs.existsSync(sourcePath)) continue;
+      const targetPath = uniquePath(ensureInside(account.homeDirectory, path.join(destinationDir, path.basename(sourcePath))));
+      copyRecursive(sourcePath, targetPath);
+      applyAccountFileOwnership(account, targetPath);
+    }
+    res.json(fileOperationResponse(account, { copied: sources.length }));
+  } catch (error: any) {
+    res.status(500).json({ ok: false, message: error.message || "Unable to copy item." });
+  }
+});
+
+app.post("/api/user/files/move", requireLicense, async (req, res) => {
+  const account = requireUserAccount(req, res);
+  if (!account) return;
+  if (!ensureFileManagerAccess(req, res, account)) return;
+  try {
+    const body = parseFileOperationBody(req);
+    const destinationDir = accountFolderFromVirtual(account, body.targetFolderId || "root-dir", body.targetPath || "");
+    const sources = sourcePathsForIds(account, body.ids || []);
+    for (const sourcePath of sources) {
+      if (!fs.existsSync(sourcePath)) continue;
+      if (destinationDir === sourcePath || destinationDir.startsWith(`${sourcePath}${path.sep}`)) {
+        throw new Error("Cannot move a folder into itself.");
+      }
+      const targetPath = uniquePath(ensureInside(account.homeDirectory, path.join(destinationDir, path.basename(sourcePath))));
+      moveRecursive(sourcePath, targetPath);
+      applyAccountFileOwnership(account, targetPath);
+    }
+    res.json(fileOperationResponse(account, { moved: sources.length }));
+  } catch (error: any) {
+    res.status(500).json({ ok: false, message: error.message || "Unable to move item." });
+  }
+});
+
+app.post("/api/user/files/extract", requireLicense, async (req, res) => {
+  const account = requireUserAccount(req, res);
+  if (!account) return;
+  if (!ensureFileManagerAccess(req, res, account)) return;
+  try {
+    const body = parseFileOperationBody(req);
+    const archivePath = accountPathFromVirtual(account, body.id, body.path || "");
+    if (!fs.existsSync(archivePath) || fs.statSync(archivePath).isDirectory()) throw new Error("Archive was not found.");
+    if (!archivePath.toLowerCase().endsWith(".zip")) throw new Error("Only .zip extraction is supported right now.");
+    const entries = await zipEntryList(archivePath);
+    ensureZipEntriesSafe(entries);
+    const destinationBase = body.targetFolderId || body.targetPath
+      ? accountFolderFromVirtual(account, body.targetFolderId || "root-dir", body.targetPath || "")
+      : path.dirname(archivePath);
+    const folderName = `${path.basename(archivePath, path.extname(archivePath))}_extracted`;
+    const targetDir = uniquePath(ensureInside(account.homeDirectory, path.join(destinationBase, folderName)));
+    fs.mkdirSync(targetDir, { recursive: true });
+    await execFileAsync("unzip", ["-qq", archivePath, "-d", targetDir], { timeout: 300000 });
+    applyAccountFileOwnership(account, targetDir);
+    res.json(fileOperationResponse(account, { extractedTo: path.basename(targetDir), entries: entries.length }));
+  } catch (error: any) {
+    res.status(500).json({ ok: false, message: error.message || "Unable to extract archive. Make sure unzip is installed." });
+  }
+});
+
+app.post("/api/user/files/compress", requireLicense, async (req, res) => {
+  const account = requireUserAccount(req, res);
+  if (!account) return;
+  if (!ensureFileManagerAccess(req, res, account)) return;
+  try {
+    const body = parseFileOperationBody(req);
+    const sources = sourcePathsForIds(account, body.ids || []);
+    if (!sources.length) throw new Error("Select at least one item to compress.");
+    const destinationDir = accountFolderFromVirtual(account, body.targetFolderId || "root-dir", body.targetPath || "");
+    const archiveName = safeVirtualName(body.name || `archive-${Date.now()}.zip`, "archive.zip").replace(/\.zip$/i, "") + ".zip";
+    const archivePath = uniquePath(ensureInside(account.homeDirectory, path.join(destinationDir, archiveName)));
+    const stagingDir = ensureInside(account.homeDirectory, path.join(account.homeDirectory, ".tpanel-tmp", `zip-${Date.now()}-${randomBytes(3).toString("hex")}`));
+    fs.mkdirSync(stagingDir, { recursive: true });
+    try {
+      for (const sourcePath of sources) {
+        if (!fs.existsSync(sourcePath)) continue;
+        copyRecursive(sourcePath, uniquePath(path.join(stagingDir, path.basename(sourcePath))));
+      }
+      await execFileAsync("zip", ["-qry", archivePath, "."], { cwd: stagingDir, timeout: 300000 });
+    } finally {
+      fs.rmSync(stagingDir, { recursive: true, force: true });
+    }
+    applyAccountFileOwnership(account, archivePath);
+    res.json(fileOperationResponse(account, { archive: path.basename(archivePath) }));
+  } catch (error: any) {
+    res.status(500).json({ ok: false, message: error.message || "Unable to create zip archive. Make sure zip is installed." });
   }
 });
 

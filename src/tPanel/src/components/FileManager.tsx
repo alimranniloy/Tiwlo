@@ -53,11 +53,24 @@ const fallbackFiles: VirtualItem[] = [
 
 export default function FileManager({ files, setFiles, addActivity, openAiWithPrompt, setActiveTab }: FileManagerProps) {
   const safeFiles = Array.isArray(files) && files.length ? files : fallbackFiles;
-  const [currentFolderId, setCurrentFolderId] = useState<string>("root-dir"); // start at root-dir
+  const [currentFolderId, setCurrentFolderId] = useState<string>(() => {
+    try {
+      return localStorage.getItem("tpanel_file_manager_folder") || "root-dir";
+    } catch {
+      return "root-dir";
+    }
+  });
   const [searchQuery, setSearchQuery] = useState("");
   const [isNewFolderModalOpen, setIsNewFolderModalOpen] = useState(false);
   const [isNewFileModalOpen, setIsNewFileModalOpen] = useState(false);
   const [newItemName, setNewItemName] = useState("");
+  const [activeOperation, setActiveOperation] = useState("");
+  const [operationError, setOperationError] = useState("");
+  const [uploadProgress, setUploadProgress] = useState<{ name: string; percent: number; loaded: number; total: number } | null>(null);
+  const [isTransferModalOpen, setIsTransferModalOpen] = useState(false);
+  const [transferMode, setTransferMode] = useState<"copy" | "move">("copy");
+  const [transferIds, setTransferIds] = useState<string[]>([]);
+  const [transferTargetId, setTransferTargetId] = useState("root-dir");
   
   // Multiple Item Selection state
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -112,6 +125,20 @@ export default function FileManager({ files, setFiles, addActivity, openAiWithPr
     return safeFiles.find(f => f.id === currentFolderId) || safeFiles.find(f => f.id === "root-dir") || fallbackFiles[0];
   };
 
+  useEffect(() => {
+    if (!safeFiles.some((item) => item.id === currentFolderId && item.type === "directory")) {
+      setCurrentFolderId("root-dir");
+    }
+  }, [currentFolderId, safeFiles]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("tpanel_file_manager_folder", currentFolderId);
+    } catch {
+      // Ignore private-mode storage failures.
+    }
+  }, [currentFolderId]);
+
   const getBreadcrumbs = () => {
     const list: VirtualItem[] = [];
     let current = getCurrentFolder();
@@ -138,6 +165,115 @@ export default function FileManager({ files, setFiles, addActivity, openAiWithPr
   const filteredItems = searchQuery.trim() === ""
     ? currentItems
     : safeFiles.filter(f => f.parentId === currentFolderId && f.name.toLowerCase().includes(searchQuery.toLowerCase()));
+
+  const authToken = () => {
+    try {
+      return JSON.parse(localStorage.getItem("tpanel_auth") || "null")?.token || "";
+    } catch {
+      return "";
+    }
+  };
+
+  const itemPath = (itemId: string) => {
+    const parts: string[] = [];
+    let current = safeFiles.find((item) => item.id === itemId);
+    while (current && current.parentId !== null) {
+      parts.unshift(current.name);
+      current = safeFiles.find((item) => item.id === current?.parentId);
+    }
+    return parts.join("/");
+  };
+
+  const currentFolderPath = () => itemPath(currentFolderId);
+
+  const directoryOptions = safeFiles
+    .filter((item) => item.type === "directory")
+    .map((item) => ({
+      id: item.id,
+      label: item.id === "root-dir" ? "/ root" : `/${itemPath(item.id)}`
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+
+  const descendantIds = (ids: string[]) => {
+    const all = new Set(ids);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      safeFiles.forEach((item) => {
+        if (item.parentId && all.has(item.parentId) && !all.has(item.id)) {
+          all.add(item.id);
+          changed = true;
+        }
+      });
+    }
+    return Array.from(all);
+  };
+
+  const topLevelIds = (ids: string[]) => ids.filter((id) => {
+    let current = safeFiles.find((item) => item.id === id);
+    while (current?.parentId) {
+      if (ids.includes(current.parentId)) return false;
+      current = safeFiles.find((item) => item.id === current?.parentId);
+    }
+    return id !== "root-dir";
+  });
+
+  const apiJson = async (path: string, payload: Record<string, unknown>) => {
+    const token = authToken();
+    if (!token) throw new Error("User session expired. Log in again.");
+    const response = await fetch(path, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(payload)
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.ok) throw new Error(data.message || "File operation failed.");
+    if (Array.isArray(data.files)) setFiles(data.files);
+    return data;
+  };
+
+  const runFileOperation = async (label: string, operation: () => Promise<any>, successMessage?: string) => {
+    setOperationError("");
+    setActiveOperation(label);
+    try {
+      const data = await operation();
+      if (successMessage) addActivity("file", successMessage);
+      setSelectedIds([]);
+      return data;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "File operation failed.";
+      setOperationError(message);
+      throw error;
+    } finally {
+      setActiveOperation("");
+    }
+  };
+
+  const openTransferModal = (mode: "copy" | "move", ids: string[]) => {
+    if (!ids.length) return;
+    setTransferMode(mode);
+    setTransferIds(topLevelIds(ids));
+    setTransferTargetId(currentFolderId);
+    setIsTransferModalOpen(true);
+  };
+
+  const confirmTransfer = async () => {
+    const target = directoryOptions.find((item) => item.id === transferTargetId);
+    await runFileOperation(
+      transferMode === "copy" ? "Copying files..." : "Moving files...",
+      () => apiJson(`/api/user/files/${transferMode}`, {
+        ids: transferIds,
+        targetFolderId: transferTargetId,
+        targetPath: itemPath(transferTargetId)
+      }),
+      `${transferMode === "copy" ? "Copied" : "Moved"} ${transferIds.length} item(s) to ${target?.label || "selected folder"}`
+    );
+    setClipBoardIds([]);
+    setIsTransferModalOpen(false);
+  };
 
   // Premium GCP/Google Cloud inspired custom Icon Resolver (No raw emojis)
   const getItemIcon = (item: VirtualItem, className = "w-5 h-5") => {
@@ -225,93 +361,60 @@ export default function FileManager({ files, setFiles, addActivity, openAiWithPr
   };
 
   // Bulk Actions
-  const handleBulkDelete = () => {
+  const handleBulkDelete = async () => {
     if (selectedIds.length === 0) return;
     if (confirm(`Are you sure you want to permanently delete these ${selectedIds.length} items?`)) {
-      setFiles(prev => prev.filter(f => !selectedIds.includes(f.id) && !(f.parentId && selectedIds.includes(f.parentId))));
-      addActivity("file", `Bulk deleted ${selectedIds.length} resource elements`);
-      setSelectedIds([]);
+      const ids = descendantIds(selectedIds);
+      await runFileOperation(
+        "Deleting selected files...",
+        () => apiJson("/api/user/files/delete", { ids }),
+        `Deleted ${selectedIds.length} selected item(s) from server storage`
+      );
     }
   };
 
-  const handleBulkCompress = () => {
+  const handleBulkCompress = async () => {
     if (selectedIds.length === 0) return;
     const nameSeed = "bulk_archive_" + Math.random().toString(36).substr(2, 4) + ".zip";
-    
-    // Total sizes
-    let totalSize = 0;
-    selectedIds.forEach(id => {
-      const match = files.find(f => f.id === id);
-      if (match) totalSize += match.size || 500;
-    });
-
-    const zipItem: VirtualItem = {
-      id: "zip-" + Math.random().toString(36).substr(2, 9),
-      name: nameSeed,
-      type: "file",
-      parentId: currentFolderId,
-      size: totalSize || 4096,
-      updatedAt: new Date().toISOString().replace('T', ' ').substring(0, 19),
-      content: `SIMULATED MULTIPLE COMPRESSION ZIP FILE CONTAINING: [${selectedIds.map(id => files.find(f => f.id === id)?.name).filter(Boolean).join(", ")}]`,
-      permissions: "0644"
-    };
-
-    setFiles(prev => [...prev, zipItem]);
-    addActivity("file", `Compressed ${selectedIds.length} files successfully into "${nameSeed}"`);
-    alert(`Success! Generated multiple selection archive "${nameSeed}" under this folder.`);
-    setSelectedIds([]);
+    await runFileOperation(
+      "Creating zip archive...",
+      () => apiJson("/api/user/files/compress", {
+        ids: selectedIds,
+        targetFolderId: currentFolderId,
+        targetPath: currentFolderPath(),
+        name: nameSeed
+      }),
+      `Compressed ${selectedIds.length} selected item(s) into ${nameSeed}`
+    );
   };
 
   const handleBulkCopy = () => {
     if (selectedIds.length === 0) return;
     setClipBoardIds(selectedIds);
     setClipBoardMode("copy");
-    alert(`Copied ${selectedIds.length} items to clipboard. Now navigate to any folder and use custom Right-Click to Paste!`);
+    openTransferModal("copy", selectedIds);
   };
 
   const handleBulkCut = () => {
     if (selectedIds.length === 0) return;
     setClipBoardIds(selectedIds);
     setClipBoardMode("cut");
-    alert(`Cut ${selectedIds.length} items. Navigate to target folder and Custom Right-Click to Paste/Move!`);
+    openTransferModal("move", selectedIds);
   };
 
-  const handlePasteClipboard = () => {
+  const handlePasteClipboard = async () => {
     if (clipBoardIds.length === 0) return;
-
-    if (clipBoardMode === "copy") {
-      // Create fresh copies with new IDs but set currentFolderId as parent
-      const copies: VirtualItem[] = [];
-      clipBoardIds.forEach(id => {
-        const source = files.find(f => f.id === id);
-        if (!source) return;
-
-        const newId = "copy-" + Math.random().toString(36).substr(2, 9);
-        copies.push({
-          ...source,
-          id: newId,
-          parentId: currentFolderId,
-          name: source.name.includes(".") 
-            ? source.name.split(".").slice(0, -1).join(".") + "_copy." + source.name.split(".").pop()
-            : source.name + "_copy",
-          updatedAt: new Date().toISOString().replace('T', ' ').substring(0, 19),
-        });
-      });
-      setFiles(prev => [...prev, ...copies]);
-      addActivity("file", `Pasted clipboard contents with copy mode (${copies.length} items)`);
-    } else {
-      // Move items by updating parentIds
-      setFiles(prev => prev.map(f => {
-        if (clipBoardIds.includes(f.id)) {
-          return { ...f, parentId: currentFolderId, updatedAt: new Date().toISOString().replace('T', ' ').substring(0, 19) };
-        }
-        return f;
-      }));
-      addActivity("file", `Moved ${clipBoardIds.length} resource elements to current folder`);
-    }
-
+    const endpoint = clipBoardMode === "copy" ? "/api/user/files/copy" : "/api/user/files/move";
+    await runFileOperation(
+      clipBoardMode === "copy" ? "Pasting copied files..." : "Moving files...",
+      () => apiJson(endpoint, {
+        ids: clipBoardIds,
+        targetFolderId: currentFolderId,
+        targetPath: currentFolderPath()
+      }),
+      `${clipBoardMode === "copy" ? "Pasted" : "Moved"} ${clipBoardIds.length} item(s) into current folder`
+    );
     setClipBoardIds([]);
-    alert("Items pasted/moved successfully!");
   };
 
   // Right-Click Event Handler
@@ -361,18 +464,19 @@ export default function FileManager({ files, setFiles, addActivity, openAiWithPr
   };
 
   // Save Permissions Command
-  const handleSaveChmod = () => {
+  const handleSaveChmod = async () => {
     if (!itemToChmod) return;
     const finalOctal = getCalculatedOctal();
 
-    setFiles(prev => prev.map(f => {
-      if (f.id === itemToChmod.id) {
-        return { ...f, permissions: finalOctal };
-      }
-      return f;
-    }));
-
-    addActivity("file", `Modified permissions for "${itemToChmod.name}" to ${finalOctal}`);
+    await runFileOperation(
+      "Updating permissions...",
+      () => apiJson("/api/user/files/chmod", {
+        id: itemToChmod.id,
+        path: itemPath(itemToChmod.id),
+        permissions: finalOctal
+      }),
+      `Modified permissions for "${itemToChmod.name}" to ${finalOctal}`
+    );
     setIsChmodModalOpen(false);
     setItemToChmod(null);
   };
@@ -385,7 +489,7 @@ export default function FileManager({ files, setFiles, addActivity, openAiWithPr
   };
 
   // Save Rename command
-  const handleSaveRename = (e: FormEvent) => {
+  const handleSaveRename = async (e: FormEvent) => {
     e.preventDefault();
     if (!itemToRename || !renameValue.trim()) return;
 
@@ -394,20 +498,21 @@ export default function FileManager({ files, setFiles, addActivity, openAiWithPr
       return;
     }
 
-    setFiles(prev => prev.map(f => {
-      if (f.id === itemToRename.id) {
-        return { ...f, name: renameValue.trim(), updatedAt: new Date().toISOString().replace('T', ' ').substring(0, 19) };
-      }
-      return f;
-    }));
-
-    addActivity("file", `Renamed "${itemToRename.name}" to "${renameValue.trim()}"`);
+    await runFileOperation(
+      "Renaming item...",
+      () => apiJson("/api/user/files/rename", {
+        id: itemToRename.id,
+        path: itemPath(itemToRename.id),
+        name: renameValue.trim()
+      }),
+      `Renamed "${itemToRename.name}" to "${renameValue.trim()}"`
+    );
     setIsRenameModalOpen(false);
     setItemToRename(null);
   };
 
   // Create folder
-  const handleCreateFolder = (e: FormEvent) => {
+  const handleCreateFolder = async (e: FormEvent) => {
     e.preventDefault();
     if (!newItemName.trim()) return;
 
@@ -416,24 +521,23 @@ export default function FileManager({ files, setFiles, addActivity, openAiWithPr
       return;
     }
 
-    const newFolder: VirtualItem = {
-      id: "dir-" + Math.random().toString(36).substr(2, 9),
-      name: newItemName.trim(),
-      type: "directory",
-      parentId: currentFolderId,
-      size: 4096,
-      updatedAt: new Date().toISOString().replace('T', ' ').substring(0, 19),
-      permissions: "0755"
-    };
-
-    setFiles(prev => [...prev, newFolder]);
-    addActivity("file", `Created folder: ${newFolder.name} under ${getCurrentFolder().name}`);
+    const folderName = newItemName.trim();
+    await runFileOperation(
+      "Creating folder...",
+      () => apiJson("/api/user/files/create", {
+        type: "directory",
+        name: folderName,
+        parentId: currentFolderId,
+        parentPath: currentFolderPath()
+      }),
+      `Created folder: ${folderName} under ${getCurrentFolder().name}`
+    );
     setNewItemName("");
     setIsNewFolderModalOpen(false);
   };
 
   // Create file
-  const handleCreateFile = (e: FormEvent) => {
+  const handleCreateFile = async (e: FormEvent) => {
     e.preventDefault();
     if (!newItemName.trim()) return;
 
@@ -442,25 +546,25 @@ export default function FileManager({ files, setFiles, addActivity, openAiWithPr
       return;
     }
 
-    const newFile: VirtualItem = {
-      id: "file-" + Math.random().toString(36).substr(2, 9),
-      name: newItemName.trim(),
-      type: "file",
-      parentId: currentFolderId,
-      size: 0,
-      updatedAt: new Date().toISOString().replace('T', ' ').substring(0, 19),
-      content: "",
-      permissions: "0644"
-    };
-
-    setFiles(prev => [...prev, newFile]);
-    addActivity("file", `Created empty file: ${newFile.name}`);
+    const fileName = newItemName.trim();
+    const data = await runFileOperation(
+      "Creating file...",
+      () => apiJson("/api/user/files/create", {
+        type: "file",
+        name: fileName,
+        parentId: currentFolderId,
+        parentPath: currentFolderPath(),
+        content: ""
+      }),
+      `Created empty file: ${fileName}`
+    );
     setNewItemName("");
     setIsNewFileModalOpen(false);
-    
-    // Automatically open in editor
-    setEditingFile(newFile);
-    setEditorContent("");
+    const created = Array.isArray(data?.files) ? data.files.find((item: VirtualItem) => item.id === data.itemId) : null;
+    if (created) {
+      setEditingFile(created);
+      setEditorContent("");
+    }
   };
 
   // Physical dynamic file download logic
@@ -482,7 +586,7 @@ export default function FileManager({ files, setFiles, addActivity, openAiWithPr
   };
 
   // Simulated zip archive compression
-  const compressToZip = (item: VirtualItem) => {
+  const compressToZip = async (item: VirtualItem) => {
     const archiveName = item.name.includes(".") 
       ? item.name.split(".")[0] + ".zip" 
       : item.name + ".zip";
@@ -492,85 +596,65 @@ export default function FileManager({ files, setFiles, addActivity, openAiWithPr
       return;
     }
 
-    const zipItem: VirtualItem = {
-      id: "zip-" + Math.random().toString(36).substr(2, 9),
-      name: archiveName,
-      type: "file",
-      parentId: currentFolderId,
-      size: Math.floor(Math.random() * 45000) + 1200,
-      updatedAt: new Date().toISOString().replace('T', ' ').substring(0, 19),
-      content: "SIMULATED BINARY ARCHIVE ZIP COMPRESSION WRAPPER",
-      permissions: "0644"
-    };
-
-    setFiles(prev => [...prev, zipItem]);
-    addActivity("file", `Compressed folder structure into archive: ${archiveName}`);
+    await runFileOperation(
+      "Creating zip archive...",
+      () => apiJson("/api/user/files/compress", {
+        ids: [item.id],
+        targetFolderId: currentFolderId,
+        targetPath: currentFolderPath(),
+        name: archiveName
+      }),
+      `Compressed "${item.name}" into ${archiveName}`
+    );
   };
 
-  // Simulated unzip extraction
-  const extractZipArchive = (item: VirtualItem) => {
-    const targetDirName = item.name.replace(".zip", "") + "_extracted";
-    
-    // Create extracted folder
-    const targetFolderId = "dir-" + Math.random().toString(36).substr(2, 9);
-    const targetFolder: VirtualItem = {
-      id: targetFolderId,
-      name: targetDirName,
-      type: "directory",
-      parentId: currentFolderId,
-      size: 4096,
-      updatedAt: new Date().toISOString().replace('T', ' ').substring(0, 19),
-      permissions: "0755"
-    };
-
-    // Create a dummy file inside the extracted folder
-    const innerFile: VirtualItem = {
-      id: "file-" + Math.random().toString(36).substr(2, 9),
-      name: "README_extracted.txt",
-      type: "file",
-      parentId: targetFolderId,
-      size: 245,
-      updatedAt: new Date().toISOString().replace('T', ' ').substring(0, 19),
-      content: `Archive extracted successfully!\n\nSource: ${item.name}\nTimestamp: ${new Date().toISOString()}`,
-      permissions: "0644"
-    };
-
-    setFiles(prev => [...prev, targetFolder, innerFile]);
-    addActivity("file", `Extracted ZIP archive contents into: ${targetDirName}/`);
-    alert(`Archive "${item.name}" extracted successfully into folder "${targetDirName}/"`);
+  const extractZipArchive = async (item: VirtualItem) => {
+    await runFileOperation(
+      "Extracting zip archive...",
+      () => apiJson("/api/user/files/extract", {
+        id: item.id,
+        path: itemPath(item.id),
+        targetFolderId: currentFolderId,
+        targetPath: currentFolderPath()
+      }),
+      `Extracted ZIP archive "${item.name}"`
+    );
   };
 
   // Delete item
-  const handleDeleteItem = (id: string, name: string) => {
+  const handleDeleteItem = async (id: string, name: string) => {
     if (confirm(`Are you sure you want to permanently delete "${name}"?`)) {
-      setFiles(prev => prev.filter(f => f.id !== id && f.parentId !== id)); 
-      addActivity("file", `Deleted virtual path resource: "${name}"`);
+      await runFileOperation(
+        "Deleting item...",
+        () => apiJson("/api/user/files/delete", { ids: descendantIds([id]) }),
+        `Deleted "${name}" from server storage`
+      );
     }
   };
 
   // Start Editing
   const openEditor = (file: VirtualItem) => {
+    if (file.content === undefined && file.size > 262144) {
+      setOperationError(`${file.name} is a large or binary file. Download it or use Extract/Move/Copy actions instead of editing as text.`);
+      return;
+    }
     setEditingFile(file);
     setEditorContent(file.content || "");
   };
 
   // Save File content
-  const handleSaveFile = () => {
+  const handleSaveFile = async () => {
     if (!editingFile) return;
-    
-    setFiles(prev => prev.map(f => {
-      if (f.id === editingFile.id) {
-         return {
-           ...f,
-           content: editorContent,
-           size: new Blob([editorContent]).size,
-           updatedAt: new Date().toISOString().replace('T', ' ').substring(0, 19)
-         };
-      }
-      return f;
-    }));
 
-    addActivity("file", `Saved modifications to server code file: ${editingFile.name}`);
+    await runFileOperation(
+      "Saving file...",
+      () => apiJson("/api/user/files/save", {
+        id: editingFile.id,
+        path: itemPath(editingFile.id),
+        content: editorContent
+      }),
+      `Saved modifications to server file: ${editingFile.name}`
+    );
     setEditingFile(prev => prev ? { ...prev, content: editorContent } : null);
     
     const saveNotif = document.getElementById("editor-save-notif");
@@ -595,53 +679,72 @@ export default function FileManager({ files, setFiles, addActivity, openAiWithPr
     }
   };
 
+  const uploadFiles = async (fileList: globalThis.File[]) => {
+    if (!fileList.length) return;
+    const token = authToken();
+    if (!token) {
+      setOperationError("User session expired. Log in again.");
+      return;
+    }
+    setOperationError("");
+    setActiveOperation("Uploading files...");
+    try {
+      for (const file of fileList) {
+        const data = await new Promise<any>((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open("POST", "/api/user/files/upload");
+          xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+          xhr.setRequestHeader("Content-Type", "application/octet-stream");
+          xhr.setRequestHeader("X-TPanel-File-Name", encodeURIComponent(file.name));
+          xhr.setRequestHeader("X-TPanel-Parent-Id", currentFolderId);
+          xhr.setRequestHeader("X-TPanel-Parent-Path", encodeURIComponent(currentFolderPath()));
+          xhr.upload.onprogress = (event) => {
+            const total = event.lengthComputable ? event.total : file.size;
+            const loaded = event.lengthComputable ? event.loaded : Math.min(file.size, event.loaded || 0);
+            setUploadProgress({
+              name: file.name,
+              loaded,
+              total,
+              percent: total ? Math.round((loaded / total) * 100) : 0
+            });
+          };
+          xhr.onload = () => {
+            try {
+              const parsed = JSON.parse(xhr.responseText || "{}");
+              if (xhr.status >= 200 && xhr.status < 300 && parsed.ok) resolve(parsed);
+              else reject(new Error(parsed.message || `Upload failed for ${file.name}`));
+            } catch {
+              reject(new Error(`Upload failed for ${file.name}`));
+            }
+          };
+          xhr.onerror = () => reject(new Error(`Upload failed for ${file.name}`));
+          xhr.send(file);
+        });
+        if (Array.isArray(data.files)) setFiles(data.files);
+        addActivity("file", `Uploaded ${file.name} to ${getCurrentFolder().name}`);
+      }
+    } catch (error) {
+      setOperationError(error instanceof Error ? error.message : "Upload failed.");
+    } finally {
+      setActiveOperation("");
+      setTimeout(() => setUploadProgress(null), 1200);
+    }
+  };
+
   const handleDrop = (e: DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
     setDragActive(false);
 
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      const file = e.dataTransfer.files[0];
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        const text = event.target?.result as string || "";
-        const newFile: VirtualItem = {
-          id: "file-" + Math.random().toString(36).substr(2, 9),
-          name: file.name,
-          type: "file",
-          parentId: currentFolderId,
-          size: file.size,
-          updatedAt: new Date().toISOString().replace('T', ' ').substring(0, 19),
-          content: text,
-          permissions: "0644"
-        };
-        setFiles(prev => [...prev, newFile]);
-        addActivity("file", `Uploaded code file: ${file.name} to server`);
-      };
-      reader.readAsText(file);
+    if (e.dataTransfer.files && e.dataTransfer.files.length) {
+      void uploadFiles(Array.from(e.dataTransfer.files));
     }
   };
 
   const handleManualUpload = (e: ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      const file = e.target.files[0];
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        const text = event.target?.result as string || "";
-        const newFile: VirtualItem = {
-          id: "file-" + Math.random().toString(36).substr(2, 9),
-          name: file.name,
-          type: "file",
-          parentId: currentFolderId,
-          size: file.size,
-          updatedAt: new Date().toISOString().replace('T', ' ').substring(0, 19),
-          content: text,
-          permissions: "0644"
-        };
-        setFiles(prev => [...prev, newFile]);
-        addActivity("file", `Uploaded code file: ${file.name} to server`);
-      };
-      reader.readAsText(file);
+    if (e.target.files && e.target.files.length) {
+      void uploadFiles(Array.from(e.target.files));
+      e.target.value = "";
     }
   };
 
@@ -708,6 +811,27 @@ export default function FileManager({ files, setFiles, addActivity, openAiWithPr
           </button>
         </div>
       </div>
+
+      {(activeOperation || operationError || uploadProgress) && (
+        <div className={`border p-3 rounded space-y-2 ${operationError ? "border-rose-700 bg-rose-950/30" : "border-indigo-700/50 bg-indigo-950/30"}`}>
+          <div className="flex items-center justify-between gap-3">
+            <p className={`text-xs font-bold font-mono ${operationError ? "text-rose-300" : "text-indigo-200"}`}>
+              {operationError || activeOperation || (uploadProgress ? `Uploading ${uploadProgress.name}` : "")}
+            </p>
+            {activeOperation && <RefreshCw className="h-4 w-4 animate-spin text-indigo-300" />}
+          </div>
+          {uploadProgress && (
+            <div className="space-y-1">
+              <div className="h-2 overflow-hidden rounded bg-slate-950">
+                <div className="h-full bg-indigo-500 transition-all" style={{ width: `${uploadProgress.percent}%` }} />
+              </div>
+              <p className="text-[10px] font-mono text-slate-400">
+                {uploadProgress.percent}% uploaded ({uploadProgress.loaded.toLocaleString()} / {uploadProgress.total.toLocaleString()} bytes)
+              </p>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Multiselect Batch Action Bar (DOCK AT TOP IF SELECTED) */}
       {selectedIds.length > 0 && (
@@ -802,6 +926,14 @@ export default function FileManager({ files, setFiles, addActivity, openAiWithPr
           >
             <FilePlus className="w-4 h-4 text-indigo-200" />
             New File
+          </button>
+          <button
+            onClick={handleSelectAllToggle}
+            disabled={filteredItems.length === 0}
+            className="px-3 py-1.5 text-xs font-semibold rounded bg-slate-800 hover:bg-slate-755 text-slate-200 border border-slate-700 hover:text-indigo-400 transition flex items-center gap-2 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <Layers className="w-4 h-4 text-indigo-300" />
+            {isAllSelected ? "Clear selection" : "Select all"}
           </button>
         </div>
         <div className="flex items-center gap-3">
@@ -1059,6 +1191,7 @@ export default function FileManager({ files, setFiles, addActivity, openAiWithPr
               Choose Local File
               <input 
                 type="file" 
+                multiple
                 className="hidden" 
                 onChange={handleManualUpload} 
               />
@@ -1158,6 +1291,26 @@ export default function FileManager({ files, setFiles, addActivity, openAiWithPr
                 <Copy className="w-3.5 h-3.5 text-slate-400" />
                 Copy absolute path
               </button>
+              <button
+                onClick={() => {
+                  openTransferModal("copy", [contextMenu.item.id]);
+                  setContextMenu(null);
+                }}
+                className="w-full px-3 py-1.5 text-left hover:bg-indigo-600 hover:text-white rounded flex items-center gap-2 cursor-pointer transition text-slate-300"
+              >
+                <Copy className="w-3.5 h-3.5 text-indigo-300" />
+                Copy to folder
+              </button>
+              <button
+                onClick={() => {
+                  openTransferModal("move", [contextMenu.item.id]);
+                  setContextMenu(null);
+                }}
+                className="w-full px-3 py-1.5 text-left hover:bg-indigo-600 hover:text-white rounded flex items-center gap-2 cursor-pointer transition text-slate-300"
+              >
+                <FolderUp className="w-3.5 h-3.5 text-amber-400" />
+                Move to folder
+              </button>
             </div>
 
             <div className="py-1 space-y-0.5">
@@ -1222,6 +1375,75 @@ export default function FileManager({ files, setFiles, addActivity, openAiWithPr
             </div>
           </div>
         </>
+      )}
+
+      {isTransferModalOpen && (
+        <div className="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-700 rounded p-5 w-full max-w-lg shadow-xl space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-slate-200 flex items-center gap-2 font-mono">
+                <FolderOpen className="w-4 h-4 text-indigo-400" />
+                {transferMode === "copy" ? "Copy to folder" : "Move to folder"}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setIsTransferModalOpen(false)}
+                className="p-1 text-slate-400 hover:text-rose-455 rounded cursor-pointer transition"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-400 font-mono">
+              {transferIds.length} selected item(s). If a same-name file exists, tPanel will keep both by creating a safe numbered name.
+            </p>
+
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-black uppercase tracking-widest text-slate-500">Destination folder</label>
+              <select
+                value={transferTargetId}
+                onChange={(event) => setTransferTargetId(event.target.value)}
+                className="w-full rounded border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-mono text-slate-200 focus:border-indigo-500 focus:outline-none"
+              >
+                {directoryOptions.map((folder) => (
+                  <option key={folder.id} value={folder.id}>{folder.label}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="max-h-40 overflow-y-auto rounded border border-slate-800 bg-slate-950 p-2">
+              {transferIds.slice(0, 12).map((id) => {
+                const item = safeFiles.find((entry) => entry.id === id);
+                if (!item) return null;
+                return (
+                  <div key={id} className="flex items-center gap-2 px-2 py-1 text-[11px] font-mono text-slate-300">
+                    {getItemIcon(item, "w-4 h-4")}
+                    <span className="truncate">{itemPath(id) || item.name}</span>
+                  </div>
+                );
+              })}
+              {transferIds.length > 12 && <p className="px-2 py-1 text-[11px] text-slate-500">+ {transferIds.length - 12} more</p>}
+            </div>
+
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setIsTransferModalOpen(false)}
+                className="px-3 py-1.5 text-xs text-slate-400 hover:bg-slate-800 rounded transition cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void confirmTransfer()}
+                disabled={Boolean(activeOperation)}
+                className="px-4 py-1.5 text-xs bg-indigo-600 hover:bg-indigo-500 rounded text-white font-bold transition cursor-pointer disabled:opacity-60"
+              >
+                {transferMode === "copy" ? "Copy here" : "Move here"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* CHMOD PERMISSIONS MODAL */}

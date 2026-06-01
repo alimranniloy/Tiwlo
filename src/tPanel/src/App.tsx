@@ -137,6 +137,38 @@ const TAB_PERMISSION_MAP: Record<string, string> = {
   copilot: "copilot"
 };
 
+const ROUTE_TO_TAB: Record<string, string> = {
+  "/dashboard": "dashboard",
+  "/files": "files",
+  "/node": "node",
+  "/domains": "domains",
+  "/databases": "databases",
+  "/emails": "emails",
+  "/copilot": "copilot",
+  "/ftp": "ftp",
+  "/disk": "disk",
+  "/postgre": "postgre",
+  "/phpmyadmin": "phpmyadmin",
+  "/dns-zone": "dns_zone",
+  "/subdomains": "subdomains",
+  "/forwarders": "forwarders",
+  "/autoresponders": "autoresponders",
+  "/ssl": "ssl",
+  "/ipblocker": "ipblocker",
+  "/ssh": "ssh",
+  "/visitors": "visitors",
+  "/bandwidth": "bandwidth",
+  "/phpversion": "phpversion",
+  "/ruby": "ruby",
+  "/marketplace": "marketplace",
+  "/cron": "cron",
+  "/terminal": "terminal"
+};
+
+const TAB_TO_ROUTE = Object.fromEntries(Object.entries(ROUTE_TO_TAB).map(([route, tab]) => [tab, route]));
+
+const tabFromLocation = () => ROUTE_TO_TAB[window.location.pathname] || "dashboard";
+
 const dnsRecordsForDomain = (account: any, domainName: string): any[] => {
   const domain = String(domainName || "").toLowerCase();
   const records = Array.isArray(account.provisioning?.dnsRecords) ? account.provisioning.dnsRecords : [];
@@ -193,7 +225,7 @@ const mergeAccountDomains = (saved: DomainItem[], account: any): DomainItem[] =>
 };
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<string>("dashboard");
+  const [activeTab, setActiveTab] = useState<string>(() => tabFromLocation());
   const [licenseStatus, setLicenseStatus] = useState<any | null>(null);
   const [isLoggedIn, setIsLoggedIn] = useState<boolean>(false);
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
@@ -204,7 +236,10 @@ export default function App() {
   const canAccessTab = (tabId: string) => Boolean(userPermissions[TAB_PERMISSION_MAP[tabId] || tabId]);
   const allowedTabs = Object.keys(TAB_PERMISSION_MAP).filter((tabId) => canAccessTab(tabId));
   const setPermittedActiveTab = (tabId: string) => {
-    setActiveTab(canAccessTab(tabId) ? tabId : "dashboard");
+    const nextTab = canAccessTab(tabId) ? tabId : "dashboard";
+    setActiveTab(nextTab);
+    const route = TAB_TO_ROUTE[nextTab] || "/dashboard";
+    if (window.location.pathname !== route) window.history.pushState(null, "", route);
   };
 
   const handleLogin = async (user: string, pass: string) => {
@@ -224,10 +259,12 @@ export default function App() {
     if (result.role === "admin") {
       setIsLoggedIn(true);
       setIsAdmin(true);
+      setActiveTab("dashboard");
       window.history.replaceState(null, "", "/admin");
     } else {
       setIsLoggedIn(true);
       setIsAdmin(false);
+      setActiveTab("dashboard");
       window.history.replaceState(null, "", "/dashboard");
     }
   };
@@ -237,6 +274,7 @@ export default function App() {
     setIsLoggedIn(false);
     setIsAdmin(false);
     setCurrentAccount(null);
+    setActiveTab("dashboard");
     window.history.replaceState(null, "", "/login");
   };
 
@@ -346,6 +384,9 @@ export default function App() {
         setCurrentAccount(data.account || saved.account || null);
         if (window.location.pathname === "/" || window.location.pathname === "/login") {
           window.history.replaceState(null, "", data.role === "admin" ? "/admin" : "/dashboard");
+        } else if (data.role !== "admin") {
+          const nextTab = tabFromLocation();
+          setActiveTab(canAccessTab(nextTab) ? nextTab : "dashboard");
         }
       } catch {
         localStorage.removeItem("tpanel_auth");
@@ -372,8 +413,18 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    const handlePopState = () => {
+      if (isAdmin) return;
+      const nextTab = tabFromLocation();
+      setActiveTab(canAccessTab(nextTab) ? nextTab : "dashboard");
+    };
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, [currentAccount, isAdmin]);
+
+  useEffect(() => {
     if (isLoggedIn && !isAdmin && !canAccessTab(activeTab)) {
-      setActiveTab("dashboard");
+      setPermittedActiveTab("dashboard");
     }
   }, [activeTab, currentAccount, isAdmin, isLoggedIn]);
 
@@ -569,7 +620,7 @@ export default function App() {
       return;
     }
     setOpenAiPromptTrigger(prompt);
-    setActiveTab("copilot");
+    setPermittedActiveTab("copilot");
   };
 
   // Badge counters
