@@ -1413,22 +1413,42 @@ function parseFileOperationBody(req: express.Request) {
   return req.body && typeof req.body === "object" ? req.body : {};
 }
 
-function ensureZipEntriesSafe(entries: string[]) {
-  for (const entry of entries) {
-    const normalized = entry.replace(/\\/g, "/");
-    if (!normalized || normalized.startsWith("/") || normalized.includes("../") || normalized === ".." || /^[a-zA-Z]:/.test(normalized)) {
-      throw new Error("Archive contains an unsafe path and was not extracted.");
+async function inspectZipArchive(zipPath: string) {
+  await execFileAsync("unzip", ["-tqq", zipPath], { timeout: 300000, maxBuffer: 1024 * 1024 });
+  const script = `
+if command -v zipinfo >/dev/null 2>&1; then
+  zipinfo -1 "$ZIP_PATH"
+else
+  unzip -Z -1 "$ZIP_PATH"
+fi | awk '
+  BEGIN { count = 0 }
+  {
+    count += 1
+    gsub(/\\\\/, "/", $0)
+    if ($0 == "" || $0 ~ /^\\// || $0 ~ /(^|\\/)\\.\\.($|\\/)/ || $0 ~ /^[A-Za-z]:/) {
+      print $0
+      exit 2
     }
   }
-}
-
-async function zipEntryList(zipPath: string) {
+  END {
+    if (count > 0) print "COUNT=" count > "/dev/stderr"
+  }
+'
+`;
   try {
-    const { stdout } = await execFileAsync("zipinfo", ["-1", zipPath], { timeout: 30000 });
-    return stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  } catch {
-    const { stdout } = await execFileAsync("unzip", ["-Z", "-1", zipPath], { timeout: 30000 });
-    return stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    const { stderr } = await execFileAsync("sh", ["-lc", script], {
+      env: { ...process.env, ZIP_PATH: zipPath },
+      timeout: 300000,
+      maxBuffer: 1024 * 1024
+    });
+    const match = stderr.match(/COUNT=(\d+)/);
+    return { entries: match ? Number(match[1]) : 0 };
+  } catch (error: any) {
+    const unsafeEntry = String(error.stdout || "").split(/\r?\n/).find(Boolean);
+    if (unsafeEntry || error.code === 2) {
+      throw new Error(`Archive contains an unsafe path and was not extracted${unsafeEntry ? `: ${unsafeEntry}` : "."}`);
+    }
+    throw error;
   }
 }
 
@@ -2010,17 +2030,16 @@ app.post("/api/user/files/extract", requireLicense, async (req, res) => {
     const archivePath = accountPathFromVirtual(account, body.id, body.path || "");
     if (!fs.existsSync(archivePath) || fs.statSync(archivePath).isDirectory()) throw new Error("Archive was not found.");
     if (!archivePath.toLowerCase().endsWith(".zip")) throw new Error("Only .zip extraction is supported right now.");
-    const entries = await zipEntryList(archivePath);
-    ensureZipEntriesSafe(entries);
+    const archiveInfo = await inspectZipArchive(archivePath);
     const destinationBase = body.targetFolderId || body.targetPath
       ? accountFolderFromVirtual(account, body.targetFolderId || "root-dir", body.targetPath || "")
       : path.dirname(archivePath);
     const folderName = `${path.basename(archivePath, path.extname(archivePath))}_extracted`;
     const targetDir = uniquePath(ensureInside(account.homeDirectory, path.join(destinationBase, folderName)));
     fs.mkdirSync(targetDir, { recursive: true });
-    await execFileAsync("unzip", ["-qq", archivePath, "-d", targetDir], { timeout: 300000 });
+    await execFileAsync("unzip", ["-qq", archivePath, "-d", targetDir], { timeout: 300000, maxBuffer: 1024 * 1024 });
     applyAccountFileOwnership(account, targetDir);
-    res.json(fileOperationResponse(account, { extractedTo: path.basename(targetDir), entries: entries.length }));
+    res.json(fileOperationResponse(account, { extractedTo: path.basename(targetDir), entries: archiveInfo.entries }));
   } catch (error: any) {
     res.status(500).json({ ok: false, message: error.message || "Unable to extract archive. Make sure unzip is installed." });
   }
