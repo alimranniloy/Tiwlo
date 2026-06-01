@@ -17,6 +17,21 @@ const tpanelPanels = new Set(['tpanel', 'hosting-panel']);
 
 const normalizeRows = (rows) => toApi(rows || []);
 const first = (rows) => normalizeRows(rows)[0] || null;
+const secretValue = (...values) => values.map((value) => text(value)).find(Boolean) || null;
+const computeNodeToApi = (row) => {
+  const item = first([row]);
+  if (!item) return null;
+  const passwordSaved = Boolean(item.passwordSecret || item.metadata?.passwordSaved || item.metadata?.credentialsSaved);
+  const { passwordSecret: _passwordSecret, ...safe } = item;
+  return {
+    ...safe,
+    metadata: {
+      ...(safe.metadata || {}),
+      passwordSaved,
+      credentialsSaved: passwordSaved
+    }
+  };
+};
 
 const hasWhmCredentials = (node) => Boolean(node?.apiToken || node?.accessHash);
 
@@ -214,7 +229,7 @@ const filterSearch = (items, search, fields) => {
 export const listComputeNodes = async (ctx, { status, panel, search } = {}) => {
   await ensureHostingTables(ctx.prisma);
   const rows = await ctx.prisma.$queryRawUnsafe('SELECT * FROM "HostingComputeNode" ORDER BY "createdAt" DESC');
-  return filterSearch(normalizeRows(rows), search, ['name', 'hostname', 'ip', 'panel'])
+  return filterSearch(normalizeRows(rows).map(computeNodeToApi).filter(Boolean), search, ['name', 'hostname', 'ip', 'panel'])
     .filter((node) => !status || node.status === status)
     .filter((node) => !panel || node.panel === panel);
 };
@@ -354,6 +369,10 @@ export const checkTPanelUsernameAvailability = async (ctx, { username, nodeId, m
 export const upsertComputeNode = async (ctx, input) => {
   await ensureHostingTables(ctx.prisma);
   const id = input.id || randomUUID();
+  const existingRows = input.id
+    ? await ctx.prisma.$queryRawUnsafe('SELECT * FROM "HostingComputeNode" WHERE "id" = $1', id)
+    : [];
+  const existingNode = first(existingRows);
   const panel = text(input.panel || 'whm').toLowerCase();
   const ip = text(input.ip || input.hostname);
   const hostname = text(input.hostname || ip);
@@ -367,7 +386,7 @@ export const upsertComputeNode = async (ctx, input) => {
     panel,
     port: integer(input.port || (panel === 'tpanel' ? 2086 : 2087), panel === 'tpanel' ? 2086 : 2087),
     username: text(input.username || (panel === 'tpanel' ? 'admin' : 'root')),
-    passwordSecret: input.password || input.rootPassword ? String(input.password || input.rootPassword) : null,
+    passwordSecret: secretValue(input.password, input.rootPassword, input.passwordSecret, input.metadata?.passwordSecret, existingNode?.passwordSecret, existingNode?.metadata?.passwordSecret),
     apiToken: panel === 'tpanel' ? null : (input.apiToken ? String(input.apiToken) : null),
     accessHash: panel === 'tpanel' ? null : (input.accessHash ? String(input.accessHash) : null),
     nameservers: panel === 'tpanel' ? [] : (input.nameservers || []),
@@ -377,10 +396,13 @@ export const upsertComputeNode = async (ctx, input) => {
     monthlyCost: number(input.monthlyCost, 0),
     location: requestedLocation && requestedLocation !== 'Global' ? requestedLocation : autoLocation,
     metadata: {
+      ...(existingNode?.metadata || {}),
       ...(input.metadata || {}),
       sshPort: integer(input.sshPort || input.metadata?.sshPort || 22, 22),
       locationSource: requestedLocation && requestedLocation !== 'Global' ? 'manual' : 'geoip-lite',
       geoIpLocation: autoLocation,
+      passwordSaved: Boolean(secretValue(input.password, input.rootPassword, input.passwordSecret, input.metadata?.passwordSecret, existingNode?.passwordSecret, existingNode?.metadata?.passwordSecret)),
+      credentialsSaved: Boolean(secretValue(input.password, input.rootPassword, input.passwordSecret, input.metadata?.passwordSecret, existingNode?.passwordSecret, existingNode?.metadata?.passwordSecret)),
       ...(panel === 'tpanel' ? { licenseInstalled: true } : {
         licenseKey: text(input.licenseKey || input.metadata?.licenseKey || ''),
         agentToken: text(input.agentToken || input.metadata?.agentToken || '')
@@ -395,10 +417,7 @@ export const upsertComputeNode = async (ctx, input) => {
     throw new AppError('Server name, hostname, and IP are required', 'BAD_USER_INPUT');
   }
 
-  const exists = input.id
-    ? await ctx.prisma.$queryRawUnsafe('SELECT "id" FROM "HostingComputeNode" WHERE "id" = $1', id)
-    : [];
-  const rows = exists.length
+  const rows = existingRows.length
     ? await ctx.prisma.$queryRawUnsafe(`
         UPDATE "HostingComputeNode"
         SET "name" = $2, "hostname" = $3, "ip" = $4, "panel" = $5, "port" = $6,
@@ -422,7 +441,7 @@ export const upsertComputeNode = async (ctx, input) => {
       payload.status, payload.monthlyCost, payload.location, json(payload.metadata, {}));
 
   await writeAudit(ctx, input.id ? 'update_hosting_compute_node' : 'create_hosting_compute_node', 'hostingComputeNode', id, { panel: payload.panel, hostname: payload.hostname });
-  return first(rows);
+  return computeNodeToApi(rows?.[0]);
 };
 
 export const deleteComputeNode = async (ctx, id) => {
@@ -468,7 +487,7 @@ export const testComputeNode = async (ctx, id) => {
       json({ ...(node.metadata || {}), health }, {})
     );
     await writeAudit(ctx, 'test_hosting_compute_node', 'hostingComputeNode', id, health);
-    return first(rows);
+    return computeNodeToApi(rows?.[0]);
   } catch (err) {
     const failedHealth = { ...health, ok: false, message: err.message || 'WHM API connection failed' };
     await ctx.prisma.$executeRawUnsafe(

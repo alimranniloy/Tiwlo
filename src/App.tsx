@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState, useEffect, type ReactElement } from 'react';
+import { Fragment, lazy, Suspense, useState, useEffect, type ReactElement, type ReactNode } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { Droplet, Domain, User } from './types';
 
@@ -105,6 +105,14 @@ const restrictedStatuses = new Set(['banned', 'blocked', 'suspended', 'disabled'
 
 function RouteLoader() {
   return null;
+}
+
+function ResettableRouter({ routerKey, children }: { routerKey: string; children: ReactNode }) {
+  return (
+    <Fragment key={routerKey}>
+      <Router>{children}</Router>
+    </Fragment>
+  );
 }
 
 function isRestrictedUser(user?: User | null) {
@@ -338,6 +346,7 @@ export default function App() {
   const storefrontHost = getStorefrontHostContext();
   const isEmailHost = typeof window !== 'undefined' && /^(?:tmail|email)\./.test(window.location.hostname.toLowerCase());
   const [showWelcome, setShowWelcome] = useState(false);
+  const [routerResetKey, setRouterResetKey] = useState(0);
   const [platformStatus, setPlatformStatus] = useState<{ loading: boolean; maintenance: boolean }>({
     loading: true,
     maintenance: false
@@ -443,19 +452,22 @@ export default function App() {
     return () => window.clearTimeout(timer);
   }, [showWelcome]);
 
-  const handleLogin = (authenticatedUser: User) => {
+  const resetAppRoute = (path = '/') => {
     if (typeof window !== 'undefined') {
-      window.history.replaceState(null, '', '/');
+      window.history.replaceState(null, '', path);
     }
+    setRouterResetKey((current) => current + 1);
+  };
+
+  const handleLogin = (authenticatedUser: User) => {
+    resetAppRoute('/');
     setUser(authenticatedUser);
     localStorage.setItem('tiwlo_user', JSON.stringify(authenticatedUser));
     setShowWelcome(true);
   };
 
   const handleLogout = () => {
-    if (typeof window !== 'undefined') {
-      window.history.replaceState(null, '', '/');
-    }
+    resetAppRoute('/');
     setUser(null);
     setShowWelcome(false);
     clearAuthToken();
@@ -476,45 +488,45 @@ export default function App() {
       : '/login';
 
     return (
-      <Router>
+      <ResettableRouter routerKey={`maintenance-${routerResetKey}`}>
         <Suspense fallback={<RouteLoader />}>
         <Routes>
           {!user && <Route path="/login" element={<LoginPage onLogin={handleLogin} maintenanceMode />} />}
           <Route path="*" element={<MaintenancePage user={user} onLogout={handleLogout} loginHref={maintenanceLoginHref} />} />
         </Routes>
         </Suspense>
-      </Router>
+      </ResettableRouter>
     );
   }
 
   if (isEmailHost) {
     return (
-      <Router>
+      <ResettableRouter routerKey={`email-${routerResetKey}`}>
         <Suspense fallback={<RouteLoader />}>
         <Routes>
           <Route path="*" element={<EmailPortal />} />
         </Routes>
         </Suspense>
-      </Router>
+      </ResettableRouter>
     );
   }
 
   if (storefrontHost) {
     return (
-      <Router>
+      <ResettableRouter routerKey={`storefront-${routerResetKey}`}>
         <Suspense fallback={<RouteLoader />}>
         <Routes>
           <Route path="/store/user/*" element={<StoreUserDashboard />} />
           <Route path="*" element={<StorefrontHost />} />
         </Routes>
         </Suspense>
-      </Router>
+      </ResettableRouter>
     );
   }
 
   if (!user) {
     return (
-      <Router>
+      <ResettableRouter routerKey={`public-${routerResetKey}`}>
         <Suspense fallback={<RouteLoader />}>
         <Routes>
           <Route path="/" element={<LandingPage />} />
@@ -539,13 +551,13 @@ export default function App() {
           <Route path="*" element={<NotFoundPage />} />
         </Routes>
         </Suspense>
-      </Router>
+      </ResettableRouter>
     );
   }
 
   if (isRestrictedUser(user)) {
     return (
-      <Router>
+      <ResettableRouter routerKey={`restricted-${routerResetKey}`}>
         <Suspense fallback={<RouteLoader />}>
           <Routes>
             <Route path="/id-verification" element={<IdentityVerification user={user} onLogout={handleLogout} />} />
@@ -555,22 +567,22 @@ export default function App() {
         <Suspense fallback={null}>
           <FloatingAIWidget />
         </Suspense>
-      </Router>
+      </ResettableRouter>
     );
   }
 
   if (!['admin', 'super_admin'].includes(user.role) && !isProfileComplete(user)) {
     return (
-      <Router>
+      <ResettableRouter routerKey={`profile-${routerResetKey}`}>
         <Suspense fallback={<RouteLoader />}>
           <CompleteProfile user={user} setUser={setUser} onLogout={handleLogout} />
         </Suspense>
-      </Router>
+      </ResettableRouter>
     );
   }
 
   return (
-    <Router>
+    <ResettableRouter routerKey={`app-${routerResetKey}`}>
       <AppContent 
         user={user} 
         setUser={setUser} 
@@ -583,6 +595,6 @@ export default function App() {
       <Suspense fallback={null}>
         <FloatingAIWidget />
       </Suspense>
-    </Router>
+    </ResettableRouter>
   );
 }

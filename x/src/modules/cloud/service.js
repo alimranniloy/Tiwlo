@@ -6,6 +6,8 @@ import { pagination, searchWhere } from '../../core/validation.js';
 import { ensureOwnerHasCredit } from '../billing/creditAutomation.js';
 import { chargeProvisioningCredit, requireProvisioningCredit } from '../billing/service.js';
 import { AppError } from '../../core/errors.js';
+import { ensureHostingTables } from '../hosting/service.js';
+import { ensureTPanelTables } from '../tpanel/service.js';
 import {
   changeTPanelNodeAccountPassword,
   createTPanelNodeAccount,
@@ -17,6 +19,7 @@ import {
 const resourceTypesWithAutoIp = new Set(['droplet', 'system_server']);
 const firstHourCharge = (monthlyCost) => Math.max(Math.round((Number(monthlyCost || 0) / 730) * 100) / 100, 0.01);
 const tpanelPanels = new Set(['tpanel', 'hosting-panel']);
+const json = (value, fallback = {}) => JSON.stringify(value ?? fallback);
 
 const findDeploymentNodeForResource = async (prisma, resource) => {
   const nodeId = String(resource?.metadata?.deploymentNode?.id || resource?.metadata?.tpanelAccount?.nodeId || '').trim();
@@ -35,6 +38,68 @@ const queueLegacyTPanelTask = async (tx, { account, action, requestedById, paylo
     VALUES ($1, $2, $3, $4, 'queued', $5, CAST($6 AS jsonb), $7, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
   `, randomUUID(), account.licenseId, account.id, action, priority, JSON.stringify(payload), requestedById || null);
   return true;
+};
+
+const terminateLocalTPanelReferences = async (tx, resource, account, cleanup = {}) => {
+  const accountId = String(account?.id || '').trim();
+  const licenseId = String(account?.licenseId || '').trim();
+  const username = String(account?.username || '').trim().toLowerCase();
+  const domain = String(account?.domain || '').trim().toLowerCase();
+  const stamp = new Date().toISOString();
+  const metadata = {
+    ...(account?.metadata || {}),
+    cloudResourceId: resource.id,
+    terminatedFromCloudAt: stamp,
+    cleanupMode: cleanup.mode || 'local_delete',
+    remoteCleanupError: cleanup.remoteError || null
+  };
+
+  if (accountId) {
+    await tx.$executeRawUnsafe(`
+      UPDATE "TPanelManagedAccount"
+      SET "status" = 'terminated',
+          "metadata" = CAST($2 AS jsonb),
+          "updatedAt" = CURRENT_TIMESTAMP
+      WHERE "id" = $1
+    `, accountId, json(metadata));
+    await tx.$executeRawUnsafe(`
+      UPDATE "TPanelDnsZone"
+      SET "status" = 'deleted',
+          "metadata" = CAST($2 AS jsonb),
+          "updatedAt" = CURRENT_TIMESTAMP
+      WHERE "accountId" = $1
+    `, accountId, json({ cloudResourceId: resource.id, deletedFromCloudAt: stamp }));
+  } else if (licenseId && (username || domain)) {
+    await tx.$executeRawUnsafe(`
+      UPDATE "TPanelManagedAccount"
+      SET "status" = 'terminated',
+          "metadata" = "metadata" || CAST($4 AS jsonb),
+          "updatedAt" = CURRENT_TIMESTAMP
+      WHERE "licenseId" = $1
+        AND (LOWER("username") = $2 OR LOWER("domain") = $3)
+    `, licenseId, username, domain, json(metadata));
+    await tx.$executeRawUnsafe(`
+      UPDATE "TPanelDnsZone"
+      SET "status" = 'deleted',
+          "metadata" = "metadata" || CAST($4 AS jsonb),
+          "updatedAt" = CURRENT_TIMESTAMP
+      WHERE "licenseId" = $1
+        AND (LOWER("domain") = $2 OR "accountId" IN (
+          SELECT "id" FROM "TPanelManagedAccount"
+          WHERE "licenseId" = $1 AND LOWER("username") = $3
+        ))
+    `, licenseId, domain, username, json({ cloudResourceId: resource.id, deletedFromCloudAt: stamp }));
+  }
+
+  if (username || domain) {
+    await tx.$executeRawUnsafe(`
+      UPDATE "HostingProvisioningOrder"
+      SET "status" = 'deleted',
+          "updatedAt" = CURRENT_TIMESTAMP
+      WHERE "status" NOT IN ('deleted', 'terminated')
+        AND (LOWER("username") = $1 OR LOWER("domain") = $2)
+    `, username, domain);
+  }
 };
 
 const ensureTPanelLoginAccountReady = async (node, resource, account) => {
@@ -240,15 +305,24 @@ export const deleteResource = async (ctx, id) => {
   const current = await ctx.prisma.cloudResource.findUnique({ where: { id } });
   if (!current) throw new AppError('Cloud resource was not found', 'NOT_FOUND');
   await canManageOwnerResource(ctx, current.ownerId);
-  const deploymentNodeId = String(current?.metadata?.deploymentNode?.id || '').trim();
+  const deploymentNodeId = String(current?.metadata?.deploymentNode?.id || current?.metadata?.tpanelAccount?.nodeId || '').trim();
   const tpanelAccount = current?.metadata?.tpanelAccount || null;
+  if (current?.type === 'droplet') {
+    await ensureHostingTables(ctx.prisma);
+    if (tpanelAccount?.id || tpanelAccount?.licenseId || tpanelAccount?.username) {
+      await ensureTPanelTables(ctx.prisma);
+    }
+  }
   const node = current?.type === 'droplet' && tpanelAccount?.username
     ? await findDeploymentNodeForResource(ctx.prisma, current)
     : null;
+  let remoteCleanupError = '';
   if (node && tpanelAccount?.username) {
-    await updateTPanelNodeAccountStatus(node, tpanelAccount, 'terminated');
-  } else if (current?.type === 'droplet' && tpanelAccount?.username && !tpanelAccount?.licenseId) {
-    throw new AppError('This tPanel account could not be deleted because its server link is missing.', 'BAD_USER_INPUT');
+    try {
+      await updateTPanelNodeAccountStatus(node, tpanelAccount, 'terminated');
+    } catch (err) {
+      remoteCleanupError = err?.message || 'Unable to reach tPanel server for remote cleanup.';
+    }
   }
   await ctx.prisma.$transaction(async (tx) => {
     await tx.cloudResource.delete({ where: { id } });
@@ -260,9 +334,12 @@ export const deleteResource = async (ctx, id) => {
         WHERE "id" = $1
       `, deploymentNodeId);
     }
-    if (current?.type === 'droplet' && tpanelAccount?.id && tpanelAccount?.licenseId) {
-      await tx.$executeRawUnsafe('UPDATE "TPanelManagedAccount" SET "status" = $2, "updatedAt" = CURRENT_TIMESTAMP WHERE "id" = $1', tpanelAccount.id, 'terminated');
-      if (!node) {
+    if (current?.type === 'droplet' && tpanelAccount?.username) {
+      await terminateLocalTPanelReferences(tx, current, tpanelAccount, {
+        mode: node ? 'remote_best_effort' : 'local_only',
+        remoteError: remoteCleanupError
+      });
+      if (!node && tpanelAccount?.id && tpanelAccount?.licenseId) {
         await queueLegacyTPanelTask(tx, {
           account: tpanelAccount,
           action: 'terminate_account',
@@ -282,7 +359,11 @@ export const deleteResource = async (ctx, id) => {
       }
     }
   });
-  await writeAudit(ctx, 'delete_resource', 'cloudResource', id);
+  await writeAudit(ctx, 'delete_resource', 'cloudResource', id, removeUndefined({
+    remoteCleanupError,
+    tpanelUsername: tpanelAccount?.username || null,
+    tpanelNodeId: deploymentNodeId || null
+  }));
   return true;
 };
 

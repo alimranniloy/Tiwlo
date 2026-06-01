@@ -1987,13 +1987,18 @@ npm install
 npm run build
 
 mkdir -p /etc/tpanel /var/lib/tpanel /var/log/tpanel
-if [ -f /root/tpanel-admin-password.txt ]; then
+ADMIN_PASSWORD="\${TPANEL_ADMIN_PASSWORD:-}"
+if [ -z "$ADMIN_PASSWORD" ] && [ -s /root/tpanel-admin-password.txt ]; then
   ADMIN_PASSWORD="$(cat /root/tpanel-admin-password.txt)"
-else
-  ADMIN_PASSWORD="$(openssl rand -base64 32 | tr -dc 'A-Za-z0-9' | head -c 20)"
-  echo "$ADMIN_PASSWORD" >/root/tpanel-admin-password.txt
-  chmod 600 /root/tpanel-admin-password.txt
 fi
+if [ -z "$ADMIN_PASSWORD" ] && [ -f /etc/tpanel/agent.env ]; then
+  ADMIN_PASSWORD="$(grep -E '^TPANEL_ADMIN_PASSWORD=' /etc/tpanel/agent.env | tail -n1 | cut -d= -f2- || true)"
+fi
+if [ -z "$ADMIN_PASSWORD" ]; then
+  ADMIN_PASSWORD="$(openssl rand -base64 32 | tr -dc 'A-Za-z0-9' | head -c 20)"
+fi
+printf '%s\\n' "$ADMIN_PASSWORD" >/root/tpanel-admin-password.txt
+chmod 600 /root/tpanel-admin-password.txt
 
 cat >/etc/tpanel/agent.env <<ENV
 API_BASE=$API_BASE
@@ -2137,7 +2142,9 @@ def local_tpanel_base():
 
 def local_tpanel_admin_token():
     password_path = pathlib.Path("/root/tpanel-admin-password.txt")
-    password = password_path.read_text(encoding="utf-8").strip() if password_path.exists() else CONFIG.get("TPANEL_ADMIN_PASSWORD", "")
+    password = password_path.read_text(encoding="utf-8").strip() if password_path.exists() else ""
+    if not password:
+        password = CONFIG.get("TPANEL_ADMIN_PASSWORD", "")
     if not password:
         return ""
     payload_data = json.dumps({"username": "admin", "password": password}).encode("utf-8")

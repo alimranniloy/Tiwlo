@@ -188,7 +188,8 @@ function FormInput({
   onChange,
   type = 'text',
   required,
-  placeholder
+  placeholder,
+  hint
 }: {
   label: string;
   value: string;
@@ -196,6 +197,7 @@ function FormInput({
   type?: string;
   required?: boolean;
   placeholder?: string;
+  hint?: string;
 }) {
   return (
     <label className="space-y-1.5">
@@ -208,6 +210,7 @@ function FormInput({
         placeholder={placeholder}
         className="w-full rounded border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-blue-500"
       />
+      {hint && <span className="block text-[11px] font-semibold text-gray-400">{hint}</span>}
     </label>
   );
 }
@@ -909,7 +912,7 @@ export default function WhmHostingModule() {
                 <FormInput required label="IP Address" value={nodeForm.ip} onChange={(value) => setNodeForm({ ...nodeForm, ip: value, hostname: value, name: nextTPanelName(nodeForm.name, value), location: 'Global' })} placeholder="192.0.2.10" />
                 <FormInput label="Panel Login Port" value={nodeForm.port} onChange={(value) => setNodeForm({ ...nodeForm, port: value })} type="number" />
                 <FormInput required label="tPanel Username" value={nodeForm.username} onChange={(value) => setNodeForm({ ...nodeForm, username: value })} />
-                <FormInput label="tPanel Password" value={nodeForm.rootPassword} onChange={(value) => setNodeForm({ ...nodeForm, rootPassword: value })} type="password" placeholder={nodeForm.id ? 'Leave blank to keep existing password' : 'Panel password'} />
+                <FormInput label="tPanel Password" value={nodeForm.rootPassword} onChange={(value) => setNodeForm({ ...nodeForm, rootPassword: value })} type="password" placeholder={nodeForm.id ? 'Leave blank to keep existing password' : 'Panel password'} hint={nodeForm.id ? 'Saved password stays on the server after restart/update. Enter a value only to replace it.' : undefined} />
                 <FormInput label="Max Accounts" value={nodeForm.maxAccounts} onChange={(value) => setNodeForm({ ...nodeForm, maxAccounts: value })} type="number" />
                 <FormInput label="Monthly Cost" value={nodeForm.monthlyCost} onChange={(value) => setNodeForm({ ...nodeForm, monthlyCost: value })} type="number" />
                 <label className="space-y-1.5 md:col-span-2">
@@ -925,7 +928,7 @@ export default function WhmHostingModule() {
                 <FormInput label="Panel Port" value={nodeForm.port} onChange={(value) => setNodeForm({ ...nodeForm, port: value })} type="number" />
                 <FormInput label="SSH Port" value={nodeForm.sshPort} onChange={(value) => setNodeForm({ ...nodeForm, sshPort: value })} type="number" />
                 <FormInput required label="Root / Admin Username" value={nodeForm.username} onChange={(value) => setNodeForm({ ...nodeForm, username: value })} />
-                <FormInput label="Root Password" value={nodeForm.rootPassword} onChange={(value) => setNodeForm({ ...nodeForm, rootPassword: value })} type="password" placeholder={nodeForm.id ? 'Leave blank to keep existing password' : 'Server root password'} />
+                <FormInput label="Root Password" value={nodeForm.rootPassword} onChange={(value) => setNodeForm({ ...nodeForm, rootPassword: value })} type="password" placeholder={nodeForm.id ? 'Leave blank to keep existing password' : 'Server root password'} hint={nodeForm.id ? 'Saved password stays on the server after restart/update. Enter a value only to replace it.' : undefined} />
                 <FormInput label="API Token" value={nodeForm.apiToken} onChange={(value) => setNodeForm({ ...nodeForm, apiToken: value })} type="password" />
                 <FormInput label="Access Hash" value={nodeForm.accessHash} onChange={(value) => setNodeForm({ ...nodeForm, accessHash: value })} type="password" />
                 <FormInput label="tPanel License Key" value={nodeForm.licenseKey} onChange={(value) => setNodeForm({ ...nodeForm, licenseKey: value })} />
