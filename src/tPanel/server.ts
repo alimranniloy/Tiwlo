@@ -1320,6 +1320,83 @@ function applyAccountFileOwnership(account: any, targetPath: string) {
   execFile("chown", ["-R", `${account.username}:${account.username}`, targetPath], { timeout: 120000 }, () => undefined);
 }
 
+async function finalizeExtractedFiles(account: any, targetPath: string) {
+  if (process.platform === "win32" || !account?.username) return;
+  await execFileAsync("chown", ["-R", `${account.username}:${account.username}`, targetPath], { timeout: 300000 });
+  await execFileAsync("sh", ["-lc", `
+chmod -R u+rwX,go+rX "$TARGET_PATH" >/dev/null 2>&1 || true
+find "$TARGET_PATH" -type f \\( -name ".env" -o -name "*.key" -o -name "*.pem" -o -name "id_rsa" \\) -exec chmod 600 {} + >/dev/null 2>&1 || true
+`], { env: { ...process.env, TARGET_PATH: targetPath }, timeout: 300000 });
+}
+
+function formatBytes(bytes: number) {
+  if (!Number.isFinite(bytes) || bytes < 0) return "unknown";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value >= 10 || unit === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unit]}`;
+}
+
+function accountQuotaBytes(account: any) {
+  const quotaMb = Number(account.quotaMb || account.limits?.diskMB || account.limits?.disk || 0);
+  return Number.isFinite(quotaMb) && quotaMb > 0 ? quotaMb * 1024 * 1024 : Number.POSITIVE_INFINITY;
+}
+
+function maxExtractEntries(account: any) {
+  const quotaMb = Number(account.quotaMb || account.limits?.diskMB || 1024);
+  const scaled = Number.isFinite(quotaMb) ? Math.ceil(quotaMb * 100) : 500000;
+  return Math.min(500000, Math.max(25000, scaled));
+}
+
+function directorySizeBytes(targetPath: string) {
+  if (!fs.existsSync(targetPath)) return 0;
+  const stat = fs.lstatSync(targetPath);
+  if (!stat.isDirectory()) return stat.size;
+  let total = stat.size;
+  for (const entry of fs.readdirSync(targetPath)) {
+    total += directorySizeBytes(path.join(targetPath, entry));
+  }
+  return total;
+}
+
+async function filesystemFreeBytes(targetPath: string) {
+  if (process.platform === "win32") return Number.POSITIVE_INFINITY;
+  const probePath = fs.existsSync(targetPath) ? targetPath : path.dirname(targetPath);
+  try {
+    const { stdout } = await execFileAsync("df", ["-Pk", probePath], { timeout: 30000, maxBuffer: 1024 * 1024 });
+    const line = stdout.trim().split(/\r?\n/)[1] || "";
+    const availableKb = Number(line.trim().split(/\s+/)[3] || 0);
+    return Number.isFinite(availableKb) && availableKb > 0 ? availableKb * 1024 : Number.POSITIVE_INFINITY;
+  } catch {
+    return Number.POSITIVE_INFINITY;
+  }
+}
+
+function timeoutForBytes(bytes: number) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return 300000;
+  return Math.min(2 * 60 * 60 * 1000, Math.max(300000, Math.ceil(bytes / (5 * 1024 * 1024)) * 1000));
+}
+
+async function ensureAccountStorageAvailable(account: any, additionalBytes: number, actionLabel: string) {
+  const addBytes = Math.max(0, Number(additionalBytes) || 0);
+  const accountHome = path.resolve(account.homeDirectory);
+  const quotaBytes = accountQuotaBytes(account);
+  const usedBytes = directorySizeBytes(accountHome);
+  if (Number.isFinite(quotaBytes) && usedBytes + addBytes > quotaBytes) {
+    throw new Error(`${actionLabel} is out of account disk limit. Needed ${formatBytes(addBytes)}, current usage ${formatBytes(usedBytes)}, quota ${formatBytes(quotaBytes)}.`);
+  }
+  const freeBytes = await filesystemFreeBytes(accountHome);
+  const reserveBytes = Math.max(64 * 1024 * 1024, Math.ceil(addBytes * 0.05));
+  if (Number.isFinite(freeBytes) && addBytes + reserveBytes > freeBytes) {
+    throw new Error(`${actionLabel} cannot continue because server disk is out of space. Needed ${formatBytes(addBytes)}, available ${formatBytes(freeBytes)}.`);
+  }
+  return { usedBytes, quotaBytes, freeBytes };
+}
+
 function virtualPathForItem(itemsById: Map<string, any>, item: any): string[] {
   if (!item || item.id === "root-dir" || item.parentId === null) return [];
   const parent = itemsById.get(item.parentId);
@@ -1414,7 +1491,23 @@ function parseFileOperationBody(req: express.Request) {
 }
 
 async function inspectZipArchive(zipPath: string) {
-  await execFileAsync("unzip", ["-tqq", zipPath], { timeout: 300000, maxBuffer: 1024 * 1024 });
+  const summaryScript = `
+if command -v zipinfo >/dev/null 2>&1; then
+  zipinfo -t "$ZIP_PATH"
+else
+  unzip -Z -t "$ZIP_PATH"
+fi
+`;
+  const summary = await execFileAsync("sh", ["-lc", summaryScript], {
+    env: { ...process.env, ZIP_PATH: zipPath },
+    timeout: 300000,
+    maxBuffer: 1024 * 1024
+  }).catch((error: any) => ({ stdout: String(error.stdout || ""), stderr: String(error.stderr || "") }));
+  const summaryText = `${summary.stdout || ""}\n${summary.stderr || ""}`;
+  const uncompressedMatch = summaryText.match(/(\d+)\s+bytes\s+uncompressed/i);
+  const summaryCountMatch = summaryText.match(/(\d+)\s+files?/i);
+  const uncompressedBytes = uncompressedMatch ? Number(uncompressedMatch[1]) : 0;
+  await execFileAsync("unzip", ["-tqq", zipPath], { timeout: timeoutForBytes(uncompressedBytes), maxBuffer: 1024 * 1024 });
   const script = `
 if command -v zipinfo >/dev/null 2>&1; then
   zipinfo -1 "$ZIP_PATH"
@@ -1442,7 +1535,10 @@ fi | awk '
       maxBuffer: 1024 * 1024
     });
     const match = stderr.match(/COUNT=(\d+)/);
-    return { entries: match ? Number(match[1]) : 0 };
+    return {
+      entries: match ? Number(match[1]) : summaryCountMatch ? Number(summaryCountMatch[1]) : 0,
+      uncompressedBytes
+    };
   } catch (error: any) {
     const unsafeEntry = String(error.stdout || "").split(/\r?\n/).find(Boolean);
     if (unsafeEntry || error.code === 2) {
@@ -1473,6 +1569,10 @@ function moveRecursive(sourcePath: string, destinationPath: string) {
     copyRecursive(sourcePath, destinationPath);
     fs.rmSync(sourcePath, { recursive: true, force: true });
   }
+}
+
+function totalPathSizeBytes(paths: string[]) {
+  return paths.reduce((total, itemPath) => total + directorySizeBytes(itemPath), 0);
 }
 
 function isEditableTextFile(fileName: string) {
@@ -1861,10 +1961,11 @@ app.post("/api/user/files", requireLicense, async (req, res) => {
   }
 });
 
-app.post("/api/user/files/upload", requireLicense, express.raw({ type: "application/octet-stream", limit: "1024mb" }), async (req, res) => {
+app.post("/api/user/files/upload", requireLicense, async (req, res) => {
   const account = requireUserAccount(req, res);
   if (!account) return;
   if (!ensureFileManagerAccess(req, res, account)) return;
+  let tempPath = "";
   try {
     const rawName = decodeURIComponent(String(req.headers["x-tpanel-file-name"] || "upload.bin"));
     const parentId = String(req.headers["x-tpanel-parent-id"] || "root-dir");
@@ -1872,11 +1973,39 @@ app.post("/api/user/files/upload", requireLicense, express.raw({ type: "applicat
     const parentDir = accountFolderFromVirtual(account, parentId, parentPath);
     const fileName = safeVirtualName(rawName, "upload.bin");
     const targetPath = uniquePath(ensureInside(account.homeDirectory, path.join(parentDir, fileName)));
-    const payload = Buffer.isBuffer(req.body) ? req.body : Buffer.from(req.body || "");
-    fs.writeFileSync(targetPath, payload);
+    const expectedBytes = Number(req.headers["content-length"] || 0);
+    if (Number.isFinite(expectedBytes) && expectedBytes > 0) {
+      await ensureAccountStorageAvailable(account, expectedBytes, "Upload");
+    }
+    const tempDir = ensureInside(account.homeDirectory, path.join(account.homeDirectory, ".tpanel-tmp", "uploads"));
+    fs.mkdirSync(tempDir, { recursive: true });
+    tempPath = path.join(tempDir, `${Date.now()}-${randomBytes(6).toString("hex")}.upload`);
+    const startUsage = directorySizeBytes(account.homeDirectory);
+    const quotaBytes = accountQuotaBytes(account);
+    let receivedBytes = 0;
+    await new Promise<void>((resolve, reject) => {
+      const writeStream = fs.createWriteStream(tempPath, { flags: "wx" });
+      req.on("data", (chunk: Buffer) => {
+        receivedBytes += chunk.length;
+        if (Number.isFinite(quotaBytes) && startUsage + receivedBytes > quotaBytes) {
+          reject(new Error(`Upload is out of account disk limit. Current usage ${formatBytes(startUsage)}, uploaded ${formatBytes(receivedBytes)}, quota ${formatBytes(quotaBytes)}.`));
+          req.unpipe(writeStream);
+          writeStream.destroy();
+        }
+      });
+      req.on("error", reject);
+      writeStream.on("error", reject);
+      writeStream.on("finish", resolve);
+      req.pipe(writeStream);
+    });
+    if (!expectedBytes) await ensureAccountStorageAvailable(account, 0, "Upload");
+    fs.renameSync(tempPath, targetPath);
+    tempPath = "";
+    fs.chmodSync(targetPath, 0o644);
     applyAccountFileOwnership(account, targetPath);
-    res.json(fileOperationResponse(account, { uploaded: path.basename(targetPath), size: payload.length }));
+    res.json(fileOperationResponse(account, { uploaded: path.basename(targetPath), size: receivedBytes }));
   } catch (error: any) {
+    if (tempPath && fs.existsSync(tempPath)) fs.rmSync(tempPath, { force: true });
     res.status(500).json({ ok: false, message: error.message || "Unable to upload file." });
   }
 });
@@ -1891,9 +2020,12 @@ app.post("/api/user/files/create", requireLicense, async (req, res) => {
     const name = safeVirtualName(body.name, body.type === "directory" ? "new-folder" : "new-file.txt");
     const targetPath = uniquePath(ensureInside(account.homeDirectory, path.join(parentDir, name)));
     if (body.type === "directory") {
+      await ensureAccountStorageAvailable(account, 0, "Create folder");
       fs.mkdirSync(targetPath, { recursive: true });
     } else {
-      fs.writeFileSync(targetPath, String(body.content || ""));
+      const content = String(body.content || "");
+      await ensureAccountStorageAvailable(account, Buffer.byteLength(content), "Create file");
+      fs.writeFileSync(targetPath, content);
     }
     applyAccountFileOwnership(account, targetPath);
     const relative = path.relative(path.resolve(account.homeDirectory), targetPath).replace(/\\/g, "/");
@@ -1914,7 +2046,11 @@ app.post("/api/user/files/save", requireLicense, async (req, res) => {
       res.status(404).json({ ok: false, message: "File was not found." });
       return;
     }
-    fs.writeFileSync(targetPath, String(body.content ?? ""));
+    const content = String(body.content ?? "");
+    const oldSize = fs.statSync(targetPath).size;
+    const nextSize = Buffer.byteLength(content);
+    await ensureAccountStorageAvailable(account, Math.max(0, nextSize - oldSize), "Save file");
+    fs.writeFileSync(targetPath, content);
     applyAccountFileOwnership(account, targetPath);
     res.json(fileOperationResponse(account, { saved: path.basename(targetPath) }));
   } catch (error: any) {
@@ -1986,6 +2122,7 @@ app.post("/api/user/files/copy", requireLicense, async (req, res) => {
     const body = parseFileOperationBody(req);
     const destinationDir = accountFolderFromVirtual(account, body.targetFolderId || "root-dir", body.targetPath || "");
     const sources = sourcePathsForIds(account, body.ids || []);
+    await ensureAccountStorageAvailable(account, totalPathSizeBytes(sources), "Copy");
     for (const sourcePath of sources) {
       if (!fs.existsSync(sourcePath)) continue;
       const targetPath = uniquePath(ensureInside(account.homeDirectory, path.join(destinationDir, path.basename(sourcePath))));
@@ -2031,15 +2168,33 @@ app.post("/api/user/files/extract", requireLicense, async (req, res) => {
     if (!fs.existsSync(archivePath) || fs.statSync(archivePath).isDirectory()) throw new Error("Archive was not found.");
     if (!archivePath.toLowerCase().endsWith(".zip")) throw new Error("Only .zip extraction is supported right now.");
     const archiveInfo = await inspectZipArchive(archivePath);
+    const entryLimit = maxExtractEntries(account);
+    if (archiveInfo.entries > entryLimit) {
+      throw new Error(`Archive has too many files for this account resource limit (${archiveInfo.entries.toLocaleString()} files, limit ${entryLimit.toLocaleString()}).`);
+    }
+    if (archiveInfo.entries > 0 && !archiveInfo.uncompressedBytes) {
+      throw new Error("Unable to calculate archive uncompressed size before extraction. Try recompressing the ZIP, then upload again.");
+    }
+    await ensureAccountStorageAvailable(account, archiveInfo.uncompressedBytes, "Archive extraction");
     const destinationBase = body.targetFolderId || body.targetPath
       ? accountFolderFromVirtual(account, body.targetFolderId || "root-dir", body.targetPath || "")
       : path.dirname(archivePath);
     const folderName = `${path.basename(archivePath, path.extname(archivePath))}_extracted`;
     const targetDir = uniquePath(ensureInside(account.homeDirectory, path.join(destinationBase, folderName)));
-    fs.mkdirSync(targetDir, { recursive: true });
-    await execFileAsync("unzip", ["-qq", archivePath, "-d", targetDir], { timeout: 300000, maxBuffer: 1024 * 1024 });
-    applyAccountFileOwnership(account, targetDir);
-    res.json(fileOperationResponse(account, { extractedTo: path.basename(targetDir), entries: archiveInfo.entries }));
+    try {
+      fs.mkdirSync(targetDir, { recursive: true });
+      await execFileAsync("unzip", ["-qq", archivePath, "-d", targetDir], { timeout: timeoutForBytes(archiveInfo.uncompressedBytes), maxBuffer: 1024 * 1024 });
+      await ensureAccountStorageAvailable(account, 0, "Archive extraction");
+      await finalizeExtractedFiles(account, targetDir);
+      res.json(fileOperationResponse(account, {
+        extractedTo: path.basename(targetDir),
+        entries: archiveInfo.entries,
+        extractedBytes: archiveInfo.uncompressedBytes
+      }));
+    } catch (error) {
+      if (fs.existsSync(targetDir)) fs.rmSync(targetDir, { recursive: true, force: true });
+      throw error;
+    }
   } catch (error: any) {
     res.status(500).json({ ok: false, message: error.message || "Unable to extract archive. Make sure unzip is installed." });
   }
@@ -2056,6 +2211,8 @@ app.post("/api/user/files/compress", requireLicense, async (req, res) => {
     const destinationDir = accountFolderFromVirtual(account, body.targetFolderId || "root-dir", body.targetPath || "");
     const archiveName = safeVirtualName(body.name || `archive-${Date.now()}.zip`, "archive.zip").replace(/\.zip$/i, "") + ".zip";
     const archivePath = uniquePath(ensureInside(account.homeDirectory, path.join(destinationDir, archiveName)));
+    const sourceBytes = totalPathSizeBytes(sources);
+    await ensureAccountStorageAvailable(account, sourceBytes * 2, "Compress");
     const stagingDir = ensureInside(account.homeDirectory, path.join(account.homeDirectory, ".tpanel-tmp", `zip-${Date.now()}-${randomBytes(3).toString("hex")}`));
     fs.mkdirSync(stagingDir, { recursive: true });
     try {
