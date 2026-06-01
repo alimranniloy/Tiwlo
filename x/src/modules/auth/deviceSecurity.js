@@ -1,12 +1,27 @@
 import crypto from 'node:crypto';
+import geoip from 'geoip-lite';
 import { toApi } from '../../core/format.js';
 
 const hash = (value) => crypto.createHash('sha256').update(String(value || '')).digest('hex');
 
 const clean = (value, fallback = '') => String(value || fallback).trim();
+const countryCode = (value = '') => {
+  const code = clean(value).toUpperCase();
+  return /^[A-Z]{2}$/.test(code) && code !== 'XX' ? code : '';
+};
+
+const normalizeIp = (value = '') => {
+  const first = clean(value).split(',')[0]?.trim() || '';
+  if (!first) return '';
+  const forwarded = first.match(/for="?([^";,\s]+)"?/i)?.[1] || first;
+  const withoutPrefix = forwarded.replace(/^::ffff:/i, '');
+  if (/^\[[^\]]+\](?::\d+)?$/.test(withoutPrefix)) return withoutPrefix.slice(1, withoutPrefix.indexOf(']'));
+  if (/^\d{1,3}(?:\.\d{1,3}){3}:\d+$/.test(withoutPrefix)) return withoutPrefix.replace(/:\d+$/, '');
+  return withoutPrefix;
+};
 
 const ipPrefix = (ip = '') => {
-  const value = clean(ip);
+  const value = normalizeIp(ip);
   if (!value) return '';
   if (value.includes(':')) return value.split(':').slice(0, 4).join(':');
   return value.split('.').slice(0, 3).join('.');
@@ -37,11 +52,37 @@ const parseUserAgent = (userAgent = '') => {
   };
 };
 
-const locationFromHeaders = (headers = {}, metadata = {}) => ({
-  country: clean(metadata.country || header(headers, 'cf-ipcountry') || header(headers, 'x-vercel-ip-country') || header(headers, 'x-country-code'), ''),
-  region: clean(metadata.region || header(headers, 'x-vercel-ip-country-region') || header(headers, 'x-region'), ''),
-  city: clean(metadata.city || header(headers, 'x-vercel-ip-city') || header(headers, 'x-city'), '')
-});
+const locationFromRequest = (headers = {}, metadata = {}, requestIp = '', input = {}, user = {}) => {
+  const ip = normalizeIp(requestIp);
+  const geo = ip ? geoip.lookup(ip) : null;
+  const headerCountry = countryCode(
+    header(headers, 'cf-ipcountry')
+    || header(headers, 'x-vercel-ip-country')
+    || header(headers, 'x-country-code')
+    || header(headers, 'x-appengine-country')
+  );
+  return {
+    country: headerCountry
+      || countryCode(geo?.country)
+      || countryCode(input.country)
+      || countryCode(user.country)
+      || countryCode(metadata.country),
+    region: clean(
+      header(headers, 'cf-region')
+      || header(headers, 'x-vercel-ip-country-region')
+      || header(headers, 'x-region')
+      || geo?.region
+      || metadata.region
+    ),
+    city: clean(
+      header(headers, 'cf-ipcity')
+      || header(headers, 'x-vercel-ip-city')
+      || header(headers, 'x-city')
+      || geo?.city
+      || metadata.city
+    )
+  };
+};
 
 const publicSession = (session) => toApi(session);
 
@@ -82,12 +123,12 @@ export const recordAuthDeviceSession = async (ctx, user, input = {}, event = 'lo
   await ensureDeviceSessionTable(ctx.prisma);
   const metadata = input.deviceMetadata && typeof input.deviceMetadata === 'object' ? input.deviceMetadata : {};
   const userAgent = clean(ctx.userAgent || metadata.userAgent);
-  const requestIp = clean(ctx.requestIp || metadata.ipAddress);
+  const requestIp = normalizeIp(ctx.requestIp || metadata.ipAddress);
   const fingerprintSeed = clean(input.deviceFingerprint) || `${userAgent}|${requestIp || 'unknown'}|${metadata.screen || ''}|${metadata.timezone || ''}`;
   const fingerprintHash = hash(fingerprintSeed);
   const fingerprintHint = fingerprintHash.slice(0, 12);
   const parsed = parseUserAgent(userAgent);
-  const location = locationFromHeaders(ctx.requestHeaders, metadata);
+  const location = locationFromRequest(ctx.requestHeaders, metadata, requestIp, input, user);
   const prefix = ipPrefix(requestIp);
   const previous = await ctx.prisma.userDeviceSession.findMany({
     where: { userId: user.id },

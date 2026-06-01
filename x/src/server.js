@@ -233,10 +233,28 @@ const storeCustomerFromRequest = async (req) => {
   }
 };
 
-const requestIp = (req) => {
-  const forwarded = req.headers['x-forwarded-for'];
-  return Array.isArray(forwarded) ? forwarded[0] : forwarded || req.ip || req.socket.remoteAddress || '';
+const firstHeaderValue = (value) => (Array.isArray(value) ? value[0] : value || '');
+
+const normalizeClientIp = (value = '') => {
+  const first = String(value || '').split(',')[0]?.trim() || '';
+  const forwarded = first.match(/for="?([^";,\s]+)"?/i)?.[1] || first;
+  const withoutPrefix = forwarded.replace(/^::ffff:/i, '');
+  if (/^\[[^\]]+\](?::\d+)?$/.test(withoutPrefix)) return withoutPrefix.slice(1, withoutPrefix.indexOf(']'));
+  if (/^\d{1,3}(?:\.\d{1,3}){3}:\d+$/.test(withoutPrefix)) return withoutPrefix.replace(/:\d+$/, '');
+  return withoutPrefix;
 };
+
+const requestIp = (req) => normalizeClientIp(
+  firstHeaderValue(req.headers['cf-connecting-ip'])
+  || firstHeaderValue(req.headers['true-client-ip'])
+  || firstHeaderValue(req.headers['x-real-ip'])
+  || firstHeaderValue(req.headers['x-client-ip'])
+  || firstHeaderValue(req.headers['x-forwarded-for'])
+  || firstHeaderValue(req.headers.forwarded)
+  || req.ip
+  || req.socket.remoteAddress
+  || ''
+);
 
 registerDiscordRoutes(app, { prisma, userFromRequest });
 

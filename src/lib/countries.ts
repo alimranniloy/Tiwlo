@@ -148,19 +148,19 @@ const TIMEZONE_COUNTRY_HINTS: Record<string, string> = {
 };
 
 export function detectBrowserCountryCode(fallback = 'BD') {
-  if (typeof navigator !== 'undefined') {
-    const locales = [navigator.language, ...(navigator.languages || [])].filter(Boolean);
-    for (const locale of locales) {
-      const region = String(locale).match(/[-_]([A-Z]{2})\b/i)?.[1]?.toUpperCase();
-      if (region && COUNTRIES.some((country) => country.code === region)) return region;
-    }
-  }
   try {
     const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
     const hinted = TIMEZONE_COUNTRY_HINTS[timezone];
     if (hinted) return hinted;
   } catch {
     return countryByCode(fallback).code;
+  }
+  if (typeof navigator !== 'undefined') {
+    const locales = [navigator.language, ...(navigator.languages || [])].filter(Boolean);
+    for (const locale of locales) {
+      const region = String(locale).match(/[-_]([A-Z]{2})\b/i)?.[1]?.toUpperCase();
+      if (region && COUNTRIES.some((country) => country.code === region)) return region;
+    }
   }
   return countryByCode(fallback).code;
 }
