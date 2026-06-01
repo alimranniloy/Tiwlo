@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import { getActor, isAdmin, ownerWhere } from '../../core/auth.js';
 import { randomIp, removeUndefined, toApi } from '../../core/format.js';
 import { writeAudit } from '../../core/audit.js';
@@ -7,6 +6,11 @@ import { pagination } from '../../core/validation.js';
 import { paragraph, sendTiwloEmail } from '../../core/email.js';
 import { ensureOwnerHasCredit, runCreditAutomationForOwner, runCreditAutomationJob } from './creditAutomation.js';
 import { notifyDiscordInvoiceEvent } from '../discord/service.js';
+import {
+  checkTPanelNodeUsername,
+  createTPanelNodeAccount,
+  tPanelNodeBaseUrl
+} from '../tpanel/nodeApi.js';
 import {
   createBkashPayment,
   createPaypalOrder,
@@ -264,99 +268,69 @@ const reserveDeploymentNodeCapacity = async (tx, pendingResource) => {
   `, nodeId, usedAccounts);
 };
 
-const findTPanelLicenseForNode = async (tx, pendingResource) => {
+const findTPanelDeploymentNode = async (tx, pendingResource) => {
   const nodeId = deploymentNodeIdForResource(pendingResource);
   if (!nodeId) return null;
-  try {
-    const rows = await tx.$queryRawUnsafe(`
-      SELECT l.*
-      FROM "TPanelLicense" l
-      LEFT JOIN "HostingComputeNode" n ON n."ip" = l."serverIp"
-      WHERE n."id" = $1
-        AND l."status" NOT IN ('deleted', 'cancelled', 'revoked')
-      ORDER BY
-        CASE WHEN l."status" = 'active' THEN 0 ELSE 1 END,
-        l."createdAt" DESC
-      LIMIT 1
-    `, nodeId);
-    return rows?.[0] || null;
-  } catch {
-    return null;
-  }
-};
-
-const queueTPanelAccountTask = async (tx, { licenseId, accountId, action, payload, requestedById, priority = 10 }) => {
-  const id = randomUUID();
-  await tx.$executeRawUnsafe(`
-    INSERT INTO "TPanelRemoteTask"
-      ("id", "licenseId", "accountId", "action", "status", "priority", "payload", "requestedById", "queuedAt", "createdAt", "updatedAt")
-    VALUES ($1, $2, $3, $4, 'queued', $5, CAST($6 AS jsonb), $7, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-  `, id, licenseId, accountId || null, action, priority, JSON.stringify(payload || {}), requestedById || null);
-  return id;
+  const rows = await tx.$queryRawUnsafe(`
+    SELECT *
+    FROM "HostingComputeNode"
+    WHERE "id" = $1
+    LIMIT 1
+  `, nodeId);
+  return rows?.[0] || null;
 };
 
 const provisionTPanelAccountForResource = async (tx, ownerId, pendingResource, resource) => {
   const accountInput = pendingResource?.metadata?.tpanelAccount || null;
   if (!accountInput || String(pendingResource?.type || '').toLowerCase() !== 'droplet') return null;
 
-  const license = await findTPanelLicenseForNode(tx, pendingResource);
+  const node = await findTPanelDeploymentNode(tx, pendingResource);
   const username = cleanTPanelUsername(accountInput.username);
   const password = String(accountInput.password || '');
-  if (!license || !username || password.length < 8) {
-    return {
-      status: license ? 'pending_credentials' : 'pending_license_link',
-      username,
-      domain: accountDomainFor(accountInput, username || 'account'),
-      message: license ? 'tPanel account credentials are incomplete.' : 'No active tPanel license is linked with this deployment node yet.'
-    };
+  if (!node || !['tpanel', 'hosting-panel'].includes(String(node.panel || '').toLowerCase())) {
+    throw new AppError('Selected tPanel server is not available anymore. Choose another location.', 'RESOURCE_EXHAUSTED');
+  }
+  if (!username || password.length < 8) {
+    throw new AppError('tPanel username and password are required before creating this droplet.', 'BAD_USER_INPUT');
   }
 
-  const existing = await tx.$queryRawUnsafe(`
-    SELECT "id", "username"
-    FROM "TPanelManagedAccount"
-    WHERE LOWER("username") = $1
-      AND "status" NOT IN ('terminated', 'deleted')
-    LIMIT 1
-  `, username);
-  if (existing?.length) {
-    throw new AppError('This tPanel username was just taken. Choose another username.', 'CONFLICT');
+  const domain = accountDomainFor(accountInput, username);
+  const remoteAvailability = await checkTPanelNodeUsername(node, username, domain);
+  if (!remoteAvailability.available) {
+    throw new AppError('This tPanel username is already used on the selected server. Choose another username.', 'CONFLICT');
   }
 
   const owner = await tx.user.findUnique({ where: { id: ownerId } }).catch(() => null);
-  const id = randomUUID();
-  const domain = accountDomainFor(accountInput, username);
-  const limits = accountInput.limits || {};
-  const metadata = {
-    ...(accountInput.metadata || {}),
-    cloudResourceId: resource.id,
-    createdFrom: 'cloud_droplet',
-    plan: pendingResource.plan || '',
-    specs: pendingResource.specs || ''
-  };
-  const accountRows = await tx.$queryRawUnsafe(`
-    INSERT INTO "TPanelManagedAccount"
-      ("id", "licenseId", "packageId", "username", "domain", "contactEmail", "ownerName",
-       "status", "ipAddress", "homeDirectory", "limits", "usage", "metadata", "createdAt", "updatedAt")
-    VALUES ($1, $2, NULL, $3, $4, $5, $6, 'queued', $7, $8, CAST($9 AS jsonb), '{}'::jsonb, CAST($10 AS jsonb), CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-    RETURNING *
-  `, id, license.id, username, domain, owner?.email || accountInput.contactEmail || null, owner?.name || accountInput.ownerName || null,
-    license.serverIp || pendingResource.ip || null, `/home/${username}`, JSON.stringify(limits || {}), JSON.stringify(metadata));
-  const account = accountRows?.[0] || { id, licenseId: license.id, username, domain };
-  await queueTPanelAccountTask(tx, {
-    licenseId: license.id,
-    accountId: account.id,
-    action: 'create_account',
-    requestedById: ownerId,
-    payload: { account, package: null, password },
-    priority: 10
-  });
-  return {
-    id: account.id,
-    licenseId: license.id,
+  const remoteAccount = await createTPanelNodeAccount(node, {
     username,
+    password,
     domain,
-    status: 'queued',
-    panelUrl: `http://${license.serverIp || pendingResource.ip}:${pendingResource?.metadata?.deploymentNode?.port || 2086}/login?username=${encodeURIComponent(username)}`
+    limits: accountInput.limits || {},
+    packageCode: accountInput.packageCode || pendingResource.plan || '',
+    packageName: accountInput.packageName || pendingResource.plan || '',
+    ownerName: owner?.name || accountInput.ownerName || '',
+    ownerEmail: owner?.email || accountInput.contactEmail || '',
+    contactEmail: owner?.email || accountInput.contactEmail || '',
+    displayName: pendingResource.name || domain,
+    runtime: accountInput.runtime || 'php',
+    permissionProfile: accountInput.permissionProfile || 'developer',
+    shellAccess: accountInput.shellAccess !== false
+  });
+  const baseUrl = tPanelNodeBaseUrl(node);
+
+  return {
+    id: remoteAccount?.id || username,
+    remoteId: remoteAccount?.id || null,
+    nodeId: node.id,
+    source: 'tpanel_node_api',
+    username,
+    domain: remoteAccount?.domain || domain,
+    status: remoteAccount?.status || 'active',
+    packageCode: accountInput.packageCode || pendingResource.plan || '',
+    packageName: accountInput.packageName || pendingResource.plan || '',
+    loginMode: 'sso',
+    panelUrl: `${baseUrl}/login?username=${encodeURIComponent(username)}`,
+    createdOnServerAt: new Date().toISOString()
   };
 };
 

@@ -251,6 +251,28 @@ function verifySession(token: string) {
   return data;
 }
 
+function ssoSecret() {
+  const localAdminPassword = TPANEL_ADMIN_PASSWORD || (process.env.NODE_ENV === "production" ? "" : "admin");
+  return localAdminPassword ? `${localAdminPassword}:tpanel-sso` : "";
+}
+
+function verifySsoPayload(token: string) {
+  const [payload, signature] = String(token || "").split(".");
+  const secret = ssoSecret();
+  if (!payload || !signature || !secret) return null;
+  const expected = createHmac("sha256", secret).update(payload).digest("base64url");
+  const left = Buffer.from(signature);
+  const right = Buffer.from(expected);
+  if (left.length !== right.length || !timingSafeEqual(left, right)) return null;
+  const data = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+  if (!data.exp || data.exp < Date.now()) return null;
+  return data;
+}
+
+function scriptSafeJson(value: unknown) {
+  return JSON.stringify(value).replace(/</g, "\\u003c");
+}
+
 function sanitizeSlug(value: unknown, fallback = "site") {
   return String(value || fallback)
     .toLowerCase()
@@ -1227,6 +1249,56 @@ app.post("/api/auth/login", async (req, res) => {
     res.status(401).json({ ok: false, message: "Invalid tPanel username or password." });
   } catch (error: any) {
     res.status(503).json({ ok: false, message: error.message || "Unable to sign in." });
+  }
+});
+
+app.get("/sso", async (req, res) => {
+  try {
+    const license = await verifyLicense(req);
+    if (!license.ok) {
+      res.status(402).type("html").send(`<html><body style="font-family:system-ui;padding:32px"><h2>tPanel license check failed</h2><p>${license.message || "Refresh the active license on this server."}</p></body></html>`);
+      return;
+    }
+    const ticket = verifySsoPayload(String(req.query.token || ""));
+    const username = String(ticket?.username || "");
+    if (!username) {
+      res.status(401).type("html").send("<html><body style=\"font-family:system-ui;padding:32px\"><h2>Login link expired</h2><p>Open tPanel again from Tiwlo dashboard.</p></body></html>");
+      return;
+    }
+    const state = readPanelState();
+    const account = state.accounts.find((item: any) => item.username === username || item.domain === username);
+    if (!account || account.status !== "active") {
+      res.status(403).type("html").send("<html><body style=\"font-family:system-ui;padding:32px\"><h2>Account is not active</h2><p>Contact the server administrator.</p></body></html>");
+      return;
+    }
+    const token = createSession("user", account);
+    const session = verifySession(token);
+    const auth = {
+      token,
+      role: "user",
+      expiresAt: session?.exp,
+      account: publicAccount(account)
+    };
+    res.type("html").send(`<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Opening tPanel</title>
+  </head>
+  <body style="margin:0;background:#020617;color:#e2e8f0;font-family:Inter,system-ui,sans-serif;display:grid;min-height:100vh;place-items:center">
+    <div style="text-align:center">
+      <h1 style="font-size:20px;margin:0 0 8px">Opening tPanel...</h1>
+      <p style="margin:0;color:#94a3b8;font-size:13px">Secure login is ready.</p>
+    </div>
+    <script>
+      localStorage.setItem("tpanel_auth", ${scriptSafeJson(scriptSafeJson(auth))});
+      location.replace("/dashboard");
+    </script>
+  </body>
+</html>`);
+  } catch (error: any) {
+    res.status(503).type("html").send(`<html><body style="font-family:system-ui;padding:32px"><h2>Unable to open tPanel</h2><p>${error.message || "Try again from Tiwlo dashboard."}</p></body></html>`);
   }
 });
 

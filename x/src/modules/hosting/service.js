@@ -6,6 +6,7 @@ import { slugify, toApi } from '../../core/format.js';
 import { writeAudit } from '../../core/audit.js';
 import { ensureOwnerHasCredit } from '../billing/creditAutomation.js';
 import { ensureTPanelTables } from '../tpanel/service.js';
+import { checkTPanelNodeUsername, listTPanelNodeAccounts } from '../tpanel/nodeApi.js';
 
 const json = (value, fallback) => JSON.stringify(value ?? fallback);
 const number = (value, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback;
@@ -308,18 +309,34 @@ export const checkTPanelUsernameAvailability = async (ctx, { username, nodeId, m
     };
   }
 
-  const existing = first(await ctx.prisma.$queryRawUnsafe(`
-    SELECT "id", "username"
-    FROM "TPanelManagedAccount"
-    WHERE LOWER("username") = $1
-      AND "status" NOT IN ('terminated', 'deleted')
-    LIMIT 1
-  `, clean));
+  let existing = null;
+  if (node) {
+    try {
+      const remote = await checkTPanelNodeUsername(node, clean);
+      existing = remote.existing;
+    } catch (err) {
+      return {
+        username: clean,
+        available: false,
+        message: err.message || 'Unable to check accounts on the selected tPanel server right now.',
+        suggestions: []
+      };
+    }
+  } else {
+    existing = first(await ctx.prisma.$queryRawUnsafe(`
+      SELECT "id", "username"
+      FROM "TPanelManagedAccount"
+      WHERE LOWER("username") = $1
+        AND "status" NOT IN ('terminated', 'deleted')
+      LIMIT 1
+    `, clean));
+  }
+
   if (!existing) {
     return {
       username: clean,
       available: true,
-      message: 'Username is available.',
+      message: node ? 'Username is available on the selected tPanel server.' : 'Username is available.',
       suggestions: []
     };
   }
@@ -329,7 +346,7 @@ export const checkTPanelUsernameAvailability = async (ctx, { username, nodeId, m
   return {
     username: clean,
     available: false,
-    message: 'This username is already used on a tPanel account. Choose another username.',
+    message: node ? 'This username already exists on the selected tPanel server. Choose another username.' : 'This username is already used on a tPanel account. Choose another username.',
     suggestions: [`${base}${suffix}`.slice(0, 16), `${base}_app`.slice(0, 16), `${base}_web`.slice(0, 16)]
   };
 };
@@ -349,7 +366,7 @@ export const upsertComputeNode = async (ctx, input) => {
     ip,
     panel,
     port: integer(input.port || (panel === 'tpanel' ? 2086 : 2087), panel === 'tpanel' ? 2086 : 2087),
-    username: text(input.username || 'root'),
+    username: text(input.username || (panel === 'tpanel' ? 'admin' : 'root')),
     passwordSecret: input.password || input.rootPassword ? String(input.password || input.rootPassword) : null,
     apiToken: panel === 'tpanel' ? null : (input.apiToken ? String(input.apiToken) : null),
     accessHash: panel === 'tpanel' ? null : (input.accessHash ? String(input.accessHash) : null),
@@ -429,7 +446,17 @@ export const testComputeNode = async (ctx, id) => {
   };
 
   try {
-    if (remoteWhmPanels.has(text(node.panel).toLowerCase()) && hasWhmCredentials(node)) {
+    const panelName = text(node.panel).toLowerCase();
+    if (panelName === 'tpanel' || (panelName === 'hosting-panel' && !hasWhmCredentials(node))) {
+      const accounts = await listTPanelNodeAccounts(node);
+      health.mode = 'tpanel_node_api';
+      health.message = 'tPanel admin API connection successful';
+      health.remote = {
+        accounts: accounts.length,
+        activeAccounts: accounts.filter((account) => text(account.status).toLowerCase() === 'active').length
+      };
+    }
+    if (remoteWhmPanels.has(panelName) && hasWhmCredentials(node)) {
       const version = await callWhmApi(node, 'version');
       health.message = 'WHM API connection successful';
       health.remote = { metadata: version.metadata || null, version: version.version || version.data?.version || null };

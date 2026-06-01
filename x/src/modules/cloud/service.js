@@ -6,9 +6,34 @@ import { pagination, searchWhere } from '../../core/validation.js';
 import { ensureOwnerHasCredit } from '../billing/creditAutomation.js';
 import { chargeProvisioningCredit, requireProvisioningCredit } from '../billing/service.js';
 import { AppError } from '../../core/errors.js';
+import {
+  changeTPanelNodeAccountPassword,
+  createTPanelNodeSsoUrl,
+  updateTPanelNodeAccountStatus
+} from '../tpanel/nodeApi.js';
 
 const resourceTypesWithAutoIp = new Set(['droplet', 'system_server']);
 const firstHourCharge = (monthlyCost) => Math.max(Math.round((Number(monthlyCost || 0) / 730) * 100) / 100, 0.01);
+const tpanelPanels = new Set(['tpanel', 'hosting-panel']);
+
+const findDeploymentNodeForResource = async (prisma, resource) => {
+  const nodeId = String(resource?.metadata?.deploymentNode?.id || resource?.metadata?.tpanelAccount?.nodeId || '').trim();
+  if (!nodeId) return null;
+  const rows = await prisma.$queryRawUnsafe('SELECT * FROM "HostingComputeNode" WHERE "id" = $1 LIMIT 1', nodeId);
+  const node = rows?.[0] || null;
+  if (!node || !tpanelPanels.has(String(node.panel || '').toLowerCase())) return null;
+  return node;
+};
+
+const queueLegacyTPanelTask = async (tx, { account, action, requestedById, payload = {}, priority = 15 }) => {
+  if (!account?.id || !account?.licenseId) return false;
+  await tx.$executeRawUnsafe(`
+    INSERT INTO "TPanelRemoteTask"
+      ("id", "licenseId", "accountId", "action", "status", "priority", "payload", "requestedById", "queuedAt", "createdAt", "updatedAt")
+    VALUES ($1, $2, $3, $4, 'queued', $5, CAST($6 AS jsonb), $7, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+  `, randomUUID(), account.licenseId, account.id, action, priority, JSON.stringify(payload), requestedById || null);
+  return true;
+};
 
 export const listPlans = async (ctx, product) => toApi(await ctx.prisma.plan.findMany({
   where: product ? { product, isActive: true } : { isActive: true },
@@ -141,6 +166,13 @@ export const updateResourceStatus = async (ctx, id, status) => {
   await canManageOwnerResource(ctx, current.ownerId);
   const nextStatus = String(status || '').toLowerCase();
   const tpanelAccount = current?.metadata?.tpanelAccount || null;
+  const shouldSyncTPanel = current?.type === 'droplet' && tpanelAccount?.username && ['active', 'off'].includes(nextStatus);
+  const node = shouldSyncTPanel ? await findDeploymentNodeForResource(ctx.prisma, current) : null;
+  if (shouldSyncTPanel && node) {
+    await updateTPanelNodeAccountStatus(node, tpanelAccount, nextStatus === 'active' ? 'active' : 'suspended');
+  } else if (shouldSyncTPanel && !tpanelAccount?.licenseId) {
+    throw new AppError('This resource is not linked with an active tPanel server anymore.', 'BAD_USER_INPUT');
+  }
   const resource = await ctx.prisma.$transaction(async (tx) => {
     const updated = await tx.cloudResource.update({ where: { id }, data: { status: nextStatus } });
     if (current?.type === 'droplet' && tpanelAccount?.id && tpanelAccount?.licenseId && ['active', 'off'].includes(nextStatus)) {
@@ -153,20 +185,23 @@ export const updateResourceStatus = async (ctx, id, status) => {
             "updatedAt" = CURRENT_TIMESTAMP
         WHERE "id" = $1
       `, tpanelAccount.id, accountStatus, JSON.stringify({ ...(tpanelAccount.metadata || {}), cloudResourceId: id, statusChangedFromCloudAt: new Date().toISOString() }));
-      await tx.$executeRawUnsafe(`
-        INSERT INTO "TPanelRemoteTask"
-          ("id", "licenseId", "accountId", "action", "status", "priority", "payload", "requestedById", "queuedAt", "createdAt", "updatedAt")
-        VALUES ($1, $2, $3, $4, 'queued', 15, CAST($5 AS jsonb), $6, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-      `, randomUUID(), tpanelAccount.licenseId, tpanelAccount.id, action, JSON.stringify({
-        account: {
-          id: tpanelAccount.id,
-          licenseId: tpanelAccount.licenseId,
-          username: tpanelAccount.username,
-          domain: tpanelAccount.domain,
-          homeDirectory: `/home/${tpanelAccount.username}`
-        },
-        note: `Cloud resource ${nextStatus}`
-      }), current.ownerId);
+      if (!node) {
+        await queueLegacyTPanelTask(tx, {
+          account: tpanelAccount,
+          action,
+          requestedById: current.ownerId,
+          payload: {
+            account: {
+              id: tpanelAccount.id,
+              licenseId: tpanelAccount.licenseId,
+              username: tpanelAccount.username,
+              domain: tpanelAccount.domain,
+              homeDirectory: `/home/${tpanelAccount.username}`
+            },
+            note: `Cloud resource ${nextStatus}`
+          }
+        });
+      }
     }
     return updated;
   });
@@ -180,6 +215,14 @@ export const deleteResource = async (ctx, id) => {
   await canManageOwnerResource(ctx, current.ownerId);
   const deploymentNodeId = String(current?.metadata?.deploymentNode?.id || '').trim();
   const tpanelAccount = current?.metadata?.tpanelAccount || null;
+  const node = current?.type === 'droplet' && tpanelAccount?.username
+    ? await findDeploymentNodeForResource(ctx.prisma, current)
+    : null;
+  if (node && tpanelAccount?.username) {
+    await updateTPanelNodeAccountStatus(node, tpanelAccount, 'terminated');
+  } else if (current?.type === 'droplet' && tpanelAccount?.username && !tpanelAccount?.licenseId) {
+    throw new AppError('This tPanel account could not be deleted because its server link is missing.', 'BAD_USER_INPUT');
+  }
   await ctx.prisma.$transaction(async (tx) => {
     await tx.cloudResource.delete({ where: { id } });
     if (current?.type === 'droplet' && deploymentNodeId) {
@@ -192,20 +235,24 @@ export const deleteResource = async (ctx, id) => {
     }
     if (current?.type === 'droplet' && tpanelAccount?.id && tpanelAccount?.licenseId) {
       await tx.$executeRawUnsafe('UPDATE "TPanelManagedAccount" SET "status" = $2, "updatedAt" = CURRENT_TIMESTAMP WHERE "id" = $1', tpanelAccount.id, 'terminated');
-      await tx.$executeRawUnsafe(`
-        INSERT INTO "TPanelRemoteTask"
-          ("id", "licenseId", "accountId", "action", "status", "priority", "payload", "requestedById", "queuedAt", "createdAt", "updatedAt")
-        VALUES ($1, $2, $3, 'terminate_account', 'queued', 20, CAST($4 AS jsonb), $5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-      `, randomUUID(), tpanelAccount.licenseId, tpanelAccount.id, JSON.stringify({
-        account: {
-          id: tpanelAccount.id,
-          licenseId: tpanelAccount.licenseId,
-          username: tpanelAccount.username,
-          domain: tpanelAccount.domain,
-          homeDirectory: `/home/${tpanelAccount.username}`
-        },
-        note: 'Cloud resource deleted'
-      }), current.ownerId);
+      if (!node) {
+        await queueLegacyTPanelTask(tx, {
+          account: tpanelAccount,
+          action: 'terminate_account',
+          priority: 20,
+          requestedById: current.ownerId,
+          payload: {
+            account: {
+              id: tpanelAccount.id,
+              licenseId: tpanelAccount.licenseId,
+              username: tpanelAccount.username,
+              domain: tpanelAccount.domain,
+              homeDirectory: `/home/${tpanelAccount.username}`
+            },
+            note: 'Cloud resource deleted'
+          }
+        });
+      }
     }
   });
   await writeAudit(ctx, 'delete_resource', 'cloudResource', id);
@@ -217,20 +264,26 @@ export const createTPanelResourceLogin = async (ctx, id) => {
   if (!current) throw new AppError('Cloud resource was not found', 'NOT_FOUND');
   await canManageOwnerResource(ctx, current.ownerId);
   const account = current.metadata?.tpanelAccount || {};
-  const node = current.metadata?.deploymentNode || {};
+  const metadataNode = current.metadata?.deploymentNode || {};
   const username = String(account.username || '').trim();
-  const host = String(node.ip || current.ip || '').trim();
-  const port = Number(node.port || 2086);
-  if (!username || !host) {
+  const node = await findDeploymentNodeForResource(ctx.prisma, current);
+  if (!username) {
     throw new AppError('This resource is not linked with a tPanel login yet', 'BAD_USER_INPUT');
   }
-  const url = account.panelUrl || `http://${host}:${port}/login?username=${encodeURIComponent(username)}`;
+  const fallbackHost = String(metadataNode.ip || current.ip || '').trim();
+  const fallbackPort = Number(metadataNode.port || 2086);
+  const url = node
+    ? createTPanelNodeSsoUrl(node, account)
+    : (account.panelUrl || (fallbackHost ? `http://${fallbackHost}:${fallbackPort}/login?username=${encodeURIComponent(username)}` : ''));
+  if (!url) {
+    throw new AppError('This resource is not linked with an active tPanel server anymore.', 'BAD_USER_INPUT');
+  }
   await writeAudit(ctx, 'open_tpanel_resource_login', 'cloudResource', id, { username });
   return toApi({
     url,
     username,
     accountId: account.id || null,
-    message: 'Open tPanel and sign in with the selected account username.'
+    message: node ? 'Opening passwordless tPanel login.' : 'Open tPanel and sign in with the selected account username.'
   });
 };
 
@@ -242,24 +295,34 @@ export const changeTPanelResourcePassword = async (ctx, id, password) => {
     throw new AppError('Password must be at least 8 characters', 'BAD_USER_INPUT');
   }
   const account = current.metadata?.tpanelAccount || {};
-  if (!account.id || !account.licenseId || !account.username) {
+  if (!account.username) {
     throw new AppError('This resource is not linked with a tPanel account yet', 'BAD_USER_INPUT');
   }
+  const node = await findDeploymentNodeForResource(ctx.prisma, current);
+  if (node) {
+    await changeTPanelNodeAccountPassword(node, account, password);
+  } else if (!account.id || !account.licenseId) {
+    throw new AppError('This resource is not linked with an active tPanel server anymore.', 'BAD_USER_INPUT');
+  }
   const updated = await ctx.prisma.$transaction(async (tx) => {
-    await tx.$executeRawUnsafe(`
-      INSERT INTO "TPanelRemoteTask"
-        ("id", "licenseId", "accountId", "action", "status", "priority", "payload", "requestedById", "queuedAt", "createdAt", "updatedAt")
-      VALUES ($1, $2, $3, 'change_account_password', 'queued', 12, CAST($4 AS jsonb), $5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-    `, randomUUID(), account.licenseId, account.id, JSON.stringify({
-      account: {
-        id: account.id,
-        licenseId: account.licenseId,
-        username: account.username,
-        domain: account.domain,
-        homeDirectory: `/home/${account.username}`
-      },
-      password
-    }), current.ownerId);
+    if (!node) {
+      await queueLegacyTPanelTask(tx, {
+        account,
+        action: 'change_account_password',
+        priority: 12,
+        requestedById: current.ownerId,
+        payload: {
+          account: {
+            id: account.id,
+            licenseId: account.licenseId,
+            username: account.username,
+            domain: account.domain,
+            homeDirectory: `/home/${account.username}`
+          },
+          password
+        }
+      });
+    }
     return tx.cloudResource.update({
       where: { id },
       data: {
