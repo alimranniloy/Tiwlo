@@ -107,6 +107,28 @@ export async function fetchHostingComputeNodesWithApi(search?: string) {
   return data.hostingComputeNodes;
 }
 
+export async function fetchCloudDeploymentNodesWithApi(search?: string) {
+  const data = await graphQL<{ cloudDeploymentNodes: any[] }>(
+    `query CloudDeploymentNodes($search: String) {
+      cloudDeploymentNodes(search: $search) {
+        id
+        name
+        ip
+        panel
+        port
+        maxAccounts
+        activeAccounts
+        location
+        status
+        metadata
+      }
+    }`,
+    { search }
+  );
+
+  return data.cloudDeploymentNodes;
+}
+
 export async function upsertHostingComputeNodeWithApi(input: Record<string, unknown>) {
   const data = await graphQL<{ upsertHostingComputeNode: any }>(
     `mutation UpsertHostingComputeNode($input: HostingComputeNodeInput!) {

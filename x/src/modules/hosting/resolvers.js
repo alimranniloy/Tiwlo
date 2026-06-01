@@ -7,6 +7,10 @@ export const hostingResolvers = {
       await requireAdmin(ctx);
       return service.listComputeNodes(ctx, args);
     },
+    cloudDeploymentNodes: async (_, args, ctx) => {
+      await requireAuth(ctx);
+      return service.listCloudDeploymentNodes(ctx, args);
+    },
     hostingProductGroups: async (_, args, ctx) => {
       await requireAdmin(ctx);
       return service.listProductGroups(ctx, args);

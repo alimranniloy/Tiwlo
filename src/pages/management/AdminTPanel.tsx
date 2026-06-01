@@ -9,6 +9,7 @@ import {
   Edit3,
   FileText,
   Globe,
+  HardDrive,
   KeyRound,
   ListChecks,
   Lock,
@@ -31,7 +32,9 @@ import {
   createTPanelManagedAccountWithApi,
   deleteTPanelAccountPackageWithApi,
   deleteTPanelPackageWithApi,
+  deletePlanWithApi,
   fetchAdminTPanelOverviewWithApi,
+  fetchPlansWithApi,
   fetchTPanelControlOverviewWithApi,
   queueTPanelRemoteTaskWithApi,
   updateTPanelManagedAccountStatusWithApi,
@@ -39,6 +42,7 @@ import {
   upsertTPanelPackageWithApi,
   upsertTPanelDnsZoneWithApi,
   updateTPanelDomainSettingsWithApi,
+  upsertPlanWithApi,
   upsertTPanelSecurityRuleWithApi,
   upsertTPanelServiceStateWithApi
 } from '../../lib/tiwloApi';
@@ -138,6 +142,19 @@ export default function AdminTPanel() {
     features: '',
     permissions: defaultTPanelPermissions()
   });
+  const [sizePackages, setSizePackages] = React.useState<any[]>([]);
+  const [sizePackageEditing, setSizePackageEditing] = React.useState<any | null>(null);
+  const [sizePackageForm, setSizePackageForm] = React.useState({
+    code: '',
+    name: '',
+    price: '5.00',
+    cpu: '1 vCPU',
+    ram: '1 GB',
+    disk: '25 GB',
+    bandwidth: '1 TB',
+    status: 'active',
+    features: 'SSD storage\nPassword deployment\nHourly credit billing'
+  });
   const [packageEditing, setPackageEditing] = React.useState<any | null>(null);
   const [packageForm, setPackageForm] = React.useState({
     name: '',
@@ -187,9 +204,13 @@ export default function AdminTPanel() {
     setLoading(true);
     setError('');
     try {
-      const adminOverview = await fetchAdminTPanelOverviewWithApi();
+      const [adminOverview, cloudPlans] = await Promise.all([
+        fetchAdminTPanelOverviewWithApi(),
+        fetchPlansWithApi('cloud')
+      ]);
       const nextLicenseId = selectedLicenseId || adminOverview?.licenses?.[0]?.id || '';
       setOverview(adminOverview);
+      setSizePackages(cloudPlans || []);
       setSelectedLicenseId(nextLicenseId);
       setControl(nextLicenseId ? await fetchTPanelControlOverviewWithApi(nextLicenseId) : null);
     } catch (err) {
@@ -357,6 +378,97 @@ export default function AdminTPanel() {
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to delete package');
+    } finally {
+      setSaving('');
+    }
+  };
+
+  const resetSizePackageForm = () => {
+    setSizePackageEditing(null);
+    setSizePackageForm({
+      code: '',
+      name: '',
+      price: '5.00',
+      cpu: '1 vCPU',
+      ram: '1 GB',
+      disk: '25 GB',
+      bandwidth: '1 TB',
+      status: 'active',
+      features: 'SSD storage\nPassword deployment\nHourly credit billing'
+    });
+  };
+
+  const editSizePackage = async (pkg: any) => {
+    const confirmed = await confirmEdit({
+      title: 'Edit size package?',
+      message: 'Are you sure you want to edit this droplet size package?',
+      resourceName: pkg.name
+    });
+    if (!confirmed) return;
+    const limits = pkg.limits || {};
+    setSizePackageEditing(pkg);
+    setSizePackageForm({
+      code: pkg.code || '',
+      name: pkg.name || '',
+      price: String(pkg.price || 0),
+      cpu: String(limits.cpu || '1 vCPU'),
+      ram: String(limits.ram || '1 GB'),
+      disk: String(limits.disk || '25 GB'),
+      bandwidth: String(limits.bandwidth || '1 TB'),
+      status: pkg.isActive === false ? 'draft' : 'active',
+      features: featureText(pkg.features)
+    });
+  };
+
+  const saveSizePackage = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setSaving('size-package');
+    setError('');
+    setNotice('');
+    try {
+      await upsertPlanWithApi({
+        id: sizePackageEditing?.id,
+        product: 'cloud',
+        code: sizePackageForm.code,
+        name: sizePackageForm.name,
+        price: Number(sizePackageForm.price || 0),
+        interval: 'month',
+        features: sizePackageForm.features.split(/\r?\n/).map((item) => item.trim()).filter(Boolean),
+        limits: {
+          cpu: sizePackageForm.cpu,
+          ram: sizePackageForm.ram,
+          disk: sizePackageForm.disk,
+          bandwidth: sizePackageForm.bandwidth
+        },
+        isActive: sizePackageForm.status === 'active'
+      });
+      resetSizePackageForm();
+      setNotice('Droplet size package saved.');
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to save size package');
+    } finally {
+      setSaving('');
+    }
+  };
+
+  const deleteSizePackage = async (pkg: any) => {
+    const confirmed = await confirmDelete({
+      title: 'Deactivate size package?',
+      message: 'This package will be hidden from user Create Droplet.',
+      resourceName: pkg.name,
+      confirmLabel: 'Deactivate package'
+    });
+    if (!confirmed) return;
+    setSaving(`size-package:${pkg.id}`);
+    setError('');
+    setNotice('');
+    try {
+      await deletePlanWithApi(pkg.id);
+      setNotice('Size package deactivated.');
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to deactivate size package');
     } finally {
       setSaving('');
     }
@@ -609,6 +721,7 @@ export default function AdminTPanel() {
     { label: 'Overview', path: '/management/tpanel', icon: Server },
     { label: 'Licenses', path: '/management/tpanel/licenses', icon: KeyRound },
     { label: 'Packages', path: '/management/tpanel/packages', icon: PackagePlus },
+    { label: 'Size Packages', path: '/management/tpanel/size-packages', icon: HardDrive },
     { label: 'Accounts', path: '/management/tpanel/accounts', icon: Users },
     { label: 'DNS', path: '/management/tpanel/dns', icon: Globe },
     { label: 'Domain Settings', path: '/management/tpanel/domain-settings', icon: Globe },
@@ -696,6 +809,70 @@ export default function AdminTPanel() {
           </div>
         ))}
       </div>
+
+      {currentSection === 'size-packages' && (
+        <section className="grid grid-cols-1 gap-6 xl:grid-cols-[0.85fr_1.15fr]">
+          <form onSubmit={saveSizePackage} className="rounded border border-[#E5E7EB] bg-white p-5">
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <HardDrive className="h-5 w-5 text-blue-600" />
+                <div>
+                  <h2 className="text-sm font-bold uppercase text-[#111827]">{sizePackageEditing ? 'Edit Size Package' : 'New Size Package'}</h2>
+                  <p className="text-[12px] text-[#6B7280]">These packages appear on user Create Droplet.</p>
+                </div>
+              </div>
+              {sizePackageEditing && <button type="button" onClick={resetSizePackageForm} className="rounded border border-[#DDE3EA] px-3 py-1.5 text-[11px] font-bold text-[#374151]">New</button>}
+            </div>
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+              <input required value={sizePackageForm.name} onChange={(event) => setSizePackageForm((current) => ({ ...current, name: event.target.value }))} className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="Basic Droplet" />
+              <input required value={sizePackageForm.code} onChange={(event) => setSizePackageForm((current) => ({ ...current, code: event.target.value }))} className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="basic-1gb" />
+              <input required type="number" min="0" step="0.01" value={sizePackageForm.price} onChange={(event) => setSizePackageForm((current) => ({ ...current, price: event.target.value }))} className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="Monthly price" />
+              <select value={sizePackageForm.status} onChange={(event) => setSizePackageForm((current) => ({ ...current, status: event.target.value }))} className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500">
+                <option value="active">Active</option>
+                <option value="draft">Draft</option>
+              </select>
+              <input required value={sizePackageForm.cpu} onChange={(event) => setSizePackageForm((current) => ({ ...current, cpu: event.target.value }))} className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="1 vCPU" />
+              <input required value={sizePackageForm.ram} onChange={(event) => setSizePackageForm((current) => ({ ...current, ram: event.target.value }))} className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="1 GB" />
+              <input required value={sizePackageForm.disk} onChange={(event) => setSizePackageForm((current) => ({ ...current, disk: event.target.value }))} className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="25 GB" />
+              <input value={sizePackageForm.bandwidth} onChange={(event) => setSizePackageForm((current) => ({ ...current, bandwidth: event.target.value }))} className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="1 TB" />
+              <textarea value={sizePackageForm.features} onChange={(event) => setSizePackageForm((current) => ({ ...current, features: event.target.value }))} className="min-h-28 rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500 md:col-span-2" placeholder="Features, one per line" />
+              <button disabled={saving === 'size-package'} className="flex items-center justify-center gap-2 rounded bg-[#0069ff] px-4 py-3 text-sm font-bold text-white hover:bg-[#0056cc] disabled:opacity-60 md:col-span-2">
+                <Plus className="h-4 w-4" /> Save size package
+              </button>
+            </div>
+          </form>
+
+          <section className="overflow-hidden rounded border border-[#E5E7EB] bg-white">
+            <div className="flex items-center justify-between border-b border-[#E5E7EB] bg-[#F9FAFB] px-5 py-4">
+              <h2 className="text-sm font-bold uppercase text-[#111827]">Droplet Size Packages</h2>
+              <span className="text-[11px] font-bold uppercase text-[#6B7280]">{sizePackages.length} active</span>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[920px] text-left">
+                <thead><tr className="border-b border-[#E5E7EB]">{['Package', 'Price', 'CPU', 'RAM', 'Disk', 'Actions'].map((heading) => <th key={heading} className="px-5 py-3 text-[11px] font-bold uppercase text-[#6B7280]">{heading}</th>)}</tr></thead>
+                <tbody className="divide-y divide-[#EEF2F7]">
+                  {sizePackages.length === 0 && <tr><td colSpan={6} className="px-5 py-12 text-center text-[13px] font-bold text-gray-400">No droplet size package yet.</td></tr>}
+                  {sizePackages.map((pkg: any) => (
+                    <tr key={pkg.id}>
+                      <td className="px-5 py-4"><p className="text-[13px] font-bold text-[#111827]">{pkg.name}</p><p className="text-[12px] text-[#6B7280]">{pkg.code}</p></td>
+                      <td className="px-5 py-4 text-[12px] font-bold text-[#111827]">{money(pkg.price, 'USD')} / {pkg.interval}</td>
+                      <td className="px-5 py-4 text-[12px] text-[#4B5563]">{pkg.limits?.cpu || '-'}</td>
+                      <td className="px-5 py-4 text-[12px] text-[#4B5563]">{pkg.limits?.ram || '-'}</td>
+                      <td className="px-5 py-4 text-[12px] text-[#4B5563]">{pkg.limits?.disk || '-'}</td>
+                      <td className="px-5 py-4">
+                        <div className="flex gap-2">
+                          <button onClick={() => editSizePackage(pkg)} className="rounded border border-[#DDE3EA] p-2 text-[#374151] hover:border-blue-400" title="Edit"><Edit3 className="h-4 w-4" /></button>
+                          <button onClick={() => deleteSizePackage(pkg)} disabled={saving === `size-package:${pkg.id}`} className="rounded border border-red-100 p-2 text-red-600 hover:bg-red-50 disabled:opacity-50" title="Deactivate"><Trash2 className="h-4 w-4" /></button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </section>
+      )}
 
       {currentSection === 'packages' && (
         <section className="space-y-6">

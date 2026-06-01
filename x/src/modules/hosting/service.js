@@ -211,6 +211,33 @@ export const listComputeNodes = async (ctx, { status, panel, search } = {}) => {
     .filter((node) => !panel || node.panel === panel);
 };
 
+export const listCloudDeploymentNodes = async (ctx, { search } = {}) => {
+  await ensureHostingTables(ctx.prisma);
+  const rows = await ctx.prisma.$queryRawUnsafe(`
+    SELECT "id", "name", "ip", "panel", "port", "maxAccounts", "activeAccounts", "location", "status", "metadata"
+    FROM "HostingComputeNode"
+    WHERE "status" = 'active'
+      AND ("maxAccounts" = 0 OR "activeAccounts" < "maxAccounts")
+      AND "panel" IN ('tpanel', 'hosting-panel', 'droplet')
+    ORDER BY "activeAccounts" ASC, "createdAt" ASC
+  `);
+  return filterSearch(normalizeRows(rows), search, ['name', 'ip', 'location', 'panel']).map((node) => ({
+    id: node.id,
+    name: node.name,
+    ip: node.ip,
+    panel: node.panel,
+    port: node.port,
+    maxAccounts: node.maxAccounts,
+    activeAccounts: node.activeAccounts,
+    location: node.location || node.metadata?.geoIpLocation || locationFromIp(node.ip),
+    status: node.status,
+    metadata: {
+      provider: node.metadata?.provider || node.panel,
+      locationSource: node.metadata?.locationSource || ''
+    }
+  }));
+};
+
 export const upsertComputeNode = async (ctx, input) => {
   await ensureHostingTables(ctx.prisma);
   const id = input.id || randomUUID();

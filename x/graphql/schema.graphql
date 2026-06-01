@@ -1027,6 +1027,19 @@ type HostingComputeNode {
   updatedAt: String
 }
 
+type CloudDeploymentNode {
+  id: ID!
+  name: String!
+  ip: String!
+  panel: String!
+  port: Int!
+  maxAccounts: Int!
+  activeAccounts: Int!
+  location: String
+  status: String!
+  metadata: JSON
+}
+
 type HostingProductGroup {
   id: ID!
   name: String!
@@ -2614,6 +2627,7 @@ type Query {
   ispAdminRecords(siteId: ID!, section: String!): [IspAdminRecord!]!
 
   hostingComputeNodes(status: String, panel: String, search: String): [HostingComputeNode!]!
+  cloudDeploymentNodes(search: String): [CloudDeploymentNode!]!
   hostingProductGroups(status: String, search: String): [HostingProductGroup!]!
   hostingProducts(groupId: ID, status: String, module: String, search: String): [HostingProduct!]!
   hostingPackages(productId: ID, status: String, search: String): [HostingPackage!]!

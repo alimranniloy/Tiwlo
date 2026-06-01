@@ -9,6 +9,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   createCloudResourceOrderWithApi,
   fetchBillingOverviewWithApi,
+  fetchCloudDeploymentNodesWithApi,
   fetchPlansWithApi,
   notifyDataRefresh
 } from '../lib/tiwloApi';
@@ -21,14 +22,6 @@ const DISTRIBUTIONS = [
   { id: 'rocky-9', name: 'Rocky Linux', version: '9 x64', color: 'bg-green-600' }
 ];
 
-const REGIONS = [
-  { id: 'nyc3', name: 'New York', datacenter: 'NYC3', country: 'US' },
-  { id: 'sfo3', name: 'San Francisco', datacenter: 'SFO3', country: 'US' },
-  { id: 'fra1', name: 'Frankfurt', datacenter: 'FRA1', country: 'DE' },
-  { id: 'lon1', name: 'London', datacenter: 'LON1', country: 'UK' },
-  { id: 'sgp1', name: 'Singapore', datacenter: 'SGP1', country: 'SG' }
-];
-
 type CloudPlan = {
   id: string;
   code: string;
@@ -37,6 +30,19 @@ type CloudPlan = {
   interval?: string;
   features?: unknown;
   limits?: Record<string, unknown> | null;
+};
+
+type CloudDeploymentNode = {
+  id: string;
+  name: string;
+  ip: string;
+  panel: string;
+  port: number;
+  maxAccounts: number;
+  activeAccounts: number;
+  location?: string | null;
+  status: string;
+  metadata?: Record<string, unknown> | null;
 };
 
 const fallbackLimits = {
@@ -63,13 +69,15 @@ function featureList(plan: CloudPlan) {
 export default function CreateDroplet() {
   const navigate = useNavigate();
   const [selectedDist, setSelectedDist] = useState(DISTRIBUTIONS[0].id);
-  const [selectedRegion, setSelectedRegion] = useState(REGIONS[0].id);
+  const [selectedNodeId, setSelectedNodeId] = useState('');
   const [selectedPlan, setSelectedPlan] = useState('');
-  const [hostname, setHostname] = useState('ubuntu-nyc3-01');
+  const [hostname, setHostname] = useState('ubuntu-server-01');
   const [username, setUsername] = useState('root');
   const [password, setPassword] = useState('');
   const [plans, setPlans] = useState<CloudPlan[]>([]);
+  const [nodes, setNodes] = useState<CloudDeploymentNode[]>([]);
   const [plansLoading, setPlansLoading] = useState(true);
+  const [nodesLoading, setNodesLoading] = useState(true);
   const [billingOverview, setBillingOverview] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [orderPhase, setOrderPhase] = useState<'form' | 'loading' | 'complete'>('form');
@@ -80,6 +88,18 @@ export default function CreateDroplet() {
     fetchBillingOverviewWithApi()
       .then(setBillingOverview)
       .catch(() => setBillingOverview(null));
+
+    fetchCloudDeploymentNodesWithApi()
+      .then((records) => {
+        const activeNodes = (records || []).filter((node: CloudDeploymentNode) => node.status === 'active' && node.ip);
+        setNodes(activeNodes);
+        setSelectedNodeId(activeNodes[0]?.id || '');
+      })
+      .catch((err) => {
+        setError(err instanceof Error ? err.message : 'Unable to load deployment servers.');
+        setNodes([]);
+      })
+      .finally(() => setNodesLoading(false));
 
     fetchPlansWithApi('cloud')
       .then((records) => {
@@ -95,6 +115,7 @@ export default function CreateDroplet() {
   }, []);
 
   const selectedPlanRecord = plans.find((plan) => plan.code === selectedPlan) || plans[0] || null;
+  const selectedNode = nodes.find((node) => node.id === selectedNodeId) || nodes[0] || null;
   const selectedHourly = hourlyPrice(Number(selectedPlanRecord?.price || 0));
   const creditBalance = Number(billingOverview?.credits || 0);
   const creditEmpty = Boolean(billingOverview) && creditBalance <= 0;
@@ -102,6 +123,10 @@ export default function CreateDroplet() {
   const handleCreate = async () => {
     if (!selectedPlanRecord) {
       setError('No active cloud package is configured. Ask administrator to add a cloud plan first.');
+      return;
+    }
+    if (!selectedNode) {
+      setError('No active deployment server is configured. Ask administrator to connect a tPanel server first.');
       return;
     }
     if (!hostname.trim()) {
@@ -124,7 +149,6 @@ export default function CreateDroplet() {
     setIsLoading(true);
     setError('');
 
-    const region = REGIONS.find((item) => item.id === selectedRegion) || REGIONS[0];
     const distribution = DISTRIBUTIONS.find((item) => item.id === selectedDist) || DISTRIBUTIONS[0];
     const cpu = limitValue(selectedPlanRecord, 'cpu', fallbackLimits.cpu);
     const ram = limitValue(selectedPlanRecord, 'ram', fallbackLimits.ram);
@@ -139,8 +163,9 @@ export default function CreateDroplet() {
         resource: {
           type: 'droplet',
           name: hostname.trim(),
-          region: `${region.name} ${region.datacenter}`,
+          region: `${selectedNode.location || 'Global'} / ${selectedNode.ip}`,
           specs: `${ram} / ${cpu} / ${disk} Disk`,
+          ip: selectedNode.ip,
           image: `${distribution.name} ${distribution.version}`,
           plan: selectedPlanRecord.code,
           cpu,
@@ -157,6 +182,14 @@ export default function CreateDroplet() {
               hourlyRate: selectedHourly,
               initialCharge: selectedHourly,
               monthlyCost: Number(selectedPlanRecord.price || 0)
+            },
+            deploymentNode: {
+              id: selectedNode.id,
+              ip: selectedNode.ip,
+              name: selectedNode.name,
+              panel: selectedNode.panel,
+              port: selectedNode.port,
+              location: selectedNode.location || 'Global'
             }
           }
         }
@@ -233,7 +266,7 @@ export default function CreateDroplet() {
           </div>
           <button
             onClick={handleCreate}
-            disabled={creditEmpty || plansLoading || !selectedPlanRecord}
+            disabled={creditEmpty || plansLoading || nodesLoading || !selectedPlanRecord || !selectedNode}
             className="group flex items-center gap-2 rounded-sm bg-[#0069ff] px-5 py-2 text-[13px] font-bold text-white transition-all hover:bg-[#0056cc] disabled:cursor-not-allowed disabled:bg-gray-300"
             id="create-droplet-top"
           >
@@ -348,26 +381,38 @@ export default function CreateDroplet() {
       </section>
 
       <section className="space-y-3">
-        <StepTitle number="3" title="Choose datacenter region" />
+        <StepTitle number="3" title="Choose deployment server" />
         <div className="rounded-sm border border-[#e5e8ed] bg-white p-5">
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
-            {REGIONS.map((region) => (
-              <button
-                key={region.id}
-                onClick={() => setSelectedRegion(region.id)}
-                className={`flex flex-col items-center rounded-sm border p-4 text-center transition-all ${
-                  selectedRegion === region.id
-                    ? 'border-[#0069ff] bg-[#f3f7ff] ring-1 ring-[#0069ff]'
-                    : 'border-[#e5e8ed] bg-white hover:border-[#0069ff]'
-                }`}
-                id={`region-${region.id}`}
-              >
-                <span className="mb-2 rounded-sm border border-[#e5e8ed] px-2 py-1 text-[11px] font-bold text-[#0069ff]">{region.country}</span>
-                <p className="text-[13px] font-bold text-[#2e3d49]">{region.name}</p>
-                <p className="mt-0.5 text-[11px] text-gray-400">{region.datacenter}</p>
-              </button>
-            ))}
-          </div>
+          {nodesLoading ? (
+            <div className="rounded-sm border border-[#e5e8ed] bg-[#f8f9fa] px-4 py-5 text-[13px] font-bold text-[#4a4a4a]">
+              Loading connected servers...
+            </div>
+          ) : nodes.length === 0 ? (
+            <div className="rounded-sm border border-amber-200 bg-amber-50 px-4 py-5 text-[13px] font-bold text-amber-700">
+              No active tPanel server is connected. Add a compute node from Administrator Hosting Account Module first.
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+              {nodes.map((node) => (
+                <button
+                  key={node.id}
+                  onClick={() => setSelectedNodeId(node.id)}
+                  className={`flex items-center justify-between gap-4 rounded-sm border p-4 text-left transition-all ${
+                    selectedNodeId === node.id
+                      ? 'border-[#0069ff] bg-[#f3f7ff] ring-1 ring-[#0069ff]'
+                      : 'border-[#e5e8ed] bg-white hover:border-[#0069ff]'
+                  }`}
+                  id={`node-${node.id}`}
+                >
+                  <span className="min-w-0">
+                    <span className="block font-mono text-sm font-black text-[#2e3d49]">{node.ip}</span>
+                    <span className="mt-1 block truncate text-[12px] font-bold text-gray-500">{node.location || 'Global'}</span>
+                  </span>
+                  <span className="shrink-0 rounded-sm border border-[#e5e8ed] px-2 py-1 text-[10px] font-black uppercase text-[#0069ff]">{node.panel}</span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       </section>
 
@@ -420,7 +465,7 @@ export default function CreateDroplet() {
         <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
           <RecapItem label="Image" value={`${DISTRIBUTIONS.find((item) => item.id === selectedDist)?.name || ''} ${DISTRIBUTIONS.find((item) => item.id === selectedDist)?.version || ''}`} />
           <RecapItem label="Package" value={selectedPlanRecord ? `${limitValue(selectedPlanRecord, 'ram', fallbackLimits.ram)} / ${limitValue(selectedPlanRecord, 'cpu', fallbackLimits.cpu)}` : 'No plan'} />
-          <RecapItem label="Region" value={REGIONS.find((item) => item.id === selectedRegion)?.name || ''} />
+          <RecapItem label="Server" value={selectedNode ? `${selectedNode.ip} / ${selectedNode.location || 'Global'}` : 'No server'} />
         </div>
         <div className="flex w-full items-center gap-5 border-t border-white/10 pt-5 md:w-auto md:border-t-0 md:pt-0">
           <div className="text-right">
@@ -430,7 +475,7 @@ export default function CreateDroplet() {
           </div>
           <button
             onClick={handleCreate}
-            disabled={creditEmpty || plansLoading || !selectedPlanRecord}
+            disabled={creditEmpty || plansLoading || nodesLoading || !selectedPlanRecord || !selectedNode}
             className="flex flex-1 items-center justify-center gap-2 rounded-sm bg-[#0069ff] px-8 py-3.5 text-[15px] font-bold text-white transition-all hover:bg-[#0056cc] disabled:cursor-not-allowed disabled:bg-gray-500 md:flex-none"
           >
             Deploy Droplet
