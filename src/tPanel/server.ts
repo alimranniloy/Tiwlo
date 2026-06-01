@@ -116,6 +116,7 @@ const DEFAULT_PACKAGES = [
   { id: "pkg-business", name: "Business", quotaMb: 10240, bandwidthGb: 250, domains: 10, emailAccounts: 50, databases: 10, ftpAccounts: 10, nodeApps: 5 },
   { id: "pkg-agency", name: "Agency", quotaMb: 51200, bandwidthGb: 1000, domains: 50, emailAccounts: 250, databases: 50, ftpAccounts: 50, nodeApps: 25 }
 ];
+const TERMINAL_ACCOUNT_STATUSES = new Set(["terminated", "deleted", "destroyed"]);
 
 const DEFAULT_ACCOUNT_PERMISSIONS = {
   dashboard: true,
@@ -665,6 +666,58 @@ function readProvisioningLog(username: string, maxLines = 40) {
   }
 }
 
+function removeIfExists(targetPath: string) {
+  try {
+    if (fs.existsSync(targetPath)) fs.rmSync(targetPath, { recursive: true, force: true });
+  } catch {
+    // cleanup is best-effort; state deletion should still finish
+  }
+}
+
+function safeAccountHome(account: any) {
+  const home = path.resolve(account?.homeDirectory || "");
+  const base = path.resolve(ACCOUNT_BASE_DIR);
+  if (!home || home === base) return "";
+  return home.startsWith(`${base}${path.sep}`) ? home : "";
+}
+
+function removeAccountProvisioningArtifacts(account: any) {
+  const username = sanitizeSlug(account?.username, "account");
+  removeIfExists(path.join(SITES_CONFIG_DIR, `${username}.json`));
+  removeIfExists(path.join(SITES_CONFIG_DIR, `${username}.log`));
+
+  if (process.platform !== "win32") {
+    const siteName = `tpanel-${username}`;
+    removeIfExists(`/etc/nginx/sites-enabled/${siteName}.conf`);
+    removeIfExists(`/etc/nginx/sites-available/${siteName}.conf`);
+    execFile("nginx", ["-t"], { timeout: 30000 }, (nginxError) => {
+      if (!nginxError) {
+        execFile("systemctl", ["reload", "nginx"], { timeout: 30000 }, () => undefined);
+      }
+    });
+  }
+
+  const home = safeAccountHome(account);
+  if (home) removeIfExists(home);
+}
+
+function hardDeleteAccount(state: any, username: string, actor: string) {
+  const account = (state.accounts || []).find((item: any) => item.username === username);
+  if (!account) return { account: null, state };
+  const accounts = (state.accounts || []).filter((item: any) => item.username !== username);
+  removeAccountProvisioningArtifacts(account);
+  const nextState = withAuditEvent({ ...state, accounts }, {
+    actor,
+    action: "account.deleted",
+    target: username,
+    message: `${username} account and hosted data were deleted permanently.`,
+    severity: "danger",
+    metadata: { domain: account.domain }
+  });
+  writePanelState(nextState);
+  return { account: { ...account, status: "deleted", updatedAt: new Date().toISOString() }, state: nextState };
+}
+
 function uniqueCleanDomains(values: unknown[]) {
   return Array.from(new Set(values.map((value) => cleanDomain(value)).filter(Boolean)));
 }
@@ -681,6 +734,7 @@ function domainInUse(state: any, domain: string, ignoreUsername = "") {
   const clean = cleanDomain(domain);
   if (!clean || !clean.includes(".")) return null;
   return (state.accounts || []).find((account: any) => {
+    if (TERMINAL_ACCOUNT_STATUSES.has(String(account.status || "").toLowerCase())) return false;
     if (ignoreUsername && account.username === ignoreUsername) return false;
     return allAccountDomains(account).includes(clean);
   }) || null;
@@ -1994,7 +2048,7 @@ app.post("/api/panel/accounts", requireCapability("accounts"), async (req, res) 
     res.status(409).json({ ok: false, message: "This domain already in use. You can't add this domain here." });
     return;
   }
-  if (state.accounts.some((account: any) => account.username === username || account.domain === domain)) {
+  if (state.accounts.some((account: any) => !TERMINAL_ACCOUNT_STATUSES.has(String(account.status || "").toLowerCase()) && (account.username === username || account.domain === domain))) {
     res.status(409).json({ ok: false, message: "An account with this username or domain already exists." });
     return;
   }
@@ -2192,12 +2246,21 @@ app.post("/api/panel/accounts/:username/:action", requireCapability("accounts"),
     return;
   }
   const state = readPanelState();
+  if (action === "terminate") {
+    const deleted = hardDeleteAccount(state, req.params.username, actorFromRequest(req));
+    if (!deleted.account) {
+      res.status(404).json({ ok: false, message: "Account not found." });
+      return;
+    }
+    res.json({ ok: true, account: publicAccount(deleted.account), accounts: deleted.state.accounts.map(publicAccount) });
+    return;
+  }
   let updatedAccount: any = null;
   const accounts = state.accounts.map((account: any) => {
     if (account.username !== req.params.username) return account;
     const updated = {
       ...account,
-      status: action === "unsuspend" ? "active" : action === "terminate" ? "terminated" : "suspended",
+      status: action === "unsuspend" ? "active" : "suspended",
       updatedAt: new Date().toISOString()
     };
     if (updated.provisioning) {

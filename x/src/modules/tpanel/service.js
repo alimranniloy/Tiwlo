@@ -1441,6 +1441,27 @@ export const createTPanelManagedAccount = async (ctx, input) => {
   const username = text(input.username).toLowerCase();
   const domain = text(input.domain).toLowerCase();
   if (!username || !domain) throw new AppError('Account username and domain are required', 'BAD_USER_INPUT');
+  await ctx.prisma.$executeRawUnsafe(`
+    DELETE FROM "TPanelDnsZone"
+    WHERE "licenseId" = $1
+      AND "status" = 'deleted'
+      AND LOWER("domain") = $2
+  `, license.id, domain);
+  await ctx.prisma.$executeRawUnsafe(`
+    DELETE FROM "TPanelRemoteTask"
+    WHERE "accountId" IN (
+      SELECT "id" FROM "TPanelManagedAccount"
+      WHERE "licenseId" = $1
+        AND "status" IN ('terminated', 'deleted')
+        AND (LOWER("username") = $2 OR LOWER("domain") = $3)
+    )
+  `, license.id, username, domain);
+  await ctx.prisma.$executeRawUnsafe(`
+    DELETE FROM "TPanelManagedAccount"
+    WHERE "licenseId" = $1
+      AND "status" IN ('terminated', 'deleted')
+      AND (LOWER("username") = $2 OR LOWER("domain") = $3)
+  `, license.id, username, domain);
   const id = randomUUID();
   const limits = { ...(pkg ? packageLimits(pkg) : {}), ...(input.limits || {}) };
   assertLimitWithinPlan(license, 'domains', limits.domains, 'Account domain allowance');
@@ -2231,7 +2252,11 @@ def handle_account_status(task, status):
         if shutil.which("usermod"):
             subprocess.run(["usermod", "-U", username], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     else:
-        pathlib.Path(home, ".tpanel_terminated").write_text("terminated\\n", encoding="utf-8")
+        base = pathlib.Path("/home").resolve()
+        target = pathlib.Path(home).resolve()
+        if str(target).startswith(str(base) + "/") and target.name == username and target.exists():
+            shutil.rmtree(target, ignore_errors=True)
+        pathlib.Path("/etc/tpanel/accounts/" + username + ".json").unlink(missing_ok=True)
         if shutil.which("usermod"):
             subprocess.run(["usermod", "-L", username], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return {"username": username, "domain": domain, "status": status}

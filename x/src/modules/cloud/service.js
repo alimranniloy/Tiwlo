@@ -19,7 +19,6 @@ import {
 const resourceTypesWithAutoIp = new Set(['droplet', 'system_server']);
 const firstHourCharge = (monthlyCost) => Math.max(Math.round((Number(monthlyCost || 0) / 730) * 100) / 100, 0.01);
 const tpanelPanels = new Set(['tpanel', 'hosting-panel']);
-const json = (value, fallback = {}) => JSON.stringify(value ?? fallback);
 
 const findDeploymentNodeForResource = async (prisma, resource) => {
   const nodeId = String(resource?.metadata?.deploymentNode?.id || resource?.metadata?.tpanelAccount?.nodeId || '').trim();
@@ -40,64 +39,54 @@ const queueLegacyTPanelTask = async (tx, { account, action, requestedById, paylo
   return true;
 };
 
-const terminateLocalTPanelReferences = async (tx, resource, account, cleanup = {}) => {
+const terminateLocalTPanelReferences = async (tx, account) => {
   const accountId = String(account?.id || '').trim();
   const licenseId = String(account?.licenseId || '').trim();
   const username = String(account?.username || '').trim().toLowerCase();
   const domain = String(account?.domain || '').trim().toLowerCase();
-  const stamp = new Date().toISOString();
-  const metadata = {
-    ...(account?.metadata || {}),
-    cloudResourceId: resource.id,
-    terminatedFromCloudAt: stamp,
-    cleanupMode: cleanup.mode || 'local_delete',
-    remoteCleanupError: cleanup.remoteError || null
-  };
 
   if (accountId) {
     await tx.$executeRawUnsafe(`
-      UPDATE "TPanelManagedAccount"
-      SET "status" = 'terminated',
-          "metadata" = CAST($2 AS jsonb),
-          "updatedAt" = CURRENT_TIMESTAMP
-      WHERE "id" = $1
-    `, accountId, json(metadata));
-    await tx.$executeRawUnsafe(`
-      UPDATE "TPanelDnsZone"
-      SET "status" = 'deleted',
-          "metadata" = CAST($2 AS jsonb),
-          "updatedAt" = CURRENT_TIMESTAMP
+      DELETE FROM "TPanelRemoteTask"
       WHERE "accountId" = $1
-    `, accountId, json({ cloudResourceId: resource.id, deletedFromCloudAt: stamp }));
+    `, accountId);
+    await tx.$executeRawUnsafe(`
+      DELETE FROM "TPanelDnsZone"
+      WHERE "accountId" = $1
+         OR ("licenseId" = $2 AND LOWER("domain") = $3)
+    `, accountId, licenseId, domain);
+    await tx.$executeRawUnsafe(`
+      DELETE FROM "TPanelManagedAccount"
+      WHERE "id" = $1
+    `, accountId);
   } else if (licenseId && (username || domain)) {
     await tx.$executeRawUnsafe(`
-      UPDATE "TPanelManagedAccount"
-      SET "status" = 'terminated',
-          "metadata" = "metadata" || CAST($4 AS jsonb),
-          "updatedAt" = CURRENT_TIMESTAMP
-      WHERE "licenseId" = $1
-        AND (LOWER("username") = $2 OR LOWER("domain") = $3)
-    `, licenseId, username, domain, json(metadata));
+      DELETE FROM "TPanelRemoteTask"
+      WHERE "accountId" IN (
+        SELECT "id" FROM "TPanelManagedAccount"
+        WHERE "licenseId" = $1
+          AND (LOWER("username") = $2 OR LOWER("domain") = $3)
+      )
+    `, licenseId, username, domain);
     await tx.$executeRawUnsafe(`
-      UPDATE "TPanelDnsZone"
-      SET "status" = 'deleted',
-          "metadata" = "metadata" || CAST($4 AS jsonb),
-          "updatedAt" = CURRENT_TIMESTAMP
+      DELETE FROM "TPanelDnsZone"
       WHERE "licenseId" = $1
         AND (LOWER("domain") = $2 OR "accountId" IN (
           SELECT "id" FROM "TPanelManagedAccount"
           WHERE "licenseId" = $1 AND LOWER("username") = $3
         ))
-    `, licenseId, domain, username, json({ cloudResourceId: resource.id, deletedFromCloudAt: stamp }));
+    `, licenseId, domain, username);
+    await tx.$executeRawUnsafe(`
+      DELETE FROM "TPanelManagedAccount"
+      WHERE "licenseId" = $1
+        AND (LOWER("username") = $2 OR LOWER("domain") = $3)
+    `, licenseId, username, domain);
   }
 
   if (username || domain) {
     await tx.$executeRawUnsafe(`
-      UPDATE "HostingProvisioningOrder"
-      SET "status" = 'deleted',
-          "updatedAt" = CURRENT_TIMESTAMP
-      WHERE "status" NOT IN ('deleted', 'terminated')
-        AND (LOWER("username") = $1 OR LOWER("domain") = $2)
+      DELETE FROM "HostingProvisioningOrder"
+      WHERE LOWER("username") = $1 OR LOWER("domain") = $2
     `, username, domain);
   }
 };
@@ -335,28 +324,7 @@ export const deleteResource = async (ctx, id) => {
       `, deploymentNodeId);
     }
     if (current?.type === 'droplet' && tpanelAccount?.username) {
-      await terminateLocalTPanelReferences(tx, current, tpanelAccount, {
-        mode: node ? 'remote_best_effort' : 'local_only',
-        remoteError: remoteCleanupError
-      });
-      if (!node && tpanelAccount?.id && tpanelAccount?.licenseId) {
-        await queueLegacyTPanelTask(tx, {
-          account: tpanelAccount,
-          action: 'terminate_account',
-          priority: 20,
-          requestedById: current.ownerId,
-          payload: {
-            account: {
-              id: tpanelAccount.id,
-              licenseId: tpanelAccount.licenseId,
-              username: tpanelAccount.username,
-              domain: tpanelAccount.domain,
-              homeDirectory: `/home/${tpanelAccount.username}`
-            },
-            note: 'Cloud resource deleted'
-          }
-        });
-      }
+      await terminateLocalTPanelReferences(tx, tpanelAccount);
     }
   });
   await writeAudit(ctx, 'delete_resource', 'cloudResource', id, removeUndefined({
