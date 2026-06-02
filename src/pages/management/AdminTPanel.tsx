@@ -493,6 +493,12 @@ export default function AdminTPanel() {
     try {
       const code = sizePackageForm.code || slugifyPlanCode(`${sizePackageForm.module}-${sizePackageForm.name}-${sizePackageForm.cpuCategory}`);
       const diskType = sizePackageCpuCategories.find((item) => item.key === sizePackageForm.cpuCategory)?.diskType || 'SSD';
+      const vcpu = Number(sizePackageForm.vcpu || 0);
+      const ramGb = Number(sizePackageForm.ramGb || 0);
+      const diskGb = Number(sizePackageForm.diskGb || 0);
+      const bandwidthGb = Number(sizePackageForm.bandwidthGb || 0);
+      const ramMb = Math.max(0, Math.round(ramGb * 1024));
+      const quotaMb = Math.max(0, Math.round(diskGb * 1024));
       await upsertPlanWithApi({
         id: sizePackageEditing?.id,
         product: 'cloud',
@@ -507,14 +513,22 @@ export default function AdminTPanel() {
           cpuCategory: sizePackageForm.cpuCategory,
           cpuBrand: sizePackageForm.cpuBrand,
           diskType,
-          vcpu: Number(sizePackageForm.vcpu || 0),
-          ramGb: Number(sizePackageForm.ramGb || 0),
-          diskGb: Number(sizePackageForm.diskGb || 0),
-          bandwidthGb: Number(sizePackageForm.bandwidthGb || 0),
-          cpu: `${Number(sizePackageForm.vcpu || 0)} vCPU`,
-          ram: `${Number(sizePackageForm.ramGb || 0)} GB`,
-          disk: `${Number(sizePackageForm.diskGb || 0)} GB`,
-          bandwidth: `${Number(sizePackageForm.bandwidthGb || 0)} GB`,
+          vcpu,
+          cpuCores: vcpu,
+          cpuCount: vcpu,
+          ramGb,
+          ramMb,
+          memoryMb: ramMb,
+          diskGb,
+          quotaMb,
+          diskMb: quotaMb,
+          diskMB: quotaMb,
+          bandwidthGb,
+          bandwidthGB: bandwidthGb,
+          cpu: `${vcpu} vCPU`,
+          ram: `${ramGb} GB`,
+          disk: `${diskGb} GB`,
+          bandwidth: `${bandwidthGb} GB`,
           extraStoragePricePerGb: Number(sizePackageForm.extraStoragePricePerGb || 0),
           sshKeyAvailable: Boolean(sizePackageForm.sshKeyAvailable),
           passwordAvailable: Boolean(sizePackageForm.passwordAvailable),

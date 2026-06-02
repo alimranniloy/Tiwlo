@@ -239,10 +239,29 @@ export default function CreateDroplet() {
   const selectedBandwidth = limitValue(selectedPlanRecord, 'bandwidth', '1 TB');
   const selectedFeatures = selectedPlanRecord ? featureList(selectedPlanRecord) : [];
   const domainRequired = selectedModule === 'tpanel' || boolLimit(selectedPlanRecord, 'domainRequired', false);
-  const passwordAvailable = boolLimit(selectedPlanRecord, 'passwordAvailable', true);
-  const sshKeyAvailable = boolLimit(selectedPlanRecord, 'sshKeyAvailable', selectedModule !== 'tpanel');
+  const passwordAvailable = selectedModule === 'tpanel' || boolLimit(selectedPlanRecord, 'passwordAvailable', true);
+  const sshKeyAvailable = selectedModule === 'tpanel' ? false : boolLimit(selectedPlanRecord, 'sshKeyAvailable', true);
+  const passwordRequired = selectedModule === 'tpanel' || selectedAuthTab === 'Password';
+  const usernameRequired = selectedModule === 'tpanel' || selectedAuthTab === 'Password';
+  const domainReady = !domainRequired || isValidDomainName(hostname);
+  const usernameReady = !usernameRequired || (username.trim().length >= 3 && usernameCheck?.available === true && !usernameChecking);
+  const passwordReady = !passwordRequired || (passwordAvailable && password.length >= 8);
+  const sshReady = selectedAuthTab !== 'SSH Keys' || (sshKeyAvailable && sshPublicKey.trim().startsWith('ssh-'));
   const creditBalance = Number(billingOverview?.credits || 0);
   const creditEmpty = Boolean(billingOverview) && creditBalance <= 0;
+  const creditReady = Boolean(billingOverview) && creditBalance >= selectedHourly;
+  const canCreate = Boolean(
+    selectedPlanRecord &&
+    selectedNode &&
+    domainReady &&
+    usernameReady &&
+    passwordReady &&
+    sshReady &&
+    creditReady &&
+    !plansLoading &&
+    !nodesLoading &&
+    !isLoading
+  );
   const activeFamilyKeys = React.useMemo(() => new Set(modulePlans.map(planFamily)), [modulePlans]);
   const activeCpuCategoryKeys = React.useMemo(() => new Set(familyPlans.map(planCpuCategory)), [familyPlans]);
   const selectedFlag = flagUrl(selectedNode?.countryCode);
@@ -286,6 +305,7 @@ export default function CreateDroplet() {
       return;
     }
     let cancelled = false;
+    setUsernameCheck(null);
     setUsernameChecking(true);
     const timer = window.setTimeout(() => {
       checkTPanelUsernameAvailabilityWithApi(clean, selectedNode.id, selectedModule)
@@ -326,8 +346,20 @@ export default function CreateDroplet() {
       setError('Username is required before creating a droplet.');
       return;
     }
+    if (usernameChecking || usernameCheck?.available !== true) {
+      setError('Wait for username availability check before creating this droplet.');
+      return;
+    }
     if (usernameCheck && usernameCheck.available === false) {
       setError(usernameCheck.message || 'Choose another tPanel username.');
+      return;
+    }
+    if (passwordRequired && !passwordAvailable) {
+      setError('Password authentication is not available for this package.');
+      return;
+    }
+    if (passwordRequired && password.length < 8) {
+      setError('Password must be at least 8 characters before creating a droplet.');
       return;
     }
     if (selectedAuthTab === 'Password' && !passwordAvailable) {
@@ -882,7 +914,7 @@ export default function CreateDroplet() {
                 </div>
                 <button
                   onClick={handleCreate}
-                  disabled={creditEmpty || plansLoading || nodesLoading || !selectedPlanRecord || !selectedNode}
+                  disabled={!canCreate}
                   className="mt-5 h-[44px] w-full bg-[#80b4f8] px-4 text-[14px] font-bold text-white transition-colors hover:bg-[#0069ff] disabled:cursor-not-allowed disabled:bg-[#b8c5d8]"
                 >
                   {creditEmpty ? 'Add Payment Method and Create Droplet' : 'Create Droplet'}
@@ -917,7 +949,7 @@ export default function CreateDroplet() {
           </div>
           <button
             onClick={handleCreate}
-            disabled={creditEmpty || plansLoading || nodesLoading || !selectedPlanRecord || !selectedNode}
+            disabled={!canCreate}
             className="h-[44px] shrink-0 bg-[#0069ff] px-5 text-[13px] font-bold text-white transition-colors hover:bg-[#0056cc] disabled:cursor-not-allowed disabled:bg-[#b8c5d8]"
           >
             {creditEmpty ? 'Add Credit' : 'Create Droplet'}

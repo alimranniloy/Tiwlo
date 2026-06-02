@@ -269,9 +269,9 @@ const APP_INSTALL_CATALOG = [
 app.use(express.json({ limit: "25mb" }));
 
 const DEFAULT_PACKAGES = [
-  { id: "pkg-starter", name: "Starter", quotaMb: 1024, bandwidthGb: 25, domains: 1, emailAccounts: 5, databases: 2, ftpAccounts: 2, nodeApps: 1 },
-  { id: "pkg-business", name: "Business", quotaMb: 10240, bandwidthGb: 250, domains: 10, emailAccounts: 50, databases: 10, ftpAccounts: 10, nodeApps: 5 },
-  { id: "pkg-agency", name: "Agency", quotaMb: 51200, bandwidthGb: 1000, domains: 50, emailAccounts: 250, databases: 50, ftpAccounts: 50, nodeApps: 25 }
+  { id: "pkg-starter", name: "Starter", quotaMb: 1024, bandwidthGb: 25, cpuCores: 1, ramMb: 1024, domains: 1, emailAccounts: 5, databases: 2, ftpAccounts: 2, nodeApps: 1 },
+  { id: "pkg-business", name: "Business", quotaMb: 10240, bandwidthGb: 250, cpuCores: 2, ramMb: 4096, domains: 10, emailAccounts: 50, databases: 10, ftpAccounts: 10, nodeApps: 5 },
+  { id: "pkg-agency", name: "Agency", quotaMb: 51200, bandwidthGb: 1000, cpuCores: 4, ramMb: 8192, domains: 50, emailAccounts: 250, databases: 50, ftpAccounts: 50, nodeApps: 25 }
 ];
 const TERMINAL_ACCOUNT_STATUSES = new Set(["terminated", "deleted", "destroyed"]);
 
@@ -709,9 +709,20 @@ function buildAccountProvisioning(req: express.Request | undefined, account: any
   const primaryDomain = cleanDomain(settings.primaryDomain || "tiwlo.com");
   const autoSubdomain = account.domain.endsWith(`.${primaryDomain}`);
   const aliases = [`www.${account.domain}`];
+  const resourceLimits = account.resourceLimits || account.limits || {};
   return {
     primaryDomain,
     autoSubdomain,
+    limits: {
+      packageId: account.packageId,
+      packageName: account.packageName,
+      quotaMb: account.quotaMb,
+      bandwidthGb: account.bandwidthGb,
+      cpuCores: account.cpuCores,
+      ramMb: account.ramMb || account.memoryMb,
+      memoryMb: account.memoryMb || account.ramMb,
+      resourceLimits
+    },
     dnsRecords: domainDnsRecords(account.domain, serverIp, true).map((record) => ({
       ...record,
       status: record.host === `ftp.${account.domain}` && !account.ftpEnabled
@@ -752,6 +763,16 @@ function writeAccountProvisioningPlan(account: any) {
     homeDirectory: account.homeDirectory,
     documentRoot: account.documentRoot,
     runtime: account.runtime,
+    limits: {
+      packageId: account.packageId,
+      packageName: account.packageName,
+      quotaMb: account.quotaMb,
+      bandwidthGb: account.bandwidthGb,
+      cpuCores: account.cpuCores,
+      ramMb: account.ramMb || account.memoryMb,
+      memoryMb: account.memoryMb || account.ramMb,
+      resourceLimits: account.resourceLimits || account.limits || {}
+    },
     provisioning: account.provisioning,
     updatedAt: new Date().toISOString()
   };
@@ -1777,6 +1798,8 @@ function ensureAccountPhpPool(account: any, versionOverride?: string) {
   fs.mkdirSync(sessionDir, { recursive: true });
   const runtimeUser = webRuntimeUser();
   const settings = phpSettingsForAccount({ ...account, phpVersion: version });
+  const poolMemoryMb = Math.max(128, Math.min(8192, Number(account.ramMb || account.memoryMb || account.phpMemoryMb || 512)));
+  const maxChildren = Math.max(1, Math.min(50, Math.floor(poolMemoryMb / 128)));
   const poolName = accountPhpPoolName(account, version);
   const socket = accountPhpFpmSocket(account, version);
   const poolConfig = `[${poolName}]
@@ -1787,7 +1810,7 @@ listen.owner = ${runtimeUser}
 listen.group = ${runtimeUser}
 listen.mode = 0660
 pm = ondemand
-pm.max_children = 10
+pm.max_children = ${maxChildren}
 pm.process_idle_timeout = 20s
 pm.max_requests = 500
 chdir = ${toUnixPath(docRoot)}
@@ -5725,19 +5748,76 @@ app.get("/api/panel/audit-events", (_req, res) => {
   res.json({ ok: true, auditEvents: state.auditEvents || [] });
 });
 
+function positiveNumber(value: any, fallback = 0) {
+  const next = Number(value);
+  return Number.isFinite(next) && next > 0 ? next : fallback;
+}
+
+function parseLimitNumber(value: any) {
+  if (value === undefined || value === null || value === "") return { amount: 0, raw: "" };
+  if (Number.isFinite(Number(value))) return { amount: Number(value), raw: "" };
+  const raw = String(value).toLowerCase().replace(/,/g, "");
+  const amount = Number(raw.match(/[\d.]+/)?.[0] || 0);
+  return { amount: Number.isFinite(amount) ? amount : 0, raw };
+}
+
+function parseLimitMb(value: any) {
+  const { amount, raw } = parseLimitNumber(value);
+  if (!amount) return 0;
+  if (!raw) return amount;
+  if (raw.includes("tb")) return Math.round(amount * 1024 * 1024);
+  if (raw.includes("gb")) return Math.round(amount * 1024);
+  return Math.round(amount);
+}
+
+function parseLimitGb(value: any) {
+  const { amount, raw } = parseLimitNumber(value);
+  if (!amount) return 0;
+  if (!raw) return amount;
+  if (raw.includes("tb")) return Math.round(amount * 1024);
+  if (raw.includes("mb")) return Math.max(1, Math.round(amount / 1024));
+  return Math.round(amount);
+}
+
+function firstPositive(...values: any[]) {
+  for (const value of values) {
+    const next = positiveNumber(value);
+    if (next > 0) return next;
+  }
+  return 0;
+}
+
 app.post("/api/panel/packages", requireCapability("packages"), (req, res) => {
   const state = readPanelState();
+  const limits = req.body?.resourceLimits || req.body?.limits || req.body?.cloudPlan?.limits || {};
+  const diskGbMb = firstPositive(limits.diskGb, limits.diskGB, parseLimitGb(limits.diskGb || limits.diskGB)) * 1024;
+  const ramGbMb = firstPositive(limits.ramGb, limits.memoryGb, parseLimitGb(limits.ramGb || limits.memoryGb)) * 1024;
+  const quotaMb = firstPositive(req.body?.quotaMb, limits.quotaMb, limits.diskMB, limits.diskMb, diskGbMb, parseLimitMb(limits.disk));
+  const bandwidthGb = firstPositive(req.body?.bandwidthGb, limits.bandwidthGb, limits.bandwidthGB, limits.transferGb, limits.transferGB, parseLimitGb(limits.bandwidth || limits.transfer));
+  const ramMb = firstPositive(req.body?.ramMb, req.body?.memoryMb, limits.ramMb, limits.memoryMb, ramGbMb, parseLimitMb(limits.ram || limits.memory));
+  const cpuCores = firstPositive(req.body?.cpuCores, req.body?.cpuCount, limits.cpuCores, limits.cpuCount, limits.vcpu, parseLimitNumber(limits.cpu).amount);
   const id = sanitizeSlug(req.body?.id || req.body?.name || `pkg-${Date.now()}`, "package");
   const pkg = {
     id,
     name: String(req.body?.name || "Custom Package").trim(),
-    quotaMb: Number(req.body?.quotaMb || 1024),
-    bandwidthGb: Number(req.body?.bandwidthGb || 100),
+    quotaMb: quotaMb || 1024,
+    bandwidthGb: bandwidthGb || 100,
+    cpuCores: cpuCores || 1,
+    ramMb: ramMb || 1024,
     domains: Number(req.body?.domains || 1),
     emailAccounts: Number(req.body?.emailAccounts || 10),
     databases: Number(req.body?.databases || 5),
     ftpAccounts: Number(req.body?.ftpAccounts || 5),
-    nodeApps: Number(req.body?.nodeApps || 1)
+    nodeApps: Number(req.body?.nodeApps || 1),
+    resourceLimits: {
+      ...limits,
+      quotaMb: quotaMb || 1024,
+      diskMB: quotaMb || 1024,
+      bandwidthGb: bandwidthGb || 100,
+      ramMb: ramMb || 1024,
+      memoryMb: ramMb || 1024,
+      cpuCores: cpuCores || 1
+    }
   };
   const packages = [...state.packages.filter((item: any) => item.id !== id), pkg];
   writePanelState(withAuditEvent({ ...state, packages }, {
@@ -5780,22 +5860,41 @@ app.post("/api/panel/accounts", requireCapability("accounts"), async (req, res) 
   const existingPackage = state.packages.find((pkg: any) => pkg.id === packageId)
     || state.packages.find((pkg: any) => packageName && String(pkg.name || "").toLowerCase() === packageName.toLowerCase());
   const basePackage = existingPackage || state.packages[0] || DEFAULT_PACKAGES[0];
+  const incomingLimits = req.body?.resourceLimits || req.body?.limits || req.body?.cloudPlan?.limits || {};
+  const diskGbMb = firstPositive(incomingLimits.diskGb, incomingLimits.diskGB, parseLimitGb(incomingLimits.diskGb || incomingLimits.diskGB)) * 1024;
+  const ramGbMb = firstPositive(incomingLimits.ramGb, incomingLimits.memoryGb, parseLimitGb(incomingLimits.ramGb || incomingLimits.memoryGb)) * 1024;
+  const requestedQuotaMb = firstPositive(req.body?.quotaMb, incomingLimits.quotaMb, incomingLimits.diskMB, incomingLimits.diskMb, diskGbMb, parseLimitMb(incomingLimits.disk));
+  const requestedBandwidthGb = firstPositive(req.body?.bandwidthGb, incomingLimits.bandwidthGb, incomingLimits.bandwidthGB, incomingLimits.transferGb, incomingLimits.transferGB, parseLimitGb(incomingLimits.bandwidth || incomingLimits.transfer));
+  const requestedRamMb = firstPositive(req.body?.ramMb, req.body?.memoryMb, incomingLimits.ramMb, incomingLimits.memoryMb, ramGbMb, parseLimitMb(incomingLimits.ram || incomingLimits.memory));
+  const requestedCpuCores = firstPositive(req.body?.cpuCores, req.body?.cpuCount, incomingLimits.cpuCores, incomingLimits.cpuCount, incomingLimits.vcpu, parseLimitNumber(incomingLimits.cpu).amount);
   const numberOr = (value: any, fallback: number) => {
     const next = Number(value);
     return Number.isFinite(next) && next > 0 ? next : fallback;
   };
-  const selectedPackage = packageName || req.body?.quotaMb || req.body?.bandwidthGb
+  const selectedPackage = packageId || packageName || requestedQuotaMb || requestedBandwidthGb || requestedRamMb || requestedCpuCores
     ? {
       ...basePackage,
       id: packageId || basePackage.id || sanitizeSlug(packageName || `pkg-${Date.now()}`, "package"),
       name: packageName || basePackage.name,
-      quotaMb: numberOr(req.body?.quotaMb, basePackage.quotaMb || 1024),
-      bandwidthGb: numberOr(req.body?.bandwidthGb, basePackage.bandwidthGb || 100),
+      quotaMb: numberOr(requestedQuotaMb, basePackage.quotaMb || 1024),
+      bandwidthGb: numberOr(requestedBandwidthGb, basePackage.bandwidthGb || 100),
+      cpuCores: numberOr(requestedCpuCores, basePackage.cpuCores || 1),
+      ramMb: numberOr(requestedRamMb, basePackage.ramMb || basePackage.memoryMb || 1024),
       domains: numberOr(req.body?.maxDomains, basePackage.domains || 1),
       emailAccounts: numberOr(req.body?.maxEmailAccounts, basePackage.emailAccounts || 10),
       databases: numberOr(req.body?.maxDatabases, basePackage.databases || 5),
       ftpAccounts: numberOr(req.body?.ftpAccounts, basePackage.ftpAccounts || 5),
-      nodeApps: numberOr(req.body?.maxNodeApps, basePackage.nodeApps || 1)
+      nodeApps: numberOr(req.body?.maxNodeApps, basePackage.nodeApps || 1),
+      resourceLimits: {
+        ...(basePackage.resourceLimits || {}),
+        ...incomingLimits,
+        quotaMb: numberOr(requestedQuotaMb, basePackage.quotaMb || 1024),
+        diskMB: numberOr(requestedQuotaMb, basePackage.quotaMb || 1024),
+        bandwidthGb: numberOr(requestedBandwidthGb, basePackage.bandwidthGb || 100),
+        ramMb: numberOr(requestedRamMb, basePackage.ramMb || basePackage.memoryMb || 1024),
+        memoryMb: numberOr(requestedRamMb, basePackage.ramMb || basePackage.memoryMb || 1024),
+        cpuCores: numberOr(requestedCpuCores, basePackage.cpuCores || 1)
+      }
     }
     : basePackage;
   const packages = selectedPackage.id
@@ -5817,6 +5916,28 @@ app.post("/api/panel/accounts", requireCapability("accounts"), async (req, res) 
     }
   }
   const homeDirectory = path.join(ACCOUNT_BASE_DIR, username);
+  const accountQuotaMb = numberOr(requestedQuotaMb, selectedPackage.quotaMb || 1024);
+  const accountBandwidthGb = numberOr(requestedBandwidthGb, selectedPackage.bandwidthGb || 100);
+  const accountRamMb = numberOr(requestedRamMb, selectedPackage.ramMb || selectedPackage.memoryMb || 1024);
+  const accountCpuCores = numberOr(requestedCpuCores, selectedPackage.cpuCores || selectedPackage.cpuCount || 1);
+  const accountPhpMemoryMb = numberOr(req.body?.phpMemoryMb, Math.max(128, Math.min(4096, accountRamMb)));
+  const accountResourceLimits = {
+    ...(selectedPackage.resourceLimits || {}),
+    ...incomingLimits,
+    packageId: selectedPackage.id,
+    packageName: selectedPackage.name,
+    quotaMb: accountQuotaMb,
+    diskMB: accountQuotaMb,
+    diskMb: accountQuotaMb,
+    diskGb: Math.round((accountQuotaMb / 1024) * 100) / 100,
+    bandwidthGb: accountBandwidthGb,
+    bandwidthGB: accountBandwidthGb,
+    ramMb: accountRamMb,
+    memoryMb: accountRamMb,
+    ramGb: Math.round((accountRamMb / 1024) * 100) / 100,
+    cpuCores: accountCpuCores,
+    cpuCount: accountCpuCores
+  };
   const account: any = {
     id: `acct-${Date.now().toString(36)}`,
     username,
@@ -5831,13 +5952,19 @@ app.post("/api/panel/accounts", requireCapability("accounts"), async (req, res) 
     phpSettings: {
       version: String(req.body?.phpVersion || "8.3"),
       extensions: DEFAULT_SELECTED_PHP_EXTENSIONS,
-      ini: normalizePhpIni({}, { phpMemoryMb: req.body?.phpMemoryMb, uploadLimitMb: req.body?.uploadLimitMb }),
+      ini: normalizePhpIni({}, { phpMemoryMb: accountPhpMemoryMb, uploadLimitMb: req.body?.uploadLimitMb }),
       updatedAt: new Date().toISOString()
     },
     nodeVersion: normalizeNodeVersion(req.body?.nodeVersion || DEFAULT_NODE_VERSION),
     nodePort: Number(req.body?.nodePort || 3000),
-    quotaMb: Number(req.body?.quotaMb || selectedPackage.quotaMb),
-    bandwidthGb: Number(req.body?.bandwidthGb || selectedPackage.bandwidthGb),
+    quotaMb: accountQuotaMb,
+    bandwidthGb: accountBandwidthGb,
+    cpuCores: accountCpuCores,
+    ramMb: accountRamMb,
+    memoryMb: accountRamMb,
+    phpMemoryMb: accountPhpMemoryMb,
+    resourceLimits: accountResourceLimits,
+    limits: accountResourceLimits,
     maxDomains: Number(req.body?.maxDomains || selectedPackage.domains),
     maxEmailAccounts: Number(req.body?.maxEmailAccounts || selectedPackage.emailAccounts),
     maxDatabases: Number(req.body?.maxDatabases || selectedPackage.databases),

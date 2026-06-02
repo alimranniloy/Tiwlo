@@ -96,6 +96,13 @@ const parseSize = (value, unit) => {
   return Math.round(amount);
 };
 
+const parseCount = (value) => {
+  if (value === undefined || value === null || value === '') return 0;
+  if (Number.isFinite(Number(value))) return Number(value);
+  const amount = Number(text(value).match(/[\d.]+/)?.[0] || 0);
+  return Number.isFinite(amount) && amount > 0 ? amount : 0;
+};
+
 export const checkTPanelNodeUsername = async (node, username, domain = '') => {
   const clean = cleanUsername(username);
   const requestedDomain = text(domain).toLowerCase();
@@ -121,9 +128,24 @@ export const createTPanelNodeAccount = async (node, input = {}) => {
 
   const limits = input.limits || {};
   const quotaMb = Number(limits.quotaMb || limits.diskMB || limits.diskMb || 0)
-    || parseSize(limits.disk || limits.diskGb || limits.diskGB, 'mb');
+    || (Number(limits.diskGb || limits.diskGB || 0) > 0 ? Math.round(Number(limits.diskGb || limits.diskGB) * 1024) : 0)
+    || parseSize(limits.disk, 'mb');
   const bandwidthGb = Number(limits.bandwidthGb || limits.bandwidthGB || 0)
-    || parseSize(limits.bandwidth || limits.transfer || limits.transferGb, 'gb');
+    || Number(limits.transferGb || limits.transferGB || 0)
+    || parseSize(limits.bandwidth || limits.transfer, 'gb');
+  const ramMb = Number(limits.ramMb || limits.memoryMb || 0)
+    || (Number(limits.ramGb || limits.memoryGb || 0) > 0 ? Math.round(Number(limits.ramGb || limits.memoryGb) * 1024) : 0)
+    || parseSize(limits.ram || limits.memory, 'mb');
+  const cpuCores = parseCount(limits.cpuCores || limits.cpuCount || limits.vcpu || limits.cpu);
+  const resourceLimits = {
+    ...limits,
+    quotaMb: quotaMb || undefined,
+    diskMB: quotaMb || undefined,
+    bandwidthGb: bandwidthGb || undefined,
+    ramMb: ramMb || undefined,
+    memoryMb: ramMb || undefined,
+    cpuCores: cpuCores || undefined
+  };
   const result = await callTPanelNodeApi(node, '/api/panel/accounts', {
     method: 'POST',
     body: {
@@ -140,6 +162,10 @@ export const createTPanelNodeAccount = async (node, input = {}) => {
       shellAccess: input.shellAccess !== false,
       quotaMb: quotaMb || undefined,
       bandwidthGb: bandwidthGb || undefined,
+      ramMb: ramMb || undefined,
+      memoryMb: ramMb || undefined,
+      cpuCores: cpuCores || undefined,
+      resourceLimits,
       maxDomains: Number(limits.domains || limits.maxDomains || 0) || undefined,
       maxDatabases: Number(limits.databases || limits.maxDatabases || 0) || undefined,
       maxEmailAccounts: Number(limits.emailAccounts || limits.maxEmailAccounts || 0) || undefined,
@@ -147,7 +173,7 @@ export const createTPanelNodeAccount = async (node, input = {}) => {
       cloudPlan: {
         code: text(input.packageCode || input.planCode || input.packageId),
         name: text(input.packageName || input.planName),
-        limits
+        limits: resourceLimits
       }
     }
   });
