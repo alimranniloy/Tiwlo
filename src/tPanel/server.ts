@@ -482,6 +482,7 @@ function publicAccount(account: any) {
   safe.phpSettings = phpSettingsForAccount(account || {});
   safe.phpVersion = safe.phpSettings.version;
   safe.nodeVersion = normalizeNodeVersion(account?.nodeVersion || DEFAULT_NODE_VERSION);
+  safe.nodeApps = nodeAppsPublicPayload(account || {});
   safe.runtimeRoutes = runtimeRouteMap(account || {});
   return safe;
 }
@@ -586,7 +587,8 @@ function starterIndexHtml(domain: string) {
 `;
 }
 
-function requestIp(req: express.Request) {
+function requestIp(req?: express.Request) {
+  if (!req) return "";
   const forwarded = req.headers["x-forwarded-for"];
   const value = Array.isArray(forwarded) ? forwarded[0] : forwarded;
   return String(value || req.ip || req.socket.remoteAddress || "").replace(/^::ffff:/, "");
@@ -701,7 +703,7 @@ function resolveAccountDomain(req: express.Request, username: string, requestedD
   return "";
 }
 
-function buildAccountProvisioning(req: express.Request, account: any) {
+function buildAccountProvisioning(req: express.Request | undefined, account: any) {
   const settings = readDomainSettings(req);
   const serverIp = account.dedicatedIp || settings.detectedServerIp || configuredServerIp(req) || "SERVER_IP";
   const primaryDomain = cleanDomain(settings.primaryDomain || "tiwlo.com");
@@ -1302,6 +1304,9 @@ function effectiveNodeVersion(account: any, requested = account?.nodeVersion) {
 function routeRuntimeFor(account: any, domain: unknown, route: any = {}) {
   const clean = cleanDomain(domain);
   const mapped = clean ? runtimeRouteMap(account)[clean] || {} : {};
+  const mappedNodeApp = mapped.nodeAppId
+    ? storedNodeApps(account).find((app: any) => app.id === mapped.nodeAppId)
+    : null;
   const runtime = normalizeRuntime(mapped.runtime || route.runtime || account.runtime || "php");
   const phpVersion = normalizePhpVersion(mapped.phpVersion || route.phpVersion || account.phpVersion || account.phpSettings?.version || DEFAULT_PHP_VERSION);
   const phpSettings = {
@@ -1315,7 +1320,9 @@ function routeRuntimeFor(account: any, domain: unknown, route: any = {}) {
     phpSettings,
     nodeVersion,
     effectiveNodeVersion: effectiveNodeVersion(account, nodeVersion),
-    nodePort: Number(mapped.nodePort || route.nodePort || account.nodePort || 3000)
+    nodePort: Number(mapped.nodePort || route.nodePort || mappedNodeApp?.port || account.nodePort || 3000),
+    nginxGzip: mapped.nginxGzip ?? route.nginxGzip ?? mappedNodeApp?.nginxGzip ?? true,
+    nginxProxyHeaders: mapped.nginxProxyHeaders ?? route.nginxProxyHeaders ?? mappedNodeApp?.nginxProxyHeaders ?? true
   };
 }
 
@@ -1782,10 +1789,430 @@ function nodeSettingsPayload(account: any, extra: any = {}) {
   };
 }
 
+function storedNodeApps(account: any) {
+  const raw = account?.nodeAppProvisioning?.apps;
+  return Array.isArray(raw) ? raw : [];
+}
+
+function nodeAppServiceName(account: any, app: any) {
+  const accountPart = sanitizeSlug(account?.username, "account").replace(/[^a-z0-9_-]/g, "").slice(0, 24);
+  const appPart = sanitizeSlug(app?.name || app?.id, "app").replace(/[^a-z0-9_-]/g, "").slice(0, 32);
+  return `tpanel-node-${accountPart}-${appPart}`;
+}
+
+function nodeAppServicePath(account: any, app: any) {
+  return `/etc/systemd/system/${nodeAppServiceName(account, app)}.service`;
+}
+
+function sanitizeEnvKey(value: unknown) {
+  const clean = String(value || "").toUpperCase().replace(/[^A-Z0-9_]/g, "").slice(0, 64);
+  if (!/^[A-Z_][A-Z0-9_]*$/.test(clean)) throw new Error("Environment variable name must start with a letter or underscore.");
+  return clean;
+}
+
+function normalizeNodeEnvVars(input: unknown, port: number) {
+  const envMap = new Map<string, string>();
+  envMap.set("PORT", String(port));
+  envMap.set("NODE_ENV", "production");
+  if (Array.isArray(input)) {
+    for (const item of input) {
+      const key = sanitizeEnvKey((item as any)?.key);
+      if (key === "PORT") continue;
+      const value = String((item as any)?.value ?? "").replace(/\r/g, "").slice(0, 4096);
+      envMap.set(key, value);
+    }
+  }
+  return Array.from(envMap.entries()).map(([key, value]) => ({ key, value }));
+}
+
+function nodeEnvFile(account: any, app: any) {
+  return path.join(path.resolve(app.appDirectory || nodeAppDirectory(account, app.name)), ".env");
+}
+
+function writeNodeEnvFile(account: any, app: any) {
+  const envFile = nodeEnvFile(account, app);
+  fs.mkdirSync(path.dirname(envFile), { recursive: true });
+  const content = normalizeNodeEnvVars(app.envVars, Number(app.port || 3000))
+    .map((item) => {
+      const value = String(item.value || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n");
+      return `${item.key}="${value}"`;
+    })
+    .join("\n") + "\n";
+  fs.writeFileSync(envFile, content);
+  if (process.platform !== "win32") fs.chmodSync(envFile, 0o600);
+  applyAccountFileOwnership(account, envFile);
+}
+
+function nodeAppDirectory(account: any, name: unknown) {
+  const appName = sanitizeSlug(name, "app").replace(/[^a-z0-9_-]/g, "").slice(0, 40);
+  return ensureInside(account.homeDirectory, path.join(account.homeDirectory, "node_apps", appName));
+}
+
+function normalizeNodeAppInput(account: any, body: any, existing: any = {}) {
+  const name = sanitizeSlug(body?.name || existing.name || "node-app", "node-app").replace(/[^a-z0-9_-]/g, "").slice(0, 40);
+  if (!/^[a-z0-9][a-z0-9_-]{1,39}$/.test(name)) throw new Error("Choose a valid Node app name using letters, numbers, dash, or underscore.");
+  const port = Number(body?.port || body?.nodePort || existing.port || 3000);
+  if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error("Choose a valid Node.js app port between 1024 and 65535.");
+  const startupFile = safeRelativePath(body?.startupFile || body?.startup || existing.startupFile || "server.js") || "server.js";
+  if (startupFile.includes("/") || startupFile.includes("\\")) throw new Error("Startup file must be inside the app root, for example server.js.");
+  const requestedVersion = normalizeNodeVersion(body?.nodeVersion || existing.nodeVersion || account.nodeVersion || DEFAULT_NODE_VERSION);
+  const domain = cleanDomain(body?.domain || existing.domain || account.domain);
+  const route = accountRuntimeDomains(account).find((entry: any) => cleanDomain(entry.domain) === domain);
+  if (!route) throw new Error("Select a domain that belongs to this hosting account.");
+  const maxMemoryMB = Math.max(128, Math.min(4096, Number(body?.maxMemoryMB || existing.maxMemoryMB || account.memoryMb || 512)));
+  const instances = Math.max(1, Math.min(8, Number(body?.instances || existing.instances || 1)));
+  return {
+    name,
+    port,
+    startupFile,
+    nodeVersion: requestedVersion,
+    domain,
+    domainId: `dom-${Buffer.from(domain).toString("base64url")}`,
+    appDirectory: existing.appDirectory || nodeAppDirectory(account, name),
+    envVars: normalizeNodeEnvVars(body?.envVars || existing.envVars, port),
+    clustering: Boolean(body?.clustering ?? existing.clustering ?? false),
+    instances,
+    maxMemoryMB,
+    nginxGzip: body?.nginxGzip ?? existing.nginxGzip ?? true,
+    nginxProxyHeaders: body?.nginxProxyHeaders ?? existing.nginxProxyHeaders ?? true
+  };
+}
+
+function allNodeAppPorts(state = readPanelState()) {
+  const ports = new Map<number, string>();
+  for (const account of activePanelAccounts(state)) {
+    for (const app of storedNodeApps(account)) {
+      const port = Number(app.port || 0);
+      if (port) ports.set(port, account.username);
+    }
+    for (const route of Object.values(runtimeRouteMap(account)) as any[]) {
+      const port = Number((route as any)?.nodePort || 0);
+      if (port) ports.set(port, account.username);
+    }
+  }
+  return ports;
+}
+
+function ensureNodePortAvailable(account: any, port: number, ignoreAppId = "") {
+  const state = readPanelState();
+  const usedByApps = allNodeAppPorts(state);
+  const owner = usedByApps.get(port);
+  if (owner && owner !== account.username) throw new Error(`Port ${port} is already allocated to another hosting account.`);
+  for (const app of storedNodeApps(account)) {
+    if (ignoreAppId && app.id === ignoreAppId) continue;
+    if (Number(app.port) === port) throw new Error(`Port ${port} is already allocated to another Node app in this account.`);
+  }
+}
+
+function writeDefaultNodeApp(account: any, app: any) {
+  fs.mkdirSync(app.appDirectory, { recursive: true });
+  const packageJson = path.join(app.appDirectory, "package.json");
+  const startupPath = path.join(app.appDirectory, app.startupFile);
+  if (!fs.existsSync(packageJson)) {
+    fs.writeFileSync(packageJson, JSON.stringify({
+      scripts: { start: `node ${app.startupFile}` },
+      dependencies: { express: "^4.21.2", dotenv: "^17.2.3" }
+    }, null, 2));
+  }
+  if (!fs.existsSync(startupPath)) {
+    fs.writeFileSync(startupPath, `require("dotenv").config();
+const express = require("express");
+const app = express();
+const port = Number(process.env.PORT || ${Number(app.port || 3000)});
+
+app.get("/", (_req, res) => {
+  res.send("${htmlEscape(app.name)} is running on tPanel Node.js");
+});
+
+app.get("/healthz", (_req, res) => {
+  res.json({ ok: true, app: "${htmlEscape(app.name)}" });
+});
+
+app.listen(port, "127.0.0.1", () => {
+  console.log("Node app listening on", port);
+});
+`);
+  }
+  applyAccountFileOwnership(account, app.appDirectory);
+}
+
+async function installNodeAppDependencies(account: any, app: any) {
+  const packageJson = path.join(app.appDirectory, "package.json");
+  if (!fs.existsSync(packageJson)) return "";
+  const nodeBin = nodeBinaryForVersion(app.nodeVersion || account.nodeVersion || DEFAULT_NODE_VERSION);
+  const nodeBinDir = path.isAbsolute(nodeBin) ? path.dirname(nodeBin) : "";
+  const command = `if [ -f package-lock.json ]; then npm ci --omit=dev; else npm install --omit=dev; fi`;
+  const runner = `${nodeBinDir ? `export PATH=${shellSingleQuote(nodeBinDir)}:$PATH; ` : ""}${command}`;
+  const { stdout, stderr } = await runAccountProvisionCommand(account, runner, app.appDirectory, 900000);
+  return `${stdout || ""}${stderr || ""}`.trim();
+}
+
+function packageDependencies(appDirectory: string) {
+  try {
+    const packageJson = JSON.parse(fs.readFileSync(path.join(appDirectory, "package.json"), "utf8"));
+    return Object.keys(packageJson.dependencies || {});
+  } catch {
+    return [];
+  }
+}
+
+function nodeAppStatus(account: any, app: any) {
+  if (process.platform === "win32") return app.status || "stopped";
+  const service = nodeAppServiceName(account, app);
+  const status = runLocalShell(`systemctl is-active ${shellSingleQuote(service)} 2>/dev/null || true`, 10000);
+  if (status === "active") return "running";
+  if (status === "failed") return "crashing";
+  return "stopped";
+}
+
+function nodeAppLogs(account: any, app: any, maxLines = 80) {
+  const saved = Array.isArray(app.logs) ? app.logs : [];
+  if (process.platform === "win32") return saved.slice(-maxLines);
+  const service = nodeAppServiceName(account, app);
+  const output = runLocalShell(`journalctl -u ${shellSingleQuote(service)} -n ${maxLines} --no-pager 2>/dev/null || true`, 20000);
+  return output ? output.split(/\r?\n/).filter(Boolean).slice(-maxLines) : saved.slice(-maxLines);
+}
+
+function nodeAppsPublicPayload(account: any) {
+  return storedNodeApps(account).map((app: any) => {
+    const status = nodeAppStatus(account, app);
+    return {
+      ...app,
+      status,
+      nodeVersion: `v${normalizeNodeVersion(app.nodeVersion || account.nodeVersion || DEFAULT_NODE_VERSION)}`,
+      installedPackages: packageDependencies(app.appDirectory || ""),
+      logs: nodeAppLogs(account, app, 60),
+      cpuUsage: status === "running" ? Number(app.cpuUsage || 1.2) : 0,
+      memoryUsageMB: status === "running" ? Number(app.memoryUsageMB || 32) : 0
+    };
+  });
+}
+
+function nodeAppsPayload(account: any, extra: any = {}) {
+  return {
+    ok: true,
+    ...extra,
+    apps: nodeAppsPublicPayload(account),
+    limits: {
+      maxNodeApps: Number(account.maxNodeApps || account.nodeApps || 0),
+      usedNodeApps: storedNodeApps(account).length
+    },
+    domains: accountRuntimeDomains(account).map((entry: any) => ({
+      id: `dom-${Buffer.from(entry.domain).toString("base64url")}`,
+      domain: entry.domain,
+      label: entry.label,
+      documentRoot: entry.documentRoot,
+      webPath: entry.webPath
+    })),
+    availableVersions: availableNodeVersions()
+  };
+}
+
+async function writeNodeAppService(account: any, app: any) {
+  if (process.platform === "win32") throw new Error("Real Node.js process provisioning is available on Linux tPanel nodes only.");
+  ensureSystemAccountUser(account);
+  if (!installedNodeVersions().includes(normalizeNodeVersion(app.nodeVersion))) {
+    await installNodeRuntimeVersion(app.nodeVersion);
+  }
+  writeDefaultNodeApp(account, app);
+  writeNodeEnvFile(account, app);
+  await installNodeAppDependencies(account, app);
+  const username = accountShellUsername(account);
+  const nodeBin = nodeBinaryForVersion(app.nodeVersion);
+  const execNode = path.isAbsolute(nodeBin) ? toUnixPath(nodeBin) : "/usr/bin/env node";
+  const service = nodeAppServiceName(account, app);
+  const envFile = nodeEnvFile(account, app);
+  const startupPath = ensureInside(app.appDirectory, path.join(app.appDirectory, app.startupFile));
+  const unit = `[Unit]
+Description=tPanel Node app ${app.name} for ${account.username}
+After=network.target
+
+[Service]
+Type=simple
+User=${username}
+Group=${username}
+WorkingDirectory=${toUnixPath(app.appDirectory)}
+EnvironmentFile=${toUnixPath(envFile)}
+Environment=NODE_ENV=production
+Environment=NODE_OPTIONS=--max-old-space-size=${Number(app.maxMemoryMB || 512)}
+Environment=WEB_CONCURRENCY=${Number(app.instances || 1)}
+ExecStart=${execNode} ${toUnixPath(startupPath)}
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=${toUnixPath(account.homeDirectory)}
+
+[Install]
+WantedBy=multi-user.target
+`;
+  fs.writeFileSync(nodeAppServicePath(account, app), unit);
+  await execFileAsync("systemctl", ["daemon-reload"], { timeout: 60000 });
+  await execFileAsync("systemctl", ["enable", "--now", service], { timeout: 120000 });
+  return service;
+}
+
+async function nodeAppControl(account: any, app: any, action: string) {
+  if (process.platform === "win32") throw new Error("Real Node.js process controls are available on Linux tPanel nodes only.");
+  const service = nodeAppServiceName(account, app);
+  const normalized = String(action || "").toLowerCase();
+  if (!["start", "stop", "restart", "reload"].includes(normalized)) throw new Error("Unsupported Node app action.");
+  if ((normalized === "start" || normalized === "restart" || normalized === "reload") && !fs.existsSync(nodeAppServicePath(account, app))) {
+    await writeNodeAppService(account, app);
+    if (normalized === "start") return service;
+  }
+  await execFileAsync("systemctl", [normalized === "reload" ? "restart" : normalized, service], { timeout: 120000 });
+  return service;
+}
+
+function updateNodeAppRoute(account: any, app: any, remove = false) {
+  return updateStoredAccount(account.username, (current: any) => {
+    const provisioning = current.provisioning || buildAccountProvisioning(undefined, current);
+    const runtimeRoutes = { ...(provisioning.vhost?.runtimeRoutes || {}) };
+    const isPrimaryDomain = cleanDomain(current.domain) === cleanDomain(app.domain);
+    if (remove) {
+      delete runtimeRoutes[cleanDomain(app.domain)];
+    } else {
+      runtimeRoutes[cleanDomain(app.domain)] = {
+        ...(runtimeRoutes[cleanDomain(app.domain)] || {}),
+        runtime: "node",
+        nodeVersion: normalizeNodeVersion(app.nodeVersion || current.nodeVersion || DEFAULT_NODE_VERSION),
+        nodePort: Number(app.port),
+        nodeAppId: app.id,
+        nginxGzip: app.nginxGzip !== false,
+        nginxProxyHeaders: app.nginxProxyHeaders !== false,
+        updatedAt: new Date().toISOString()
+      };
+    }
+    return {
+      ...current,
+      runtime: isPrimaryDomain ? (remove ? "php" : "node") : current.runtime,
+      nodeVersion: isPrimaryDomain && !remove ? normalizeNodeVersion(app.nodeVersion) : current.nodeVersion,
+      nodePort: isPrimaryDomain && !remove ? Number(app.port) : current.nodePort,
+      provisioning: {
+        ...provisioning,
+        vhost: {
+          ...(provisioning.vhost || {}),
+          runtimeRoutes,
+          status: "queued"
+        }
+      },
+      updatedAt: new Date().toISOString()
+    };
+  }) || account;
+}
+
+async function createNodeApp(account: any, body: any) {
+  if (!normalizeAccountPermissions(account.permissions, account).node) {
+    throw new Error("Node.js controls are disabled for this account.");
+  }
+  const maxApps = Number(account.maxNodeApps || account.nodeApps || 0);
+  const currentApps = storedNodeApps(account);
+  if (maxApps > 0 && currentApps.length >= maxApps) throw new Error("Node app limit reached. Upgrade the package before creating more Node.js apps.");
+  const normalized = normalizeNodeAppInput(account, body);
+  ensureNodePortAvailable(account, normalized.port);
+  if (currentApps.some((app: any) => app.name === normalized.name)) throw new Error("This Node app name already exists.");
+  const app = {
+    id: `node-${Date.now().toString(36)}-${randomBytes(3).toString("hex")}`,
+    ...normalized,
+    status: "stopped",
+    logs: [`[${new Date().toISOString()}] Node app created.`],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+  await writeNodeAppService(account, app);
+  const updated = updateStoredAccount(account.username, (current: any) => ({
+    ...current,
+    nodeAppProvisioning: {
+      ...(current.nodeAppProvisioning || {}),
+      apps: [app, ...storedNodeApps(current)]
+    },
+    updatedAt: new Date().toISOString()
+  })) || account;
+  const routed = updateNodeAppRoute(updated, app);
+  appendProvisioningLog(routed, `Node app ${app.name} started on ${app.domain}:${app.port}.`);
+  applyAccountProvisioning(routed);
+  return routed;
+}
+
+async function updateNodeApp(account: any, appId: string, body: any) {
+  const existing = storedNodeApps(account).find((app: any) => app.id === appId);
+  if (!existing) throw new Error("Node app was not found.");
+  const normalized = normalizeNodeAppInput(account, body, existing);
+  ensureNodePortAvailable(account, normalized.port, appId);
+  const nextApp = { ...existing, ...normalized, updatedAt: new Date().toISOString() };
+  await writeNodeAppService(account, nextApp);
+  const updated = updateStoredAccount(account.username, (current: any) => ({
+    ...current,
+    nodeAppProvisioning: {
+      ...(current.nodeAppProvisioning || {}),
+      apps: storedNodeApps(current).map((app: any) => app.id === appId ? nextApp : app)
+    },
+    updatedAt: new Date().toISOString()
+  })) || account;
+  const routed = updateNodeAppRoute(updated, nextApp);
+  appendProvisioningLog(routed, `Node app ${nextApp.name} settings applied.`);
+  applyAccountProvisioning(routed);
+  return routed;
+}
+
+async function deleteNodeApp(account: any, appId: string) {
+  const existing = storedNodeApps(account).find((app: any) => app.id === appId);
+  if (!existing) throw new Error("Node app was not found.");
+  if (process.platform !== "win32") {
+    const service = nodeAppServiceName(account, existing);
+    await execFileAsync("systemctl", ["disable", "--now", service], { timeout: 120000 }).catch(() => undefined);
+    removeIfExists(nodeAppServicePath(account, existing));
+    await execFileAsync("systemctl", ["daemon-reload"], { timeout: 60000 }).catch(() => undefined);
+  }
+  const appDir = existing.appDirectory ? ensureInside(account.homeDirectory, existing.appDirectory) : "";
+  if (appDir && fs.existsSync(appDir)) fs.rmSync(appDir, { recursive: true, force: true });
+  const updated = updateStoredAccount(account.username, (current: any) => ({
+    ...current,
+    nodeAppProvisioning: {
+      ...(current.nodeAppProvisioning || {}),
+      apps: storedNodeApps(current).filter((app: any) => app.id !== appId)
+    },
+    updatedAt: new Date().toISOString()
+  })) || account;
+  const routed = updateNodeAppRoute(updated, existing, true);
+  appendProvisioningLog(routed, `Node app ${existing.name} deleted.`);
+  applyAccountProvisioning(routed);
+  return routed;
+}
+
+async function installNodePackage(account: any, appId: string, packageNameInput: unknown, uninstall = false) {
+  const app = storedNodeApps(account).find((item: any) => item.id === appId);
+  if (!app) throw new Error("Node app was not found.");
+  const packageName = String(packageNameInput || "").trim().toLowerCase();
+  if (!/^(?:@[\w.-]+\/)?[\w.-]{1,214}$/.test(packageName)) throw new Error("Enter a valid npm package name.");
+  const command = uninstall ? `npm uninstall ${shellSingleQuote(packageName)} --save` : `npm install ${shellSingleQuote(packageName)} --save`;
+  const nodeBin = nodeBinaryForVersion(app.nodeVersion || account.nodeVersion || DEFAULT_NODE_VERSION);
+  const nodeBinDir = path.isAbsolute(nodeBin) ? path.dirname(nodeBin) : "";
+  const { stdout, stderr } = await runAccountProvisionCommand(account, `${nodeBinDir ? `export PATH=${shellSingleQuote(nodeBinDir)}:$PATH; ` : ""}${command}`, app.appDirectory, 900000);
+  applyAccountFileOwnership(account, app.appDirectory);
+  await nodeAppControl(account, app, "restart").catch(() => undefined);
+  return `${stdout || ""}${stderr || ""}`.trim();
+}
+
 function nginxContentBlock(account: any, documentRoot: string, routeRuntime: any = null) {
   const root = toUnixPath(documentRoot);
   const runtime = routeRuntime || routeRuntimeFor(account, account.domain);
   if (runtime.runtime === "node") {
+    const proxyHeaders = runtime.nginxProxyHeaders !== false
+      ? `        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+`
+      : "";
+    const gzipBlock = runtime.nginxGzip !== false
+      ? `
+    gzip on;
+    gzip_proxied any;
+    gzip_types text/plain text/css application/json application/javascript text/xml application/xml;
+`
+      : "";
     return `    location /.well-known/acme-challenge/ {
         root ${root};
     }
@@ -1796,10 +2223,9 @@ function nginxContentBlock(account: any, documentRoot: string, routeRuntime: any
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
         proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }`;
+${proxyHeaders.trimEnd()}
+    }
+${gzipBlock.trimEnd()}`;
   }
 
   return `    root ${root};
@@ -2954,10 +3380,18 @@ async function createDatabaseUser(account: any, engine: string, username: unknow
 async function grantDatabaseAccess(account: any, engine: string, userInput: unknown, dbInput: unknown, privilegesInput: unknown) {
   const user = accountDbObjectName(account, userInput, "user").slice(0, engine === "mysql" ? 32 : 63);
   const database = accountDbObjectName(account, dbInput, "database");
+  ensureOwnDbName(account, user);
+  ensureOwnDbName(account, database);
   const requested = Array.isArray(privilegesInput) ? privilegesInput.map((item) => String(item).toUpperCase()) : DATABASE_PRIVILEGES;
   const privileges = requested.filter((item) => DATABASE_PRIVILEGES.includes(item));
   const effectivePrivileges = privileges.length ? privileges : DATABASE_PRIVILEGES;
   await ensureDatabaseEngineReady(engine);
+  const [databaseNames, userNames] = await Promise.all([
+    databaseNamesForEngine(account, engine),
+    databaseUsersForEngine(account, engine)
+  ]);
+  if (!databaseNames.includes(database)) throw new Error("Database was not found on this hosting account.");
+  if (!userNames.includes(user)) throw new Error("Database user was not found on this hosting account.");
   if (engine === "postgresql") {
     await runPostgresSql(`GRANT ALL PRIVILEGES ON DATABASE ${pgIdent(database)} TO ${pgIdent(user)};`);
   } else {
@@ -3383,7 +3817,7 @@ function installTargetForDomain(account: any, domainInput: unknown, installPathI
     relativePath,
     documentRoot,
     destination,
-    url: `https://${domain}${urlPath}`
+    url: `${accountSslPaths(account).ready ? "https" : "http"}://${domain}${urlPath}`
   };
 }
 
@@ -4024,6 +4458,96 @@ app.post("/api/user/node-settings", requireLicense, async (req, res) => {
     }));
   } catch (error: any) {
     res.status(500).json({ ok: false, message: error.message || "Unable to apply Node.js settings." });
+  }
+});
+
+app.get("/api/user/node-apps", requireLicense, async (req, res) => {
+  const account = requireUserAccount(req, res);
+  if (!account) return;
+  if (!normalizeAccountPermissions(account.permissions, account).node) {
+    res.status(403).json({ ok: false, message: "Node.js controls are disabled for this account." });
+    return;
+  }
+  try {
+    res.json(nodeAppsPayload(account));
+  } catch (error: any) {
+    res.status(500).json({ ok: false, message: error.message || "Unable to load Node.js apps." });
+  }
+});
+
+app.post("/api/user/node-apps", requireLicense, async (req, res) => {
+  const account = requireUserAccount(req, res);
+  if (!account) return;
+  try {
+    const updated = await createNodeApp(account, req.body || {});
+    res.json(nodeAppsPayload(updated, { account: publicAccount(updated) }));
+  } catch (error: any) {
+    res.status(500).json({ ok: false, message: error.message || "Unable to create Node.js app." });
+  }
+});
+
+app.post("/api/user/node-apps/:id/settings", requireLicense, async (req, res) => {
+  const account = requireUserAccount(req, res);
+  if (!account) return;
+  if (!normalizeAccountPermissions(account.permissions, account).node) {
+    res.status(403).json({ ok: false, message: "Node.js controls are disabled for this account." });
+    return;
+  }
+  try {
+    const updated = await updateNodeApp(account, req.params.id, req.body || {});
+    res.json(nodeAppsPayload(updated, { account: publicAccount(updated) }));
+  } catch (error: any) {
+    res.status(500).json({ ok: false, message: error.message || "Unable to update Node.js app." });
+  }
+});
+
+app.post("/api/user/node-apps/:id/action", requireLicense, async (req, res) => {
+  const account = requireUserAccount(req, res);
+  if (!account) return;
+  if (!normalizeAccountPermissions(account.permissions, account).node) {
+    res.status(403).json({ ok: false, message: "Node.js controls are disabled for this account." });
+    return;
+  }
+  try {
+    const appEntry = storedNodeApps(account).find((app: any) => app.id === req.params.id);
+    if (!appEntry) throw new Error("Node app was not found.");
+    await nodeAppControl(account, appEntry, req.body?.action);
+    const refreshed = accountForSession(sessionFromRequest(req)) || account;
+    res.json(nodeAppsPayload(refreshed));
+  } catch (error: any) {
+    res.status(500).json({ ok: false, message: error.message || "Unable to control Node.js app." });
+  }
+});
+
+app.post("/api/user/node-apps/:id/packages", requireLicense, async (req, res) => {
+  const account = requireUserAccount(req, res);
+  if (!account) return;
+  if (!normalizeAccountPermissions(account.permissions, account).node) {
+    res.status(403).json({ ok: false, message: "Node.js controls are disabled for this account." });
+    return;
+  }
+  try {
+    const uninstall = String(req.body?.action || "").toLowerCase() === "uninstall";
+    const output = await installNodePackage(account, req.params.id, req.body?.packageName || req.body?.name, uninstall);
+    const refreshed = accountForSession(sessionFromRequest(req)) || account;
+    res.json(nodeAppsPayload(refreshed, { installOutput: output }));
+  } catch (error: any) {
+    res.status(500).json({ ok: false, message: error.message || "Unable to update npm package." });
+  }
+});
+
+app.delete("/api/user/node-apps/:id", requireLicense, async (req, res) => {
+  const account = requireUserAccount(req, res);
+  if (!account) return;
+  if (!normalizeAccountPermissions(account.permissions, account).node) {
+    res.status(403).json({ ok: false, message: "Node.js controls are disabled for this account." });
+    return;
+  }
+  try {
+    const updated = await deleteNodeApp(account, req.params.id);
+    res.json(nodeAppsPayload(updated, { account: publicAccount(updated) }));
+  } catch (error: any) {
+    res.status(500).json({ ok: false, message: error.message || "Unable to delete Node.js app." });
   }
 });
 

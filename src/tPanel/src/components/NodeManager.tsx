@@ -28,7 +28,7 @@ import {
   Sparkles,
   Database
 } from "lucide-react";
-import { NodeApp, DomainItem, VirtualItem, NodeEnvVar } from "../types";
+import { NodeApp, DomainItem, VirtualItem } from "../types";
 
 interface NodeManagerProps {
   nodeApps: NodeApp[];
@@ -63,6 +63,50 @@ export default function NodeManager({ nodeApps, setNodeApps, domains, files, add
   const activeApp = nodeApps.find(a => a.id === selectedAppId);
   const terminalEndRef = useRef<HTMLDivElement>(null);
 
+  const authToken = () => {
+    try {
+      return JSON.parse(localStorage.getItem("tpanel_auth") || "null")?.token || "";
+    } catch {
+      return "";
+    }
+  };
+
+  const hydrateNodeApps = (payload: any, preferredId = selectedAppId) => {
+    const apps = Array.isArray(payload.apps) ? payload.apps : [];
+    setNodeApps(apps);
+    if (apps.length) {
+      const nextId = apps.some((app: NodeApp) => app.id === preferredId) ? preferredId : apps[0].id;
+      setSelectedAppId(nextId);
+    } else {
+      setSelectedAppId("");
+    }
+  };
+
+  const nodeApi = async (url: string, body?: any, method = "POST") => {
+    const token = authToken();
+    const response = await fetch(url, {
+      method,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        ...(body === undefined ? {} : { "Content-Type": "application/json" })
+      },
+      body: body === undefined ? undefined : JSON.stringify(body)
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.ok) throw new Error(data.message || "Node.js operation failed.");
+    return data;
+  };
+
+  const loadRealNodeApps = async () => {
+    const token = authToken();
+    if (!token) return;
+    const response = await fetch("/api/user/node-apps", {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    const data = await response.json().catch(() => ({}));
+    if (response.ok && data.ok) hydrateNodeApps(data);
+  };
+
   // Auto-scroll terminal logs safely without scrolling the parent window!
   useEffect(() => {
     if (appPanelTab === "monitor" && terminalEndRef.current && terminalEndRef.current.parentElement) {
@@ -74,6 +118,18 @@ export default function NodeManager({ nodeApps, setNodeApps, domains, files, add
       }
     }
   }, [activeApp?.logs, appPanelTab]);
+
+  useEffect(() => {
+    loadRealNodeApps().catch(() => undefined);
+    const timer = window.setInterval(() => {
+      loadRealNodeApps().catch(() => undefined);
+    }, 10000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!appDomainId && domains[0]?.id) setAppDomainId(domains[0].id);
+  }, [appDomainId, domains]);
 
   // Handle version switching loader
   const [isVersionSwitching, setIsVersionSwitching] = useState(false);
@@ -94,64 +150,7 @@ export default function NodeManager({ nodeApps, setNodeApps, domains, files, add
     { name: "bcryptjs", desc: "Optimized bcrypt implementation in JavaScript for passwords hashing" }
   ];
 
-  // Fluctuating server logs and load simulation
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setNodeApps(prevApps => prevApps.map(app => {
-        if (app.status !== "running") return app;
-
-        // Count PM2 cores
-        const totalCores = app.instances || 1;
-        const isCluster = app.clustering || false;
-        
-        // Base CPU usage varies by packages and clustering
-        const baseCpu = isCluster ? (1.5 * totalCores) : 1.2;
-        const pkgFactor = (app.installedPackages?.length || 3) * 0.15;
-        const cpuChange = (Math.random() - 0.5) * 0.5;
-        const newCpu = Math.max(0.1, Math.min(95, parseFloat((baseCpu + cpuChange + pkgFactor).toFixed(2))));
-        
-        // Base memory is limited by maxMemoryMB set
-        const baseMem = app.memoryUsageMB || 28.5;
-        const memLimit = app.maxMemoryMB || 512;
-        const memChange = (Math.random() - 0.5) * (isCluster ? 1.6 : 0.6);
-        const newMem = Math.max(15, Math.min(memLimit - 10, parseFloat((baseMem + memChange).toFixed(1))));
-
-        // Potentially append a random server hit log
-        let updatedLogs = [...app.logs];
-        if (Math.random() > 0.6) {
-          const endpoints = ["/", "/api/v1/auth/session", "/api/v1/users/profile", "/api/v1/db/query", "/healthz", "/static/bundle.js"];
-          const selectedEndpoint = endpoints[Math.floor(Math.random() * endpoints.length)];
-          const requestIps = [window.location.hostname || "127.0.0.1", "10.0.0.8", "172.16.4.20"];
-          const randomIp = requestIps[Math.floor(Math.random() * requestIps.length)];
-          const timestamp = new Date().toLocaleTimeString();
-          const statusCode = Math.random() > 0.97 ? 500 : (Math.random() > 0.94 ? 404 : 200);
-          
-          let logLine = `[${timestamp}] Incoming request - IP: ${randomIp} - Method: GET - URI: ${selectedEndpoint} - Response: ${statusCode} ${statusCode === 200 ? "OK" : statusCode === 404 ? "NOT FOUND" : "INTERNAL ERROR"}`;
-          
-          if (isCluster) {
-            const workerId = Math.floor(Math.random() * totalCores);
-            logLine = `[PM2] [worker-${workerId}] ${logLine}`;
-          }
-
-          updatedLogs.push(logLine);
-
-          // Keep logs length reasonable
-          if (updatedLogs.length > 60) {
-            updatedLogs.shift();
-          }
-        }
-
-        return {
-          ...app,
-          cpuUsage: newCpu,
-          memoryUsageMB: newMem,
-          logs: updatedLogs
-        };
-      }));
-    }, 3000);
-
-    return () => clearInterval(interval);
-  }, [setNodeApps]);
+  // Node app status/logs are loaded from the server journal.
 
   const updateActiveApp = (updatedFields: Partial<NodeApp>) => {
     if (!activeApp) return;
@@ -166,6 +165,26 @@ export default function NodeManager({ nodeApps, setNodeApps, domains, files, add
     }));
   };
 
+  const saveActiveAppSettings = async (updatedFields: Partial<NodeApp>) => {
+    if (!activeApp) return;
+    const nextApp = { ...activeApp, ...updatedFields };
+    updateActiveApp(updatedFields);
+    const data = await nodeApi(`/api/user/node-apps/${encodeURIComponent(activeApp.id)}/settings`, {
+      name: nextApp.name,
+      domain: domains.find((domain) => domain.id === nextApp.domainId)?.domainName || mappedDomain,
+      port: nextApp.port,
+      startupFile: nextApp.startupFile,
+      nodeVersion: nextApp.nodeVersion,
+      envVars: nextApp.envVars,
+      clustering: nextApp.clustering,
+      instances: nextApp.instances,
+      maxMemoryMB: nextApp.maxMemoryMB,
+      nginxGzip: nextApp.nginxGzip,
+      nginxProxyHeaders: nextApp.nginxProxyHeaders
+    });
+    hydrateNodeApps(data, activeApp.id);
+  };
+
   // Safe configurations resolved with fallback values
   const nodeVersion = activeApp?.nodeVersion || "v20.11.0";
   const clustering = activeApp?.clustering || false;
@@ -173,267 +192,199 @@ export default function NodeManager({ nodeApps, setNodeApps, domains, files, add
   const maxMemoryMB = activeApp?.maxMemoryMB || 512;
   const nginxGzip = activeApp?.nginxGzip !== false;
   const nginxProxyHeaders = activeApp?.nginxProxyHeaders !== false;
-  const installedPackages = activeApp?.installedPackages || ["express", "cors", "dotenv"];
+  const installedPackages = activeApp?.installedPackages || [];
+  const envVars = activeApp?.envVars || [];
 
   // Handle Create Application
-  const handleCreateApp = (e: FormEvent) => {
+  const handleCreateApp = async (e: FormEvent) => {
     e.preventDefault();
     if (!appName.trim() || !appStartup) return;
 
-    // Check if name or port already used
-    if (nodeApps.some(a => a.name.toLowerCase() === appName.toLowerCase())) {
-       alert("An application with that name already exists in the system.");
-       return;
+    const selectedDomain = domains.find((domain) => domain.id === appDomainId)?.domainName || domains[0]?.domainName;
+    if (!selectedDomain) {
+      alert("Add a domain or subdomain before creating a Node.js app.");
+      return;
     }
-    if (nodeApps.some(a => a.port === Number(appPort))) {
-       alert(`Port ${appPort} is currently allocated to another process.`);
-       return;
+    try {
+      const data = await nodeApi("/api/user/node-apps", {
+        name: appName.trim().toLowerCase().replace(/[^a-z0-9-_]/g, ""),
+        domain: selectedDomain,
+        port: Number(appPort),
+        startupFile: appStartup,
+        envVars: [
+          { key: "PORT", value: String(appPort) },
+          { key: "NODE_ENV", value: "production" }
+        ]
+      });
+      hydrateNodeApps(data);
+      setIsAddingApp(false);
+      addActivity("node", `Started real Node.js app "${appName}" on ${selectedDomain}:${appPort}`);
+      setAppName("");
+      setAppPort(Number(appPort) + 1);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Unable to create Node.js app.");
     }
-
-    const newApp: NodeApp = {
-      id: "app-" + Math.random().toString(36).substr(2, 9),
-      name: appName.trim().toLowerCase().replace(/[^a-z0-9-_]/g, ""),
-      domainId: appDomainId,
-      port: Number(appPort),
-      startupFile: appStartup,
-      status: "running",
-      envVars: [
-        { key: "PORT", value: String(appPort) },
-        { key: "NODE_ENV", value: "development" }
-      ],
-      cpuUsage: 1.0,
-      memoryUsageMB: 28.5,
-      logs: [
-        `[INFO] [${new Date().toLocaleTimeString()}] Dynamic container initializing ... OK`,
-        `[INFO] Spawning Virtual Node.js environment engine ... v20.11.0 loaded`,
-        `[EXEC] node ${appStartup}`,
-        `[NODE MASTER_PROCESS] API Server successfully bound and running on Port ${appPort}`,
-        `[INFO] Listening to routes and ready for requests.`
-      ],
-      nodeVersion: "v20.11.0",
-      clustering: false,
-      instances: 1,
-      maxMemoryMB: 512,
-      nginxGzip: true,
-      nginxProxyHeaders: true,
-      installedPackages: ["express", "cors", "dotenv"]
-    };
-
-    setNodeApps(prev => [...prev, newApp]);
-    setSelectedAppId(newApp.id);
-    setIsAddingApp(false);
-    addActivity("node", `Deployed new Node.js App instance: "${newApp.name}" on port ${newApp.port}`);
-    
-    // Clear inputs
-    setAppName("");
-    setAppPort(3002);
   };
 
   // Toggle status (start/stop)
-  const toggleAppStatus = (id: string, action: "start" | "stop") => {
-    setNodeApps(prev => prev.map(app => {
-      if (app.id === id) {
-        const timestamp = new Date().toLocaleTimeString();
-        let newLogs = [...app.logs];
-        if (action === "start") {
-          newLogs.push(`[${timestamp}] [CONTROL] Start signal received.`);
-          newLogs.push(`[${timestamp}] [EXEC] node ${app.startupFile}`);
-          newLogs.push(`[${timestamp}] [NODE MASTER_PROCESS] API Server listening on port ${app.port}`);
-          return {
-            ...app,
-            status: "running",
-            cpuUsage: 1.2,
-            memoryUsageMB: 32.4,
-            logs: newLogs
-          };
-        } else {
-          newLogs.push(`[${timestamp}] [CONTROL] Stop signal received. Gracefully terminating child threads.`);
-          newLogs.push(`[${timestamp}] [SYS] Process exited with code 0 (SIGTERM - user intervention).`);
-          return {
-            ...app,
-            status: "stopped",
-            cpuUsage: 0,
-            memoryUsageMB: 0,
-            logs: newLogs
-          };
-        }
-      }
-      return app;
-    }));
-    addActivity("node", `${action === "start" ? "Started" : "Stopped"} Node process "${activeApp?.name}"`);
+  const toggleAppStatus = async (id: string, action: "start" | "stop") => {
+    try {
+      const data = await nodeApi(`/api/user/node-apps/${encodeURIComponent(id)}/action`, { action });
+      hydrateNodeApps(data, id);
+      addActivity("node", `${action === "start" ? "Started" : "Stopped"} real Node process "${activeApp?.name}"`);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Unable to control Node.js app.");
+    }
   };
 
   // Restart app
-  const restartApp = (id: string) => {
-    setNodeApps(prev => prev.map(app => {
-      if (app.id === id) {
-        const timestamp = new Date().toLocaleTimeString();
-        const newLogs = [
-          ...app.logs,
-          `[${timestamp}] [CONTROL] Hard-Restart signal received.`,
-          `[${timestamp}] [SYS] Terminating process thread ID: ${Math.floor(Math.random() * 8000 + 1000)} ... Done`,
-          `[${timestamp}] [PROC] Re-pooling system modules ...`,
-          `[${timestamp}] [EXEC] node ${app.startupFile}`,
-          `[${timestamp}] [NODE MASTER_PROCESS] Reboot completed, bound to port ${app.port} successfully.`
-        ];
-        return {
-          ...app,
-          status: "running",
-          cpuUsage: 2.5, // momentary surge
-          memoryUsageMB: 38.0,
-          logs: newLogs
-        };
-      }
-      return app;
-    }));
-    addActivity("node", `Restarted node worker: "${activeApp?.name}"`);
+  const restartApp = async (id: string) => {
+    try {
+      const data = await nodeApi(`/api/user/node-apps/${encodeURIComponent(id)}/action`, { action: "restart" });
+      hydrateNodeApps(data, id);
+      addActivity("node", `Restarted real Node app "${activeApp?.name}"`);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Unable to restart Node.js app.");
+    }
   };
 
   // Switch Node Engine version with logs
-  const handleNodeVersionChange = (version: string) => {
+  const handleNodeVersionChange = async (version: string) => {
     if (!activeApp) return;
     setIsVersionSwitching(true);
-    const timestamp = new Date().toLocaleTimeString();
-
-    updateActiveApp({
-      nodeVersion: version,
-      logs: [
-        ...activeApp.logs,
-        `[${timestamp}] [SYSTEM] Switched runtime engine target version: -> ${version}`,
-        `[${timestamp}] [NPM] Initiating environment sync and lockfile rebuild...`,
-        `[${timestamp}] [SYSTEM] Swapping Node binary space pointer...`,
-        `[${timestamp}] [SYSTEM] App instance rebooted using runtime engine ${version} completely.`
-      ]
-    });
-
-    setTimeout(() => {
-      setIsVersionSwitching(false);
+    try {
+      await saveActiveAppSettings({ nodeVersion: version });
       addActivity("node", `Switched "${activeApp.name}" Node.js runtime engine to ${version}`);
-    }, 850);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Unable to switch Node.js version.");
+      loadRealNodeApps().catch(() => undefined);
+    } finally {
+      setIsVersionSwitching(false);
+    }
   };
 
   // Add environment variable
-  const addEnvVar = () => {
+  const addEnvVar = async () => {
     if (!envKey.trim() || !envVal.trim() || !activeApp) return;
 
     // Check key
     const sanitizedKey = envKey.trim().toUpperCase().replace(/[^A-Z0-9_]/g, "");
-    if (activeApp.envVars.some(v => v.key === sanitizedKey)) {
+    if (envVars.some(v => v.key === sanitizedKey)) {
       alert("This variable key already exists.");
       return;
     }
 
-    const updatedVars = [...activeApp.envVars, { key: sanitizedKey, value: envVal.trim() }];
-    
-    setNodeApps(prev => prev.map(app => {
-      if (app.id === activeApp.id) {
-        return {
-          ...app,
-          envVars: updatedVars,
-          logs: [...app.logs, `[${new Date().toLocaleTimeString()}] [ENV] Added configuration variable: ${sanitizedKey}`]
-        };
-      }
-      return app;
-    }));
-
-    setEnvKey("");
-    setEnvVal("");
-    addActivity("node", `Configured environment variable ${sanitizedKey} in "${activeApp.name}"`);
+    const updatedVars = [...envVars, { key: sanitizedKey, value: envVal.trim() }];
+    try {
+      await saveActiveAppSettings({ envVars: updatedVars });
+      setEnvKey("");
+      setEnvVal("");
+      addActivity("node", `Configured environment variable ${sanitizedKey} in "${activeApp.name}"`);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Unable to save environment variable.");
+    }
   };
 
   // Delete environment variable
-  const deleteEnvVar = (key: string) => {
+  const deleteEnvVar = async (key: string) => {
     if (!activeApp) return;
-    const updatedVars = activeApp.envVars.filter(v => v.key !== key);
-
-    setNodeApps(prev => prev.map(app => {
-      if (app.id === activeApp.id) {
-        return {
-          ...app,
-          envVars: updatedVars,
-          logs: [...app.logs, `[${new Date().toLocaleTimeString()}] [ENV] Revoked variable configuration: ${key}`]
-        };
-      }
-      return app;
-    }));
-    addActivity("node", `Deleted environment variable ${key} in "${activeApp.name}"`);
+    const updatedVars = envVars.filter(v => v.key !== key);
+    try {
+      await saveActiveAppSettings({ envVars: updatedVars });
+      addActivity("node", `Deleted environment variable ${key} in "${activeApp.name}"`);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Unable to delete environment variable.");
+    }
   };
 
   // NPM install workflow
-  const handleInstallPackage = (pkgName: string) => {
+  const handleInstallPackage = async (pkgName: string) => {
     if (!activeApp || installingPackage) return;
     
     setInstallingPackage(pkgName);
     setInstallingProgress(5);
 
-    // Simulate progressive installation steps
     let currentProg = 5;
     const progressInterval = setInterval(() => {
-      currentProg += Math.floor(Math.random() * 25) + 15;
-      if (currentProg >= 100) {
-        currentProg = 100;
-        clearInterval(progressInterval);
-      } else {
-        setInstallingProgress(currentProg);
-      }
-    }, 150);
+      currentProg = Math.min(90, currentProg + 10);
+      setInstallingProgress(currentProg);
+    }, 500);
 
-    setTimeout(() => {
+    try {
+      const data = await nodeApi(`/api/user/node-apps/${encodeURIComponent(activeApp.id)}/packages`, {
+        packageName: pkgName,
+        action: "install"
+      });
+      hydrateNodeApps(data, activeApp.id);
+      addActivity("node", `Installed NPM package "${pkgName}" into real app "${activeApp.name}"`);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Unable to install npm package.");
+    } finally {
       clearInterval(progressInterval);
       setInstallingProgress(100);
-      
-      const currentPkgs = activeApp.installedPackages || ["express", "cors", "dotenv"];
-      const updatedPkgs = currentPkgs.includes(pkgName) ? currentPkgs : [...currentPkgs, pkgName];
-      const timestamp = new Date().toLocaleTimeString();
-
-      updateActiveApp({
-        installedPackages: updatedPkgs,
-        logs: [
-          ...activeApp.logs,
-          `[${timestamp}] [NPM] npm install ${pkgName} --save`,
-          `[${timestamp}] [NPM] npm WARN resolution checking packages lockfile ...`,
-          `[${timestamp}] [NPM] added 1 package, audited 284 modules in 1.48s`,
-          `[${timestamp}] [SYSTEM] Process environment auto-updating. Successfully bound dynamic dependency.`
-        ]
-      });
-
-      addActivity("node", `Installed NPM package "${pkgName}" into app "${activeApp.name}"`);
       setInstallingPackage(null);
       setInstallingProgress(0);
-    }, 1100);
+    }
   };
 
-  const handlePrunePackage = (pkgName: string) => {
+  const handlePrunePackage = async (pkgName: string) => {
     if (!activeApp) return;
-    const currentPkgs = activeApp.installedPackages || ["express", "cors", "dotenv"];
-    const updatedPkgs = currentPkgs.filter(p => p !== pkgName);
-    const timestamp = new Date().toLocaleTimeString();
-
-    updateActiveApp({
-      installedPackages: updatedPkgs,
-      logs: [
-        ...activeApp.logs,
-        `[${timestamp}] [NPM] npm uninstall ${pkgName} --save`,
-        `[${timestamp}] [NPM] removed 1 package, audited 283 modules in 0.85s`,
-        `[${timestamp}] [SYSTEM] Dependency pruned. System reloaded.`
-      ]
-    });
-
-    addActivity("node", `Pruned NPM package "${pkgName}" from app "${activeApp.name}"`);
+    try {
+      const data = await nodeApi(`/api/user/node-apps/${encodeURIComponent(activeApp.id)}/packages`, {
+        packageName: pkgName,
+        action: "uninstall"
+      });
+      hydrateNodeApps(data, activeApp.id);
+      addActivity("node", `Removed NPM package "${pkgName}" from real app "${activeApp.name}"`);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Unable to remove npm package.");
+    }
   };
 
   // Delete app entirely
-  const handleDeleteApp = (id: string, name: string) => {
+  const handleDeleteApp = async (id: string, name: string) => {
     if (confirm(`Are you sure you want to stop and delete the Node.js application "${name}" entirely?`)) {
-      setNodeApps(prev => prev.filter(app => app.id !== id));
-      addActivity("node", `Removed Node app configuration: "${name}"`);
-      // Update selected
-      const left = nodeApps.filter(app => app.id !== id);
-      if (left.length > 0) {
-        setSelectedAppId(left[0].id);
-      } else {
-        setSelectedAppId("");
+      try {
+        const data = await nodeApi(`/api/user/node-apps/${encodeURIComponent(id)}`, undefined, "DELETE");
+        hydrateNodeApps(data);
+        addActivity("node", `Deleted real Node app and service: "${name}"`);
+      } catch (error) {
+        alert(error instanceof Error ? error.message : "Unable to delete Node.js app.");
       }
+    }
+  };
+
+  const generateExpressBoilerplate = async () => {
+    if (!activeApp) return;
+    const content = `require("dotenv").config();
+const express = require("express");
+const app = express();
+const port = Number(process.env.PORT || ${activeApp.port});
+
+app.get("/", (_req, res) => {
+  res.send("${activeApp.name} is running");
+});
+
+app.get("/healthz", (_req, res) => {
+  res.json({ ok: true });
+});
+
+app.listen(port, "127.0.0.1", () => {
+  console.log("Node app listening on", port);
+});
+`;
+    try {
+      await nodeApi("/api/user/files/create", {
+        parentId: "root-dir",
+        parentPath: `node_apps/${activeApp.name}`,
+        type: "file",
+        name: activeApp.startupFile || "server.js",
+        content
+      });
+      await restartApp(activeApp.id);
+      addActivity("file", `Created Express startup file for "${activeApp.name}"`);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Unable to create Express boilerplate.");
     }
   };
 
@@ -457,7 +408,7 @@ export default function NodeManager({ nodeApps, setNodeApps, domains, files, add
               <h2 className="text-lg font-bold text-slate-100 font-sans tracking-tight">
                 Node.js Application Ecosystem
               </h2>
-              <p className="text-slate-400 text-xs mt-0.5">Deploy standalone processes, auto-bind proxy mapping, configure PM2 clustering monitors, and manage NPM workspace dependencies.</p>
+              <p className="text-slate-400 text-xs mt-0.5">Deploy account-owned Node services, bind reverse proxy routes, and manage real NPM workspace dependencies.</p>
             </div>
           </div>
         </div>
@@ -496,76 +447,52 @@ export default function NodeManager({ nodeApps, setNodeApps, domains, files, add
           {/* List of Applications Bar (LEFT) */}
           <div className="lg:col-span-1 space-y-4">
             
-            {/* PM2 Daemon Core System Status */}
+            {/* Real Node service status */}
             <div className="bg-slate-900 border border-slate-700/80 rounded-xl p-3.5 space-y-3 font-sans">
               <div className="flex justify-between items-center border-b border-slate-800 pb-2">
                 <div className="flex items-center gap-1.5">
                   <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping"></span>
-                  <span className="text-[10px] font-black text-slate-100 uppercase tracking-wider font-mono">PM2 System Daemon</span>
+                  <span className="text-[10px] font-black text-slate-100 uppercase tracking-wider font-mono">Node Service Manager</span>
                 </div>
                 <span className="text-[9px] bg-indigo-500/10 text-indigo-400 font-mono border border-indigo-500/20 px-1.5 py-0.5 rounded font-black uppercase">
-                  v5.4.1 LIVE
+                  systemd live
                 </span>
               </div>
               
               <div className="space-y-1.5 text-[10.5px] font-mono leading-normal">
                 <div className="flex justify-between">
-                  <span className="text-slate-500">Daemon RAM:</span>
-                  <span className="text-slate-300 font-bold">42.8 MB / 8 GB</span>
+                  <span className="text-slate-500">Apps:</span>
+                  <span className="text-slate-300 font-bold">{nodeApps.length} configured</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-slate-500">Node Engine:</span>
-                  <span className="text-slate-305 font-bold text-sky-400">v20.11.0</span>
+                  <span className="text-slate-305 font-bold text-sky-400">{activeApp?.nodeVersion || "auto"}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-slate-500">Uptime:</span>
-                  <span className="text-slate-305 text-emerald-400 font-bold">48d 14h 22m</span>
+                  <span className="text-slate-500">Selected:</span>
+                  <span className="text-slate-305 text-emerald-400 font-bold">{activeApp?.status || "none"}</span>
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-1.5 pt-1 text-[10px] font-mono">
                 <button 
                   onClick={() => {
-                    const timestamp = new Date().toLocaleTimeString();
-                    setNodeApps(prev => prev.map(app => {
-                      if (app.id !== selectedAppId) return app;
-                      return {
-                        ...app,
-                        logs: [
-                          ...app.logs,
-                          `[${timestamp}] [SYSTEM] stdout console stream memory buffer cleared manually by Administrator.`
-                        ]
-                      };
-                    }));
-                    alert("PM2 active logs buffer successfully flushed!");
-                    addActivity("node", "PM2 global terminal logs buffer flushed");
+                    loadRealNodeApps().catch((error) => alert(error instanceof Error ? error.message : "Unable to refresh logs."));
+                    addActivity("node", "Node process logs refreshed from server journal");
                   }}
                   className="py-1 bg-slate-950 hover:bg-slate-850 text-slate-300 rounded border border-slate-755 hover:border-slate-600 transition cursor-pointer"
-                  title="Truncate memory buffer"
+                  title="Refresh server journal"
                 >
-                  🧹 Flush Logs
+                  Refresh Logs
                 </button>
                 <button 
                   onClick={() => {
-                    const timestamp = new Date().toLocaleTimeString();
-                    setNodeApps(prev => prev.map(app => {
-                      if (app.status !== "running") return app;
-                      return {
-                        ...app,
-                        logs: [
-                          ...app.logs,
-                          `[${timestamp}] [PM2] Graceful reload triggered. Signal: SIGINT`,
-                          `[${timestamp}] [PM2] All threads re-bound successfully. Live.`
-                        ]
-                      };
-                    }));
-                    alert("Graceful Daemon reload dispatched to PM2 threads!");
-                    addActivity("node", "PM2 thread cluster gracefully restarted");
+                    if (selectedAppId) restartApp(selectedAppId);
                   }}
                   className="py-1 bg-slate-950 hover:bg-slate-850 text-slate-300 rounded border border-slate-755 hover:border-slate-600 transition cursor-pointer"
-                  title="Reload active ecosystem"
+                  title="Restart selected app service"
                 >
-                  🚀 Reload daemon
+                  Restart App
                 </button>
               </div>
             </div>
@@ -612,13 +539,11 @@ export default function NodeManager({ nodeApps, setNodeApps, domains, files, add
                 <span className="text-[10px] text-slate-500 mt-0.5 block">Deploy full boot file scaffolds directly into document workspace.</span>
               </div>
               <button 
-                onClick={() => {
-                  alert("BOILERPLATE DOWNLOADED:\n\n'server.js' Express router boilerplate has been successfully scaffolded inside your File Manager at '/home/tpanel/public_html/'");
-                  addActivity("file", "Scaffolded NodeJS server.js boilerplate entrypoint in file explorer");
-                }}
+                onClick={generateExpressBoilerplate}
+                disabled={!activeApp}
                 className="w-full py-1.5 bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-400 border border-indigo-500/20 hover:border-indigo-500/45 text-[11px] font-bold rounded-lg transition text-center cursor-pointer font-sans"
               >
-                ⚡ Generate Express server.js Boilerplate
+                Generate Express server.js Boilerplate
               </button>
             </div>
 
@@ -787,7 +712,7 @@ export default function NodeManager({ nodeApps, setNodeApps, domains, files, add
                           <div className="flex items-center justify-between">
                             <span className="text-xs font-bold text-slate-350 font-mono flex items-center gap-2">
                               <Layers className="w-4 h-4 text-indigo-400 animate-pulse" />
-                              PM2 Cluster Ecosystem Monitor ({instances} Processes online)
+                              Service Runtime Monitor ({instances} worker hint)
                             </span>
                             <span className="text-[10px] text-emerald-400 font-mono bg-emerald-500/15 border border-emerald-500/20 px-2 py-0.5 rounded leading-none flex items-center gap-1">
                               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
@@ -870,7 +795,7 @@ export default function NodeManager({ nodeApps, setNodeApps, domains, files, add
                           <div>
                             <span className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
                               <Package className="w-4 h-4 text-indigo-400" />
-                              Virtual package.json Dependencies
+                              Real package.json Dependencies
                             </span>
                             <span className="text-[10px] text-slate-500 block mt-0.5">Integrate modules easily; system parses package loaders inside live thread.</span>
                           </div>
@@ -1031,7 +956,11 @@ export default function NodeManager({ nodeApps, setNodeApps, domains, files, add
                               max={2048}
                               step={128}
                               value={maxMemoryMB}
-                              onChange={(e) => updateActiveApp({ maxMemoryMB: Number(e.target.value) })}
+                              onChange={(e) => {
+                                const value = Number(e.target.value);
+                                updateActiveApp({ maxMemoryMB: value });
+                              }}
+                              onBlur={(e) => saveActiveAppSettings({ maxMemoryMB: Number(e.currentTarget.value) }).catch((error) => alert(error instanceof Error ? error.message : "Unable to save memory limit."))}
                               className="w-full h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-sky-500 focus:outline-none"
                             />
                             <div className="flex justify-between text-[9px] text-slate-600">
@@ -1048,12 +977,12 @@ export default function NodeManager({ nodeApps, setNodeApps, domains, files, add
                       {/* Process mode & clustering scaling options */}
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         
-                        {/* PM2 clustering switch */}
+                        {/* Worker hint switch */}
                         <div className="bg-slate-950 border border-slate-700 p-4 rounded-xl space-y-4 font-mono">
                           <div className="flex justify-between items-center">
                             <div>
-                              <span className="text-xs font-bold text-slate-300 block">PM2 Process Cluster Mode</span>
-                              <span className="text-[10px] text-slate-500 mt-0.5 block">Map Node single threads to multi-core hyperthreading nodes.</span>
+                              <span className="text-xs font-bold text-slate-300 block">Worker Count Hint</span>
+                              <span className="text-[10px] text-slate-500 mt-0.5 block">Stores the preferred worker count for apps that read WEB_CONCURRENCY.</span>
                             </div>
                             <label className="relative inline-flex items-center cursor-pointer select-none">
                               <input
@@ -1061,17 +990,11 @@ export default function NodeManager({ nodeApps, setNodeApps, domains, files, add
                                 checked={clustering}
                                 onChange={(e) => {
                                   const nowCheck = e.target.checked;
-                                  const timestamp = new Date().toLocaleTimeString();
-                                  updateActiveApp({ 
+                                  saveActiveAppSettings({
                                     clustering: nowCheck,
-                                    instances: nowCheck ? 2 : 1,
-                                    logs: [
-                                      ...activeApp.logs,
-                                      `[${timestamp}] [PM2] Cluster mode changed to ${nowCheck ? "ACTIVE" : "STANDALONE"}.`,
-                                      `[${timestamp}] [PM2] Dispatching worker pool instances: count set size to ${nowCheck ? 2 : 1} modules.`
-                                    ]
-                                  });
-                                  addActivity("node", `PM2 Process Clustering ${nowCheck ? "Enabled" : "Disabled"} for "${activeApp.name}"`);
+                                    instances: nowCheck ? 2 : 1
+                                  }).catch((error) => alert(error instanceof Error ? error.message : "Unable to save worker mode."));
+                                  addActivity("node", `Worker mode ${nowCheck ? "enabled" : "disabled"} for "${activeApp.name}"`);
                                 }}
                                 className="sr-only peer"
                               />
@@ -1096,16 +1019,9 @@ export default function NodeManager({ nodeApps, setNodeApps, domains, files, add
                                 value={instances}
                                 onChange={(e) => {
                                   const newCores = Number(e.target.value);
-                                  const timestamp = new Date().toLocaleTimeString();
-                                  updateActiveApp({ 
-                                    instances: newCores,
-                                    logs: [
-                                      ...activeApp.logs,
-                                      `[${timestamp}] [PM2] Rescaled process grouping topology: -> ${newCores} cores active.`,
-                                      `[${timestamp}] [PM2] Allocation complete. Multi-instancing reloaded.`
-                                    ]
-                                  });
+                                  updateActiveApp({ instances: newCores });
                                 }}
+                                onBlur={(e) => saveActiveAppSettings({ instances: Number(e.currentTarget.value) }).catch((error) => alert(error instanceof Error ? error.message : "Unable to save worker count."))}
                                 className="w-full h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-500 focus:outline-none"
                               />
                               <div className="flex justify-between text-[9px] text-slate-600">
@@ -1134,7 +1050,7 @@ export default function NodeManager({ nodeApps, setNodeApps, domains, files, add
                               <input
                                 type="checkbox"
                                 checked={nginxGzip}
-                                onChange={(e) => updateActiveApp({ nginxGzip: e.target.checked })}
+                                onChange={(e) => saveActiveAppSettings({ nginxGzip: e.target.checked }).catch((error) => alert(error instanceof Error ? error.message : "Unable to save gzip setting."))}
                                 className="rounded border-slate-700 text-sky-600 bg-slate-900 focus:ring-sky-500 focus:ring-offset-slate-950"
                               />
                             </label>
@@ -1147,7 +1063,7 @@ export default function NodeManager({ nodeApps, setNodeApps, domains, files, add
                               <input
                                 type="checkbox"
                                 checked={nginxProxyHeaders}
-                                onChange={(e) => updateActiveApp({ nginxProxyHeaders: e.target.checked })}
+                                onChange={(e) => saveActiveAppSettings({ nginxProxyHeaders: e.target.checked }).catch((error) => alert(error instanceof Error ? error.message : "Unable to save proxy setting."))}
                                 className="rounded border-slate-700 text-sky-600 bg-slate-900 focus:ring-sky-500 focus:ring-offset-slate-950"
                               />
                             </label>
@@ -1158,7 +1074,7 @@ export default function NodeManager({ nodeApps, setNodeApps, domains, files, add
 
                       {/* Auto-generated server config block */}
                       <div className="space-y-2 font-mono">
-                        <span className="text-xs font-bold text-slate-450 uppercase tracking-wider block pl-1">Virtual Nginx reverse-proxy deployment block</span>
+                        <span className="text-xs font-bold text-slate-450 uppercase tracking-wider block pl-1">Generated Nginx reverse-proxy block</span>
                         <div className="bg-slate-950 border border-slate-700 rounded-xl overflow-hidden text-[11px] p-4 text-sky-400 leading-normal font-mono relative overflow-x-auto pr-1">
                           <code className="block whitespace-pre select-all text-slate-300">
 {`server {
@@ -1213,7 +1129,7 @@ export default function NodeManager({ nodeApps, setNodeApps, domains, files, add
 
                         {/* Env vars lists */}
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                          {activeApp.envVars.map(item => (
+                          {envVars.map(item => (
                             <div key={item.key} className="flex justify-between items-center bg-slate-900 border border-slate-700 rounded px-3 py-2 font-mono text-xs">
                               <div className="truncate pr-2">
                                 <span className="text-amber-500 font-bold">{item.key}</span>
