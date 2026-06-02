@@ -274,7 +274,7 @@ function SiteHeader() {
           ))}
         </nav>
         <div className="flex items-center gap-3">
-          <button onClick={() => navigate('/login')} className="hidden px-3 py-2 text-[14px] font-bold text-white hover:text-[#7cf4ff] sm:block">Log in</button>
+          <button onClick={() => navigate('/login')} className="hidden px-3 py-2 text-[14px] font-bold text-white hover:text-[#7cf4ff] sm:block">Login</button>
           <button onClick={() => navigate('/signup')} className="rounded-full bg-[#7cf4ff] px-3.5 py-2 text-[12px] font-bold text-black transition hover:bg-white sm:px-5 sm:py-2.5 sm:text-[14px]">Sign up</button>
         </div>
       </div>
@@ -309,8 +309,8 @@ function HeroSection() {
       <HeroVideo />
       <div className="relative z-10 mx-auto grid w-full max-w-[1220px] place-items-center px-3 py-10 text-center sm:px-5 md:px-8">
         <div className="mx-auto max-w-[860px]">
-          <h1 className="text-[34px] font-black leading-[1.03] tracking-normal text-white sm:text-[52px] lg:text-[66px]">
-            Tiwlo Cloud
+          <h1 className="text-[32px] font-black leading-[1.03] tracking-normal text-white sm:text-[48px] lg:text-[58px]">
+            Operations Cloud
           </h1>
           <p className="mx-auto mt-4 max-w-[660px] text-[14px] font-semibold leading-6 text-white/84 sm:mt-5 sm:text-[17px] sm:leading-7">
             One workspace for hosting, payments, stores, ISP billing, DNS, and support teams that run live customer operations.

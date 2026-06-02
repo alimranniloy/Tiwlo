@@ -102,19 +102,22 @@ function Header() {
   const navigate = useNavigate();
   return (
     <header className="sticky top-0 z-40 border-b border-white/10 bg-black text-white">
-      <div className="mx-auto flex h-[70px] max-w-[1320px] items-center justify-between px-4 md:px-8">
+      <div className="mx-auto flex h-14 max-w-[1320px] items-center justify-between px-3 sm:h-16 sm:px-4 md:px-8">
         <button onClick={() => navigate('/')} className="flex items-center">
-          <img src="/brand/white-logo.png" alt="Tiwlo" className="h-9 w-[144px] object-contain object-left" />
+          <img src="/brand/white-logo.png" alt="Tiwlo" className="h-7 w-[100px] object-contain object-left sm:h-8 sm:w-[128px]" />
         </button>
-        <nav className="hidden items-center gap-8 lg:flex">
+        <nav className="hidden items-center gap-7 lg:flex">
           {navLinks.map((item) => (
-            <Link key={item.label} to={item.to} className="inline-flex items-center gap-1 text-[15px] font-bold text-white/88 hover:text-[#7cf4ff]">
+            <Link key={item.label} to={item.to} className="inline-flex items-center gap-1 text-[14px] font-bold text-white/88 hover:text-[#7cf4ff]">
               {item.label}
               {item.menu && <ChevronDown className="h-4 w-4" />}
             </Link>
           ))}
         </nav>
-        <button onClick={() => navigate('/signup')} className="rounded-full bg-[#7cf4ff] px-5 py-3 text-[15px] font-bold text-black transition hover:bg-white">Sign up</button>
+        <div className="flex items-center gap-3">
+          <button onClick={() => navigate('/login')} className="hidden px-3 py-2 text-[14px] font-bold text-white hover:text-[#7cf4ff] sm:block">Login</button>
+          <button onClick={() => navigate('/signup')} className="rounded-full bg-[#7cf4ff] px-3.5 py-2 text-[12px] font-bold text-black transition hover:bg-white sm:px-5 sm:py-2.5 sm:text-[14px]">Sign up</button>
+        </div>
       </div>
     </header>
   );

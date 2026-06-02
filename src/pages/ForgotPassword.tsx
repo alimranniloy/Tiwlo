@@ -1,9 +1,9 @@
 import React from 'react';
-import { AlertCircle, ArrowLeft, CheckCircle2, Mail, Phone, ShieldCheck } from 'lucide-react';
+import { AlertCircle, ArrowLeft, CheckCircle2 } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import BrandLogo from '../components/BrandLogo';
 import { requestPasswordResetWithApi } from '../lib/tiwloApi';
 import { COUNTRIES, countryByCode, detectBrowserCountryCode, normalizePhoneForCountry } from '../lib/countries';
+import { TiwloAuthButton, TiwloAuthInput, TiwloAuthLogo, TiwloAuthShell } from '../components/TiwloAuth';
 
 type RecoveryMode = 'email' | 'phone';
 
@@ -45,88 +45,61 @@ export default function ForgotPassword() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-[#f3f5f9] px-4 py-8">
-      <div className="w-full max-w-md overflow-hidden rounded-lg border border-[#DDE3EA] bg-white">
-        <div className="border-b border-[#E8ECF2] px-6 py-5 text-center">
-          <BrandLogo className="mx-auto h-12 w-36" />
-          <h1 className="mt-4 text-xl font-black text-[#111827]">Reset Password</h1>
-          <p className="mt-2 text-sm leading-5 text-[#6B7280]">Choose email or mobile number. We will send secure reset instructions if the account exists.</p>
-        </div>
+    <TiwloAuthShell>
+      <TiwloAuthLogo />
+      <section className="w-full">
+        <h1 className="text-center text-[30px] font-semibold tracking-normal">Reset password</h1>
+        <p className="mx-auto mt-3 max-w-[320px] text-center text-[14px] leading-6 text-[#555]">
+          Choose email or mobile. We will send a secure reset link if the account exists.
+        </p>
 
-        <div className="p-5 sm:p-6">
-          {sent ? (
-            <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-5 text-emerald-800">
-              <div className="flex items-start gap-3">
-                <div className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-emerald-600 text-white">
-                  <CheckCircle2 className="h-5 w-5" />
-                </div>
-                <div>
-                  <p className="text-sm font-black">Reset instructions sent successfully.</p>
-                  <p className="mt-1 text-[13px] leading-5 text-emerald-700">Check your email or WhatsApp inbox. The secure reset link expires soon for your account safety.</p>
-                </div>
-              </div>
+        {sent ? (
+          <div className="mt-8 rounded-[22px] border border-emerald-100 bg-emerald-50 px-5 py-5 text-center">
+            <CheckCircle2 className="mx-auto h-8 w-8 text-emerald-600" />
+            <p className="mt-3 text-[15px] font-semibold text-emerald-900">Reset link sent successfully.</p>
+            <p className="mt-1 text-[13px] leading-5 text-emerald-700">Check your inbox or WhatsApp.</p>
+          </div>
+        ) : (
+          <form onSubmit={submit} className="mt-7 space-y-5">
+            <div className="grid grid-cols-2 rounded-[22px] border border-[#d8d8d8] p-1 text-[13px] font-semibold">
+              <button type="button" onClick={() => setMode('email')} className={`rounded-[18px] py-2.5 ${mode === 'email' ? 'bg-[#111] text-white' : 'text-[#555]'}`}>Email</button>
+              <button type="button" onClick={() => setMode('phone')} className={`rounded-[18px] py-2.5 ${mode === 'phone' ? 'bg-[#111] text-white' : 'text-[#555]'}`}>Mobile</button>
             </div>
-          ) : (
-            <form onSubmit={submit} className="space-y-5">
-              <div className="grid grid-cols-2 overflow-hidden rounded-md border border-[#D1D5DB] bg-[#F8FAFC] p-1 text-xs font-black">
-                <button type="button" onClick={() => setMode('email')} className={`rounded px-3 py-2.5 ${mode === 'email' ? 'bg-white text-[#111827]' : 'text-[#6B7280]'}`}>
-                  Email
-                </button>
-                <button type="button" onClick={() => setMode('phone')} className={`rounded px-3 py-2.5 ${mode === 'phone' ? 'bg-white text-[#111827]' : 'text-[#6B7280]'}`}>
-                  Mobile
-                </button>
-              </div>
 
-              {mode === 'email' ? (
-                <label className="block space-y-2">
-                  <span className="text-[11px] font-black uppercase tracking-wider text-[#4B5563]">Email Address</span>
-                  <div className="relative">
-                    <Mail className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
-                    <input required type="email" value={email} onChange={(event) => setEmail(event.target.value)} className="w-full rounded-md border border-[#D1D5DB] px-4 py-3 pl-10 text-sm outline-none focus:border-[#2563EB]" placeholder="you@example.com" />
-                  </div>
-                </label>
-              ) : (
-                <label className="block space-y-2">
-                  <span className="text-[11px] font-black uppercase tracking-wider text-[#4B5563]">Mobile Number</span>
-                  <div className="grid grid-cols-[116px_1fr] overflow-hidden rounded-md border border-[#D1D5DB] bg-white focus-within:border-[#128c7e]">
-                    <select value={country} onChange={(event) => setCountry(event.target.value)} className="border-r border-[#D1D5DB] bg-[#F8FAFC] px-2 py-3 text-xs font-black outline-none" aria-label="Country code">
-                      {COUNTRIES.map((item) => <option key={item.code} value={item.code}>{item.flag} {item.dialCode}</option>)}
-                    </select>
-                    <div className="relative">
-                      <Phone className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
-                      <input required type="tel" value={phone} onChange={(event) => setPhone(event.target.value)} className="w-full px-4 py-3 pl-10 text-sm outline-none" placeholder={selectedCountry.code === 'BD' ? '01712345678' : 'Mobile number'} />
-                    </div>
-                  </div>
-                  {normalizedPhone.localDigits && (
-                    <p className="text-[11px] font-bold text-[#128c7e]">We will match it as {normalizedPhone.e164}.</p>
-                  )}
-                </label>
-              )}
-
-              <div className="flex items-start gap-2 rounded-md border border-[#E5E7EB] bg-[#F9FAFB] px-3 py-3 text-[12px] leading-5 text-[#4B5563]">
-                <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-[#128c7e]" />
-                <span>For privacy, we show the same success message even if the account is not found.</span>
-              </div>
-
-              {error && (
-                <div className="flex items-start gap-2 rounded-md border border-red-100 bg-red-50 px-3 py-2 text-[12px] font-bold text-red-600">
-                  <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                  <span>{error}</span>
+            {mode === 'email' ? (
+              <TiwloAuthInput label="Email address" value={email} type="email" autoComplete="email" onChange={(event) => setEmail(event.target.value)} />
+            ) : (
+              <label className="relative block">
+                <span className="absolute -top-2 left-5 z-10 bg-white px-1 text-[12px] font-medium text-[#2563ff]">Mobile number</span>
+                <div className="grid grid-cols-[112px_1fr] overflow-hidden rounded-[22px] border border-[#d8d8d8] bg-white focus-within:border-[#2563ff]">
+                  <select value={country} onChange={(event) => setCountry(event.target.value)} className="border-r border-[#dedede] bg-white px-2 text-[13px] font-semibold outline-none">
+                    {COUNTRIES.map((item) => <option key={item.code} value={item.code}>{item.flag} {item.dialCode}</option>)}
+                  </select>
+                  <input value={phone} type="tel" onChange={(event) => setPhone(event.target.value)} className="h-[54px] px-4 text-[15px] font-medium outline-none" placeholder={selectedCountry.code === 'BD' ? '01712345678' : 'Mobile number'} />
                 </div>
-              )}
+                {normalizedPhone.localDigits && <p className="mt-1 text-[12px] font-medium text-[#128c7e]">We will match {normalizedPhone.e164}.</p>}
+              </label>
+            )}
 
-              <button disabled={sending} className="w-full rounded-md bg-[#111827] py-3 text-xs font-black uppercase tracking-widest text-white hover:bg-black disabled:opacity-60">
-                {sending ? 'Sending...' : mode === 'email' ? 'Send Email Link' : 'Send WhatsApp Link'}
-              </button>
-            </form>
-          )}
+            {error && <AuthError message={error} />}
+            <TiwloAuthButton disabled={sending}>{sending ? 'Sending...' : 'Send reset link'}</TiwloAuthButton>
+          </form>
+        )}
 
-          <Link to="/login" className="mt-6 flex items-center justify-center gap-2 text-[13px] font-bold text-[#0069ff] hover:underline">
-            <ArrowLeft className="h-4 w-4" />
-            Back to sign in
-          </Link>
-        </div>
-      </div>
+        <Link to="/login" className="mt-8 flex items-center justify-center gap-2 text-[14px] font-medium text-[#2563ff] hover:underline">
+          <ArrowLeft className="h-4 w-4" />
+          Back to login
+        </Link>
+      </section>
+    </TiwloAuthShell>
+  );
+}
+
+function AuthError({ message }: { message: string }) {
+  return (
+    <div className="flex items-start gap-2 rounded-[14px] border border-red-100 bg-red-50 px-3 py-2 text-[12px] font-semibold leading-5 text-red-600">
+      <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+      <span>{message}</span>
     </div>
   );
 }
