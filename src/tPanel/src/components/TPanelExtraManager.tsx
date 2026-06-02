@@ -21,17 +21,9 @@ import {
   Terminal,
   Database,
   RefreshCw,
-  Search,
-  Wifi,
-  ChevronRight,
   Sparkles,
-  ArrowRight,
   ArrowUpRight,
-  Cpu,
-  Lock,
-  AlertTriangle,
-  Play,
-  HelpCircle
+  Cpu
 } from "lucide-react";
 import { DomainItem } from "../types";
 
@@ -85,12 +77,7 @@ export default function TPanelExtraManager({ activeTab, domains, setDomains, add
   const [newPgDbName, setNewPgDbName] = useState("");
   const [newPgUsername, setNewPgUsername] = useState("");
 
-  // 4. phpMyAdmin SQL query states
-  const [pmQueryText, setPmQueryText] = useState("SELECT * FROM users LIMIT 10;");
-  const [pmQueryResult, setPmQueryResult] = useState<any>(null);
-  const [pmActiveTable, setPmActiveTable] = useState("users");
-
-  // 5. Zone DNS records and subdomains are tied directly to Domains & DNS
+  // 4. Zone DNS records and subdomains are tied directly to Domains & DNS
   const [selectedDNSDomain, setSelectedDNSDomain] = useState(() => domains[0]?.domainName || "");
   const [newRecordType, setNewRecordType] = useState<"A" | "CNAME" | "TXT" | "MX">("A");
   const [newRecordName, setNewRecordName] = useState("");
@@ -168,8 +155,19 @@ export default function TPanelExtraManager({ activeTab, domains, setDomains, add
   const [phpDiagnostics, setPhpDiagnostics] = useState<any>(null);
   const [phpStatusMessage, setPhpStatusMessage] = useState("");
   const [isSavingPhpSettings, setIsSavingPhpSettings] = useState(false);
+  const [phpTargetDomain, setPhpTargetDomain] = useState("all");
+  const [runtimeDomains, setRuntimeDomains] = useState<any[]>([]);
 
-  // 12. Ruby manager
+  // 12. Node.js selector
+  const [selectedNodeVersion, setSelectedNodeVersion] = useState(() => account?.nodeVersion || getPersisted("node_version", "24.15.0"));
+  const [nodeAvailableVersions, setNodeAvailableVersions] = useState<string[]>([]);
+  const [nodeTargetDomain, setNodeTargetDomain] = useState("all");
+  const [nodePort, setNodePort] = useState(() => String(account?.nodePort || 3000));
+  const [nodeStatusMessage, setNodeStatusMessage] = useState("");
+  const [nodeDiagnostics, setNodeDiagnostics] = useState<any>(null);
+  const [isSavingNodeSettings, setIsSavingNodeSettings] = useState(false);
+
+  // 13. Ruby manager
   const [rubyApps, setRubyApps] = useState(() => getPersisted("ruby_apps", [
     { rubyVersion: "3.2.1", name: "Rails Ecommerce", port: 5000, status: "Active" }
   ]));
@@ -210,6 +208,7 @@ export default function TPanelExtraManager({ activeTab, domains, setDomains, add
   useEffect(() => { savePersisted("blocked_ips", blockedIPs); }, [blockedIPs]);
   useEffect(() => { savePersisted("php_version", selectedPhpVersion); }, [selectedPhpVersion]);
   useEffect(() => { savePersisted("php_ext", phpExtensions); }, [phpExtensions]);
+  useEffect(() => { savePersisted("node_version", selectedNodeVersion); }, [selectedNodeVersion]);
   useEffect(() => { savePersisted("ruby_apps", rubyApps); }, [rubyApps]);
   useEffect(() => { savePersisted("installed_apps", installedApps); }, [installedApps]);
   useEffect(() => { savePersisted("cron_jobs", cronJobs); }, [cronJobs]);
@@ -240,7 +239,18 @@ export default function TPanelExtraManager({ activeTab, domains, setDomains, add
       setPhpExtensionRows(data.extensions);
       setPhpExtensions(Object.fromEntries(data.extensions.map((item: any) => [item.name, Boolean(item.selected)])));
     }
+    if (Array.isArray(data.domains)) setRuntimeDomains(data.domains);
     setPhpDiagnostics(data.diagnostics || null);
+    if (data.account && onAccountUpdate) onAccountUpdate(data.account);
+  };
+
+  const hydrateNodeSettings = (data: any) => {
+    const settings = data?.settings || {};
+    if (settings.version) setSelectedNodeVersion(settings.version);
+    if (settings.nodePort) setNodePort(String(settings.nodePort));
+    if (Array.isArray(data.installedVersions)) setNodeAvailableVersions(data.installedVersions);
+    if (Array.isArray(data.domains)) setRuntimeDomains(data.domains);
+    setNodeDiagnostics(data.diagnostics || null);
     if (data.account && onAccountUpdate) onAccountUpdate(data.account);
   };
 
@@ -272,6 +282,7 @@ export default function TPanelExtraManager({ activeTab, domains, setDomains, add
         },
         body: JSON.stringify({
           phpVersion: selectedPhpVersion,
+          targetDomains: phpTargetDomain === "all" ? "all" : [phpTargetDomain],
           extensions: phpExtensions,
           ini: {
             memory_limit: phpIniLimit,
@@ -301,6 +312,56 @@ export default function TPanelExtraManager({ activeTab, domains, setDomains, add
   useEffect(() => {
     if (activeTab !== "phpversion") return;
     loadPhpSettings().catch((error) => setPhpStatusMessage(error instanceof Error ? error.message : "Unable to load PHP settings."));
+  }, [activeTab, account?.username]);
+
+  const loadNodeSettings = async () => {
+    const token = authToken();
+    if (!token) return;
+    const response = await fetch("/api/user/node-settings", {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.ok) throw new Error(data.message || "Unable to load Node.js settings.");
+    hydrateNodeSettings(data);
+  };
+
+  const applyNodeSettings = async () => {
+    const token = authToken();
+    if (!token) {
+      setNodeStatusMessage("User session expired. Log in again.");
+      return;
+    }
+    setIsSavingNodeSettings(true);
+    setNodeStatusMessage("Applying Node.js runtime...");
+    try {
+      const response = await fetch("/api/user/node-settings", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          nodeVersion: selectedNodeVersion,
+          nodePort: Number(nodePort || 3000),
+          targetDomains: nodeTargetDomain === "all" ? "all" : [nodeTargetDomain],
+          autoInstall: true
+        })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.ok) throw new Error(data.message || "Unable to apply Node.js settings.");
+      hydrateNodeSettings(data);
+      setNodeStatusMessage(`Node.js ${data.settings?.effectiveVersion || selectedNodeVersion} mapped to ${nodeTargetDomain === "all" ? "all domains" : nodeTargetDomain}.`);
+      addActivity("node", `Node.js runtime applied: ${data.settings?.effectiveVersion || selectedNodeVersion}`);
+    } catch (error) {
+      setNodeStatusMessage(error instanceof Error ? error.message : "Unable to apply Node.js settings.");
+    } finally {
+      setIsSavingNodeSettings(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab !== "nodeselector") return;
+    loadNodeSettings().catch((error) => setNodeStatusMessage(error instanceof Error ? error.message : "Unable to load Node.js settings."));
   }, [activeTab, account?.username]);
 
   // Terminal scroll helper
@@ -356,25 +417,6 @@ export default function TPanelExtraManager({ activeTab, domains, setDomains, add
   const handleDropPgDb = (name: string) => {
     setPgDatabases(prev => prev.filter(d => d.name !== name));
     addActivity("db", `PostgreSQL cluster ${name} deleted`);
-  };
-
-  // phpMyAdmin SQL Query exec
-  const executeSqlQuery = (e: FormEvent) => {
-    e.preventDefault();
-    if (pmQueryText.toLowerCase().includes("select")) {
-      setPmQueryResult({
-        columns: ["id", "username", "email", "created_at", "status"],
-        rows: [
-          { id: 1, username: "niloy_admin", email: "alimranniloy610@gmail.com", created_at: "2026-05-18", status: "Active" },
-          { id: 2, username: "tpanel_bot", email: "support@tpanel.pro", created_at: "2026-05-20", status: "Active" },
-          { id: 3, username: "jane_dev", email: "jane@gmail.com", created_at: "2026-05-21", status: "Pending" }
-        ]
-      });
-    } else {
-      setPmQueryResult({
-        message: "Query Executed Successfully. (1 Row Affected)"
-      });
-    }
   };
 
   // DNS Record adding
@@ -895,95 +937,43 @@ export default function TPanelExtraManager({ activeTab, domains, setDomains, add
       {activeTab === "phpmyadmin" && (
         <div className="space-y-6 animate-fade-in">
           <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6">
-            <div className="flex items-center gap-3 mb-6">
-              <div className="p-3 bg-indigo-600/10 rounded-xl text-indigo-400">
-                <Database className="w-5 h-5" />
-              </div>
-              <div>
-                <h2 className="text-lg font-bold text-slate-100">phpMyAdmin Portal</h2>
-                <p className="text-xs text-slate-400">Review SQL databases, table structures, and execute direct queries</p>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-              {/* Tables list */}
-              <div className="bg-slate-950 border border-slate-700 rounded-xl p-4">
-                <span className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Tables in cluster</span>
-                <div className="space-y-1.5 mt-3">
-                  {["users", "orders", "products", "logs_analytics", "settings_meta", "migrations"].map((tbl, i) => (
-                    <button
-                      key={i}
-                      onClick={() => {
-                        setPmActiveTable(tbl);
-                        setPmQueryText(`SELECT * FROM ${tbl} LIMIT 10;`);
-                      }}
-                      className={`w-full text-left px-3 py-2 rounded-lg text-xs font-mono transition-colors flex items-center justify-between ${
-                        pmActiveTable === tbl 
-                          ? "bg-indigo-600/15 text-indigo-400 border border-indigo-500/20" 
-                          : "text-slate-400 hover:bg-white/5"
-                      }`}
-                    >
-                      <span>{tbl}</span>
-                      <ChevronRight className="w-3 h-3" />
-                    </button>
-                  ))}
+            <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-3 bg-indigo-600/10 rounded-xl text-indigo-400">
+                  <Database className="w-5 h-5" />
+                </div>
+                <div>
+                  <h2 className="text-lg font-bold text-slate-100">phpMyAdmin</h2>
+                  <p className="text-xs text-slate-400">Open the original server database console installed on this tPanel node.</p>
                 </div>
               </div>
-
-              {/* Console query block */}
-              <div className="lg:col-span-3 space-y-4">
-                <form onSubmit={executeSqlQuery} className="bg-slate-950 border border-slate-700 rounded-xl p-4">
-                  <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Interactive SQL Console</span>
-                  <div className="mt-3">
-                    <textarea
-                      value={pmQueryText}
-                      onChange={(e) => setPmQueryText(e.target.value)}
-                      rows={3}
-                      className="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-xs text-slate-100 font-mono focus:outline-none focus:border-indigo-500/50"
-                    />
-                  </div>
-                  <div className="flex justify-end gap-3 mt-3">
-                    <button
-                      type="submit"
-                      className="bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs px-4 py-2 rounded-lg flex items-center gap-2 transition-all cursor-pointer"
-                    >
-                      <Terminal className="w-3.5 h-3.5" /> Execute Code
-                    </button>
-                  </div>
-                </form>
-
-                {/* Query outcomes */}
-                {pmQueryResult && (
-                  <div className="bg-slate-950 border border-slate-700 rounded-xl p-4 overflow-hidden">
-                    <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Interactive Result Console</span>
-                    {pmQueryResult.message ? (
-                      <p className="text-xs text-emerald-400 font-mono mt-3">{pmQueryResult.message}</p>
-                    ) : (
-                      <div className="overflow-x-auto mt-3">
-                        <table className="w-full text-left text-xs border-collapse font-mono">
-                          <thead>
-                            <tr className="border-b border-slate-700 bg-white/5 text-slate-400">
-                              {pmQueryResult.columns.map((col: string, i: number) => (
-                                <th key={i} className="p-2">{col}</th>
-                              ))}
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-white/5 text-slate-305">
-                            {pmQueryResult.rows.map((row: any, i: number) => (
-                              <tr key={i} className="hover:bg-white/5">
-                                {pmQueryResult.columns.map((col: string, j: number) => (
-                                  <td key={j} className="p-2 max-w-xs truncate">{row[col]}</td>
-                                ))}
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    const token = authToken();
+                    const response = await fetch("/api/user/phpmyadmin-url", {
+                      headers: { Authorization: `Bearer ${token}` }
+                    });
+                    const data = await response.json().catch(() => ({}));
+                    if (!response.ok || !data.ok) throw new Error(data.message || "phpMyAdmin is not ready.");
+                    window.location.assign(data.url || "/phpmyadmin/");
+                  } catch (error) {
+                    alert(error instanceof Error ? error.message : "phpMyAdmin is not ready.");
+                  }
+                }}
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-xs font-bold text-white transition hover:bg-indigo-500"
+              >
+                <ArrowUpRight className="w-4 h-4" />
+                Open phpMyAdmin
+              </button>
             </div>
+
+            <div className="mt-6 rounded-xl border border-slate-700 bg-slate-950 p-4">
+              <p className="text-xs leading-6 text-slate-400">
+                The embedded demo database screen has been removed. This shortcut now routes to the package-installed phpMyAdmin service on the server.
+              </p>
+              </div>
           </div>
         </div>
       )}
@@ -1584,7 +1574,7 @@ export default function TPanelExtraManager({ activeTab, domains, setDomains, add
               </div>
             </div>
 
-            <div className="grid grid-cols-1 gap-4 bg-slate-950 border border-slate-700 p-4 rounded-xl mb-6 md:grid-cols-[1fr_auto_auto] md:items-center">
+            <div className="grid grid-cols-1 gap-4 bg-slate-950 border border-slate-700 p-4 rounded-xl mb-6 md:grid-cols-[1fr_220px_180px_auto] md:items-center">
               <div>
                 <span className="block text-xs text-slate-400">Account runtime:</span>
                 <span className="text-lg font-mono font-bold text-slate-100">
@@ -1597,6 +1587,16 @@ export default function TPanelExtraManager({ activeTab, domains, setDomains, add
                   <p className="mt-1 text-[11px] text-emerald-400">Per-account PHP-FPM pool will be used after apply.</p>
                 )}
               </div>
+              <select
+                value={phpTargetDomain}
+                onChange={(e) => setPhpTargetDomain(e.target.value)}
+                className="bg-slate-900 border border-slate-700 rounded-xl px-4 py-2 text-xs text-slate-100"
+              >
+                <option value="all">All domains</option>
+                {(runtimeDomains.length ? runtimeDomains : domains.map((domain) => ({ domain: domain.domainName, label: "Domain" }))).map((entry: any) => (
+                  <option key={entry.domain} value={entry.domain}>{entry.domain}</option>
+                ))}
+              </select>
               <select
                 value={selectedPhpVersion}
                 onChange={(e) => setSelectedPhpVersion(e.target.value)}
@@ -1615,6 +1615,22 @@ export default function TPanelExtraManager({ activeTab, domains, setDomains, add
                 {isSavingPhpSettings ? "Applying..." : "Apply"}
               </button>
             </div>
+
+            {runtimeDomains.length > 0 && (
+              <div className="mb-6 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+                {runtimeDomains.map((entry: any) => (
+                  <div key={entry.domain} className="rounded-xl border border-slate-700 bg-slate-950 p-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="truncate text-xs font-bold text-slate-100">{entry.domain}</span>
+                      <span className="rounded border border-slate-700 px-2 py-0.5 text-[10px] font-bold uppercase text-slate-400">
+                        {entry.runtime?.runtime || "php"}
+                      </span>
+                    </div>
+                    <p className="mt-1 truncate text-[11px] text-slate-500">{entry.webPath || entry.documentRoot}</p>
+                  </div>
+                ))}
+              </div>
+            )}
 
             {/* Extensions Selector */}
             <span className="text-[10px] uppercase font-bold text-slate-450 tracking-wider">PHP extension modules</span>
@@ -1707,6 +1723,103 @@ export default function TPanelExtraManager({ activeTab, domains, setDomains, add
                 </pre>
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* 15. SELECT NODE VERSION */}
+      {activeTab === "nodeselector" && (
+        <div className="space-y-6 animate-fade-in">
+          <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6">
+            <div className="flex items-center gap-3 mb-6">
+              <div className="p-3 bg-emerald-600/10 rounded-xl text-emerald-400">
+                <Cpu className="w-5 h-5" />
+              </div>
+              <div>
+                <h2 className="text-lg font-bold text-slate-100">Node.js Selector</h2>
+                <p className="text-xs text-slate-400">Choose the Node.js executable version and map it to all domains or one domain route.</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 bg-slate-950 border border-slate-700 p-4 rounded-xl mb-6 md:grid-cols-[1fr_220px_180px_130px_auto] md:items-center">
+              <div>
+                <span className="block text-xs text-slate-400">Active runtime:</span>
+                <span className="text-lg font-mono font-bold text-slate-100">
+                  Node.js {selectedNodeVersion}
+                  {account?.domain ? <span className="ml-2 text-xs font-semibold text-slate-500">for {account.domain}</span> : null}
+                </span>
+                <p className="mt-1 text-[11px] text-emerald-400">Missing versions are downloaded automatically on apply.</p>
+              </div>
+              <select
+                value={nodeTargetDomain}
+                onChange={(e) => setNodeTargetDomain(e.target.value)}
+                className="bg-slate-900 border border-slate-700 rounded-xl px-4 py-2 text-xs text-slate-100"
+              >
+                <option value="all">All domains</option>
+                {(runtimeDomains.length ? runtimeDomains : domains.map((domain) => ({ domain: domain.domainName, label: "Domain" }))).map((entry: any) => (
+                  <option key={entry.domain} value={entry.domain}>{entry.domain}</option>
+                ))}
+              </select>
+              <select
+                value={selectedNodeVersion}
+                onChange={(e) => setSelectedNodeVersion(e.target.value)}
+                className="bg-slate-900 border border-slate-700 rounded-xl px-4 py-2 text-xs text-slate-100"
+              >
+                {(nodeAvailableVersions.length ? nodeAvailableVersions : ["24.15.0", "22.11.0", "20.18.1", "18.20.4", "16.20.2", "14.21.3"]).map((version) => (
+                  <option key={version} value={version}>Node.js {version}</option>
+                ))}
+              </select>
+              <input
+                type="number"
+                min={1024}
+                max={65535}
+                value={nodePort}
+                onChange={(e) => setNodePort(e.target.value)}
+                className="bg-slate-900 border border-slate-700 rounded-xl px-4 py-2 text-xs text-slate-100"
+                aria-label="Node.js app port"
+              />
+              <button
+                type="button"
+                onClick={applyNodeSettings}
+                disabled={isSavingNodeSettings}
+                className="rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isSavingNodeSettings ? "Applying..." : "Apply"}
+              </button>
+            </div>
+
+            {nodeStatusMessage && (
+              <div className="mb-6 rounded-lg border border-slate-700 bg-slate-950 p-3 text-xs font-semibold text-slate-200">
+                {nodeStatusMessage}
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {(runtimeDomains.length ? runtimeDomains : domains.map((domain) => ({ domain: domain.domainName, webPath: domain.documentRoot, runtime: { runtime: "php" } }))).map((entry: any) => (
+                <div key={entry.domain} className="rounded-xl border border-slate-700 bg-slate-950 p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="truncate text-xs font-bold text-slate-100">{entry.domain}</span>
+                    <span className={`rounded border px-2 py-0.5 text-[10px] font-bold uppercase ${
+                      entry.runtime?.runtime === "node" ? "border-emerald-500/20 text-emerald-400" : "border-slate-700 text-slate-400"
+                    }`}>
+                      {entry.runtime?.runtime || "php"}
+                    </span>
+                  </div>
+                  <p className="mt-1 truncate text-[11px] text-slate-500">{entry.webPath || entry.documentRoot}</p>
+                  {entry.runtime?.runtime === "node" && (
+                    <p className="mt-2 text-[11px] font-mono text-emerald-400">
+                      v{entry.runtime.nodeVersion} :{entry.runtime.nodePort || nodePort}
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {nodeDiagnostics?.provisioningLog?.length > 0 && (
+              <pre className="mt-6 max-h-48 overflow-auto rounded-lg border border-slate-700 bg-slate-950 p-3 text-[11px] text-slate-300">
+                {nodeDiagnostics.provisioningLog.join("\n")}
+              </pre>
+            )}
           </div>
         </div>
       )}

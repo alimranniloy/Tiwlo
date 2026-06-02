@@ -13,6 +13,7 @@ BRANCH="${TPANEL_BRANCH:-main}"
 TOOLS_DIR="$TPANEL_DIR/tools"
 DOWNLOADS_DIR="$TOOLS_DIR/downloads"
 NODE_VERSION="${TPANEL_NODE_VERSION:-24.15.0}"
+PHP_SELECTOR_VERSIONS="${TPANEL_PHP_SELECTOR_VERSIONS:-8.4 8.3 8.2 8.1 8.0 7.4}"
 NODE_OS="linux"
 case "$(uname -m)" in
   x86_64|amd64) NODE_ARCH="x64" ;;
@@ -95,6 +96,68 @@ ensure_node() {
   fi
 }
 
+install_php_selector_versions() {
+  if ! have apt-get; then
+    return 0
+  fi
+  export DEBIAN_FRONTEND=noninteractive
+  if [ -r /etc/os-release ] && . /etc/os-release && [ "${ID:-}" = "ubuntu" ]; then
+    apt-get install -y software-properties-common apt-transport-https lsb-release gnupg >/dev/null 2>&1 || true
+    if have add-apt-repository; then
+      add-apt-repository -y ppa:ondrej/php >/dev/null 2>&1 || true
+      apt-get update -y || true
+    fi
+  fi
+  for version in $PHP_SELECTOR_VERSIONS; do
+    apt-get install -y \
+      "php${version}-fpm" "php${version}-cli" "php${version}-common" "php${version}-mysql" \
+      "php${version}-pgsql" "php${version}-sqlite3" "php${version}-curl" "php${version}-zip" \
+      "php${version}-mbstring" "php${version}-xml" "php${version}-gd" "php${version}-intl" \
+      "php${version}-bcmath" "php${version}-soap" "php${version}-opcache" "php${version}-imagick" \
+      "php${version}-redis" "php${version}-gmp" "php${version}-ldap" "php${version}-imap" \
+      "php${version}-readline" || true
+  done
+}
+
+install_node_selector_versions() {
+  local selector_root="$TOOLS_DIR/node-selector"
+  local index_file="$DOWNLOADS_DIR/node-index.json"
+  mkdir -p "$selector_root" "$DOWNLOADS_DIR"
+  if have curl; then
+    curl -fsSL https://nodejs.org/dist/index.json -o "$index_file" || return 0
+  elif have wget; then
+    wget -qO "$index_file" https://nodejs.org/dist/index.json || return 0
+  else
+    return 0
+  fi
+  local versions
+  versions="$("$NODE_BIN_DIR/node" - "$index_file" <<'NODE'
+const fs = require("fs");
+const rows = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+const selected = [];
+const majors = new Set();
+for (const row of rows) {
+  const version = String(row.version || "").replace(/^v/, "");
+  const major = Number(version.split(".")[0]);
+  if (!Number.isFinite(major) || major < 14 || majors.has(major)) continue;
+  majors.add(major);
+  selected.push(version);
+  if (selected.length >= 6) break;
+}
+console.log(selected.join(" "));
+NODE
+)"
+  for version in $versions; do
+    local folder="node-v${version}-${NODE_OS}-${NODE_ARCH}"
+    local tarball="${folder}.tar.xz"
+    if [ -x "$selector_root/$folder/bin/node" ]; then
+      continue
+    fi
+    download "https://nodejs.org/dist/v${version}/${tarball}" "$DOWNLOADS_DIR/$tarball" || true
+    [ -f "$DOWNLOADS_DIR/$tarball" ] && tar -xJf "$DOWNLOADS_DIR/$tarball" -C "$selector_root" || true
+  done
+}
+
 json_escape() {
   printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
 }
@@ -148,17 +211,19 @@ step "Installing runtime packages"
 if have apt-get; then
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -y
-  apt-get install -y git curl wget ca-certificates openssl xz-utils nginx ufw certbot python3 python3-certbot-nginx build-essential php-fpm php-cli php-common php-mysql php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache php-imagick php-redis php-gmp php-ldap php-imap php-readline mariadb-server pdns-server pdns-backend-mysql dnsutils postfix dovecot-core dovecot-imapd dovecot-pop3d opendkim opendkim-tools rspamd mailutils libsasl2-modules zip unzip tar rsync logrotate cron acl || true
+  apt-get install -y git curl wget ca-certificates openssl xz-utils nginx ufw certbot python3 python3-certbot-nginx build-essential software-properties-common apt-transport-https lsb-release gnupg php-fpm php-cli php-common php-mysql php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache php-imagick php-redis php-gmp php-ldap php-imap php-readline phpmyadmin mariadb-server pdns-server pdns-backend-mysql dnsutils postfix dovecot-core dovecot-imapd dovecot-pop3d opendkim opendkim-tools rspamd mailutils libsasl2-modules zip unzip tar rsync logrotate cron acl || true
 elif have dnf; then
-  dnf install -y git curl wget ca-certificates openssl xz nginx firewalld certbot python3 python3-certbot-nginx gcc gcc-c++ make php-fpm php-cli php-common php-mysqlnd php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache php-pecl-imagick php-pecl-redis php-gmp php-ldap php-imap php-readline mariadb-server pdns pdns-backend-mysql bind-utils postfix dovecot opendkim opendkim-tools rspamd mailx cyrus-sasl cyrus-sasl-plain zip unzip tar rsync logrotate cronie acl || true
+  dnf install -y git curl wget ca-certificates openssl xz nginx firewalld certbot python3 python3-certbot-nginx gcc gcc-c++ make php-fpm php-cli php-common php-mysqlnd php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache php-pecl-imagick php-pecl-redis php-gmp php-ldap php-imap php-readline phpMyAdmin mariadb-server pdns pdns-backend-mysql bind-utils postfix dovecot opendkim opendkim-tools rspamd mailx cyrus-sasl cyrus-sasl-plain zip unzip tar rsync logrotate cronie acl || true
 elif have yum; then
-  yum install -y git curl wget ca-certificates openssl xz nginx firewalld certbot python3 python3-certbot-nginx gcc gcc-c++ make php-fpm php-cli php-common php-mysqlnd php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache php-pecl-imagick php-pecl-redis php-gmp php-ldap php-imap php-readline mariadb-server pdns pdns-backend-mysql bind-utils postfix dovecot opendkim opendkim-tools rspamd mailx cyrus-sasl cyrus-sasl-plain zip unzip tar rsync logrotate cronie acl || true
+  yum install -y git curl wget ca-certificates openssl xz nginx firewalld certbot python3 python3-certbot-nginx gcc gcc-c++ make php-fpm php-cli php-common php-mysqlnd php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache php-pecl-imagick php-pecl-redis php-gmp php-ldap php-imap php-readline phpMyAdmin mariadb-server pdns pdns-backend-mysql bind-utils postfix dovecot opendkim opendkim-tools rspamd mailx cyrus-sasl cyrus-sasl-plain zip unzip tar rsync logrotate cronie acl || true
 else
   echo "Unsupported Linux package manager. Install git, curl, xz, and nginx, then rerun."
   exit 1
 fi
 
 ensure_node
+install_node_selector_versions
+install_php_selector_versions
 SERVICE_PATH="${NODE_BIN_DIR}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 ok "Using Node.js $("${NODE_BIN_DIR}/node" -v) and npm $("$NPM_BIN" -v)"
 
@@ -226,6 +291,8 @@ NODE_ENV=production
 PORT=$TPANEL_PORT
 NODE_BIN_DIR=$NODE_BIN_DIR
 NPM_BIN=$NPM_BIN
+TPANEL_TOOLS_DIR=$TOOLS_DIR
+TPANEL_NODE_SELECTOR_DIR=$TOOLS_DIR/node-selector
 ENV
 chmod 600 /etc/tpanel/agent.env
 
@@ -281,11 +348,33 @@ SERVER_IP="${TPANEL_SERVER_IP:-${SERVER_IP:-_}}"
 SITE_PATH="/etc/nginx/sites-available/tpanel-panel.conf"
 ENABLED_PATH="/etc/nginx/sites-enabled/tpanel-panel.conf"
 CERT_DIR="/etc/letsencrypt/live/$TPANEL_DOMAIN"
+PHP_FPM_SOCKET="$(find /run/php -maxdepth 1 -type s -name 'php*-fpm.sock' 2>/dev/null | sort -V | tail -n 1 || true)"
 
 mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled /var/log/nginx
 rm -f /etc/nginx/sites-enabled/default
 
 write_proxy_location() {
+  if [ -d /usr/share/phpmyadmin ] && [ -n "$PHP_FPM_SOCKET" ]; then
+    cat <<NGINX
+    location = /phpmyadmin {
+        return 302 /phpmyadmin/;
+    }
+
+    location /phpmyadmin/ {
+        root /usr/share;
+        index index.php index.html;
+        try_files \$uri \$uri/ =404;
+    }
+
+    location ~ ^/phpmyadmin/(.+\\.php)$ {
+        root /usr/share;
+        include snippets/fastcgi-php.conf;
+        fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
+        fastcgi_pass unix:${PHP_FPM_SOCKET};
+    }
+
+NGINX
+  fi
   cat <<NGINX
     client_max_body_size 256m;
 
@@ -365,21 +454,91 @@ fi
 . /etc/tpanel/agent.env
 export PATH="${NODE_BIN_DIR:-/usr/local/bin}:$PATH"
 NPM_BIN="${NPM_BIN:-npm}"
+TOOLS_DIR="${TPANEL_TOOLS_DIR:-/opt/tpanel/tools}"
+DOWNLOADS_DIR="$TOOLS_DIR/downloads"
+NODE_SELECTOR_DIR="${TPANEL_NODE_SELECTOR_DIR:-$TOOLS_DIR/node-selector}"
+PHP_SELECTOR_VERSIONS="${TPANEL_PHP_SELECTOR_VERSIONS:-8.4 8.3 8.2 8.1 8.0 7.4}"
+download_runtime() {
+  local url="$1"
+  local output="$2"
+  mkdir -p "$(dirname "$output")"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "$url" -o "$output"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -qO "$output" "$url"
+  else
+    return 1
+  fi
+}
+install_node_selector_versions() {
+  local node_bin="${NODE_BIN_DIR:-}"
+  if [ -z "$node_bin" ] || [ ! -x "$node_bin/node" ]; then
+    node_bin="$(dirname "$(command -v node || echo /usr/bin/node)")"
+  fi
+  [ -x "$node_bin/node" ] || return 0
+  local arch node_arch index_file versions
+  arch="$(uname -m)"
+  case "$arch" in
+    x86_64|amd64) node_arch="x64" ;;
+    arm64|aarch64) node_arch="arm64" ;;
+    *) return 0 ;;
+  esac
+  mkdir -p "$NODE_SELECTOR_DIR" "$DOWNLOADS_DIR"
+  index_file="$DOWNLOADS_DIR/node-index.json"
+  download_runtime https://nodejs.org/dist/index.json "$index_file" || return 0
+  versions="$("$node_bin/node" - "$index_file" <<'NODE'
+const fs = require("fs");
+const rows = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+const selected = [];
+const majors = new Set();
+for (const row of rows) {
+  const version = String(row.version || "").replace(/^v/, "");
+  const major = Number(version.split(".")[0]);
+  if (!Number.isFinite(major) || major < 14 || majors.has(major)) continue;
+  majors.add(major);
+  selected.push(version);
+  if (selected.length >= 6) break;
+}
+console.log(selected.join(" "));
+NODE
+)"
+  for version in $versions; do
+    local folder="node-v${version}-linux-${node_arch}"
+    local tarball="${folder}.tar.xz"
+    [ -x "$NODE_SELECTOR_DIR/$folder/bin/node" ] && continue
+    download_runtime "https://nodejs.org/dist/v${version}/${tarball}" "$DOWNLOADS_DIR/$tarball" || true
+    [ -f "$DOWNLOADS_DIR/$tarball" ] && tar -xJf "$DOWNLOADS_DIR/$tarball" -C "$NODE_SELECTOR_DIR" || true
+  done
+}
+install_php_selector_versions() {
+  command -v apt-get >/dev/null 2>&1 || return 0
+  export DEBIAN_FRONTEND=noninteractive
+  if [ -r /etc/os-release ] && . /etc/os-release && [ "${ID:-}" = "ubuntu" ]; then
+    apt-get install -y software-properties-common apt-transport-https lsb-release gnupg >/dev/null 2>&1 || true
+    command -v add-apt-repository >/dev/null 2>&1 && add-apt-repository -y ppa:ondrej/php >/dev/null 2>&1 || true
+    apt-get update -y || true
+  fi
+  for version in $PHP_SELECTOR_VERSIONS; do
+    apt-get install -y "php${version}-fpm" "php${version}-cli" "php${version}-common" "php${version}-mysql" "php${version}-pgsql" "php${version}-sqlite3" "php${version}-curl" "php${version}-zip" "php${version}-mbstring" "php${version}-xml" "php${version}-gd" "php${version}-intl" "php${version}-bcmath" "php${version}-soap" "php${version}-opcache" "php${version}-imagick" "php${version}-redis" "php${version}-gmp" "php${version}-ldap" "php${version}-imap" "php${version}-readline" || true
+  done
+}
 install_runtime_packages() {
   if command -v apt-get >/dev/null 2>&1; then
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -y
-    apt-get install -y php-fpm php-cli php-common php-mysql php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache php-imagick php-redis php-gmp php-ldap php-imap php-readline zip unzip || true
+    apt-get install -y software-properties-common apt-transport-https lsb-release gnupg php-fpm php-cli php-common php-mysql php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache php-imagick php-redis php-gmp php-ldap php-imap php-readline phpmyadmin zip unzip || true
   elif command -v dnf >/dev/null 2>&1; then
-    dnf install -y php-fpm php-cli php-common php-mysqlnd php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache php-pecl-imagick php-pecl-redis php-gmp php-ldap php-imap php-readline zip unzip || true
+    dnf install -y php-fpm php-cli php-common php-mysqlnd php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache php-pecl-imagick php-pecl-redis php-gmp php-ldap php-imap php-readline phpMyAdmin zip unzip || true
   elif command -v yum >/dev/null 2>&1; then
-    yum install -y php-fpm php-cli php-common php-mysqlnd php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache php-pecl-imagick php-pecl-redis php-gmp php-ldap php-imap php-readline zip unzip || true
+    yum install -y php-fpm php-cli php-common php-mysqlnd php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache php-pecl-imagick php-pecl-redis php-gmp php-ldap php-imap php-readline phpMyAdmin zip unzip || true
   fi
   for svc in $(systemctl list-unit-files --type=service 'php*-fpm.service' 2>/dev/null | awk '/php.*-fpm\.service/ {print $1}'); do
     systemctl enable --now "$svc" >/dev/null 2>&1 || true
   done
 }
 install_runtime_packages
+install_php_selector_versions
+install_node_selector_versions
 git -C "$SOURCE_DIR" pull --ff-only
 cd "$APP_DIR"
 install_app_dependencies() {

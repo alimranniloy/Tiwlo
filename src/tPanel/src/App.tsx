@@ -98,6 +98,7 @@ const DEFAULT_USER_PERMISSIONS: Record<string, boolean> = {
   email: true,
   ssl: true,
   node: true,
+  nodeselector: true,
   php: true,
   ruby: false,
   marketplace: true,
@@ -129,6 +130,7 @@ const TAB_PERMISSION_MAP: Record<string, string> = {
   visitors: "metrics",
   bandwidth: "metrics",
   node: "node",
+  nodeselector: "node",
   phpversion: "php",
   ruby: "ruby",
   marketplace: "marketplace",
@@ -158,6 +160,7 @@ const ROUTE_TO_TAB: Record<string, string> = {
   "/ssh": "ssh",
   "/visitors": "visitors",
   "/bandwidth": "bandwidth",
+  "/node-selector": "nodeselector",
   "/phpversion": "phpversion",
   "/ruby": "ruby",
   "/marketplace": "marketplace",
@@ -627,7 +630,7 @@ export default function App() {
       case "postgre":
         return { title: "PostgreSQL Database Engine", subtitle: "Deploy Relational PGSQL Clusters & Map Host Credentials" };
       case "phpmyadmin":
-        return { title: "phpMyAdmin MySQL Browser", subtitle: "Interactive Relational Schemas & Direct SQL Query Core" };
+        return { title: "phpMyAdmin", subtitle: "Open the original server database console" };
       case "dns_zone":
         return { title: "DNS Zone Record Coordinator", subtitle: "Update Namespace Mapping Records (A, CNAME, MX, TXT)" };
       case "subdomains":
@@ -648,6 +651,8 @@ export default function App() {
         return { title: "Bandwidth Flow Analytics", subtitle: "Monthly Usage Gauges & Outbound Flow Limits" };
       case "phpversion":
         return { title: "Select Server PHP Version", subtitle: "Swap PHP Compilation Runtimes & Toggle Module Extensions" };
+      case "nodeselector":
+        return { title: "Select Node.js Version", subtitle: "Map Node.js runtimes to all domains or one domain" };
       case "ruby":
         return { title: "Ruby App Rack Coordinator", subtitle: "Launch & Coordinate Sinatra, Rails & Jekyll Rack Servers" };
       case "marketplace":
@@ -821,14 +826,14 @@ export default function App() {
             />
           )}
 
-          {(activeTab === "databases" || activeTab === "phpmyadmin") && (
+          {activeTab === "databases" && (
             <DatabaseManager 
               databases={databases} 
               setDatabases={setDatabases} 
               dbUsers={dbUsers}
               setDbUsers={setDbUsers}
               addActivity={addActivity}
-              initialTab={activeTab === "phpmyadmin" ? "phpmyadmin" : "overview"}
+              initialTab="overview"
             />
           )}
 
@@ -848,7 +853,7 @@ export default function App() {
             />
           )}
 
-          {!["dashboard", "files", "node", "domains", "databases", "emails", "copilot", "phpmyadmin"].includes(activeTab) && (
+          {!["dashboard", "files", "node", "domains", "databases", "emails", "copilot"].includes(activeTab) && (
             <TPanelExtraManager 
               activeTab={activeTab}
               domains={domains}

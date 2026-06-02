@@ -111,6 +111,7 @@ export default function Sidebar({
       title: "Software & Runtimes",
       items: [
         { id: "node", label: "Node.js Manager", icon: Cpu, badge: runningAppsCount > 0 ? runningAppsCount : null, badgeColor: "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" },
+        { id: "nodeselector", label: "Node Selector", icon: Cpu },
         { id: "phpversion", label: "PHP Selector", icon: FileCode2 },
         { id: "ruby", label: "Ruby App Suite", icon: Gem },
         { id: "marketplace", label: "App Marketplace", icon: ShoppingBag, highlight: true }

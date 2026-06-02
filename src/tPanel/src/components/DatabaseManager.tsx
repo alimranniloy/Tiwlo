@@ -738,8 +738,7 @@ export default function DatabaseManager({
         <div className="flex bg-slate-950 p-1 border border-slate-800 rounded-xl max-w-full">
           {[
             { id: "overview", label: "MySQL Databases", icon: Settings2 },
-            { id: "wizard", label: "Database Wizard", icon: Sliders },
-            { id: "phpmyadmin", label: "phpMyAdmin Portal", icon: Table }
+            { id: "wizard", label: "Database Wizard", icon: Sliders }
           ].map(tab => {
             const ActiveIcon = tab.icon;
             const isActive = activeTab === tab.id;

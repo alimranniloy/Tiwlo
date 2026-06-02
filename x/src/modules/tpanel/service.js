@@ -2629,11 +2629,11 @@ fi
 if command -v apt-get >/dev/null 2>&1; then
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -y
-  apt-get install -y php-fpm php-cli php-common php-mysql php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache php-imagick php-redis php-gmp php-ldap php-imap php-readline zip unzip || true
+  apt-get install -y software-properties-common apt-transport-https lsb-release gnupg php-fpm php-cli php-common php-mysql php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache php-imagick php-redis php-gmp php-ldap php-imap php-readline phpmyadmin zip unzip || true
 elif command -v dnf >/dev/null 2>&1; then
-  dnf install -y php-fpm php-cli php-common php-mysqlnd php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache php-pecl-imagick php-pecl-redis php-gmp php-ldap php-imap php-readline zip unzip || true
+  dnf install -y php-fpm php-cli php-common php-mysqlnd php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache php-pecl-imagick php-pecl-redis php-gmp php-ldap php-imap php-readline phpMyAdmin zip unzip || true
 elif command -v yum >/dev/null 2>&1; then
-  yum install -y php-fpm php-cli php-common php-mysqlnd php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache php-pecl-imagick php-pecl-redis php-gmp php-ldap php-imap php-readline zip unzip || true
+  yum install -y php-fpm php-cli php-common php-mysqlnd php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache php-pecl-imagick php-pecl-redis php-gmp php-ldap php-imap php-readline phpMyAdmin zip unzip || true
 fi
 for svc in $(systemctl list-unit-files --type=service 'php*-fpm.service' 2>/dev/null | awk '/php.*-fpm\.service/ {print $1}'); do
   systemctl enable --now "$svc" >/dev/null 2>&1 || true

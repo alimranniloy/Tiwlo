@@ -25,6 +25,8 @@ const TPANEL_CONFIG_DIR = process.env.TPANEL_CONFIG_DIR || (process.platform ===
 const DOMAIN_SETTINGS_FILE = path.join(TPANEL_CONFIG_DIR, "domain-settings.json");
 const PANEL_STATE_FILE = path.join(TPANEL_CONFIG_DIR, "hosting-state.json");
 const SITES_CONFIG_DIR = path.join(TPANEL_CONFIG_DIR, "sites");
+const TPANEL_TOOLS_DIR = process.env.TPANEL_TOOLS_DIR || (process.platform === "win32" ? path.join(process.cwd(), ".tpanel", "tools") : "/opt/tpanel/tools");
+const NODE_SELECTOR_DIR = process.env.TPANEL_NODE_SELECTOR_DIR || path.join(TPANEL_TOOLS_DIR, "node-selector");
 const ACCOUNT_BASE_DIR = process.env.TPANEL_ACCOUNT_BASE_DIR || (process.platform === "win32" ? path.join(process.cwd(), ".tpanel", "accounts") : "/home/tpanel/accounts");
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 const LICENSE_CACHE_MS = Number(process.env.TPANEL_LICENSE_CACHE_MS || 120000);
@@ -83,19 +85,19 @@ const HOSTING_STACK_PACKAGES = {
     "nginx", "certbot", "python3-certbot-nginx", "php-fpm", "php-cli", "php-common", "php-mysql", "php-pgsql", "php-sqlite3", "php-curl", "php-zip", "php-mbstring",
     "php-xml", "php-gd", "php-intl", "php-bcmath", "php-soap", "php-opcache", "php-imagick", "php-redis", "php-gmp", "php-ldap", "php-imap", "php-readline", "mariadb-server", "pdns-server", "pdns-backend-mysql", "dnsutils",
     "postfix", "dovecot-core", "dovecot-imapd", "dovecot-pop3d", "opendkim", "opendkim-tools", "rspamd", "mailutils", "libsasl2-modules",
-    "zip", "unzip", "tar", "rsync", "logrotate", "cron", "acl"
+    "phpmyadmin", "zip", "unzip", "tar", "rsync", "logrotate", "cron", "acl"
   ],
   dnf: [
     "nginx", "certbot", "python3-certbot-nginx", "php-fpm", "php-cli", "php-common", "php-mysqlnd", "php-pgsql", "php-sqlite3", "php-curl", "php-zip", "php-mbstring",
     "php-xml", "php-gd", "php-intl", "php-bcmath", "php-soap", "php-opcache", "php-pecl-imagick", "php-pecl-redis", "php-gmp", "php-ldap", "php-imap", "php-readline", "mariadb-server", "pdns", "pdns-backend-mysql", "bind-utils",
     "postfix", "dovecot", "opendkim", "opendkim-tools", "rspamd", "mailx", "cyrus-sasl", "cyrus-sasl-plain",
-    "zip", "unzip", "tar", "rsync", "logrotate", "cronie", "acl"
+    "phpMyAdmin", "zip", "unzip", "tar", "rsync", "logrotate", "cronie", "acl"
   ],
   yum: [
     "nginx", "certbot", "python3-certbot-nginx", "php-fpm", "php-cli", "php-common", "php-mysqlnd", "php-pgsql", "php-sqlite3", "php-curl", "php-zip", "php-mbstring",
     "php-xml", "php-gd", "php-intl", "php-bcmath", "php-soap", "php-opcache", "php-pecl-imagick", "php-pecl-redis", "php-gmp", "php-ldap", "php-imap", "php-readline", "mariadb-server", "pdns", "pdns-backend-mysql", "bind-utils",
     "postfix", "dovecot", "opendkim", "opendkim-tools", "rspamd", "mailx", "cyrus-sasl", "cyrus-sasl-plain",
-    "zip", "unzip", "tar", "rsync", "logrotate", "cronie", "acl"
+    "phpMyAdmin", "zip", "unzip", "tar", "rsync", "logrotate", "cronie", "acl"
   ]
 };
 
@@ -103,6 +105,7 @@ const HOSTING_STACK_CHECKS = [
   { id: "nginx", label: "Nginx Web Server", command: "nginx", services: ["nginx"], packageNames: { apt: "nginx", dnf: "nginx", yum: "nginx" } },
   { id: "certbot", label: "Auto SSL Certbot", command: "certbot", services: [], packageNames: { apt: "certbot", dnf: "certbot", yum: "certbot" } },
   { id: "php", label: "PHP Runtime", command: "php", services: ["php*-fpm"], packageNames: { apt: "php-fpm", dnf: "php-fpm", yum: "php-fpm" } },
+  { id: "phpmyadmin", label: "phpMyAdmin", command: "php", services: [], packageNames: { apt: "phpmyadmin", dnf: "phpMyAdmin", yum: "phpMyAdmin" } },
   { id: "mysql", label: "MariaDB/MySQL", command: "mysql", services: ["mariadb", "mysql"], packageNames: { apt: "mariadb-server", dnf: "mariadb-server", yum: "mariadb-server" } },
   { id: "dns", label: "PowerDNS Authoritative", command: "pdns_server", services: ["pdns"], packageNames: { apt: "pdns-server", dnf: "pdns", yum: "pdns" } },
   { id: "mail", label: "Mail Stack", command: "postfix", services: ["postfix", "dovecot"], packageNames: { apt: "postfix", dnf: "postfix", yum: "postfix" } },
@@ -147,6 +150,9 @@ const PHP_EXTENSION_PACKAGES: Record<string, string> = {
 };
 let phpVersionCache: { at: number; versions: string[] } | null = null;
 const phpExtensionCache = new Map<string, { at: number; extensions: string[] }>();
+const DEFAULT_NODE_VERSION = process.env.TPANEL_NODE_VERSION || "24.15.0";
+const DEFAULT_NODE_SELECTOR_VERSIONS = ["24.15.0", "22.11.0", "20.18.1", "18.20.4", "16.20.2", "14.21.3"];
+let nodeVersionCache: { at: number; versions: string[] } | null = null;
 
 app.use(express.json({ limit: "25mb" }));
 
@@ -363,6 +369,8 @@ function publicAccount(account: any) {
   safe.permissions = normalizeAccountPermissions(account?.permissions, account);
   safe.phpSettings = phpSettingsForAccount(account || {});
   safe.phpVersion = safe.phpSettings.version;
+  safe.nodeVersion = normalizeNodeVersion(account?.nodeVersion || DEFAULT_NODE_VERSION);
+  safe.runtimeRoutes = runtimeRouteMap(account || {});
   return safe;
 }
 
@@ -673,16 +681,17 @@ function accountNginxConfig(account: any) {
   const ssl = accountSslPaths(account);
   const primaryNames = uniqueCleanDomains([account.domain, ...(account.provisioning?.vhost?.aliases || [])]);
   const routes = [
-    { serverNames: primaryNames, documentRoot: account.documentRoot },
+    { serverNames: primaryNames, documentRoot: account.documentRoot, runtime: routeRuntimeFor(account, account.domain) },
     ...accountSubdomainRoutes(account).map((route: any) => ({
       serverNames: [route.domain, ...(route.aliases || [])],
-      documentRoot: route.documentRoot
+      documentRoot: route.documentRoot,
+      runtime: routeRuntimeFor(account, route.domain, route)
     }))
   ].filter((route) => route.serverNames.length);
 
   return routes.map((route) => [
-    nginxHttpServerBlock(account, route.serverNames, route.documentRoot, Boolean(account.sslEnabled && ssl.ready)),
-    account.sslEnabled && ssl.ready ? nginxHttpsServerBlock(account, route.serverNames, route.documentRoot) : ""
+    nginxHttpServerBlock(account, route.serverNames, route.documentRoot, Boolean(account.sslEnabled && ssl.ready), route.runtime),
+    account.sslEnabled && ssl.ready ? nginxHttpsServerBlock(account, route.serverNames, route.documentRoot, route.runtime) : ""
   ].filter(Boolean).join("\n")).join("\n");
 }
 
@@ -946,6 +955,94 @@ function accountSubdomainRoutes(account: any) {
     .filter((route: any) => route.domain && route.domain !== cleanDomain(account.domain));
 }
 
+function normalizeRuntime(value: unknown, fallback = "php") {
+  const runtime = String(value || fallback).toLowerCase();
+  return ["php", "node", "static"].includes(runtime) ? runtime : fallback;
+}
+
+function runtimeRouteMap(account: any) {
+  const raw = account?.provisioning?.vhost?.runtimeRoutes;
+  return raw && typeof raw === "object" ? raw : {};
+}
+
+function normalizeNodeVersion(value: unknown, fallback = DEFAULT_NODE_VERSION) {
+  const clean = String(value || fallback).trim().replace(/^v/i, "");
+  return /^\d+\.\d+\.\d+$/.test(clean) ? clean : fallback;
+}
+
+function sortNodeVersions(versions: string[]) {
+  return Array.from(new Set(versions.map((item) => normalizeNodeVersion(item)).filter(Boolean)))
+    .sort((a, b) => {
+      const left = a.split(".").map(Number);
+      const right = b.split(".").map(Number);
+      return right[0] - left[0] || right[1] - left[1] || right[2] - left[2];
+    });
+}
+
+function effectiveNodeVersion(account: any, requested = account?.nodeVersion) {
+  const preferred = normalizeNodeVersion(requested || DEFAULT_NODE_VERSION);
+  const installed = installedNodeVersions();
+  return installed.includes(preferred) ? preferred : installed[0] || preferred;
+}
+
+function routeRuntimeFor(account: any, domain: unknown, route: any = {}) {
+  const clean = cleanDomain(domain);
+  const mapped = clean ? runtimeRouteMap(account)[clean] || {} : {};
+  const runtime = normalizeRuntime(mapped.runtime || route.runtime || account.runtime || "php");
+  const phpVersion = normalizePhpVersion(mapped.phpVersion || route.phpVersion || account.phpVersion || account.phpSettings?.version || DEFAULT_PHP_VERSION);
+  const phpSettings = {
+    ...phpSettingsForAccount({ ...account, phpVersion, phpSettings: { ...(account.phpSettings || {}), ...(mapped.phpSettings || route.phpSettings || {}), version: phpVersion } }),
+    version: phpVersion
+  };
+  const nodeVersion = normalizeNodeVersion(mapped.nodeVersion || route.nodeVersion || account.nodeVersion || DEFAULT_NODE_VERSION);
+  return {
+    runtime,
+    phpVersion,
+    phpSettings,
+    nodeVersion,
+    effectiveNodeVersion: effectiveNodeVersion(account, nodeVersion),
+    nodePort: Number(mapped.nodePort || route.nodePort || account.nodePort || 3000)
+  };
+}
+
+function accountRuntimeDomains(account: any) {
+  const entries = [
+    {
+      domain: cleanDomain(account.domain),
+      label: "Primary domain",
+      documentRoot: path.resolve(account.documentRoot || path.join(account.homeDirectory, "public_html")),
+      webPath: "/public_html",
+      primary: true,
+      aliases: uniqueCleanDomains(account.provisioning?.vhost?.aliases || [])
+    },
+    ...accountSubdomainRoutes(account).map((route: any) => ({
+      domain: cleanDomain(route.domain),
+      label: route.type === "addon_domain" ? "Addon domain" : "Subdomain",
+      documentRoot: path.resolve(route.documentRoot),
+      webPath: route.webPath,
+      primary: false,
+      aliases: uniqueCleanDomains(route.aliases || []),
+      route
+    }))
+  ].filter((entry) => entry.domain);
+
+  return entries.map((entry) => ({
+    ...entry,
+    runtime: routeRuntimeFor(account, entry.domain, entry.route)
+  }));
+}
+
+function normalizeTargetDomains(input: any, account: any) {
+  const domains = accountRuntimeDomains(account).map((entry: any) => entry.domain);
+  const selected = Array.isArray(input)
+    ? input
+    : String(input || "all").toLowerCase() === "all"
+      ? domains
+      : [input];
+  const clean = uniqueCleanDomains(selected);
+  return clean.includes("all") ? domains : clean.filter((domain) => domains.includes(domain));
+}
+
 function normalizePhpVersion(value: unknown, fallback = DEFAULT_PHP_VERSION) {
   const match = String(value || "").match(/^[0-9]+\.[0-9]+/);
   return match ? match[0] : fallback;
@@ -1047,6 +1144,88 @@ function installedPhpExtensions(version: string) {
   }
 }
 
+function installedNodeVersions() {
+  if (nodeVersionCache && Date.now() - nodeVersionCache.at < 60000) return nodeVersionCache.versions;
+  const versions: string[] = [];
+  try {
+    const output = execFileSync("node", ["-v"], { encoding: "utf8", timeout: 10000 }).trim();
+    if (output) versions.push(output.replace(/^v/i, ""));
+  } catch {
+    // bundled node selector may still exist
+  }
+  try {
+    if (fs.existsSync(NODE_SELECTOR_DIR)) {
+      for (const entry of fs.readdirSync(NODE_SELECTOR_DIR, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue;
+        const match = entry.name.match(/^node-v(\d+\.\d+\.\d+)-/);
+        if (match) versions.push(match[1]);
+      }
+    }
+  } catch {
+    // keep fallback list
+  }
+  const detected = sortNodeVersions(versions.length ? versions : DEFAULT_NODE_SELECTOR_VERSIONS);
+  nodeVersionCache = { at: Date.now(), versions: detected };
+  return detected;
+}
+
+function nodeBinaryForVersion(version: string) {
+  const clean = normalizeNodeVersion(version);
+  if (process.platform === "win32") return "node";
+  try {
+    if (fs.existsSync(NODE_SELECTOR_DIR)) {
+      for (const entry of fs.readdirSync(NODE_SELECTOR_DIR, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue;
+        if (!entry.name.startsWith(`node-v${clean}-`)) continue;
+        const candidate = path.join(NODE_SELECTOR_DIR, entry.name, "bin", "node");
+        if (fs.existsSync(candidate)) return candidate;
+      }
+    }
+  } catch {
+    // fallback below
+  }
+  return "node";
+}
+
+async function installNodeRuntimeVersion(version: string) {
+  if (process.platform === "win32") return "";
+  const clean = normalizeNodeVersion(version);
+  const escapedRoot = NODE_SELECTOR_DIR.replace(/'/g, "'\\''");
+  const escapedVersion = clean.replace(/'/g, "'\\''");
+  const script = `
+set -e
+arch="$(uname -m)"
+case "$arch" in
+  x86_64|amd64) node_arch="x64" ;;
+  arm64|aarch64) node_arch="arm64" ;;
+  *) echo "Unsupported Node.js architecture: $arch"; exit 1 ;;
+esac
+root='${escapedRoot}'
+version='${escapedVersion}'
+folder="node-v\${version}-linux-\${node_arch}"
+tarball="\${folder}.tar.xz"
+url="https://nodejs.org/dist/v\${version}/\${tarball}"
+mkdir -p "$root"
+if [ ! -x "$root/\$folder/bin/node" ]; then
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' EXIT
+  if command -v curl >/dev/null 2>&1; then
+    curl -fL "$url" -o "$tmp/\$tarball"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -O "$tmp/\$tarball" "$url"
+  else
+    echo "curl or wget is required to install Node.js runtimes."
+    exit 1
+  fi
+  tar -xJf "$tmp/\$tarball" -C "$root"
+fi
+"$root/\$folder/bin/node" -v
+`;
+  const { stdout, stderr } = await execFileAsync("sh", ["-lc", script], { timeout: 900000, maxBuffer: 4 * 1024 * 1024 });
+  nodeVersionCache = null;
+  return `${stdout || ""}${stderr || ""}`.trim();
+}
+
 function normalizePhpExtensionSelection(input: any) {
   const raw = Array.isArray(input)
     ? input
@@ -1084,9 +1263,9 @@ function phpSettingsForAccount(account: any) {
   };
 }
 
-function writePhpUserIni(account: any) {
+function writePhpUserIni(account: any, documentRoot?: string) {
   const settings = phpSettingsForAccount(account);
-  const publicDir = path.resolve(account.documentRoot || path.join(account.homeDirectory, "public_html"));
+  const publicDir = path.resolve(documentRoot || account.documentRoot || path.join(account.homeDirectory, "public_html"));
   fs.mkdirSync(publicDir, { recursive: true });
   fs.writeFileSync(path.join(publicDir, ".user.ini"), [
     `memory_limit=${settings.ini.memory_limit}`,
@@ -1127,9 +1306,9 @@ function ensureSystemAccountUser(account: any) {
   fs.mkdirSync(path.join(home, "public_html"), { recursive: true });
 }
 
-function ensureAccountPhpPool(account: any) {
-  if (process.platform === "win32" || account.runtime === "node") return null;
-  const version = effectivePhpVersion(account);
+function ensureAccountPhpPool(account: any, versionOverride?: string) {
+  if (process.platform === "win32" || (account.runtime === "node" && !versionOverride)) return null;
+  const version = effectivePhpVersion(account, versionOverride || account.phpVersion);
   const confDir = `/etc/php/${version}/fpm/pool.d`;
   if (!fs.existsSync(confDir)) {
     throw new Error(`PHP-FPM ${version} is not installed. Install PHP ${version} FPM and extensions, then apply again.`);
@@ -1210,6 +1389,8 @@ function phpSettingsPayload(account: any, extra: any = {}) {
     settings,
     installedVersions,
     extensions: catalog,
+    domains: accountRuntimeDomains(account),
+    runtimeRoutes: runtimeRouteMap(account),
     missingExtensions: settings.extensions.filter((name: string) => !installedSet.has(name)),
     fpm: {
       service: phpFpmService(settings.effectiveVersion),
@@ -1223,15 +1404,39 @@ function phpSettingsPayload(account: any, extra: any = {}) {
   };
 }
 
-function nginxContentBlock(account: any, documentRoot: string) {
+function nodeSettingsPayload(account: any, extra: any = {}) {
+  const version = normalizeNodeVersion(account?.nodeVersion || DEFAULT_NODE_VERSION);
+  const installedVersions = installedNodeVersions();
+  const effectiveVersion = effectiveNodeVersion(account, version);
+  return {
+    ok: true,
+    ...extra,
+    settings: {
+      version,
+      effectiveVersion,
+      nodePort: Number(account?.nodePort || 3000),
+      binary: nodeBinaryForVersion(effectiveVersion)
+    },
+    installedVersions,
+    domains: accountRuntimeDomains(account),
+    runtimeRoutes: runtimeRouteMap(account),
+    missingVersions: installedVersions.includes(version) ? [] : [version],
+    diagnostics: {
+      provisioningLog: readProvisioningLog(account.username, 20)
+    }
+  };
+}
+
+function nginxContentBlock(account: any, documentRoot: string, routeRuntime: any = null) {
   const root = toUnixPath(documentRoot);
-  if (account.runtime === "node" && path.resolve(documentRoot) === path.resolve(account.documentRoot)) {
+  const runtime = routeRuntime || routeRuntimeFor(account, account.domain);
+  if (runtime.runtime === "node") {
     return `    location /.well-known/acme-challenge/ {
         root ${root};
     }
 
     location / {
-        proxy_pass http://127.0.0.1:${Number(account.nodePort || 3000)};
+        proxy_pass http://127.0.0.1:${Number(runtime.nodePort || account.nodePort || 3000)};
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
@@ -1259,7 +1464,7 @@ function nginxContentBlock(account: any, documentRoot: string) {
 
     location ~ \\.php$ {
         include snippets/fastcgi-php.conf;
-        fastcgi_pass unix:${phpFpmSocket(account)};
+        fastcgi_pass unix:${phpFpmSocket({ ...account, phpVersion: runtime.phpVersion, phpSettings: runtime.phpSettings })};
     }
 
     location ~ /\\. {
@@ -1267,7 +1472,7 @@ function nginxContentBlock(account: any, documentRoot: string) {
     }`;
 }
 
-function nginxHttpServerBlock(account: any, serverNames: string[], documentRoot: string, redirectToHttps: boolean) {
+function nginxHttpServerBlock(account: any, serverNames: string[], documentRoot: string, redirectToHttps: boolean, routeRuntime: any = null) {
   const names = uniqueCleanDomains(serverNames).join(" ");
   const root = toUnixPath(documentRoot);
   if (redirectToHttps) {
@@ -1290,12 +1495,12 @@ function nginxHttpServerBlock(account: any, serverNames: string[], documentRoot:
     listen 80;
     server_name ${names};
 
-${nginxContentBlock(account, documentRoot)}
+${nginxContentBlock(account, documentRoot, routeRuntime)}
 }
 `;
 }
 
-function nginxHttpsServerBlock(account: any, serverNames: string[], documentRoot: string) {
+function nginxHttpsServerBlock(account: any, serverNames: string[], documentRoot: string, routeRuntime: any = null) {
   const names = uniqueCleanDomains(serverNames).join(" ");
   const ssl = accountSslPaths(account);
   return `server {
@@ -1307,7 +1512,7 @@ function nginxHttpsServerBlock(account: any, serverNames: string[], documentRoot
     include /etc/letsencrypt/options-ssl-nginx.conf;
     ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
 
-${nginxContentBlock(account, documentRoot)}
+${nginxContentBlock(account, documentRoot, routeRuntime)}
 }
 `;
 }
@@ -1332,7 +1537,12 @@ function applyAccountProvisioning(account: any) {
   ensureWebIngress(account);
   ensureWebReadableAccount(account);
   try {
-    if (account.runtime === "php") ensureAccountPhpPool(account);
+    const phpRoutes = accountRuntimeDomains(account).filter((entry: any) => entry.runtime.runtime === "php");
+    const versions = Array.from(new Set(phpRoutes.map((entry: any) => entry.runtime.phpVersion)));
+    versions.forEach((version: any) => ensureAccountPhpPool(account, version));
+    phpRoutes.forEach((entry: any) => {
+      writePhpUserIni({ ...account, phpVersion: entry.runtime.phpVersion, phpSettings: entry.runtime.phpSettings }, entry.documentRoot);
+    });
   } catch (error: any) {
     appendProvisioningLog(account, `PHP-FPM pool failed: ${error.message}`);
     patchAccountProvisioning(account, { vhost: { status: "failed", message: error.message }, ssl: { status: "blocked" } });
@@ -2130,8 +2340,9 @@ async function installPhpRuntimePackages(version: string, extensions: string[]) 
   if (!manager) return "No supported package manager was detected.";
   const packages = phpPackageNames(manager, version, extensions);
   const quoted = packages.map((item) => `'${item.replace(/'/g, "'\\''")}'`).join(" ");
+  const aptBootstrap = "export DEBIAN_FRONTEND=noninteractive; apt-get update -y; if [ -r /etc/os-release ] && . /etc/os-release && [ \"\\${ID:-}\" = \"ubuntu\" ]; then apt-get install -y software-properties-common apt-transport-https lsb-release gnupg >/dev/null 2>&1 || true; command -v add-apt-repository >/dev/null 2>&1 && add-apt-repository -y ppa:ondrej/php >/dev/null 2>&1 || true; apt-get update -y || true; fi";
   const command = manager === "apt"
-    ? `export DEBIAN_FRONTEND=noninteractive; apt-get update -y && apt-get install -y ${quoted}`
+    ? `${aptBootstrap}; apt-get install -y ${quoted}`
     : `${manager} install -y ${quoted}`;
   try {
     const { stdout, stderr } = await execFileAsync("sh", ["-lc", command], { timeout: 900000, maxBuffer: 4 * 1024 * 1024 });
@@ -2142,7 +2353,7 @@ async function installPhpRuntimePackages(version: string, extensions: string[]) 
     if (manager !== "apt") throw error;
     const fallback = genericPhpPackageNames(manager, extensions);
     const fallbackQuoted = fallback.map((item) => `'${item.replace(/'/g, "'\\''")}'`).join(" ");
-    const { stdout, stderr } = await execFileAsync("sh", ["-lc", `export DEBIAN_FRONTEND=noninteractive; apt-get update -y && apt-get install -y ${fallbackQuoted}`], { timeout: 900000, maxBuffer: 4 * 1024 * 1024 });
+    const { stdout, stderr } = await execFileAsync("sh", ["-lc", `${aptBootstrap}; apt-get install -y ${fallbackQuoted}`], { timeout: 900000, maxBuffer: 4 * 1024 * 1024 });
     phpVersionCache = null;
     phpExtensionCache.clear();
     return `${error.stdout || ""}${error.stderr || ""}\n${stdout || ""}${stderr || ""}`.trim();
@@ -2427,29 +2638,63 @@ app.post("/api/user/php-settings", requireLicense, async (req, res) => {
     const requestedVersion = normalizePhpVersion(req.body?.phpVersion || req.body?.version || account.phpVersion || DEFAULT_PHP_VERSION);
     const requestedExtensions = normalizePhpExtensionSelection(req.body?.extensions);
     const requestedIni = normalizePhpIni(req.body?.ini || req.body?.phpIni || {}, account);
+    const targetDomains = normalizeTargetDomains(req.body?.targetDomains || req.body?.domain || req.body?.domainScope || "all", account);
+    if (!targetDomains.length) {
+      res.status(400).json({ ok: false, message: "Select at least one domain that belongs to this account." });
+      return;
+    }
     let installOutput = "";
     if (req.body?.autoInstall !== false) {
       installOutput = await installPhpRuntimePackages(requestedVersion, requestedExtensions);
       installOutput += `\n${await enablePhpExtensions(requestedVersion, requestedExtensions)}`;
     }
     const updated = updateStoredAccount(account.username, (current: any) => {
+      const provisioning = current.provisioning || buildAccountProvisioning(req, current);
+      const currentTargets = normalizeTargetDomains(targetDomains, current);
+      const primarySelected = currentTargets.includes(cleanDomain(current.domain));
+      const runtimeRoutes = { ...(provisioning.vhost?.runtimeRoutes || {}) };
+      currentTargets.forEach((domain: string) => {
+        runtimeRoutes[domain] = {
+          ...(runtimeRoutes[domain] || {}),
+          runtime: "php",
+          phpVersion: requestedVersion,
+          phpSettings: {
+            version: requestedVersion,
+            extensions: requestedExtensions,
+            ini: requestedIni
+          },
+          updatedAt: new Date().toISOString()
+        };
+      });
+      const subdomains = Array.isArray(provisioning.vhost?.subdomains)
+        ? provisioning.vhost.subdomains.map((route: any) => cleanDomain(route.domain) && currentTargets.includes(cleanDomain(route.domain))
+          ? {
+              ...route,
+              runtime: "php",
+              phpVersion: requestedVersion,
+              phpSettings: { version: requestedVersion, extensions: requestedExtensions, ini: requestedIni }
+            }
+          : route)
+        : [];
       const next = {
         ...current,
-        runtime: "php",
-        phpVersion: requestedVersion,
-        phpSettings: {
+        runtime: primarySelected ? "php" : current.runtime,
+        phpVersion: primarySelected ? requestedVersion : current.phpVersion,
+        phpSettings: primarySelected ? {
           version: requestedVersion,
           extensions: requestedExtensions,
           ini: requestedIni,
           updatedAt: new Date().toISOString()
-        },
+        } : current.phpSettings,
         provisioning: {
-          ...(current.provisioning || buildAccountProvisioning(req, current)),
+          ...provisioning,
           vhost: {
-            ...((current.provisioning || {}).vhost || {}),
+            ...(provisioning.vhost || {}),
             status: "queued",
-            phpVersion: requestedVersion,
-            phpSettings: { version: requestedVersion, extensions: requestedExtensions, ini: requestedIni }
+            phpVersion: primarySelected ? requestedVersion : provisioning.vhost?.phpVersion,
+            phpSettings: primarySelected ? { version: requestedVersion, extensions: requestedExtensions, ini: requestedIni } : provisioning.vhost?.phpSettings,
+            runtimeRoutes,
+            subdomains
           }
         },
         updatedAt: new Date().toISOString()
@@ -2460,7 +2705,6 @@ app.post("/api/user/php-settings", requireLicense, async (req, res) => {
       res.status(404).json({ ok: false, message: "Hosting account was not found." });
       return;
     }
-    writePhpUserIni(updated);
     applyAccountProvisioning(updated);
     res.json(phpSettingsPayload(updated, {
       account: publicAccount(updated),
@@ -2468,6 +2712,113 @@ app.post("/api/user/php-settings", requireLicense, async (req, res) => {
     }));
   } catch (error: any) {
     res.status(500).json({ ok: false, message: error.message || "Unable to apply PHP settings." });
+  }
+});
+
+app.get("/api/user/phpmyadmin-url", requireLicense, async (req, res) => {
+  const account = requireUserAccount(req, res);
+  if (!account) return;
+  if (!normalizeAccountPermissions(account.permissions, account).phpmyadmin) {
+    res.status(403).json({ ok: false, message: "phpMyAdmin access is disabled for this account." });
+    return;
+  }
+  const configured = String(process.env.TPANEL_PHPMYADMIN_URL || "").trim();
+  res.json({
+    ok: true,
+    url: configured || "/phpmyadmin/",
+    target: "system_phpmyadmin"
+  });
+});
+
+app.get("/api/user/node-settings", requireLicense, async (_req, res) => {
+  const account = requireUserAccount(_req, res);
+  if (!account) return;
+  if (!normalizeAccountPermissions(account.permissions, account).node) {
+    res.status(403).json({ ok: false, message: "Node.js controls are disabled for this account." });
+    return;
+  }
+  res.json(nodeSettingsPayload(account));
+});
+
+app.post("/api/user/node-settings", requireLicense, async (req, res) => {
+  const account = requireUserAccount(req, res);
+  if (!account) return;
+  if (!normalizeAccountPermissions(account.permissions, account).node) {
+    res.status(403).json({ ok: false, message: "Node.js controls are disabled for this account." });
+    return;
+  }
+  try {
+    const requestedVersion = normalizeNodeVersion(req.body?.nodeVersion || req.body?.version || account.nodeVersion || DEFAULT_NODE_VERSION);
+    const requestedPort = Number(req.body?.nodePort || req.body?.port || account.nodePort || 3000);
+    if (!Number.isInteger(requestedPort) || requestedPort < 1024 || requestedPort > 65535) {
+      res.status(400).json({ ok: false, message: "Choose a valid Node.js app port between 1024 and 65535." });
+      return;
+    }
+    const targetDomains = normalizeTargetDomains(req.body?.targetDomains || req.body?.domain || req.body?.domainScope || "all", account);
+    if (!targetDomains.length) {
+      res.status(400).json({ ok: false, message: "Select at least one domain that belongs to this account." });
+      return;
+    }
+    let installOutput = "";
+    if (req.body?.autoInstall !== false && !installedNodeVersions().includes(requestedVersion)) {
+      installOutput = await installNodeRuntimeVersion(requestedVersion);
+    }
+    const updated = updateStoredAccount(account.username, (current: any) => {
+      const provisioning = current.provisioning || buildAccountProvisioning(req, current);
+      const currentTargets = normalizeTargetDomains(targetDomains, current);
+      const primarySelected = currentTargets.includes(cleanDomain(current.domain));
+      const runtimeRoutes = { ...(provisioning.vhost?.runtimeRoutes || {}) };
+      currentTargets.forEach((domain: string) => {
+        runtimeRoutes[domain] = {
+          ...(runtimeRoutes[domain] || {}),
+          runtime: "node",
+          nodeVersion: requestedVersion,
+          nodePort: requestedPort,
+          updatedAt: new Date().toISOString()
+        };
+      });
+      const subdomains = Array.isArray(provisioning.vhost?.subdomains)
+        ? provisioning.vhost.subdomains.map((route: any) => cleanDomain(route.domain) && currentTargets.includes(cleanDomain(route.domain))
+          ? {
+              ...route,
+              runtime: "node",
+              nodeVersion: requestedVersion,
+              nodePort: requestedPort
+            }
+          : route)
+        : [];
+      return {
+        ...current,
+        runtime: primarySelected ? "node" : current.runtime,
+        nodeVersion: primarySelected ? requestedVersion : current.nodeVersion,
+        nodePort: primarySelected ? requestedPort : current.nodePort,
+        provisioning: {
+          ...provisioning,
+          vhost: {
+            ...(provisioning.vhost || {}),
+            status: "queued",
+            runtime: primarySelected ? "node" : provisioning.vhost?.runtime,
+            nodeVersion: primarySelected ? requestedVersion : provisioning.vhost?.nodeVersion,
+            nodePort: primarySelected ? requestedPort : provisioning.vhost?.nodePort,
+            runtimeRoutes,
+            subdomains
+          }
+        },
+        updatedAt: new Date().toISOString()
+      };
+    });
+    if (!updated) {
+      res.status(404).json({ ok: false, message: "Hosting account was not found." });
+      return;
+    }
+    appendProvisioningLog(updated, `Node.js ${requestedVersion} mapped to ${targetDomains.join(", ")} on port ${requestedPort}.`);
+    applyAccountProvisioning(updated);
+    res.json(nodeSettingsPayload(updated, {
+      account: publicAccount(updated),
+      installOutput: installOutput.trim()
+    }));
+  } catch (error: any) {
+    res.status(500).json({ ok: false, message: error.message || "Unable to apply Node.js settings." });
   }
 });
 
@@ -3334,7 +3685,7 @@ app.post("/api/panel/accounts", requireCapability("accounts"), async (req, res) 
       ini: normalizePhpIni({}, { phpMemoryMb: req.body?.phpMemoryMb, uploadLimitMb: req.body?.uploadLimitMb }),
       updatedAt: new Date().toISOString()
     },
-    nodeVersion: String(req.body?.nodeVersion || "20"),
+    nodeVersion: normalizeNodeVersion(req.body?.nodeVersion || DEFAULT_NODE_VERSION),
     nodePort: Number(req.body?.nodePort || 3000),
     quotaMb: Number(req.body?.quotaMb || selectedPackage.quotaMb),
     bandwidthGb: Number(req.body?.bandwidthGb || selectedPackage.bandwidthGb),
