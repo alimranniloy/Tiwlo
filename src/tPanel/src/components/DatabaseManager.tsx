@@ -44,6 +44,7 @@ interface DatabaseManagerProps {
   setDbUsers: Dispatch<SetStateAction<DatabaseUser[]>>;
   addActivity: (category: "file" | "domain" | "node" | "db" | "email" | "ssl", message: string) => void;
   initialTab?: "overview" | "wizard" | "phpmyadmin";
+  initialEngine?: "mysql" | "postgresql";
 }
 
 // All available checkable tPanel Database Privileges list
@@ -74,16 +75,119 @@ export default function DatabaseManager({
   dbUsers, 
   setDbUsers, 
   addActivity,
-  initialTab = "overview"
+  initialTab = "overview",
+  initialEngine = "mysql"
 }: DatabaseManagerProps) {
   // Navigation level tab: overview | wizard | phpmyadmin
   const [activeTab, setActiveTab] = useState<"overview" | "wizard" | "phpmyadmin">("overview");
+  const [selectedEngine, setSelectedEngine] = useState<"mysql" | "postgresql">(initialEngine);
+  const [dbPrefix, setDbPrefix] = useState("tp_account_");
+  const [dbStatus, setDbStatus] = useState("");
+  const [isDbBusy, setIsDbBusy] = useState(false);
 
   useEffect(() => {
     if (initialTab) {
       setActiveTab(initialTab);
     }
   }, [initialTab]);
+
+  useEffect(() => {
+    setSelectedEngine(initialEngine);
+  }, [initialEngine]);
+
+  const authToken = () => {
+    try {
+      return JSON.parse(localStorage.getItem("tpanel_auth") || "null")?.token || "";
+    } catch {
+      return "";
+    }
+  };
+
+  const engineLabel = selectedEngine === "postgresql" ? "PostgreSQL" : "MySQL";
+  const displayPrefix = dbPrefix;
+  const fullDbName = (name: string) => `${displayPrefix}${name}`;
+  const fullUserName = (name: string) => `${displayPrefix}${name}`;
+
+  const hydrateRealDatabases = (payload: any) => {
+    if (payload.prefix) setDbPrefix(String(payload.prefix));
+    const realDatabases: DatabaseItem[] = Array.isArray(payload.databases)
+      ? payload.databases.map((db: any) => ({
+          id: db.id || `${payload.engine}-${db.name}`,
+          name: db.name,
+          sizeMB: Number(db.sizeMB || 0),
+          tables: []
+        }))
+      : [];
+    const realUsers: DatabaseUser[] = Array.isArray(payload.users)
+      ? payload.users.map((user: any) => ({
+          username: user.username,
+          databases: Array.isArray(user.databases) ? user.databases : [],
+          privileges: user.privileges || {}
+        }))
+      : [];
+    setDatabases(realDatabases);
+    setDbUsers(realUsers);
+    if (realDatabases.length && !realDatabases.some((db) => db.id === selectedDbId)) {
+      setSelectedDbId(realDatabases[0].id);
+    } else if (!realDatabases.length) {
+      setSelectedDbId("");
+    }
+    if (realUsers.length && !realUsers.some((user) => user.username === mapUser)) {
+      setMapUser(realUsers[0].username);
+    } else if (!realUsers.length) {
+      setMapUser("");
+    }
+    if (realDatabases.length && !realDatabases.some((db) => db.name === mapDb)) {
+      setMapDb(realDatabases[0].name);
+    } else if (!realDatabases.length) {
+      setMapDb("");
+    }
+  };
+
+  const loadRealDatabases = async (engine = selectedEngine) => {
+    const token = authToken();
+    if (!token) return;
+    setDbStatus(`Loading ${engine === "postgresql" ? "PostgreSQL" : "MySQL"} databases...`);
+    try {
+      const response = await fetch(`/api/user/databases?engine=${encodeURIComponent(engine)}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.ok) throw new Error(data.message || "Unable to load databases.");
+      hydrateRealDatabases(data);
+      setDbStatus(`${engine === "postgresql" ? "PostgreSQL" : "MySQL"} is connected. ${data.databases?.length || 0} databases found.`);
+    } catch (error) {
+      setDbStatus(error instanceof Error ? error.message : "Unable to load databases.");
+      setDatabases([]);
+      setDbUsers([]);
+    }
+  };
+
+  const postDbAction = async (url: string, body: any, method = "POST") => {
+    const token = authToken();
+    if (!token) throw new Error("User session expired. Log in again.");
+    setIsDbBusy(true);
+    try {
+      const response = await fetch(url, {
+        method,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json"
+        },
+        body: method === "DELETE" ? undefined : JSON.stringify({ engine: selectedEngine, ...body })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.ok) throw new Error(data.message || "Database operation failed.");
+      hydrateRealDatabases(data);
+      return data;
+    } finally {
+      setIsDbBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    loadRealDatabases(selectedEngine);
+  }, [selectedEngine]);
 
   // Overall lists & state variables
   const [selectedDbId, setSelectedDbId] = useState<string>(databases[0]?.id || "");
@@ -128,6 +232,9 @@ export default function DatabaseManager({
   const [renameNewName, setRenameNewName] = useState("");
   const [dbUserToRename, setDbUserToRename] = useState<string | null>(null);
   const [renameUserNewName, setRenameUserNewName] = useState("");
+  const [passwordUserToChange, setPasswordUserToChange] = useState<string | null>(null);
+  const [changeUserPassword, setChangeUserPassword] = useState("");
+  const [changePasswordShow, setChangePasswordShow] = useState(false);
 
   // Row creation state
   const [isAddingRow, setIsAddingRow] = useState(false);
@@ -205,107 +312,70 @@ export default function DatabaseManager({
   };
 
   // Create MySQL database item
-  const handleCreateDb = (name: string, isWizard = false) => {
+  const handleCreateDb = async (name: string, isWizard = false) => {
     const sanitizedName = name.trim().toLowerCase().replace(/[^a-z0-9_]/g, "");
     if (!sanitizedName) return false;
 
     if (databases.some(db => db.name === sanitizedName)) {
-      alert(`Database with schema name 'niloy_${sanitizedName}' already exists.`);
+      alert(`Database with schema name '${displayPrefix}${sanitizedName}' already exists.`);
       return false;
     }
-
-    const newDb: DatabaseItem = {
-      id: "db-" + Math.random().toString(36).substr(2, 9),
-      name: sanitizedName,
-      sizeMB: 0.1,
-      tables: [
-        {
-          name: "users",
-          columns: ["id", "username", "email", "registration_ip", "status"],
-          rows: [
-            { id: 101, username: "imran_admin", email: "niloy@test.com", registration_ip: "162.24.99.11", status: "active" },
-            { id: 102, username: "sarah_k", email: "sarah@gmail.com", registration_ip: "45.112.30.22", status: "pending" }
-          ]
-        },
-        {
-          name: "config_vars",
-          columns: ["id", "setting_key", "setting_value"],
-          rows: [
-            { id: 1, setting_key: "app_theme", setting_value: "dark_mode_galaxy" },
-            { id: 2, setting_key: "maintenance_active", setting_value: "false" },
-            { id: 3, setting_key: "api_gateway_endpoint", setting_value: "https://api.my-portfolio.com/v1" }
-          ]
-        }
-      ]
-    };
-
-    setDatabases(prev => [...prev, newDb]);
-    addActivity("db", `Created MySQL database schema: niloy_${sanitizedName}`);
-    setSelectedDbId(newDb.id);
-    return true;
+    try {
+      const data = await postDbAction("/api/user/databases", { name: sanitizedName });
+      const created = data.databases?.find((db: any) => db.name === sanitizedName) || data.databases?.[0];
+      if (created?.id) setSelectedDbId(created.id);
+      setDbStatus(`${engineLabel} database ${displayPrefix}${sanitizedName} created.`);
+      addActivity("db", `Created ${engineLabel} database: ${displayPrefix}${sanitizedName}`);
+      return true;
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Unable to create database.");
+      return false;
+    }
   };
 
   // Create database user item
-  const handleCreateUser = (username: string, pass: string) => {
+  const handleCreateUser = async (username: string, pass: string) => {
     const sanitizedUser = username.trim().toLowerCase().replace(/[^a-z0-9_]/g, "");
     if (!sanitizedUser) return false;
 
     if (dbUsers.some(user => user.username === sanitizedUser)) {
-      alert(`MySQL user 'niloy_${sanitizedUser}' already exists.`);
+      alert(`${engineLabel} user '${displayPrefix}${sanitizedUser}' already exists.`);
       return false;
     }
-
-    const newUser: DatabaseUser = {
-      username: sanitizedUser,
-      databases: [],
-      privileges: {}
-    };
-
-    setDbUsers(prev => [...prev, newUser]);
-    addActivity("db", `Created database user credential: niloy_${sanitizedUser}`);
-    return true;
+    try {
+      await postDbAction("/api/user/database-users", { username: sanitizedUser, password: pass });
+      setDbStatus(`${engineLabel} user ${displayPrefix}${sanitizedUser} created.`);
+      addActivity("db", `Created ${engineLabel} user: ${displayPrefix}${sanitizedUser}`);
+      return true;
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Unable to create database user.");
+      return false;
+    }
   };
 
   // Map user permissions with customized privileges
-  const handleSaveUserMapping = (username: string, dbName: string, privsList: string[]) => {
-    setDbUsers(prev => prev.map(user => {
-      if (user.username === username) {
-        const alreadyLinked = user.databases.includes(dbName);
-        const nextLinkedDbs = alreadyLinked ? user.databases : [...user.databases, dbName];
-        const nextPrivs = {
-          ...(user.privileges || {}),
-          [dbName]: privsList
-        };
-        return {
-          ...user,
-          databases: nextLinkedDbs,
-          privileges: nextPrivs
-        };
-      }
-      return user;
-    }));
-
-    addActivity("db", `Configured niloy_${username} mapped to niloy_${dbName} with ${privsList.length} privileges.`);
-    return true;
+  const handleSaveUserMapping = async (username: string, dbName: string, privsList: string[]) => {
+    try {
+      await postDbAction("/api/user/database-grants", { username, database: dbName, privileges: privsList });
+      addActivity("db", `Configured ${displayPrefix}${username} mapped to ${displayPrefix}${dbName} with ${privsList.length} privileges.`);
+      setDbStatus(`${engineLabel} privileges saved for ${displayPrefix}${username}.`);
+      return true;
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Unable to map database user.");
+      return false;
+    }
   };
 
   // Delete User database link
-  const handleUnmapUserDb = (username: string, dbName: string) => {
-    if (!confirm(`Are you sure you want to revoke niloy_${username}'s access from database niloy_${dbName}?`)) return;
-    setDbUsers(prev => prev.map(user => {
-      if (user.username === username) {
-        return {
-          ...user,
-          databases: user.databases.filter(d => d !== dbName),
-          privileges: {
-            ...(user.privileges || {}),
-            [dbName]: []
-          }
-        };
-      }
-      return user;
-    }));
-    addActivity("db", `Revoked access of user niloy_${username} from niloy_${dbName}`);
+  const handleUnmapUserDb = async (username: string, dbName: string) => {
+    if (!confirm(`Are you sure you want to revoke ${fullUserName(username)} access from database ${fullDbName(dbName)}?`)) return;
+    try {
+      await postDbAction(`/api/user/database-grants/${selectedEngine}/${encodeURIComponent(username)}/${encodeURIComponent(dbName)}`, {}, "DELETE");
+      addActivity("db", `Revoked access of user ${fullUserName(username)} from ${fullDbName(dbName)}`);
+      setDbStatus(`${engineLabel} access revoked for ${fullUserName(username)}.`);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Unable to revoke database access.");
+    }
   };
 
   // Rename database
@@ -373,39 +443,54 @@ export default function DatabaseManager({
   };
 
   // Delete Database
-  const handleDeleteDb = (dbId: string, name: string) => {
-    if (!confirm(`CRITICAL: Drop database 'niloy_${name}'? This action is IRREVERSIBLE and will wipe all ${databases.find(d => d.id === dbId)?.tables.length} structures.`)) return;
-    setDatabases(prev => prev.filter(db => db.id !== dbId));
-    
-    // Cascade removal in linked users list
-    setDbUsers(prev => prev.map(user => ({
-      ...user,
-      databases: user.databases.filter(d => d !== name),
-      privileges: user.privileges ? (() => {
-        const next = { ...user.privileges };
-        delete next[name];
-        return next;
-      })() : undefined
-    })));
-
-    addActivity("db", `Dropped database: niloy_${name}`);
-    if (selectedDbId === dbId) {
-      setSelectedDbId(databases[0]?.id || "");
+  const handleDeleteDb = async (dbId: string, name: string) => {
+    if (!confirm(`CRITICAL: Drop database '${fullDbName(name)}'? This action is irreversible.`)) return;
+    try {
+      await postDbAction(`/api/user/databases/${selectedEngine}/${encodeURIComponent(name)}`, {}, "DELETE");
+      addActivity("db", `Dropped database: ${fullDbName(name)}`);
+      setDbStatus(`${engineLabel} database ${fullDbName(name)} deleted.`);
+      if (selectedDbId === dbId) {
+        setSelectedDbId(databases.find((db) => db.id !== dbId)?.id || "");
+      }
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Unable to delete database.");
     }
   };
 
   // Delete User account
-  const handleDeleteUser = (username: string) => {
-    if (!confirm(`Terminate database user account 'niloy_${username}'?`)) return;
-    setDbUsers(prev => prev.filter(user => user.username !== username));
-    addActivity("db", `Terminated DB user account niloy_${username}`);
+  const handleDeleteUser = async (username: string) => {
+    if (!confirm(`Terminate database user account '${fullUserName(username)}'?`)) return;
+    try {
+      await postDbAction(`/api/user/database-users/${selectedEngine}/${encodeURIComponent(username)}`, {}, "DELETE");
+      addActivity("db", `Terminated DB user account ${fullUserName(username)}`);
+      setDbStatus(`${engineLabel} user ${fullUserName(username)} deleted.`);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Unable to delete database user.");
+    }
+  };
+
+  const handleChangeUserPassword = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!passwordUserToChange || !changeUserPassword.trim()) return;
+    try {
+      await postDbAction(`/api/user/database-users/${selectedEngine}/${encodeURIComponent(passwordUserToChange)}/password`, {
+        password: changeUserPassword
+      });
+      addActivity("db", `Changed password for ${engineLabel} user ${fullUserName(passwordUserToChange)}`);
+      setDbStatus(`${engineLabel} password updated for ${fullUserName(passwordUserToChange)}.`);
+      setPasswordUserToChange(null);
+      setChangeUserPassword("");
+      setChangePasswordShow(false);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Unable to change database user password.");
+    }
   };
 
   // Check / Repair DB Simulator logger
   const runDbCheckOrRepair = (type: "check" | "repair", dbName: string) => {
     setOpModalType(type);
     setOpDbTarget(dbName);
-    setOpLogs([`Reading database file nodes: \`mysql://niloy_${dbName}\`...`]);
+    setOpLogs([`Reading database file nodes: \`${selectedEngine}://${fullDbName(dbName)}\`...`]);
     
     setTimeout(() => {
       setOpLogs(prev => [...prev, "Querying schema validation matrices..."]);
@@ -417,7 +502,7 @@ export default function DatabaseManager({
         }
 
         const details = db.tables.map(t => {
-          return `Table \`niloy_${dbName}\`.\`${t.name}\`: status is OK. (${t.rows.length} rows verified)`;
+          return `Table \`${fullDbName(dbName)}\`.\`${t.name}\`: status is OK. (${t.rows.length} rows verified)`;
         });
 
         if (type === "check") {
@@ -448,21 +533,21 @@ export default function DatabaseManager({
   };
 
   // Exec direct wizard flow Step action
-  const handleWizardSubmit = (e: FormEvent) => {
+  const handleWizardSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (wizardStep === 1) {
       if (!wizardDbName.trim()) return;
-      const ok = handleCreateDb(wizardDbName, true);
+      const ok = await handleCreateDb(wizardDbName, true);
       if (ok) setWizardStep(2);
     } else if (wizardStep === 2) {
       if (!wizardUsername.trim() || !wizardPassword.trim()) return;
-      const ok = handleCreateUser(wizardUsername, wizardPassword);
+      const ok = await handleCreateUser(wizardUsername, wizardPassword);
       if (ok) setWizardStep(3);
     } else if (wizardStep === 3) {
       const dbSfx = wizardDbName.trim().toLowerCase().replace(/[^a-z0-9_]/g, "");
       const usSfx = wizardUsername.trim().toLowerCase().replace(/[^a-z0-9_]/g, "");
-      handleSaveUserMapping(usSfx, dbSfx, wizardPrivs);
-      setWizardStep(4);
+      const ok = await handleSaveUserMapping(usSfx, dbSfx, wizardPrivs);
+      if (ok) setWizardStep(4);
     }
   };
 
@@ -729,34 +814,64 @@ export default function DatabaseManager({
         <div>
           <h2 className="text-xl font-extrabold text-slate-100 flex items-center gap-2.5">
             <Database className="w-6 h-6 text-emerald-400 drop-shadow-[0_0_10px_rgba(52,211,153,0.3)]" />
-            MySQL Relational Databases Engine
+            {engineLabel} Databases Engine
           </h2>
-          <p className="text-slate-400 text-xs mt-1">Configure full-stack schemas, configure users, assign privileges, and audit with customized phpMyAdmin panel.</p>
+          <p className="text-slate-400 text-xs mt-1">Real schemas, users, grants, passwords, and usage are managed directly on this tPanel server.</p>
+          {dbStatus && (
+            <p className="text-[11px] text-emerald-300 mt-2 flex items-center gap-1.5">
+              <RefreshCw className={`w-3.5 h-3.5 ${isDbBusy ? "animate-spin" : ""}`} />
+              {dbStatus}
+            </p>
+          )}
         </div>
 
-        {/* Tab Selection */}
-        <div className="flex bg-slate-950 p-1 border border-slate-800 rounded-xl max-w-full">
-          {[
-            { id: "overview", label: "MySQL Databases", icon: Settings2 },
-            { id: "wizard", label: "Database Wizard", icon: Sliders }
-          ].map(tab => {
-            const ActiveIcon = tab.icon;
-            const isActive = activeTab === tab.id;
-            return (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id as any)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold uppercase tracking-wider transition-all duration-200 cursor-pointer ${
-                  isActive 
-                    ? "bg-emerald-505 bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-md shadow-emerald-900/40"
-                    : "text-slate-400 hover:text-slate-200 hover:bg-slate-900/80"
-                }`}
-              >
-                <ActiveIcon className="w-3.5 h-3.5" />
-                <span>{tab.label}</span>
-              </button>
-            );
-          })}
+        <div className="flex flex-col sm:flex-row gap-2 max-w-full">
+          <div className="flex bg-slate-950 p-1 border border-slate-800 rounded-xl max-w-full">
+            {[
+              { id: "mysql", label: "MySQL" },
+              { id: "postgresql", label: "PostgreSQL" }
+            ].map(engine => {
+              const isActive = selectedEngine === engine.id;
+              return (
+                <button
+                  key={engine.id}
+                  onClick={() => setSelectedEngine(engine.id as "mysql" | "postgresql")}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold uppercase tracking-wider transition-all duration-200 cursor-pointer ${
+                    isActive
+                      ? "bg-slate-100 text-slate-950"
+                      : "text-slate-400 hover:text-slate-200 hover:bg-slate-900/80"
+                  }`}
+                >
+                  {engine.label}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Tab Selection */}
+          <div className="flex bg-slate-950 p-1 border border-slate-800 rounded-xl max-w-full">
+            {[
+              { id: "overview", label: `${engineLabel} Databases`, icon: Settings2 },
+              { id: "wizard", label: "Database Wizard", icon: Sliders }
+            ].map(tab => {
+              const ActiveIcon = tab.icon;
+              const isActive = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id as any)}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold uppercase tracking-wider transition-all duration-200 cursor-pointer ${
+                    isActive
+                      ? "bg-emerald-505 bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-md shadow-emerald-900/40"
+                      : "text-slate-400 hover:text-slate-200 hover:bg-slate-900/80"
+                  }`}
+                >
+                  <ActiveIcon className="w-3.5 h-3.5" />
+                  <span>{tab.label}</span>
+                </button>
+              );
+            })}
+          </div>
         </div>
       </div>
 
@@ -778,11 +893,11 @@ export default function DatabaseManager({
                 <h3 className="text-xs font-bold text-slate-205 tracking-widest uppercase font-mono">Create New Database</h3>
               </div>
               
-              <form onSubmit={(e) => { e.preventDefault(); handleCreateDb(newDbName); setNewDbName(""); }} className="space-y-4 text-xs font-mono">
+              <form onSubmit={async (e) => { e.preventDefault(); const ok = await handleCreateDb(newDbName); if (ok) setNewDbName(""); }} className="space-y-4 text-xs font-mono">
                 <div className="space-y-1.5">
                   <label className="text-[10px] text-slate-500 font-bold block uppercase font-sans">Database Name</label>
                   <div className="flex items-center bg-slate-950 border border-slate-800 focus-within:border-emerald-500 rounded-xl overflow-hidden transition">
-                    <span className="bg-slate-900 px-3 py-2 text-slate-500 font-medium">niloy_</span>
+                    <span className="bg-slate-900 px-3 py-2 text-slate-500 font-medium">{displayPrefix}</span>
                     <input 
                       type="text"
                       required
@@ -795,6 +910,7 @@ export default function DatabaseManager({
                 </div>
                 <button
                   type="submit"
+                  disabled={isDbBusy}
                   className="w-full py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl font-bold transition duration-200 flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-emerald-950/40 text-xs"
                 >
                   <Plus className="w-4 h-4" />
@@ -812,11 +928,11 @@ export default function DatabaseManager({
                 <h3 className="text-xs font-bold text-slate-205 tracking-widest uppercase font-mono">Add New User</h3>
               </div>
 
-              <form onSubmit={(e) => { e.preventDefault(); handleCreateUser(newUsername, newUserPass); setNewUsername(""); setNewUserPass(""); }} className="space-y-4 text-xs font-mono">
+              <form onSubmit={async (e) => { e.preventDefault(); const ok = await handleCreateUser(newUsername, newUserPass); if (ok) { setNewUsername(""); setNewUserPass(""); } }} className="space-y-4 text-xs font-mono">
                 <div className="space-y-1.5">
                   <label className="text-[10px] text-slate-500 font-bold block uppercase font-sans">Username</label>
                   <div className="flex items-center bg-slate-950 border border-slate-800 focus-within:border-emerald-500 rounded-xl overflow-hidden transition">
-                    <span className="bg-slate-900 px-3 py-2 text-slate-500 font-medium font-mono">niloy_</span>
+                    <span className="bg-slate-900 px-3 py-2 text-slate-500 font-medium font-mono">{displayPrefix}</span>
                     <input 
                       type="text"
                       required
@@ -877,10 +993,11 @@ export default function DatabaseManager({
 
                 <button
                   type="submit"
+                  disabled={isDbBusy}
                   className="w-full py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl font-bold transition duration-200 flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-emerald-950/40 text-xs"
                 >
                   <UserPlus className="w-4 h-4" />
-                  Create MySQL User
+                  Create {engineLabel} User
                 </button>
               </form>
             </div>
@@ -905,7 +1022,7 @@ export default function DatabaseManager({
                         className="w-full px-2.5 py-2 bg-slate-950 border border-slate-800 rounded-xl focus:border-emerald-500 text-slate-300 font-mono text-xs focus:outline-none"
                       >
                         {dbUsers.map(user => (
-                          <option key={user.username} value={user.username}>niloy_{user.username}</option>
+                          <option key={user.username} value={user.username}>{fullUserName(user.username)}</option>
                         ))}
                       </select>
                     </div>
@@ -918,7 +1035,7 @@ export default function DatabaseManager({
                         className="w-full px-2.5 py-2 bg-slate-950 border border-slate-800 rounded-xl focus:border-emerald-500 text-slate-300 font-mono text-xs focus:outline-none"
                       >
                         {databases.map(db => (
-                          <option key={db.name} value={db.name}>niloy_{db.name}</option>
+                          <option key={db.name} value={db.name}>{fullDbName(db.name)}</option>
                         ))}
                       </select>
                     </div>
@@ -957,7 +1074,7 @@ export default function DatabaseManager({
                       className="w-full px-2.5 py-2 bg-slate-950 border border-slate-800 rounded-xl focus:border-emerald-500 text-slate-300 font-mono text-xs focus:outline-none"
                     >
                       {databases.map(db => (
-                        <option key={db.name} value={db.name}>niloy_{db.name}</option>
+                        <option key={db.name} value={db.name}>{fullDbName(db.name)}</option>
                       ))}
                     </select>
                   </div>
@@ -1002,7 +1119,7 @@ export default function DatabaseManager({
               <div className="flex justify-between items-center mb-4 border-b border-slate-850 pb-3">
                 <div className="flex items-center gap-2">
                   <Database className="w-5 h-5 text-emerald-400" />
-                  <h3 className="text-sm font-bold text-slate-200">Current MySQL Databases</h3>
+                  <h3 className="text-sm font-bold text-slate-200">Current {engineLabel} Databases</h3>
                 </div>
                 <span className="text-[10px] font-mono bg-emerald-500/10 text-emerald-400 px-2 py-0.5 rounded-full border border-emerald-500/20 font-bold">
                   {databases.length} Registered
@@ -1027,7 +1144,7 @@ export default function DatabaseManager({
                         return (
                           <tr key={db.id || idx} className="hover:bg-slate-900/30 transition-colors">
                             <td className="p-3.5 font-bold text-slate-100">
-                              niloy_{db.name}
+                              {fullDbName(db.name)}
                             </td>
                             <td className="p-3.5 text-center text-emerald-400 font-semibold">
                               {(db.sizeMB).toFixed(2)} MB
@@ -1045,7 +1162,7 @@ export default function DatabaseManager({
                                         setMappedPrivileges(user.privileges?.[db.name] || TPANEL_PRIVILEGES);
                                       }}
                                     >
-                                      <span className="font-mono text-[10px]">niloy_{user.username}</span>
+                                      <span className="font-mono text-[10px]">{fullUserName(user.username)}</span>
                                       <button 
                                         type="button"
                                         onClick={(e) => { e.stopPropagation(); handleUnmapUserDb(user.username, db.name); }}
@@ -1064,12 +1181,6 @@ export default function DatabaseManager({
                             <td className="p-3.5 text-right">
                               <div className="flex justify-end gap-1.5">
                                 <button
-                                  onClick={() => { setDbToRename(db); setRenameNewName(db.name); }}
-                                  className="px-2 py-1 text-[10px] uppercase font-bold tracking-wider text-slate-300 hover:text-slate-100 bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 rounded-lg transition"
-                                >
-                                  Rename
-                                </button>
-                                <button
                                   onClick={() => handleDeleteDb(db.id, db.name)}
                                   className="p-1 px-1.5 text-slate-400 hover:text-rose-400 bg-slate-900 hover:bg-rose-500/5 hover:border-rose-500/10 border border-slate-800 rounded-lg transition"
                                   title="Drop database"
@@ -1086,7 +1197,7 @@ export default function DatabaseManager({
                 </div>
               ) : (
                 <div className="text-center py-10 bg-slate-950 border border-slate-850 rounded-xl text-slate-500 text-xs">
-                  No active MySQL databases created. Start by typing a name to the left or use the step-by-step Wizard!
+                  No active {engineLabel} databases created. Start by typing a name to the left or use the step-by-step Wizard.
                 </div>
               )}
             </div>
@@ -1108,7 +1219,7 @@ export default function DatabaseManager({
                   <table className="w-full text-left font-mono text-[11px] border-collapse">
                     <thead>
                       <tr className="bg-slate-900 border-b border-slate-850 text-slate-400 font-bold uppercase tracking-wider text-[10px]">
-                        <th className="p-3.5">MySQL Username Access</th>
+                        <th className="p-3.5">{engineLabel} Username Access</th>
                         <th className="p-3.5">Mapped Directories &amp; Roles</th>
                         <th className="p-3.5 text-right">Actions</th>
                       </tr>
@@ -1118,14 +1229,14 @@ export default function DatabaseManager({
                         <tr key={uidx} className="hover:bg-slate-900/30 transition-all">
                           <td className="p-3.5 font-bold text-slate-100 flex items-center gap-1.5">
                             <Lock className="w-3.5 h-3.5 text-emerald-400/80" />
-                            niloy_{user.username}
+                            {fullUserName(user.username)}
                           </td>
                           <td className="p-3.5 font-sans">
                             {user.databases.length > 0 ? (
                               <div className="flex flex-wrap gap-1.5">
                                 {user.databases.map(db => (
                                   <span key={db} className="px-2 py-0.5 bg-slate-900 border border-slate-800 text-slate-300 rounded text-[10px] font-mono">
-                                    niloy_{db}
+                                    {fullDbName(db)}
                                   </span>
                                 ))}
                               </div>
@@ -1136,10 +1247,10 @@ export default function DatabaseManager({
                           <td className="p-3.5 text-right">
                             <div className="flex justify-end gap-1.5">
                               <button
-                                onClick={() => { setDbUserToRename(user.username); setRenameUserNewName(user.username); }}
+                                onClick={() => { setPasswordUserToChange(user.username); setChangeUserPassword(""); }}
                                 className="px-2 py-1 text-[10px] uppercase font-bold tracking-wider text-slate-300 hover:text-slate-100 bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 rounded-lg transition"
                               >
-                                Rename
+                                Password
                               </button>
                               <button
                                 onClick={() => handleDeleteUser(user.username)}
@@ -1175,7 +1286,7 @@ export default function DatabaseManager({
           <div className="bg-slate-900 border-b border-slate-800 p-5-5 px-6 py-5 flex flex-col md:flex-row justify-between items-center gap-4">
             <div className="space-y-0.5">
               <span className="text-[9.5px] font-mono text-emerald-450 tracking-widest uppercase font-bold">Guided Setup</span>
-              <h3 className="text-md font-extrabold text-slate-200">tPanel MySQL Database Wizard v3.5</h3>
+              <h3 className="text-md font-extrabold text-slate-200">tPanel {engineLabel} Database Wizard</h3>
             </div>
             
             {/* Steps indicator nodes */}
@@ -1211,14 +1322,14 @@ export default function DatabaseManager({
                     <Info className="w-6 h-6 text-emerald-400 shrink-0 mt-0.5" />
                     <div>
                       <p className="font-extrabold text-[#f1f5f9] mb-1">Step 1: Define Database Name</p>
-                      <p>The database holds all relational structures (tables, indices). tPanel automatically prefixes all instances with your primary account ID (<strong className="text-emerald-400">niloy_</strong>).</p>
+                      <p>The database holds relational structures. tPanel automatically prefixes all instances with your account namespace (<strong className="text-emerald-400">{displayPrefix}</strong>).</p>
                     </div>
                   </div>
 
                   <div className="space-y-1.5 font-mono text-xs">
                     <label className="text-[10px] text-slate-450 uppercase block font-sans font-bold">Database Name (suffix)</label>
                     <div className="flex items-center bg-slate-950 border border-slate-800 focus-within:border-emerald-500 rounded-xl overflow-hidden">
-                      <span className="bg-slate-900 px-4 py-2.5 font-bold text-slate-550 border-r border-slate-850">niloy_</span>
+                      <span className="bg-slate-900 px-4 py-2.5 font-bold text-slate-550 border-r border-slate-850">{displayPrefix}</span>
                       <input 
                         type="text" 
                         required
@@ -1257,7 +1368,7 @@ export default function DatabaseManager({
                     <div className="space-y-1.5">
                       <label className="text-[10px] text-slate-450 uppercase block font-sans font-bold">Username</label>
                       <div className="flex items-center bg-slate-950 border border-slate-800 focus-within:border-emerald-500 rounded-xl overflow-hidden">
-                        <span className="bg-slate-900 px-4 py-2.5 font-bold text-slate-550 border-r border-slate-850">niloy_</span>
+                        <span className="bg-slate-900 px-4 py-2.5 font-bold text-slate-550 border-r border-slate-850">{displayPrefix}</span>
                         <input 
                           type="text" 
                           required
@@ -1345,7 +1456,7 @@ export default function DatabaseManager({
                       <Shield className="w-5 h-5 text-emerald-400 shrink-0" />
                       <div>
                         <p className="font-bold text-[#f1f5f9]">Step 3: Define Privileges Mapping</p>
-                        <p className="text-[11px] text-slate-400">Add user <strong className="text-emerald-400">niloy_{wizardUsername}</strong> permissions on <strong className="text-emerald-400">niloy_{wizardDbName}</strong> database schema.</p>
+                        <p className="text-[11px] text-slate-400">Add user <strong className="text-emerald-400">{fullUserName(wizardUsername)}</strong> permissions on <strong className="text-emerald-400">{fullDbName(wizardDbName)}</strong> database schema.</p>
                       </div>
                     </div>
                   </div>
@@ -1428,7 +1539,7 @@ export default function DatabaseManager({
                       <ShieldCheck className="w-7 h-7" />
                     </div>
                     <div className="space-y-1">
-                      <h4 className="text-base font-extrabold text-slate-100">MySQL Database Configuration Completed!</h4>
+                      <h4 className="text-base font-extrabold text-slate-100">{engineLabel} Database Configuration Completed!</h4>
                       <p className="text-slate-400 text-xs">tPanel Daemon successfully mapped authentication matrices.</p>
                     </div>
                   </div>
@@ -1437,11 +1548,11 @@ export default function DatabaseManager({
                   <div className="bg-slate-950 border border-slate-850 rounded-2xl p-4.5 space-y-3 font-mono text-xs">
                     <div className="flex items-center gap-2.5 text-slate-205">
                       <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                      <span>Database schema <strong className="text-emerald-400 font-bold">niloy_{wizardDbName}</strong> created.</span>
+                      <span>Database schema <strong className="text-emerald-400 font-bold">{fullDbName(wizardDbName)}</strong> created.</span>
                     </div>
                     <div className="flex items-center gap-2.5 text-slate-205">
                       <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                      <span>Database login user <strong className="text-emerald-400 font-bold">niloy_{wizardUsername}</strong> verified.</span>
+                      <span>Database login user <strong className="text-emerald-400 font-bold">{fullUserName(wizardUsername)}</strong> verified.</span>
                     </div>
                     <div className="flex items-center gap-2.5 text-slate-205">
                       <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
@@ -1805,7 +1916,7 @@ export default function DatabaseManager({
                 <span className="text-[10px] text-emerald-450 font-mono uppercase tracking-widest font-bold">Manage Privileges</span>
                 <h4 className="text-sm font-bold text-slate-100 flex items-center gap-1.5 font-sans">
                   <ShieldCheck className="text-emerald-400 w-5 h-5 animate-pulse" />
-                  Grant niloy_{editPrivsUser || mapUser} Access to niloy_{editPrivsDb || mapDb}
+                  Grant {fullUserName(editPrivsUser || mapUser)} Access to {fullDbName(editPrivsDb || mapDb)}
                 </h4>
               </div>
               <button 
@@ -1818,7 +1929,7 @@ export default function DatabaseManager({
 
             {/* Privileges checklist selectors */}
             <div className="flex justify-between items-center bg-slate-950 p-2.5 rounded-xl text-xs">
-              <span className="font-sans font-extrabold text-slate-400 tracking-wider">MYSQL DATA PRIVILEGES</span>
+              <span className="font-sans font-extrabold text-slate-400 tracking-wider">{engineLabel.toUpperCase()} DATA PRIVILEGES</span>
               <button
                 type="button"
                 onClick={() => {
@@ -1872,12 +1983,14 @@ export default function DatabaseManager({
                 Cancel
               </button>
               <button
-                onClick={() => {
+                onClick={async () => {
                   const u = editPrivsUser || mapUser;
                   const d = editPrivsDb || mapDb;
-                  handleSaveUserMapping(u, d, mappedPrivileges);
-                  setIsMappingPrivilegesMode(false);
-                  setEditPrivsUser("");
+                  const ok = await handleSaveUserMapping(u, d, mappedPrivileges);
+                  if (ok) {
+                    setIsMappingPrivilegesMode(false);
+                    setEditPrivsUser("");
+                  }
                 }}
                 className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition cursor-pointer"
               >
@@ -1886,6 +1999,56 @@ export default function DatabaseManager({
             </div>
 
           </div>
+        </div>
+      )}
+
+      {/* DATABASE USER PASSWORD MODAL */}
+      {passwordUserToChange && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <form onSubmit={handleChangeUserPassword} className="bg-slate-900 border border-slate-800 rounded-2xl p-5 w-full max-w-sm shadow-2xl space-y-4 text-xs">
+            <h4 className="text-sm font-bold text-slate-100 flex items-center gap-1.5 border-b border-slate-800 pb-2">
+              <Lock className="w-5 h-5 text-emerald-400" />
+              Change Password: {fullUserName(passwordUserToChange)}
+            </h4>
+
+            <div className="space-y-1.5">
+              <label className="text-[10px] text-slate-500 uppercase font-bold block">New Password</label>
+              <div className="relative">
+                <input
+                  type={changePasswordShow ? "text" : "password"}
+                  required
+                  minLength={8}
+                  value={changeUserPassword}
+                  onChange={(e) => setChangeUserPassword(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 focus:border-emerald-500 px-3 py-2 rounded-xl text-slate-200 pr-10 focus:outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => setChangePasswordShow((value) => !value)}
+                  className="absolute right-3 top-2 text-slate-500 hover:text-slate-300"
+                >
+                  {changePasswordShow ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 border-t border-slate-800 pt-3">
+              <button
+                type="button"
+                onClick={() => { setPasswordUserToChange(null); setChangeUserPassword(""); }}
+                className="px-3.5 py-1.5 hover:bg-slate-800 text-slate-400 rounded-xl transition"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={isDbBusy}
+                className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl transition disabled:opacity-60"
+              >
+                Save Password
+              </button>
+            </div>
+          </form>
         </div>
       )}
 

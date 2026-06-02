@@ -36,6 +36,16 @@ interface TPanelExtraManagerProps {
   onAccountUpdate?: (account: any) => void;
 }
 
+interface SshAccessInfo {
+  username: string;
+  host: string;
+  port: number;
+  homeDirectory: string;
+  command: string;
+  passwordSet: boolean;
+  keys: string[];
+}
+
 export default function TPanelExtraManager({ activeTab, domains, setDomains, addActivity, account, onAccountUpdate }: TPanelExtraManagerProps) {
   // PERSISTED STATES
   const getPersisted = <T,>(key: string, def: T): T => {
@@ -112,8 +122,11 @@ export default function TPanelExtraManager({ activeTab, domains, setDomains, add
   const [newBlockedIP, setNewBlockedIP] = useState("");
 
   // 9. SSH key manager
-  const [sshActiveKey, setSshActiveKey] = useState("ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC11...");
+  const [sshInfo, setSshInfo] = useState<SshAccessInfo | null>(null);
+  const [sshStatus, setSshStatus] = useState("");
+  const [isSshBusy, setIsSshBusy] = useState(false);
   const [newSshKey, setNewSshKey] = useState("");
+  const [newSshPassword, setNewSshPassword] = useState("");
 
   // 10. Live Visitors & Bandwidth Stats
   const [visitorTraffic, setVisitorTraffic] = useState(() => {
@@ -192,11 +205,12 @@ export default function TPanelExtraManager({ activeTab, domains, setDomains, add
 
   // 15. Terminal Simulator state
   const [terminalLogs, setTerminalLogs] = useState<string[]>(() => [
-    "tPanel Cloud Shell Console initialized successfully.",
-    "Type 'help' to render all server commands.",
-    "root@tpanel.pro:~# "
+    "tPanel account shell initializes commands inside your hosting home.",
+    "Type a Linux command and press Enter.",
+    "account@tpanel:~$ "
   ]);
   const [terminalInputText, setTerminalInputText] = useState("");
+  const [isTerminalRunning, setIsTerminalRunning] = useState(false);
   const terminalBottomRef = useRef<HTMLDivElement>(null);
 
   // Sync state modifications to disk persistence
@@ -222,6 +236,55 @@ export default function TPanelExtraManager({ activeTab, domains, setDomains, add
       return JSON.parse(localStorage.getItem("tpanel_auth") || "null")?.token || "";
     } catch {
       return "";
+    }
+  };
+
+  const shellPrompt = (info = sshInfo) => `${info?.username || account?.username || "account"}@tpanel:~$`;
+
+  const terminalBanner = (info: SshAccessInfo | null) => [
+    info
+      ? `Real shell ready for ${info.username}.`
+      : "tPanel account shell initializes commands inside your hosting home.",
+    info?.homeDirectory ? `Home: ${info.homeDirectory}` : "Commands are limited to the current hosting account.",
+    `${shellPrompt(info)} `
+  ];
+
+  const loadSshAccess = async (resetTerminal = false) => {
+    const token = authToken();
+    if (!token) return;
+    setIsSshBusy(true);
+    setSshStatus("Loading real shell access...");
+    try {
+      const response = await fetch("/api/user/ssh-access", {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.ok) throw new Error(data.message || "Shell access is not available for this account.");
+      const info: SshAccessInfo = {
+        username: data.username,
+        host: data.host,
+        port: Number(data.port || 22),
+        homeDirectory: data.homeDirectory,
+        command: data.command,
+        passwordSet: Boolean(data.passwordSet),
+        keys: Array.isArray(data.keys) ? data.keys : []
+      };
+      setSshInfo(info);
+      setSshStatus(`Shell is active for ${info.username}.`);
+      if (resetTerminal) setTerminalLogs(terminalBanner(info));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Shell access is not available.";
+      setSshInfo(null);
+      setSshStatus(message);
+      if (resetTerminal) {
+        setTerminalLogs([
+          message,
+          "Ask the administrator to enable Shell access or upgrade the tPanel package.",
+          `${shellPrompt(null)} `
+        ]);
+      }
+    } finally {
+      setIsSshBusy(false);
     }
   };
 
@@ -362,6 +425,11 @@ export default function TPanelExtraManager({ activeTab, domains, setDomains, add
   useEffect(() => {
     if (activeTab !== "nodeselector") return;
     loadNodeSettings().catch((error) => setNodeStatusMessage(error instanceof Error ? error.message : "Unable to load Node.js settings."));
+  }, [activeTab, account?.username]);
+
+  useEffect(() => {
+    if (activeTab !== "ssh" && activeTab !== "terminal") return;
+    loadSshAccess(activeTab === "terminal").catch(() => undefined);
   }, [activeTab, account?.username]);
 
   // Terminal scroll helper
@@ -538,12 +606,67 @@ export default function TPanelExtraManager({ activeTab, domains, setDomains, add
   };
 
   // SSH Key install
-  const handleInstallSsh = (e: FormEvent) => {
+  const handleInstallSsh = async (e: FormEvent) => {
     e.preventDefault();
     if (!newSshKey.trim()) return;
-    setSshActiveKey(newSshKey);
-    addActivity("ssl", "SSH deployment authorized key keys successfully updated");
-    setNewSshKey("");
+    const token = authToken();
+    if (!token) {
+      setSshStatus("User session expired. Log in again.");
+      return;
+    }
+    setIsSshBusy(true);
+    setSshStatus("Installing authorized SSH key...");
+    try {
+      const response = await fetch("/api/user/ssh-keys", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ publicKey: newSshKey })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.ok) throw new Error(data.message || "Unable to install SSH key.");
+      addActivity("ssl", "SSH authorized key updated for hosting account shell");
+      setNewSshKey("");
+      await loadSshAccess();
+    } catch (error) {
+      setSshStatus(error instanceof Error ? error.message : "Unable to install SSH key.");
+    } finally {
+      setIsSshBusy(false);
+    }
+  };
+
+  const handleSetSshPassword = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!newSshPassword.trim()) return;
+    const token = authToken();
+    if (!token) {
+      setSshStatus("User session expired. Log in again.");
+      return;
+    }
+    setIsSshBusy(true);
+    setSshStatus("Updating SSH password...");
+    try {
+      const response = await fetch("/api/user/ssh-password", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ password: newSshPassword })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.ok) throw new Error(data.message || "Unable to update SSH password.");
+      if (data.account && onAccountUpdate) onAccountUpdate(data.account);
+      setNewSshPassword("");
+      addActivity("ssl", "SSH password updated for hosting account shell");
+      await loadSshAccess();
+    } catch (error) {
+      setSshStatus(error instanceof Error ? error.message : "Unable to update SSH password.");
+    } finally {
+      setIsSshBusy(false);
+    }
   };
 
   // Let's Encrypt Certificate installation
@@ -595,78 +718,47 @@ export default function TPanelExtraManager({ activeTab, domains, setDomains, add
     setNewCronCommand("");
   };
 
-  // Interactive Terminal Parser
-  const runTerminalCommand = (e: FormEvent) => {
+  // Interactive account terminal runner
+  const runTerminalCommand = async (e: FormEvent) => {
     e.preventDefault();
     const cmd = terminalInputText.trim();
     if (!cmd) return;
-
-    let res: string[] = [`root@tpanel.pro:~# ${cmd}`];
-    const parts = cmd.toLowerCase().split(" ");
-    const primary = parts[0];
-
-    switch (primary) {
-      case "help":
-        res.push(
-          "Available terminal core scripts :",
-          "  neofetch       Displays tPanel Host specs & logo",
-          "  nodejs -v      Verify active node instance",
-          "  postgresql     Verify postgres running server status",
-          "  neostat        List memory allocation telemetry",
-          "  ping [host]    Ping host server latency tracer",
-          "  whoami         View currently authorized username",
-          "  clear          Clears console logs trace",
-          "  uptime         Display server running uptime hours"
-        );
-        break;
-      case "neofetch":
-        res.push(
-          "  /\x1b[35m_\\ \x1b[0mtPanel Pro System Core v3.2",
-          " / \\_\\ OS: Ubuntu 24.04 LTS (x86_64)",
-          " \\_/ / Kernel: Linux 6.1.0-cloud-amd64",
-          "  \\_/  Uptime: 12 days, 4 hours, 12 mins",
-          "       Shell: bash / tPanel Interactive SSH",
-          "       Memory: 1.2 GB / 8 GB (15%)",
-          "       CPU: Intel Xeon Cascade Lake (2 cores)"
-        );
-        break;
-      case "nodejs":
-      case "node":
-        res.push("v20.11.0 (LTS Active Thread)");
-        break;
-      case "postgresql":
-      case "postgres":
-        res.push("postgresql.service - PostgreSQL 16 Relational Server", "   Active: active (running) since Wed 2026-05-18 09:20; 3 days ago");
-        break;
-      case "neostat":
-        res.push("Current RAM: 1.20 GB Used, 6.80 GB Available. Active PIDs: 12");
-        break;
-      case "ping":
-        const host = parts[1] || "google.com";
-        res.push(
-          `PING ${host} (142.250.190.46) 56(84) bytes of data.`,
-          `64 bytes from ${host}: icmp_seq=1 ttl=118 time=12.4 ms`,
-          `64 bytes from ${host}: icmp_seq=2 ttl=118 time=11.9 ms`,
-          `--- ${host} ping statistics ---`,
-          "2 packets transmitted, 2 received, 0% packet loss, time 1002ms"
-        );
-        break;
-      case "whoami":
-        res.push("root (Primary Host Administrator)");
-        break;
-      case "clear":
-        setTerminalLogs(["Console cleared.", "root@tpanel.pro:~# "]);
-        setTerminalInputText("");
-        return;
-      case "uptime":
-        res.push("up 12 days, 4:12, 1 user, load average: 0.12, 0.08, 0.02");
-        break;
-      default:
-        res.push(`bash: ${primary}: command not registered. Type 'help'.`);
+    if (cmd === "clear") {
+      setTerminalLogs(terminalBanner(sshInfo));
+      setTerminalInputText("");
+      return;
     }
-
-    setTerminalLogs(prev => [...prev, ...res, "root@tpanel.pro:~# "]);
+    const token = authToken();
+    if (!token) {
+      setTerminalLogs(prev => [...prev, "User session expired. Log in again.", `${shellPrompt()} `]);
+      return;
+    }
     setTerminalInputText("");
+    setIsTerminalRunning(true);
+    setTerminalLogs(prev => [...prev, `${shellPrompt()} ${cmd}`]);
+    try {
+      const response = await fetch("/api/user/terminal", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ command: cmd })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.ok) throw new Error(data.message || "Unable to run terminal command.");
+      const output: string[] = [];
+      if (data.stdout) output.push(String(data.stdout).trimEnd());
+      if (data.stderr) output.push(String(data.stderr).trimEnd());
+      if (Number(data.exitCode || 0) !== 0) output.push(`exit code ${data.exitCode}`);
+      if (!output.length) output.push("Done.");
+      setTerminalLogs(prev => [...prev, ...output, `${shellPrompt({ ...(sshInfo || {}), username: data.user || sshInfo?.username } as SshAccessInfo)} `]);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unable to run terminal command.";
+      setTerminalLogs(prev => [...prev, message, `${shellPrompt()} `]);
+    } finally {
+      setIsTerminalRunning(false);
+    }
   };
 
   return (
@@ -1388,44 +1480,116 @@ export default function TPanelExtraManager({ activeTab, domains, setDomains, add
       {activeTab === "ssh" && (
         <div className="space-y-6 animate-fade-in">
           <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6">
-            <div className="flex items-center gap-3 mb-6">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+              <div className="flex items-center gap-3">
               <div className="p-3 bg-indigo-600/10 rounded-xl text-indigo-400">
                 <Terminal className="w-5 h-5" />
               </div>
               <div>
-                <h2 className="text-lg font-bold text-slate-100">SSH Key Security access</h2>
-                <p className="text-xs text-slate-400">Configure public deployment key files to login securely with shell tokens</p>
+                  <h2 className="text-lg font-bold text-slate-100">SSH Shell Access</h2>
+                  <p className="text-xs text-slate-400">Real Linux user access for this hosting account only</p>
+                </div>
               </div>
+              <button
+                onClick={() => loadSshAccess()}
+                disabled={isSshBusy}
+                className="px-3 py-2 bg-slate-950 hover:bg-slate-800 border border-slate-700 rounded-xl text-xs font-bold text-slate-200 flex items-center gap-2 disabled:opacity-60"
+              >
+                <RefreshCw className={`w-4 h-4 ${isSshBusy ? "animate-spin" : ""}`} />
+                Refresh
+              </button>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <form onSubmit={handleInstallSsh} className="space-y-4">
-                <label className="block text-xs font-semibold text-slate-400">Paste Authorized Public SSH Key (.pub file contents)</label>
-                <textarea
-                  value={newSshKey}
-                  onChange={(e) => setNewSshKey(e.target.value)}
-                  rows={4}
-                  placeholder="ssh-rsa AAAAB3NzaC1yc..."
-                  className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs text-slate-100 font-mono focus:outline-none"
-                />
-                <button
-                  type="submit"
-                  className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs px-4 py-2.5 rounded-xl transition-all cursor-pointer"
-                >
-                  Publish Public Key
-                </button>
-              </form>
+            {sshStatus && (
+              <div className={`mb-5 rounded-xl border px-4 py-3 text-xs ${
+                sshInfo ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-300" : "bg-amber-500/10 border-amber-500/20 text-amber-300"
+              }`}>
+                {sshStatus}
+              </div>
+            )}
 
-              <div className="bg-slate-950 border border-slate-700 p-5 rounded-xl text-xs space-y-3">
-                <span className="font-bold text-slate-100">Active Authorized Key Token:</span>
-                <pre className="p-2.5 bg-white/5 border border-slate-700 rounded font-mono text-[10px] text-slate-400 whitespace-pre-wrap select-all truncate">
-                  {sshActiveKey}
-                </pre>
-                <div className="border-t border-slate-700 pt-3">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div className="space-y-6">
+                <form onSubmit={handleInstallSsh} className="space-y-4">
+                  <label className="block text-xs font-semibold text-slate-400">Paste Authorized Public SSH Key (.pub file contents)</label>
+                  <textarea
+                    value={newSshKey}
+                    onChange={(e) => setNewSshKey(e.target.value)}
+                    rows={4}
+                    placeholder="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA..."
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs text-slate-100 font-mono focus:outline-none focus:border-indigo-500"
+                  />
+                  <button
+                    type="submit"
+                    disabled={isSshBusy}
+                    className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs px-4 py-2.5 rounded-xl transition-all cursor-pointer disabled:opacity-60"
+                  >
+                    Publish Public Key
+                  </button>
+                </form>
+
+                <form onSubmit={handleSetSshPassword} className="space-y-4 border-t border-slate-800 pt-5">
+                  <label className="block text-xs font-semibold text-slate-400">Set SSH Password</label>
+                  <input
+                    type="password"
+                    minLength={8}
+                    value={newSshPassword}
+                    onChange={(e) => setNewSshPassword(e.target.value)}
+                    placeholder={sshInfo?.passwordSet ? "Enter a new password" : "Create SSH password"}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs text-slate-100 focus:outline-none focus:border-indigo-500"
+                  />
+                  <button
+                    type="submit"
+                    disabled={isSshBusy}
+                    className="bg-slate-100 hover:bg-white text-slate-950 font-bold text-xs px-4 py-2.5 rounded-xl transition-all cursor-pointer disabled:opacity-60"
+                  >
+                    Save SSH Password
+                  </button>
+                </form>
+              </div>
+
+              <div className="bg-slate-950 border border-slate-700 p-5 rounded-xl text-xs space-y-4">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <span className="block text-[10px] uppercase tracking-wider text-slate-500 font-bold">Linux User</span>
+                    <code className="text-emerald-300 font-mono">{sshInfo?.username || account?.username || "Not enabled"}</code>
+                  </div>
+                  <div>
+                    <span className="block text-[10px] uppercase tracking-wider text-slate-500 font-bold">Port</span>
+                    <code className="text-slate-200 font-mono">{sshInfo?.port || 22}</code>
+                  </div>
+                </div>
+
+                <div>
                   <span className="font-bold text-slate-100 text-[11px]">Console connection command:</span>
-                  <code className="block mt-1 font-mono text-[11px] select-all p-2 bg-white/5 rounded border border-slate-700 text-amber-400">
-                    ssh root@164.92.210.82 -p 2200
+                  <code className="block mt-1 font-mono text-[11px] select-all p-2 bg-white/5 rounded border border-slate-700 text-amber-400 whitespace-pre-wrap break-all">
+                    {sshInfo?.command || "Shell access is disabled for this account."}
                   </code>
+                </div>
+
+                <div>
+                  <span className="font-bold text-slate-100 text-[11px]">Account home:</span>
+                  <code className="block mt-1 font-mono text-[11px] select-all p-2 bg-white/5 rounded border border-slate-700 text-slate-300 whitespace-pre-wrap break-all">
+                    {sshInfo?.homeDirectory || account?.homeDirectory || "Unavailable"}
+                  </code>
+                </div>
+
+                <div className="border-t border-slate-700 pt-3 space-y-2">
+                  <span className="font-bold text-slate-100 text-[11px]">Authorized keys ({sshInfo?.keys?.length || 0})</span>
+                  {(sshInfo?.keys || []).length > 0 ? (
+                    <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
+                      {sshInfo?.keys.map((key, idx) => (
+                        <pre key={idx} className="p-2.5 bg-white/5 border border-slate-700 rounded font-mono text-[10px] text-slate-400 whitespace-pre-wrap break-all">
+                          {key}
+                        </pre>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-slate-500">No SSH key installed yet.</p>
+                  )}
+                  <div className="text-[11px] text-slate-400">
+                    Password login: <span className={sshInfo?.passwordSet ? "text-emerald-300" : "text-amber-300"}>{sshInfo?.passwordSet ? "Configured" : "Not configured"}</span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -2057,15 +2221,15 @@ export default function TPanelExtraManager({ activeTab, domains, setDomains, add
                 <Terminal className="w-5 h-5" />
               </div>
               <div>
-                <h2 className="text-lg font-bold text-slate-100">Interactive Server Kernel Terminal</h2>
-                <p className="text-xs text-slate-400">Execute authorized bash operations in sandboxed host emulator</p>
+                <h2 className="text-lg font-bold text-slate-100">Interactive Account Shell</h2>
+                <p className="text-xs text-slate-400">Commands run as your hosting Linux user inside the account home</p>
               </div>
             </div>
 
             <div className="bg-slate-950 rounded-2xl border border-slate-700 p-4 flex flex-col h-96 font-mono text-xs overflow-hidden">
               <div className="flex-1 overflow-y-auto space-y-2 pr-1 text-slate-300">
                 {terminalLogs.map((log, idx) => {
-                  if (log.startsWith("root@tpanel.pro:~#")) {
+                  if (log.includes("@tpanel:~$")) {
                     return (
                       <div key={idx} className="text-indigo-400 font-semibold">
                         {log}
@@ -2082,12 +2246,13 @@ export default function TPanelExtraManager({ activeTab, domains, setDomains, add
               </div>
 
               <form onSubmit={runTerminalCommand} className="flex gap-2 border-t border-slate-700 pt-3 mt-2 shrink-0">
-                <span className="text-indigo-400 font-semibold flex items-center shrink-0">root@tpanel.pro:~#</span>
+                <span className="text-indigo-400 font-semibold flex items-center shrink-0">{shellPrompt()}</span>
                 <input
                   type="text"
                   value={terminalInputText}
                   onChange={(e) => setTerminalInputText(e.target.value)}
-                  placeholder="Type 'help' and press Enter..."
+                  placeholder={isTerminalRunning ? "Command is running..." : "npm install, ls, php -v, node -v..."}
+                  disabled={isTerminalRunning}
                   className="flex-1 bg-transparent border-none outline-none text-slate-200 focus:outline-none focus:ring-0 p-0 text-xs font-mono"
                   autoFocus
                 />

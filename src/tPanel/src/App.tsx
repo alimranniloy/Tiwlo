@@ -826,7 +826,7 @@ export default function App() {
             />
           )}
 
-          {activeTab === "databases" && (
+          {(activeTab === "databases" || activeTab === "postgre") && (
             <DatabaseManager 
               databases={databases} 
               setDatabases={setDatabases} 
@@ -834,6 +834,7 @@ export default function App() {
               setDbUsers={setDbUsers}
               addActivity={addActivity}
               initialTab="overview"
+              initialEngine={activeTab === "postgre" ? "postgresql" : "mysql"}
             />
           )}
 
@@ -853,7 +854,7 @@ export default function App() {
             />
           )}
 
-          {!["dashboard", "files", "node", "domains", "databases", "emails", "copilot"].includes(activeTab) && (
+          {!["dashboard", "files", "node", "domains", "databases", "postgre", "emails", "copilot"].includes(activeTab) && (
             <TPanelExtraManager 
               activeTab={activeTab}
               domains={domains}

@@ -85,19 +85,19 @@ const HOSTING_STACK_PACKAGES = {
     "nginx", "certbot", "python3-certbot-nginx", "php-fpm", "php-cli", "php-common", "php-mysql", "php-pgsql", "php-sqlite3", "php-curl", "php-zip", "php-mbstring",
     "php-xml", "php-gd", "php-intl", "php-bcmath", "php-soap", "php-opcache", "php-imagick", "php-redis", "php-gmp", "php-ldap", "php-imap", "php-readline", "mariadb-server", "pdns-server", "pdns-backend-mysql", "dnsutils",
     "postfix", "dovecot-core", "dovecot-imapd", "dovecot-pop3d", "opendkim", "opendkim-tools", "rspamd", "mailutils", "libsasl2-modules",
-    "phpmyadmin", "zip", "unzip", "tar", "rsync", "logrotate", "cron", "acl"
+    "phpmyadmin", "postgresql", "postgresql-contrib", "zip", "unzip", "tar", "rsync", "logrotate", "cron", "acl"
   ],
   dnf: [
     "nginx", "certbot", "python3-certbot-nginx", "php-fpm", "php-cli", "php-common", "php-mysqlnd", "php-pgsql", "php-sqlite3", "php-curl", "php-zip", "php-mbstring",
     "php-xml", "php-gd", "php-intl", "php-bcmath", "php-soap", "php-opcache", "php-pecl-imagick", "php-pecl-redis", "php-gmp", "php-ldap", "php-imap", "php-readline", "mariadb-server", "pdns", "pdns-backend-mysql", "bind-utils",
     "postfix", "dovecot", "opendkim", "opendkim-tools", "rspamd", "mailx", "cyrus-sasl", "cyrus-sasl-plain",
-    "phpMyAdmin", "zip", "unzip", "tar", "rsync", "logrotate", "cronie", "acl"
+    "phpMyAdmin", "postgresql", "postgresql-contrib", "zip", "unzip", "tar", "rsync", "logrotate", "cronie", "acl"
   ],
   yum: [
     "nginx", "certbot", "python3-certbot-nginx", "php-fpm", "php-cli", "php-common", "php-mysqlnd", "php-pgsql", "php-sqlite3", "php-curl", "php-zip", "php-mbstring",
     "php-xml", "php-gd", "php-intl", "php-bcmath", "php-soap", "php-opcache", "php-pecl-imagick", "php-pecl-redis", "php-gmp", "php-ldap", "php-imap", "php-readline", "mariadb-server", "pdns", "pdns-backend-mysql", "bind-utils",
     "postfix", "dovecot", "opendkim", "opendkim-tools", "rspamd", "mailx", "cyrus-sasl", "cyrus-sasl-plain",
-    "phpMyAdmin", "zip", "unzip", "tar", "rsync", "logrotate", "cronie", "acl"
+    "phpMyAdmin", "postgresql", "postgresql-contrib", "zip", "unzip", "tar", "rsync", "logrotate", "cronie", "acl"
   ]
 };
 
@@ -107,6 +107,7 @@ const HOSTING_STACK_CHECKS = [
   { id: "php", label: "PHP Runtime", command: "php", services: ["php*-fpm"], packageNames: { apt: "php-fpm", dnf: "php-fpm", yum: "php-fpm" } },
   { id: "phpmyadmin", label: "phpMyAdmin", command: "php", services: [], packageNames: { apt: "phpmyadmin", dnf: "phpMyAdmin", yum: "phpMyAdmin" } },
   { id: "mysql", label: "MariaDB/MySQL", command: "mysql", services: ["mariadb", "mysql"], packageNames: { apt: "mariadb-server", dnf: "mariadb-server", yum: "mariadb-server" } },
+  { id: "postgresql", label: "PostgreSQL", command: "psql", services: ["postgresql"], packageNames: { apt: "postgresql", dnf: "postgresql", yum: "postgresql" } },
   { id: "dns", label: "PowerDNS Authoritative", command: "pdns_server", services: ["pdns"], packageNames: { apt: "pdns-server", dnf: "pdns", yum: "pdns" } },
   { id: "mail", label: "Mail Stack", command: "postfix", services: ["postfix", "dovecot"], packageNames: { apt: "postfix", dnf: "postfix", yum: "postfix" } },
   { id: "node", label: "Node.js Runtime", command: "node", services: [], packageNames: { apt: "nodejs", dnf: "nodejs", yum: "nodejs" } }
@@ -153,6 +154,12 @@ const phpExtensionCache = new Map<string, { at: number; extensions: string[] }>(
 const DEFAULT_NODE_VERSION = process.env.TPANEL_NODE_VERSION || "24.15.0";
 const DEFAULT_NODE_SELECTOR_VERSIONS = ["24.15.0", "22.11.0", "20.18.1", "18.20.4", "16.20.2", "14.21.3"];
 let nodeVersionCache: { at: number; versions: string[] } | null = null;
+const DATABASE_PRIVILEGES = [
+  "ALTER", "ALTER ROUTINE", "CREATE", "CREATE ROUTINE", "CREATE TEMPORARY TABLES",
+  "CREATE VIEW", "DELETE", "DROP", "EVENT", "EXECUTE", "INDEX", "INSERT",
+  "LOCK TABLES", "REFERENCES", "SELECT", "SHOW VIEW", "TRIGGER", "UPDATE"
+];
+const DB_ENGINES = new Set(["mysql", "postgresql"]);
 
 app.use(express.json({ limit: "25mb" }));
 
@@ -1296,14 +1303,25 @@ function ensureSystemAccountUser(account: any) {
   const username = sanitizeSlug(account.username, "account").replace(/[^a-z0-9_-]/g, "").slice(0, 31);
   if (!/^[a-z_][a-z0-9_-]{2,30}$/.test(username)) throw new Error("Invalid Linux username for PHP isolation.");
   const home = path.resolve(account.homeDirectory);
+  let createdUser = false;
   try {
     execFileSync("id", ["-u", username], { stdio: "ignore", timeout: 10000 });
   } catch {
     fs.mkdirSync(path.dirname(home), { recursive: true });
     if (fs.existsSync(home)) execFileSync("useradd", ["-d", home, "-s", "/bin/bash", username], { timeout: 120000 });
     else execFileSync("useradd", ["-m", "-d", home, "-s", "/bin/bash", username], { timeout: 120000 });
+    createdUser = true;
   }
   fs.mkdirSync(path.join(home, "public_html"), { recursive: true });
+  try {
+    const chownArgs = createdUser
+      ? ["-R", `${username}:${username}`, home]
+      : [`${username}:${username}`, home, path.join(home, "public_html")];
+    execFileSync("chown", chownArgs, { timeout: 120000 });
+    execFileSync("chmod", ["750", home], { timeout: 30000 });
+  } catch {
+    // ownership normalization is best-effort; command execution will surface remaining permission issues
+  }
 }
 
 function ensureAccountPhpPool(account: any, versionOverride?: string) {
@@ -2374,6 +2392,415 @@ async function enablePhpExtensions(version: string, extensions: string[]) {
   }
 }
 
+function normalizeDbEngine(value: unknown) {
+  const engine = String(value || "mysql").toLowerCase();
+  return DB_ENGINES.has(engine) ? engine : "mysql";
+}
+
+function dbSuffix(value: unknown, fallback = "database") {
+  return String(value || fallback)
+    .toLowerCase()
+    .replace(/[^a-z0-9_]/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 32) || fallback;
+}
+
+function accountDbPrefix(account: any) {
+  return `tp_${dbSuffix(account?.username, "acct").slice(0, 20)}_`;
+}
+
+function accountDbObjectName(account: any, name: unknown, fallback = "item") {
+  return `${accountDbPrefix(account)}${dbSuffix(name, fallback)}`.slice(0, 63);
+}
+
+function dbDisplayName(account: any, realName: string) {
+  const prefix = accountDbPrefix(account);
+  return realName.startsWith(prefix) ? realName.slice(prefix.length) : realName;
+}
+
+function sqlString(value: unknown) {
+  return `'${String(value ?? "").replace(/\\/g, "\\\\").replace(/'/g, "''")}'`;
+}
+
+function mysqlIdent(value: string) {
+  return `\`${value.replace(/`/g, "``")}\``;
+}
+
+function pgIdent(value: string) {
+  return `"${value.replace(/"/g, '""')}"`;
+}
+
+function shellSingleQuote(value: unknown) {
+  return `'${String(value ?? "").replace(/'/g, "'\\''")}'`;
+}
+
+function storedDatabaseProvisioning(account: any) {
+  const raw = account?.databaseProvisioning || {};
+  return {
+    databases: Array.isArray(raw.databases) ? raw.databases : [],
+    users: Array.isArray(raw.users) ? raw.users : [],
+    grants: Array.isArray(raw.grants) ? raw.grants : []
+  };
+}
+
+function updateDatabaseProvisioning(username: string, updater: (current: any) => any) {
+  return updateStoredAccount(username, (account: any) => ({
+    ...account,
+    databaseProvisioning: updater(storedDatabaseProvisioning(account)),
+    updatedAt: new Date().toISOString()
+  }));
+}
+
+async function runMysqlSql(sql: string, timeout = 120000) {
+  const command = `mysql --batch --raw --skip-column-names <<'SQL'\n${sql}\nSQL`;
+  return execFileAsync("sh", ["-lc", command], { timeout, maxBuffer: 4 * 1024 * 1024 });
+}
+
+async function runPostgresSql(sql: string, timeout = 120000) {
+  const command = `if command -v runuser >/dev/null 2>&1; then runuser -u postgres -- psql -v ON_ERROR_STOP=1 -At <<'SQL'\n${sql}\nSQL\nelse sudo -u postgres psql -v ON_ERROR_STOP=1 -At <<'SQL'\n${sql}\nSQL\nfi`;
+  return execFileAsync("sh", ["-lc", command], { timeout, maxBuffer: 4 * 1024 * 1024 });
+}
+
+async function ensureDatabaseEngineReady(engine: string) {
+  if (process.platform === "win32") throw new Error("Real database provisioning is available on Linux tPanel nodes only.");
+  const normalized = normalizeDbEngine(engine);
+  const commandName = normalized === "postgresql" ? "psql" : "mysql";
+  if (await commandExists(commandName)) {
+    if (normalized === "postgresql") {
+      await execFileAsync("sh", ["-lc", "systemctl enable --now postgresql >/dev/null 2>&1 || true"], { timeout: 60000 }).catch(() => undefined);
+    } else {
+      await execFileAsync("sh", ["-lc", "systemctl enable --now mariadb >/dev/null 2>&1 || systemctl enable --now mysql >/dev/null 2>&1 || true"], { timeout: 60000 }).catch(() => undefined);
+    }
+    return;
+  }
+  const manager = await packageManager();
+  if (!manager) throw new Error(`${normalized} package is not installed and no supported package manager was detected.`);
+  const packages = normalized === "postgresql"
+    ? (manager === "apt" ? ["postgresql", "postgresql-contrib"] : ["postgresql", "postgresql-contrib"])
+    : (manager === "apt" ? ["mariadb-server", "mariadb-client"] : ["mariadb-server"]);
+  const quoted = packages.map(shellSingleQuote).join(" ");
+  const install = manager === "apt"
+    ? `export DEBIAN_FRONTEND=noninteractive; apt-get update -y && apt-get install -y ${quoted}`
+    : `${manager} install -y ${quoted}`;
+  const start = normalized === "postgresql"
+    ? "systemctl enable --now postgresql >/dev/null 2>&1 || true"
+    : "systemctl enable --now mariadb >/dev/null 2>&1 || systemctl enable --now mysql >/dev/null 2>&1 || true";
+  await execFileAsync("sh", ["-lc", `${install}; ${start}`], { timeout: 900000, maxBuffer: 4 * 1024 * 1024 });
+}
+
+async function databaseNamesForEngine(account: any, engine: string) {
+  await ensureDatabaseEngineReady(engine);
+  const prefix = accountDbPrefix(account);
+  if (engine === "postgresql") {
+    const { stdout } = await runPostgresSql(`SELECT datname FROM pg_database WHERE datname LIKE ${sqlString(`${prefix}%`)} ORDER BY datname;`);
+    return stdout.split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
+  }
+  const { stdout } = await runMysqlSql(`SHOW DATABASES LIKE ${sqlString(`${prefix}%`)};`);
+  return stdout.split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
+}
+
+async function databaseUsersForEngine(account: any, engine: string) {
+  await ensureDatabaseEngineReady(engine);
+  const prefix = accountDbPrefix(account);
+  if (engine === "postgresql") {
+    const { stdout } = await runPostgresSql(`SELECT rolname FROM pg_roles WHERE rolname LIKE ${sqlString(`${prefix}%`)} ORDER BY rolname;`);
+    return stdout.split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
+  }
+  const { stdout } = await runMysqlSql(`SELECT User FROM mysql.user WHERE User LIKE ${sqlString(`${prefix}%`)} ORDER BY User;`);
+  return stdout.split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
+}
+
+async function databaseUsageForEngine(account: any, engine: string, names: string[]) {
+  if (!names.length) return new Map<string, number>();
+  if (engine === "postgresql") {
+    const values = names.map(sqlString).join(",");
+    const { stdout } = await runPostgresSql(`SELECT datname || E'\\t' || pg_database_size(datname) FROM pg_database WHERE datname IN (${values});`);
+    return new Map(stdout.split(/\r?\n/).filter(Boolean).map((line) => {
+      const [name, bytes] = line.split(/\t/);
+      return [name, Number(bytes || 0) / 1024 / 1024];
+    }));
+  }
+  const values = names.map(sqlString).join(",");
+  const { stdout } = await runMysqlSql(`SELECT table_schema, COALESCE(SUM(data_length + index_length), 0) FROM information_schema.tables WHERE table_schema IN (${values}) GROUP BY table_schema;`);
+  return new Map(stdout.split(/\r?\n/).filter(Boolean).map((line) => {
+    const [name, bytes] = line.split(/\t/);
+    return [name, Number(bytes || 0) / 1024 / 1024];
+  }));
+}
+
+async function databasePayload(account: any, engineInput: unknown = "mysql") {
+  const engine = normalizeDbEngine(engineInput);
+  const provisioning = storedDatabaseProvisioning(account);
+  const names = await databaseNamesForEngine(account, engine).catch(() => []);
+  const users = await databaseUsersForEngine(account, engine).catch(() => []);
+  const usage = await databaseUsageForEngine(account, engine, names).catch(() => new Map<string, number>());
+  const grants = provisioning.grants.filter((grant: any) => grant.engine === engine);
+  const dbs = names.map((realName) => {
+    const display = dbDisplayName(account, realName);
+    const assignedUsers = grants.filter((grant: any) => grant.database === realName).map((grant: any) => dbDisplayName(account, grant.user));
+    return {
+      id: `${engine}:${realName}`,
+      engine,
+      name: display,
+      realName,
+      sizeMB: Number((usage.get(realName) || 0).toFixed(2)),
+      tables: [],
+      users: assignedUsers,
+      createdAt: provisioning.databases.find((item: any) => item.engine === engine && item.realName === realName)?.createdAt || null
+    };
+  });
+  const mappedUsers = users.map((realName) => {
+    const display = dbDisplayName(account, realName);
+    return {
+      engine,
+      username: display,
+      realName,
+      databases: grants.filter((grant: any) => grant.user === realName).map((grant: any) => dbDisplayName(account, grant.database)),
+      privileges: Object.fromEntries(grants.filter((grant: any) => grant.user === realName).map((grant: any) => [dbDisplayName(account, grant.database), grant.privileges || DATABASE_PRIVILEGES])),
+      passwordSet: true,
+      createdAt: provisioning.users.find((item: any) => item.engine === engine && item.realName === realName)?.createdAt || null
+    };
+  });
+  return {
+    ok: true,
+    engine,
+    prefix: accountDbPrefix(account),
+    databases: dbs,
+    users: mappedUsers,
+    limits: {
+      maxDatabases: Number(account.maxDatabases || 0),
+      usedDatabases: dbs.length
+    }
+  };
+}
+
+async function createDatabase(account: any, engine: string, name: unknown) {
+  const realName = accountDbObjectName(account, name, "database");
+  await ensureDatabaseEngineReady(engine);
+  if (engine === "postgresql") {
+    await runPostgresSql(`SELECT 'CREATE DATABASE ${pgIdent(realName)}' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = ${sqlString(realName)})\\gexec`);
+  } else {
+    await runMysqlSql(`CREATE DATABASE IF NOT EXISTS ${mysqlIdent(realName)} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;`);
+  }
+  updateDatabaseProvisioning(account.username, (current: any) => ({
+    ...current,
+    databases: [
+      ...current.databases.filter((item: any) => !(item.engine === engine && item.realName === realName)),
+      { engine, realName, name: dbDisplayName(account, realName), createdAt: new Date().toISOString() }
+    ]
+  }));
+  return realName;
+}
+
+async function createDatabaseUser(account: any, engine: string, username: unknown, password: unknown) {
+  const realName = accountDbObjectName(account, username, "user").slice(0, engine === "mysql" ? 32 : 63);
+  const pass = String(password || "");
+  if (pass.length < 8) throw new Error("Database user password must be at least 8 characters.");
+  await ensureDatabaseEngineReady(engine);
+  if (engine === "postgresql") {
+    await runPostgresSql(`DO $$\nBEGIN\n  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = ${sqlString(realName)}) THEN\n    CREATE ROLE ${pgIdent(realName)} LOGIN PASSWORD ${sqlString(pass)};\n  END IF;\nEND\n$$;\nALTER ROLE ${pgIdent(realName)} WITH LOGIN PASSWORD ${sqlString(pass)};`);
+  } else {
+    await runMysqlSql(`CREATE USER IF NOT EXISTS ${sqlString(realName)}@'localhost' IDENTIFIED BY ${sqlString(pass)};\nALTER USER ${sqlString(realName)}@'localhost' IDENTIFIED BY ${sqlString(pass)};\nFLUSH PRIVILEGES;`);
+  }
+  updateDatabaseProvisioning(account.username, (current: any) => ({
+    ...current,
+    users: [
+      ...current.users.filter((item: any) => !(item.engine === engine && item.realName === realName)),
+      { engine, realName, username: dbDisplayName(account, realName), createdAt: new Date().toISOString() }
+    ]
+  }));
+  return realName;
+}
+
+async function grantDatabaseAccess(account: any, engine: string, userInput: unknown, dbInput: unknown, privilegesInput: unknown) {
+  const user = accountDbObjectName(account, userInput, "user").slice(0, engine === "mysql" ? 32 : 63);
+  const database = accountDbObjectName(account, dbInput, "database");
+  const requested = Array.isArray(privilegesInput) ? privilegesInput.map((item) => String(item).toUpperCase()) : DATABASE_PRIVILEGES;
+  const privileges = requested.filter((item) => DATABASE_PRIVILEGES.includes(item));
+  const effectivePrivileges = privileges.length ? privileges : DATABASE_PRIVILEGES;
+  await ensureDatabaseEngineReady(engine);
+  if (engine === "postgresql") {
+    await runPostgresSql(`GRANT ALL PRIVILEGES ON DATABASE ${pgIdent(database)} TO ${pgIdent(user)};`);
+  } else {
+    await runMysqlSql(`GRANT ${effectivePrivileges.join(", ")} ON ${mysqlIdent(database)}.* TO ${sqlString(user)}@'localhost';\nFLUSH PRIVILEGES;`);
+  }
+  updateDatabaseProvisioning(account.username, (current: any) => ({
+    ...current,
+    grants: [
+      ...current.grants.filter((item: any) => !(item.engine === engine && item.user === user && item.database === database)),
+      { engine, user, database, privileges: effectivePrivileges, updatedAt: new Date().toISOString() }
+    ]
+  }));
+}
+
+async function revokeDatabaseAccess(account: any, engine: string, userInput: unknown, dbInput: unknown) {
+  const user = accountDbObjectName(account, userInput, "user").slice(0, engine === "mysql" ? 32 : 63);
+  const database = accountDbObjectName(account, dbInput, "database");
+  ensureOwnDbName(account, user);
+  ensureOwnDbName(account, database);
+  await ensureDatabaseEngineReady(engine);
+  if (engine === "postgresql") {
+    await runPostgresSql(`REVOKE ALL PRIVILEGES ON DATABASE ${pgIdent(database)} FROM ${pgIdent(user)};`);
+  } else {
+    await runMysqlSql(`REVOKE ALL PRIVILEGES ON ${mysqlIdent(database)}.* FROM ${sqlString(user)}@'localhost';\nFLUSH PRIVILEGES;`);
+  }
+  updateDatabaseProvisioning(account.username, (current: any) => ({
+    ...current,
+    grants: current.grants.filter((item: any) => !(item.engine === engine && item.user === user && item.database === database))
+  }));
+}
+
+function ensureOwnDbName(account: any, realName: string) {
+  if (!realName.startsWith(accountDbPrefix(account))) throw new Error("Blocked database object outside this hosting account.");
+}
+
+async function deleteDatabase(account: any, engine: string, name: unknown) {
+  const realName = accountDbObjectName(account, name, "database");
+  ensureOwnDbName(account, realName);
+  await ensureDatabaseEngineReady(engine);
+  if (engine === "postgresql") {
+    await runPostgresSql(`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = ${sqlString(realName)};\nDROP DATABASE IF EXISTS ${pgIdent(realName)};`);
+  } else {
+    await runMysqlSql(`DROP DATABASE IF EXISTS ${mysqlIdent(realName)};`);
+  }
+  updateDatabaseProvisioning(account.username, (current: any) => ({
+    ...current,
+    databases: current.databases.filter((item: any) => !(item.engine === engine && item.realName === realName)),
+    grants: current.grants.filter((item: any) => !(item.engine === engine && item.database === realName))
+  }));
+}
+
+async function deleteDatabaseUser(account: any, engine: string, username: unknown) {
+  const realName = accountDbObjectName(account, username, "user").slice(0, engine === "mysql" ? 32 : 63);
+  ensureOwnDbName(account, realName);
+  await ensureDatabaseEngineReady(engine);
+  if (engine === "postgresql") {
+    const names = await databaseNamesForEngine(account, engine).catch(() => []);
+    for (const database of names) {
+      await runPostgresSql(`REVOKE ALL PRIVILEGES ON DATABASE ${pgIdent(database)} FROM ${pgIdent(realName)};`).catch(() => undefined);
+    }
+    await runPostgresSql(`DROP ROLE IF EXISTS ${pgIdent(realName)};`);
+  } else {
+    await runMysqlSql(`DROP USER IF EXISTS ${sqlString(realName)}@'localhost';\nFLUSH PRIVILEGES;`);
+  }
+  updateDatabaseProvisioning(account.username, (current: any) => ({
+    ...current,
+    users: current.users.filter((item: any) => !(item.engine === engine && item.realName === realName)),
+    grants: current.grants.filter((item: any) => !(item.engine === engine && item.user === realName))
+  }));
+}
+
+async function changeDatabaseUserPassword(account: any, engine: string, username: unknown, password: unknown) {
+  const realName = accountDbObjectName(account, username, "user").slice(0, engine === "mysql" ? 32 : 63);
+  ensureOwnDbName(account, realName);
+  const pass = String(password || "");
+  if (pass.length < 8) throw new Error("Database user password must be at least 8 characters.");
+  await ensureDatabaseEngineReady(engine);
+  if (engine === "postgresql") {
+    await runPostgresSql(`ALTER ROLE ${pgIdent(realName)} WITH PASSWORD ${sqlString(pass)};`);
+  } else {
+    await runMysqlSql(`ALTER USER ${sqlString(realName)}@'localhost' IDENTIFIED BY ${sqlString(pass)};\nFLUSH PRIVILEGES;`);
+  }
+}
+
+function accountShellUsername(account: any) {
+  return sanitizeSlug(account.username, "account").replace(/[^a-z0-9_-]/g, "").slice(0, 31);
+}
+
+function ensureShellAllowed(account: any) {
+  const permissions = normalizeAccountPermissions(account.permissions, account);
+  if (!permissions.terminal || account.shellAccess !== true) {
+    throw new Error("Shell access is not enabled for this hosting account. Upgrade the tPanel package or ask the administrator to enable Shell.");
+  }
+  if (!Number.isFinite(accountQuotaBytes(account))) {
+    throw new Error("No terminal disk limit is assigned to this account. Upgrade the tPanel package before using Shell.");
+  }
+}
+
+async function runAccountShellCommand(account: any, commandInput: unknown) {
+  ensureShellAllowed(account);
+  ensureSystemAccountUser(account);
+  const username = accountShellUsername(account);
+  const home = path.resolve(account.homeDirectory);
+  const command = String(commandInput || "").trim();
+  if (!command) throw new Error("Enter a command to run.");
+  if (command.length > 2000) throw new Error("Command is too long for the web terminal.");
+  await ensureAccountStorageAvailable(account, 0, "Terminal");
+  const memoryMb = Math.max(128, Math.min(4096, Number(account.phpMemoryMb || account.memoryMb || 512)));
+  const timeoutSeconds = Math.max(30, Math.min(300, Number(account.terminalTimeoutSeconds || 120)));
+  const runner = `cd ${shellSingleQuote(home)} && export HOME=${shellSingleQuote(home)} USER=${shellSingleQuote(username)} LOGNAME=${shellSingleQuote(username)} PATH=/usr/local/bin:/usr/bin:/bin:${shellSingleQuote(path.join(home, "node_modules", ".bin"))} && ulimit -v ${memoryMb * 1024} || true; timeout ${timeoutSeconds}s bash -lc ${shellSingleQuote(command)}`;
+  const wrapped = `if command -v runuser >/dev/null 2>&1; then runuser -u ${shellSingleQuote(username)} -- bash -lc ${shellSingleQuote(runner)}; else su -s /bin/bash ${shellSingleQuote(username)} -c ${shellSingleQuote(runner)}; fi`;
+  try {
+    const { stdout, stderr } = await execFileAsync("sh", ["-lc", wrapped], { timeout: (timeoutSeconds + 15) * 1000, maxBuffer: 2 * 1024 * 1024 });
+    await ensureAccountStorageAvailable(account, 0, "Terminal");
+    return { stdout: stdout || "", stderr: stderr || "", exitCode: 0 };
+  } catch (error: any) {
+    return {
+      stdout: error.stdout || "",
+      stderr: error.stderr || error.message || "",
+      exitCode: Number.isFinite(error.code) ? error.code : 1
+    };
+  }
+}
+
+function authorizedKeysPath(account: any) {
+  const home = path.resolve(account.homeDirectory);
+  const sshDir = path.join(home, ".ssh");
+  return { sshDir, filePath: path.join(sshDir, "authorized_keys") };
+}
+
+function normalizePublicSshKey(value: unknown) {
+  const key = String(value || "").trim().replace(/\r/g, "").split("\n").map((line) => line.trim()).find(Boolean) || "";
+  if (!/^(ssh-rsa|ssh-ed25519|ecdsa-sha2-nistp(256|384|521))\s+[A-Za-z0-9+/=]+(?:\s+.*)?$/.test(key)) {
+    throw new Error("Paste a valid public SSH key, for example ssh-ed25519 AAAA...");
+  }
+  return key;
+}
+
+function readAuthorizedKeys(account: any) {
+  const { filePath } = authorizedKeysPath(account);
+  try {
+    if (!fs.existsSync(filePath)) return [];
+    return fs.readFileSync(filePath, "utf8").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+async function writeAuthorizedKey(account: any, publicKey: string) {
+  ensureShellAllowed(account);
+  ensureSystemAccountUser(account);
+  const username = accountShellUsername(account);
+  const { sshDir, filePath } = authorizedKeysPath(account);
+  fs.mkdirSync(sshDir, { recursive: true });
+  const keys = readAuthorizedKeys(account);
+  if (!keys.includes(publicKey)) keys.push(publicKey);
+  fs.writeFileSync(filePath, `${keys.join("\n")}\n`);
+  fs.chmodSync(sshDir, 0o700);
+  fs.chmodSync(filePath, 0o600);
+  if (process.platform !== "win32") {
+    await execFileAsync("chown", ["-R", `${username}:${username}`, sshDir], { timeout: 30000 }).catch(() => undefined);
+  }
+  return keys;
+}
+
+async function setShellPassword(account: any, password: unknown) {
+  ensureShellAllowed(account);
+  const pass = String(password || "");
+  if (pass.length < 8) throw new Error("SSH password must be at least 8 characters.");
+  if (/[\r\n:]/.test(pass)) throw new Error("SSH password cannot contain line breaks or colon characters.");
+  ensureSystemAccountUser(account);
+  const username = accountShellUsername(account);
+  await execFileAsync("sh", ["-lc", `printf '%s:%s\\n' ${shellSingleQuote(username)} ${shellSingleQuote(pass)} | chpasswd`], { timeout: 60000 });
+  const updated = updateStoredAccount(account.username, (current: any) => ({
+    ...current,
+    shellPasswordSet: true,
+    updatedAt: new Date().toISOString()
+  }));
+  return updated || account;
+}
+
 async function hostingStackStatus() {
   const manager = await packageManager();
   const checks = await Promise.all(HOSTING_STACK_CHECKS.map(async (check) => {
@@ -2819,6 +3246,203 @@ app.post("/api/user/node-settings", requireLicense, async (req, res) => {
     }));
   } catch (error: any) {
     res.status(500).json({ ok: false, message: error.message || "Unable to apply Node.js settings." });
+  }
+});
+
+app.get("/api/user/databases", requireLicense, async (req, res) => {
+  const account = requireUserAccount(req, res);
+  if (!account) return;
+  if (!normalizeAccountPermissions(account.permissions, account).databases) {
+    res.status(403).json({ ok: false, message: "Database access is disabled for this account." });
+    return;
+  }
+  try {
+    res.json(await databasePayload(account, req.query.engine || "mysql"));
+  } catch (error: any) {
+    res.status(500).json({ ok: false, message: error.message || "Unable to load real databases." });
+  }
+});
+
+app.post("/api/user/databases", requireLicense, async (req, res) => {
+  const account = requireUserAccount(req, res);
+  if (!account) return;
+  if (!normalizeAccountPermissions(account.permissions, account).databases) {
+    res.status(403).json({ ok: false, message: "Database access is disabled for this account." });
+    return;
+  }
+  try {
+    const engine = normalizeDbEngine(req.body?.engine);
+    const current = await databasePayload(account, engine).catch(() => ({ databases: [] as any[] }));
+    const maxDatabases = Number(account.maxDatabases || 0);
+    if (maxDatabases > 0 && current.databases.length >= maxDatabases) {
+      res.status(403).json({ ok: false, message: "Database limit reached. Upgrade the tPanel package to create more databases." });
+      return;
+    }
+    await createDatabase(account, engine, req.body?.name || req.body?.database);
+    const updated = accountForSession(sessionFromRequest(req)) || account;
+    res.json(await databasePayload(updated, engine));
+  } catch (error: any) {
+    res.status(500).json({ ok: false, message: error.message || "Unable to create database." });
+  }
+});
+
+app.delete("/api/user/databases/:engine/:name", requireLicense, async (req, res) => {
+  const account = requireUserAccount(req, res);
+  if (!account) return;
+  if (!normalizeAccountPermissions(account.permissions, account).databases) {
+    res.status(403).json({ ok: false, message: "Database access is disabled for this account." });
+    return;
+  }
+  try {
+    const engine = normalizeDbEngine(req.params.engine);
+    await deleteDatabase(account, engine, req.params.name);
+    const updated = accountForSession(sessionFromRequest(req)) || account;
+    res.json(await databasePayload(updated, engine));
+  } catch (error: any) {
+    res.status(500).json({ ok: false, message: error.message || "Unable to delete database." });
+  }
+});
+
+app.post("/api/user/database-users", requireLicense, async (req, res) => {
+  const account = requireUserAccount(req, res);
+  if (!account) return;
+  if (!normalizeAccountPermissions(account.permissions, account).databases) {
+    res.status(403).json({ ok: false, message: "Database access is disabled for this account." });
+    return;
+  }
+  try {
+    const engine = normalizeDbEngine(req.body?.engine);
+    await createDatabaseUser(account, engine, req.body?.username || req.body?.user, req.body?.password);
+    const updated = accountForSession(sessionFromRequest(req)) || account;
+    res.json(await databasePayload(updated, engine));
+  } catch (error: any) {
+    res.status(500).json({ ok: false, message: error.message || "Unable to create database user." });
+  }
+});
+
+app.delete("/api/user/database-users/:engine/:username", requireLicense, async (req, res) => {
+  const account = requireUserAccount(req, res);
+  if (!account) return;
+  if (!normalizeAccountPermissions(account.permissions, account).databases) {
+    res.status(403).json({ ok: false, message: "Database access is disabled for this account." });
+    return;
+  }
+  try {
+    const engine = normalizeDbEngine(req.params.engine);
+    await deleteDatabaseUser(account, engine, req.params.username);
+    const updated = accountForSession(sessionFromRequest(req)) || account;
+    res.json(await databasePayload(updated, engine));
+  } catch (error: any) {
+    res.status(500).json({ ok: false, message: error.message || "Unable to delete database user. Remove owned databases first if PostgreSQL blocks the role." });
+  }
+});
+
+app.post("/api/user/database-users/:engine/:username/password", requireLicense, async (req, res) => {
+  const account = requireUserAccount(req, res);
+  if (!account) return;
+  if (!normalizeAccountPermissions(account.permissions, account).databases) {
+    res.status(403).json({ ok: false, message: "Database access is disabled for this account." });
+    return;
+  }
+  try {
+    const engine = normalizeDbEngine(req.params.engine);
+    await changeDatabaseUserPassword(account, engine, req.params.username, req.body?.password);
+    const updated = accountForSession(sessionFromRequest(req)) || account;
+    res.json(await databasePayload(updated, engine));
+  } catch (error: any) {
+    res.status(500).json({ ok: false, message: error.message || "Unable to change database user password." });
+  }
+});
+
+app.post("/api/user/database-grants", requireLicense, async (req, res) => {
+  const account = requireUserAccount(req, res);
+  if (!account) return;
+  if (!normalizeAccountPermissions(account.permissions, account).databases) {
+    res.status(403).json({ ok: false, message: "Database access is disabled for this account." });
+    return;
+  }
+  try {
+    const engine = normalizeDbEngine(req.body?.engine);
+    await grantDatabaseAccess(account, engine, req.body?.username || req.body?.user, req.body?.database, req.body?.privileges);
+    const updated = accountForSession(sessionFromRequest(req)) || account;
+    res.json(await databasePayload(updated, engine));
+  } catch (error: any) {
+    res.status(500).json({ ok: false, message: error.message || "Unable to grant database access." });
+  }
+});
+
+app.delete("/api/user/database-grants/:engine/:username/:database", requireLicense, async (req, res) => {
+  const account = requireUserAccount(req, res);
+  if (!account) return;
+  if (!normalizeAccountPermissions(account.permissions, account).databases) {
+    res.status(403).json({ ok: false, message: "Database access is disabled for this account." });
+    return;
+  }
+  try {
+    const engine = normalizeDbEngine(req.params.engine);
+    await revokeDatabaseAccess(account, engine, req.params.username, req.params.database);
+    const updated = accountForSession(sessionFromRequest(req)) || account;
+    res.json(await databasePayload(updated, engine));
+  } catch (error: any) {
+    res.status(500).json({ ok: false, message: error.message || "Unable to revoke database access." });
+  }
+});
+
+app.get("/api/user/ssh-access", requireLicense, async (req, res) => {
+  const account = requireUserAccount(req, res);
+  if (!account) return;
+  try {
+    ensureShellAllowed(account);
+    ensureSystemAccountUser(account);
+    const username = accountShellUsername(account);
+    const settings = readDomainSettings(req);
+    const host = settings.primaryDomain || settings.detectedServerIp || configuredServerIp(req) || req.hostname;
+    res.json({
+      ok: true,
+      username,
+      host,
+      port: 22,
+      homeDirectory: account.homeDirectory,
+      command: `ssh ${username}@${host} -p 22`,
+      passwordSet: Boolean(account.shellPasswordSet),
+      keys: readAuthorizedKeys(account)
+    });
+  } catch (error: any) {
+    res.status(403).json({ ok: false, message: error.message || "Shell access is not available." });
+  }
+});
+
+app.post("/api/user/ssh-keys", requireLicense, async (req, res) => {
+  const account = requireUserAccount(req, res);
+  if (!account) return;
+  try {
+    const key = normalizePublicSshKey(req.body?.publicKey || req.body?.key);
+    const keys = await writeAuthorizedKey(account, key);
+    res.json({ ok: true, keys });
+  } catch (error: any) {
+    res.status(500).json({ ok: false, message: error.message || "Unable to install SSH key." });
+  }
+});
+
+app.post("/api/user/ssh-password", requireLicense, async (req, res) => {
+  const account = requireUserAccount(req, res);
+  if (!account) return;
+  try {
+    const updated = await setShellPassword(account, req.body?.password);
+    res.json({ ok: true, account: publicAccount(updated), passwordSet: true });
+  } catch (error: any) {
+    res.status(500).json({ ok: false, message: error.message || "Unable to set SSH password." });
+  }
+});
+
+app.post("/api/user/terminal", requireLicense, async (req, res) => {
+  const account = requireUserAccount(req, res);
+  if (!account) return;
+  try {
+    const result = await runAccountShellCommand(account, req.body?.command);
+    res.json({ ok: true, ...result, cwd: account.homeDirectory, user: accountShellUsername(account) });
+  } catch (error: any) {
+    res.status(403).json({ ok: false, message: error.message || "Unable to run terminal command." });
   }
 });
 
@@ -3547,7 +4171,7 @@ app.post("/api/panel/hosting-stack/install", requireCapability("software"), asyn
     ? `export DEBIAN_FRONTEND=noninteractive; apt-get update -y && apt-get install -y ${quoted}`
     : `${manager} install -y ${quoted}`;
   try {
-    const { stdout, stderr } = await execFileAsync("sh", ["-lc", `${installCommand}; systemctl enable --now nginx >/dev/null 2>&1 || true; systemctl enable --now mariadb >/dev/null 2>&1 || systemctl enable --now mysql >/dev/null 2>&1 || true; systemctl enable --now postfix >/dev/null 2>&1 || true; systemctl enable --now dovecot >/dev/null 2>&1 || true; systemctl enable --now opendkim >/dev/null 2>&1 || true; systemctl enable --now rspamd >/dev/null 2>&1 || true; if command -v ufw >/dev/null 2>&1; then ufw allow 80/tcp >/dev/null 2>&1 || true; ufw allow 443/tcp >/dev/null 2>&1 || true; fi; if command -v firewall-cmd >/dev/null 2>&1; then firewall-cmd --permanent --add-service=http >/dev/null 2>&1 || true; firewall-cmd --permanent --add-service=https >/dev/null 2>&1 || true; firewall-cmd --reload >/dev/null 2>&1 || true; fi; for svc in $(systemctl list-unit-files --type=service 'php*-fpm.service' 2>/dev/null | awk '/php.*-fpm\\.service/ {print $1}'); do systemctl enable --now "$svc" >/dev/null 2>&1 || true; done`], { timeout: 900000 });
+    const { stdout, stderr } = await execFileAsync("sh", ["-lc", `${installCommand}; systemctl enable --now nginx >/dev/null 2>&1 || true; systemctl enable --now mariadb >/dev/null 2>&1 || systemctl enable --now mysql >/dev/null 2>&1 || true; systemctl enable --now postgresql >/dev/null 2>&1 || true; systemctl enable --now postfix >/dev/null 2>&1 || true; systemctl enable --now dovecot >/dev/null 2>&1 || true; systemctl enable --now opendkim >/dev/null 2>&1 || true; systemctl enable --now rspamd >/dev/null 2>&1 || true; if command -v ufw >/dev/null 2>&1; then ufw allow 80/tcp >/dev/null 2>&1 || true; ufw allow 443/tcp >/dev/null 2>&1 || true; fi; if command -v firewall-cmd >/dev/null 2>&1; then firewall-cmd --permanent --add-service=http >/dev/null 2>&1 || true; firewall-cmd --permanent --add-service=https >/dev/null 2>&1 || true; firewall-cmd --reload >/dev/null 2>&1 || true; fi; for svc in $(systemctl list-unit-files --type=service 'php*-fpm.service' 2>/dev/null | awk '/php.*-fpm\\.service/ {print $1}'); do systemctl enable --now "$svc" >/dev/null 2>&1 || true; done`], { timeout: 900000 });
     res.json({ ok: true, packages, output: `${stdout || ""}${stderr || ""}`.trim(), stack: await hostingStackStatus() });
   } catch (error: any) {
     res.status(500).json({ ok: false, packages, message: error.message || "Package installation failed.", output: `${error.stdout || ""}${error.stderr || ""}`.trim() });
