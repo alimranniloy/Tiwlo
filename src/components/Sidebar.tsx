@@ -133,6 +133,7 @@ export default function Sidebar({ user, isOpen, setIsOpen, onLogout }: SidebarPr
         items: [
           { name: 'Automation Logs', icon: Terminal, path: '/management/logs' },
           { name: 'Email', icon: Mail, path: '/management/email' },
+          { name: 'WhatsApp API', icon: MessageCircle, path: '/management/whatsapp-api' },
           { name: 'API Management', icon: Zap, path: '/management/api' },
           { name: 'Security Policy', icon: Lock, path: '/management/security' },
           { name: 'Backup', icon: Archive, path: '/management/backup' },

@@ -28,6 +28,9 @@ export const userFields = `
   billingName
   profileCompletedAt
   emailVerifiedAt
+  whatsappVerifiedAt
+  whatsappVerifiedPhone
+  whatsappVerificationRequired
   createdAt
   updatedAt
 `;

@@ -75,9 +75,28 @@ export async function signupWithApi(input: {
   billingName?: string;
 }) {
   const device = deviceMetadata();
-  const data = await graphQL<{ signup: { token: string; user: User } }>(
+  const data = await graphQL<{ signup: {
+    ok: boolean;
+    requiresWhatsAppOtp: boolean;
+    challengeId?: string;
+    phone?: string;
+    phoneE164?: string;
+    expiresAt?: string;
+    resendAvailableAt?: string;
+    message?: string;
+    token?: string;
+    user?: User;
+  } }>(
     `mutation Signup($input: SignupInput!) {
       signup(input: $input) {
+        ok
+        requiresWhatsAppOtp
+        challengeId
+        phone
+        phoneE164
+        expiresAt
+        resendAvailableAt
+        message
         token
         user { ${userFields} }
       }
@@ -85,8 +104,106 @@ export async function signupWithApi(input: {
     { input: { ...input, ...device } }
   );
 
-  setAuthToken(data.signup.token);
+  if (data.signup.token) setAuthToken(data.signup.token);
   return data.signup;
+}
+
+export async function checkSignupAvailabilityWithApi(input: { email?: string; phone?: string; mobileCountryCode?: string; country?: string }) {
+  const data = await graphQL<{ signupAvailability: { ok: boolean; emailAvailable: boolean; phoneAvailable: boolean; normalizedPhone?: string; message: string } }>(
+    `query SignupAvailability($email: String, $phone: String, $mobileCountryCode: String, $country: String) {
+      signupAvailability(email: $email, phone: $phone, mobileCountryCode: $mobileCountryCode, country: $country) {
+        ok
+        emailAvailable
+        phoneAvailable
+        normalizedPhone
+        message
+      }
+    }`,
+    input
+  );
+  return data.signupAvailability;
+}
+
+export async function verifySignupWhatsAppOtpWithApi(challengeId: string, code: string) {
+  const data = await graphQL<{ verifySignupWhatsAppOtp: { token: string; user: User } }>(
+    `mutation VerifySignupWhatsAppOtp($challengeId: ID!, $code: String!) {
+      verifySignupWhatsAppOtp(challengeId: $challengeId, code: $code) {
+        token
+        user { ${userFields} }
+      }
+    }`,
+    { challengeId, code }
+  );
+  setAuthToken(data.verifySignupWhatsAppOtp.token);
+  return data.verifySignupWhatsAppOtp;
+}
+
+export async function resendSignupWhatsAppOtpWithApi(challengeId: string) {
+  const data = await graphQL<{ resendSignupWhatsAppOtp: any }>(
+    `mutation ResendSignupWhatsAppOtp($challengeId: ID!) {
+      resendSignupWhatsAppOtp(challengeId: $challengeId) {
+        ok
+        challengeId
+        phone
+        phoneE164
+        expiresAt
+        resendAvailableAt
+        message
+      }
+    }`,
+    { challengeId }
+  );
+  return data.resendSignupWhatsAppOtp;
+}
+
+export async function changeSignupWhatsAppPhoneWithApi(challengeId: string, input: { phone?: string; mobileCountryCode?: string; country?: string }) {
+  const data = await graphQL<{ changeSignupWhatsAppPhone: any }>(
+    `mutation ChangeSignupWhatsAppPhone($challengeId: ID!, $input: WhatsAppPhoneInput!) {
+      changeSignupWhatsAppPhone(challengeId: $challengeId, input: $input) {
+        ok
+        challengeId
+        phone
+        phoneE164
+        expiresAt
+        resendAvailableAt
+        message
+      }
+    }`,
+    { challengeId, input }
+  );
+  return data.changeSignupWhatsAppPhone;
+}
+
+export async function startWhatsAppVerificationWithApi(input?: { phone?: string; mobileCountryCode?: string; country?: string }) {
+  const data = await graphQL<{ startWhatsAppVerification: any }>(
+    `mutation StartWhatsAppVerification($input: WhatsAppPhoneInput) {
+      startWhatsAppVerification(input: $input) {
+        ok
+        challengeId
+        phone
+        phoneE164
+        expiresAt
+        resendAvailableAt
+        message
+      }
+    }`,
+    { input }
+  );
+  return data.startWhatsAppVerification;
+}
+
+export async function verifyWhatsAppOtpWithApi(challengeId: string, code: string) {
+  const data = await graphQL<{ verifyWhatsAppOtp: { token: string; user: User } }>(
+    `mutation VerifyWhatsAppOtp($challengeId: ID!, $code: String!) {
+      verifyWhatsAppOtp(challengeId: $challengeId, code: $code) {
+        token
+        user { ${userFields} }
+      }
+    }`,
+    { challengeId, code }
+  );
+  setAuthToken(data.verifyWhatsAppOtp.token);
+  return data.verifyWhatsAppOtp;
 }
 
 export async function verifyCurrentPasswordWithApi(password: string) {

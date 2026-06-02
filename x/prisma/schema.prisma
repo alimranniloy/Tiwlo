@@ -27,6 +27,9 @@ model User {
   billingName              String?
   profileCompletedAt       DateTime?
   emailVerifiedAt          DateTime?
+  whatsappVerifiedAt       DateTime?
+  whatsappVerifiedPhone    String?
+  whatsappLastOtpSentAt    DateTime?
   emailVerificationToken   String?
   emailVerificationExpires DateTime?
   passwordResetTokenHash   String?
@@ -55,6 +58,30 @@ model User {
   tiwloPayWithdrawals      TiwloPayWithdrawal[]
   deviceSessions           UserDeviceSession[]
   identityVerifications    IdentityVerification[]
+}
+
+model WhatsAppOtpChallenge {
+  id                  String    @id @default(cuid())
+  purpose             String
+  status              String    @default("pending")
+  userId              String?
+  email               String?
+  phone               String
+  mobileCountryCode   String?
+  country             String?
+  phoneE164           String
+  codeHash            String
+  payload             Json?
+  attempts            Int       @default(0)
+  expiresAt           DateTime
+  resendAvailableAt   DateTime
+  verifiedAt          DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  @@index([purpose, status, createdAt])
+  @@index([userId, status])
+  @@index([phoneE164, status])
 }
 
 model IdentityVerification {

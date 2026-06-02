@@ -9,7 +9,7 @@ export const mergeResolvers = (...modules) => {
       if (key === 'Query' || key === 'Mutation') {
         merged[key] = { ...merged[key], ...value };
       } else {
-        merged[key] = value;
+        merged[key] = { ...(merged[key] || {}), ...value };
       }
     }
   }

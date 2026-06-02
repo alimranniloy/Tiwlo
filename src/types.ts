@@ -39,6 +39,9 @@ export interface User {
   billingName?: string;
   profileCompletedAt?: string;
   emailVerifiedAt?: string;
+  whatsappVerifiedAt?: string;
+  whatsappVerifiedPhone?: string;
+  whatsappVerificationRequired?: boolean;
   role: 'super_admin' | 'admin' | 'manager' | 'staff' | 'user' | 'store_owner' | 'store_customer' | 'isp_admin';
 }
 

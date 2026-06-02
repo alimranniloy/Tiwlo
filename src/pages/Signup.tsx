@@ -1,8 +1,14 @@
-import React, { useMemo, useState } from 'react';
-import { AlertCircle, ArrowLeft, ArrowRight, Lock, Mail, MapPin, Phone, ShieldCheck, User, UserPlus } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { AlertCircle, ArrowLeft, ArrowRight, CheckCircle2, Lock, Mail, MapPin, MessageCircle, Phone, RefreshCw, ShieldCheck, User, UserPlus } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { User as UserType } from '../types';
-import { signupWithApi } from '../lib/tiwloApi';
+import {
+  changeSignupWhatsAppPhoneWithApi,
+  checkSignupAvailabilityWithApi,
+  resendSignupWhatsAppOtpWithApi,
+  signupWithApi,
+  verifySignupWhatsAppOtpWithApi
+} from '../lib/tiwloApi';
 import BrandLogo from '../components/BrandLogo';
 import { COUNTRIES, countryByCode, detectBrowserCountryCode, phoneValidationMessage } from '../lib/countries';
 import AuthCard, { AuthShell } from '../components/AuthCard';
@@ -62,6 +68,12 @@ export default function SignupPage({ onSignup }: SignupProps) {
   const [form, setForm] = useState<SignupForm>(() => ({ ...initialForm, country: detectBrowserCountryCode(initialForm.country) }));
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
+  const [availability, setAvailability] = useState<{ emailAvailable?: boolean; phoneAvailable?: boolean; message?: string }>({});
+  const [pendingOtp, setPendingOtp] = useState<any>(null);
+  const [otp, setOtp] = useState('');
+  const [otpError, setOtpError] = useState('');
+  const [otpLoading, setOtpLoading] = useState(false);
+  const [resendSeconds, setResendSeconds] = useState(0);
   const selectedCountry = useMemo(() => countryByCode(form.country), [form.country]);
 
   const setValue = (key: keyof SignupForm, value: string) => {
@@ -94,6 +106,40 @@ export default function SignupPage({ onSignup }: SignupProps) {
     setStep(2);
   };
 
+  useEffect(() => {
+    const email = form.email.trim();
+    const phone = form.phone.trim();
+    if (!email && !phone) {
+      setAvailability({});
+      return undefined;
+    }
+    const timer = window.setTimeout(() => {
+      checkSignupAvailabilityWithApi({
+        email,
+        phone,
+        country: form.country,
+        mobileCountryCode: selectedCountry.dialCode
+      })
+        .then(setAvailability)
+        .catch(() => setAvailability({}));
+    }, 450);
+    return () => window.clearTimeout(timer);
+  }, [form.email, form.phone, form.country, selectedCountry.dialCode]);
+
+  useEffect(() => {
+    if (!pendingOtp?.resendAvailableAt) {
+      setResendSeconds(0);
+      return undefined;
+    }
+    const tick = () => {
+      const seconds = Math.max(0, Math.ceil((new Date(pendingOtp.resendAvailableAt).getTime() - Date.now()) / 1000));
+      setResendSeconds(seconds);
+    };
+    tick();
+    const interval = window.setInterval(tick, 1000);
+    return () => window.clearInterval(interval);
+  }, [pendingOtp?.resendAvailableAt]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const accountMessage = validateAccountStep();
@@ -120,13 +166,139 @@ export default function SignupPage({ onSignup }: SignupProps) {
         state: form.state,
         postalCode: form.postalCode
       });
-      onSignup(result.user);
+      if (result.requiresWhatsAppOtp) {
+        setPendingOtp(result);
+        setOtp('');
+        setOtpError('');
+        return;
+      }
+      if (result.user) onSignup(result.user);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to create account');
     } finally {
       setIsLoading(false);
     }
   };
+
+  const verifyOtp = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!pendingOtp?.challengeId) return;
+    if (!/^\d{6}$/.test(otp.trim())) {
+      setOtpError('Enter the 6 digit WhatsApp OTP.');
+      return;
+    }
+    setOtpLoading(true);
+    setOtpError('');
+    try {
+      const result = await verifySignupWhatsAppOtpWithApi(pendingOtp.challengeId, otp.trim());
+      onSignup(result.user);
+    } catch (err) {
+      setOtpError(err instanceof Error ? err.message : 'Unable to verify OTP.');
+    } finally {
+      setOtpLoading(false);
+    }
+  };
+
+  const resendOtp = async () => {
+    if (!pendingOtp?.challengeId || resendSeconds > 0) return;
+    setOtpLoading(true);
+    setOtpError('');
+    try {
+      setPendingOtp(await resendSignupWhatsAppOtpWithApi(pendingOtp.challengeId));
+    } catch (err) {
+      setOtpError(err instanceof Error ? err.message : 'Unable to resend OTP.');
+    } finally {
+      setOtpLoading(false);
+    }
+  };
+
+  const changeOtpPhone = async () => {
+    if (!pendingOtp?.challengeId) return;
+    const profileMessage = phoneValidationMessage(form.country, form.phone);
+    if (profileMessage) {
+      setOtpError(profileMessage);
+      return;
+    }
+    setOtpLoading(true);
+    setOtpError('');
+    try {
+      setPendingOtp(await changeSignupWhatsAppPhoneWithApi(pendingOtp.challengeId, {
+        phone: form.phone,
+        country: form.country,
+        mobileCountryCode: selectedCountry.dialCode
+      }));
+      setOtp('');
+    } catch (err) {
+      setOtpError(err instanceof Error ? err.message : 'Unable to change phone number.');
+    } finally {
+      setOtpLoading(false);
+    }
+  };
+
+  if (pendingOtp) {
+    return (
+      <AuthShell>
+        <AuthCard
+          wide
+          title="Verify WhatsApp"
+          socialLabel="Secure signup"
+          logo={<BrandLogo className="h-14 w-40" />}
+          footer={<p className="text-xs">Already verified? Enter the latest 6 digit code from WhatsApp.</p>}
+        >
+          <div className="rounded-lg border border-[#d8f3dc] bg-[#f0fff4] p-4 text-[#14532d]">
+            <div className="flex items-start gap-3">
+              <MessageCircle className="mt-0.5 h-5 w-5 shrink-0" />
+              <div>
+                <p className="text-sm font-black">We sent a 6 digit OTP to your WhatsApp number.</p>
+                <p className="mt-1 text-xs leading-5 text-[#166534]">Use the mobile number you entered during signup: <span className="font-mono font-bold">{pendingOtp.phoneE164 || pendingOtp.phone}</span></p>
+              </div>
+            </div>
+          </div>
+
+          <form onSubmit={verifyOtp} className="space-y-5">
+            <label className="space-y-2">
+              <span className="ml-1 text-[10px] font-bold uppercase tracking-wider text-[#4a4a4a]">WhatsApp OTP</span>
+              <input
+                value={otp}
+                onChange={(event) => {
+                  setOtp(event.target.value.replace(/\D/g, '').slice(0, 6));
+                  setOtpError('');
+                }}
+                inputMode="numeric"
+                maxLength={6}
+                placeholder="000000"
+                className="w-full rounded-md border border-gray-200 bg-white px-4 py-4 text-center text-2xl font-black tracking-[0.4em] outline-none transition-all focus:border-green-600"
+              />
+            </label>
+
+            <div className="grid grid-cols-1 gap-3 rounded-lg border border-gray-200 bg-gray-50 p-3 md:grid-cols-[140px_1fr_auto]">
+              <select value={form.country} onChange={(e) => setValue('country', e.target.value)} className="rounded border border-gray-200 bg-white px-2 py-2 text-xs font-black outline-none">
+                {COUNTRIES.map((country) => <option key={country.code} value={country.code}>{country.flag} {country.dialCode}</option>)}
+              </select>
+              <input value={form.phone} onChange={(e) => setValue('phone', e.target.value)} placeholder="Change WhatsApp number" className="rounded border border-gray-200 bg-white px-3 py-2 text-sm outline-none" />
+              <button type="button" onClick={changeOtpPhone} disabled={otpLoading} className="rounded bg-gray-900 px-4 py-2 text-xs font-black uppercase text-white disabled:opacity-60">Change Number</button>
+            </div>
+
+            {otpError && (
+              <div className="flex items-start gap-2 rounded-sm border border-red-100 bg-red-50 px-3 py-2 text-[12px] font-bold text-red-600">
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>{otpError}</span>
+              </div>
+            )}
+
+            <div className="flex flex-col gap-3 sm:flex-row">
+              <button disabled={otpLoading} className="flex w-full items-center justify-center gap-2 rounded-md bg-[#128c7e] py-3 text-xs font-black uppercase tracking-widest text-white transition-all hover:bg-[#0f756a] disabled:opacity-70">
+                {otpLoading ? <div className="h-5 w-5 animate-spin rounded-full border-2 border-white/30 border-t-white" /> : <>Verify & Create Account <CheckCircle2 className="h-5 w-5" /></>}
+              </button>
+              <button type="button" onClick={resendOtp} disabled={otpLoading || resendSeconds > 0} className="inline-flex items-center justify-center gap-2 rounded-md border border-gray-200 bg-white px-5 py-3 text-xs font-black uppercase tracking-widest text-gray-700 disabled:opacity-50">
+                <RefreshCw className="h-4 w-4" /> {resendSeconds > 0 ? `Resend ${resendSeconds}s` : 'Resend OTP'}
+              </button>
+            </div>
+          </form>
+        </AuthCard>
+      </AuthShell>
+    );
+  }
 
   return (
     <AuthShell>
@@ -159,6 +331,7 @@ export default function SignupPage({ onSignup }: SignupProps) {
                 </Field>
                 <Field label="Email Address" icon={Mail}>
                   <input required type="email" value={form.email} onChange={(e) => setValue('email', e.target.value)} placeholder="you@example.com" className="w-full rounded-sm border border-gray-200 bg-white px-4 py-3 pl-12 text-sm font-medium outline-none transition-all focus:border-blue-600 md:py-3.5 md:text-base" />
+                  {form.email && availability.emailAvailable === false && <p className="mt-1 text-[11px] font-bold text-red-600">This email address is already in use.</p>}
                 </Field>
                 <Field label="Password" icon={Lock}>
                   <input required type="password" value={form.password} onChange={(e) => setValue('password', e.target.value)} placeholder="Create a password" className="w-full rounded-sm border border-gray-200 bg-white px-4 py-3 pl-12 text-sm font-medium outline-none transition-all focus:border-blue-600 md:py-3.5 md:text-base" />
@@ -195,6 +368,7 @@ export default function SignupPage({ onSignup }: SignupProps) {
                       <input required type="tel" value={form.phone} onChange={(e) => setValue('phone', e.target.value)} placeholder={form.country === 'BD' ? '1712345678' : 'Mobile number'} className="w-full bg-white px-4 py-3 pl-12 text-sm font-medium outline-none" />
                     </div>
                   </div>
+                  {form.phone && availability.phoneAvailable === false && <p className="mt-1 text-[11px] font-bold text-red-600">This phone number is already in use.</p>}
                 </label>
                 <Field label="Address" icon={MapPin}>
                   <input required type="text" value={form.addressLine1} onChange={(e) => setValue('addressLine1', e.target.value)} placeholder="Street address" className="w-full rounded-sm border border-gray-200 bg-white px-4 py-3 pl-12 text-sm font-medium outline-none transition-all focus:border-blue-600" />

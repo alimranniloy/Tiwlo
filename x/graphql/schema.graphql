@@ -19,6 +19,9 @@ type User {
   billingName: String
   profileCompletedAt: String
   emailVerifiedAt: String
+  whatsappVerifiedAt: String
+  whatsappVerifiedPhone: String
+  whatsappVerificationRequired: Boolean
   createdAt: String
   updatedAt: String
   securitySummary: JSON
@@ -84,6 +87,48 @@ type PermissionGroup {
 type AuthPayload {
   token: String!
   user: User!
+}
+
+type SignupPayload {
+  ok: Boolean!
+  requiresWhatsAppOtp: Boolean!
+  challengeId: ID
+  phone: String
+  phoneE164: String
+  expiresAt: String
+  resendAvailableAt: String
+  message: String
+  token: String
+  user: User
+}
+
+type SignupAvailability {
+  ok: Boolean!
+  emailAvailable: Boolean!
+  phoneAvailable: Boolean!
+  normalizedPhone: String
+  message: String!
+}
+
+type WhatsAppOtpPayload {
+  ok: Boolean!
+  challengeId: ID!
+  phone: String
+  phoneE164: String
+  expiresAt: String!
+  resendAvailableAt: String!
+  message: String!
+}
+
+type WhatsAppVerificationStatus {
+  enabled: Boolean!
+  required: Boolean!
+  verified: Boolean!
+  phone: String
+  mobileCountryCode: String
+  country: String
+  whatsappVerifiedPhone: String
+  whatsappVerifiedAt: String
 }
 
 type DashboardSummary {
@@ -1650,6 +1695,12 @@ input SignupInput {
   billingName: String
 }
 
+input WhatsAppPhoneInput {
+  phone: String
+  mobileCountryCode: String
+  country: String
+}
+
 input UpdateProfileInput {
   id: ID
   name: String
@@ -2578,6 +2629,8 @@ input AiModelChatInput {
 type Query {
   health: String!
   me: User
+  signupAvailability(email: String, phone: String, mobileCountryCode: String, country: String): SignupAvailability!
+  whatsAppVerificationStatus: WhatsAppVerificationStatus!
   users(search: String, role: String, status: String): [User!]!
   dashboardSummary: DashboardSummary!
   ecommerceAdminSummary: EcommerceAdminSummary!
@@ -2666,7 +2719,12 @@ type Query {
 
 type Mutation {
   login(input: LoginInput!): AuthPayload!
-  signup(input: SignupInput!): AuthPayload!
+  signup(input: SignupInput!): SignupPayload!
+  resendSignupWhatsAppOtp(challengeId: ID!): WhatsAppOtpPayload!
+  changeSignupWhatsAppPhone(challengeId: ID!, input: WhatsAppPhoneInput!): WhatsAppOtpPayload!
+  verifySignupWhatsAppOtp(challengeId: ID!, code: String!): AuthPayload!
+  startWhatsAppVerification(input: WhatsAppPhoneInput): WhatsAppOtpPayload!
+  verifyWhatsAppOtp(challengeId: ID!, code: String!): AuthPayload!
   updateProfile(input: UpdateProfileInput!): User!
   requestPasswordReset(email: String!): Boolean!
   resetPassword(token: String!, password: String!): AuthPayload!

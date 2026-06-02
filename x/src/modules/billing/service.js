@@ -6,6 +6,7 @@ import { pagination } from '../../core/validation.js';
 import { paragraph, sendTiwloEmail } from '../../core/email.js';
 import { ensureOwnerHasCredit, runCreditAutomationForOwner, runCreditAutomationJob } from './creditAutomation.js';
 import { notifyDiscordInvoiceEvent } from '../discord/service.js';
+import { sendInvoiceWhatsApp } from '../whatsapp/service.js';
 import {
   checkTPanelNodeUsername,
   createTPanelNodeAccount,
@@ -62,6 +63,7 @@ async function notifyBillingEvent(ctx, invoice, title, message, path = '/invoice
       paragraph(`Invoice ${invoice.number} total: ${moneyLabel(invoice.amount, invoice.currency)}.`)
     ].join('')
   });
+  await sendInvoiceWhatsApp(ctx, invoice, owner, message, path);
   await notifyDiscordInvoiceEvent(ctx, 'created', invoice, { message });
 }
 

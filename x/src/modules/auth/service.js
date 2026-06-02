@@ -9,6 +9,16 @@ import { isProfileInputComplete, profileCompletionData } from '../../core/profil
 import { appOrigin, cta, paragraph, sendTiwloEmail } from '../../core/email.js';
 import { recordAuthDeviceSession } from './deviceSecurity.js';
 import { enforceSignupShield } from './systemShield.js';
+import {
+  attachWhatsAppState,
+  createSignupOtpChallenge,
+  isWhatsAppEnabled,
+  normalizeWhatsAppPhone,
+  sendForgotPasswordWhatsApp,
+  sendSecurityWhatsApp,
+  signupAvailability,
+  verifyOtpChallenge
+} from '../whatsapp/service.js';
 
 function randomToken() {
   return crypto.randomBytes(32).toString('hex');
@@ -101,6 +111,13 @@ export const login = async (ctx, input) => {
       paragraph('If this was not you, reset your password immediately from the login page.')
     ].join('')
   });
+  await sendSecurityWhatsApp(
+    ctx,
+    user,
+    device.unusual ? 'Unusual login detected' : 'New login detected',
+    `Your Tiwlo account was signed in from ${device.session.deviceName || 'an unknown device'} at ${[device.session.city, device.session.region, device.session.country].filter(Boolean).join(', ') || device.session.ipAddress || 'an unknown location'}.`,
+    '/settings'
+  );
   return { token: createToken(user), user: toApi(user) };
 };
 
@@ -120,6 +137,32 @@ export const signup = async (ctx, input) => {
   const profile = profileCompletionData(input);
   if (profile.error) throw new AppError(profile.error, 'BAD_USER_INPUT');
   const verificationToken = randomToken();
+  const availability = await signupAvailability(ctx, input);
+  if (!availability.emailAvailable) throw new AppError('This email address is already in use.', 'BAD_USER_INPUT');
+  if (!availability.phoneAvailable) throw new AppError('This phone number is already in use.', 'BAD_USER_INPUT');
+  if (await isWhatsAppEnabled(ctx.prisma)) {
+    const challenge = await createSignupOtpChallenge(ctx, input, {
+      input: {
+        ...input,
+        password: undefined,
+        email,
+        mobileCountryCode: profile.data.mobileCountryCode,
+        phone: profile.data.phone,
+        country: profile.data.country
+      },
+      profile: profile.data,
+      passwordHash,
+      verificationToken
+    });
+    return {
+      ok: true,
+      requiresWhatsAppOtp: true,
+      ...challenge,
+      token: null,
+      user: null,
+      message: 'A 6 digit WhatsApp OTP was sent to your signup mobile number.'
+    };
+  }
   const user = await ctx.prisma.user.create({
     data: {
       email,
@@ -140,7 +183,57 @@ export const signup = async (ctx, input) => {
   if (String(shield.user.status || '').toLowerCase() !== 'disabled') {
     queueVerificationEmail(ctx, shield.user, verificationToken);
   }
-  return { token: createToken(shield.user), user: toApi(shield.user) };
+  return { ok: true, requiresWhatsAppOtp: false, token: createToken(shield.user), user: toApi(shield.user), message: 'Account created.' };
+};
+
+export const verifySignupWhatsAppOtp = async (ctx, challengeId, code) => {
+  const challenge = await verifyOtpChallenge(ctx, challengeId, code, 'signup');
+  const payload = challenge.payload || {};
+  const input = payload.input || {};
+  const profile = payload.profile || profileCompletionData(input).data;
+  const email = normalizeEmail(input.email || challenge.email);
+  if (!email || !payload.passwordHash) throw new AppError('Signup session is incomplete. Start signup again.', 'BAD_USER_INPUT');
+  const availability = await signupAvailability(ctx, {
+    email,
+    phone: profile.phone || challenge.phone,
+    mobileCountryCode: profile.mobileCountryCode || challenge.mobileCountryCode,
+    country: profile.country || challenge.country
+  });
+  if (!availability.emailAvailable) throw new AppError('This email address is already in use.', 'BAD_USER_INPUT');
+  if (!availability.phoneAvailable) throw new AppError('This phone number is already in use.', 'BAD_USER_INPUT');
+
+  const emailVerificationToken = payload.verificationToken || randomToken();
+  const user = await ctx.prisma.user.create({
+    data: {
+      email,
+      passwordHash: payload.passwordHash,
+      name: input.name,
+      credits: await getNewAccountCredit(ctx.prisma),
+      role: 'user',
+      emailVerifiedAt: null,
+      emailVerificationToken,
+      emailVerificationExpires: addHours(48),
+      ...profile
+    }
+  });
+  const normalizedPhone = normalizeWhatsAppPhone(profile);
+  await ctx.prisma.$executeRawUnsafe(`
+    UPDATE "User"
+    SET "whatsappVerifiedAt" = CURRENT_TIMESTAMP,
+        "whatsappVerifiedPhone" = $2,
+        "whatsappLastOtpSentAt" = CURRENT_TIMESTAMP,
+        "updatedAt" = CURRENT_TIMESTAMP
+    WHERE "id" = $1
+  `, user.id, normalizedPhone.phoneE164 || challenge.phoneE164);
+
+  const device = await recordAuthDeviceSession(ctx, user, input, 'signup');
+  await writeAudit({ ...ctx, user }, 'signup', 'user', user.id, { email, device: device.session, whatsappVerified: true });
+  const shield = await enforceSignupShield(ctx, user, input, device.session);
+  if (String(shield.user.status || '').toLowerCase() !== 'disabled') {
+    queueVerificationEmail(ctx, shield.user, emailVerificationToken);
+  }
+  const enriched = await attachWhatsAppState(ctx.prisma, shield.user);
+  return { token: createToken(enriched), user: toApi(enriched) };
 };
 
 export const updateProfile = async (ctx, actor, input) => {
@@ -202,6 +295,7 @@ export const requestPasswordReset = async (ctx, emailInput) => {
       cta('Reset Password', link)
     ].join('')
   });
+  await sendForgotPasswordWhatsApp(ctx, user, link);
   await writeAudit({ ...ctx, user }, 'request_password_reset', 'user', user.id, { email });
   return true;
 };
@@ -233,6 +327,7 @@ export const resetPassword = async (ctx, token, password) => {
     preview: 'Your Tiwlo password was updated successfully.',
     html: paragraph('Your password was changed successfully. If this was not you, contact support immediately.')
   });
+  await sendSecurityWhatsApp(ctx, updated, 'Password changed', 'Your Tiwlo password was changed. If this was not you, contact support immediately.', '/settings');
   return { token: createToken(updated), user: toApi(updated) };
 };
 

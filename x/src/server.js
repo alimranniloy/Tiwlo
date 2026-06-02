@@ -27,6 +27,7 @@ import { registerSystemToolRoutes, startBackupAutomation, startSslAutomation } f
 import { registerTPanelRoutes } from './modules/tpanel/service.js';
 import { startPowerDnsAutomation } from './modules/powerdns/service.js';
 import { registerDiscordRoutes } from './modules/discord/service.js';
+import { ensureWhatsAppAuthSchema, publicWhatsAppStatus } from './modules/whatsapp/service.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -156,7 +157,8 @@ app.get('/api/platform/status', async (_req, res) => {
       maintenance: {
         enabled: Boolean(value.enabled),
         updatedAt: setting?.updatedAt || null
-      }
+      },
+      whatsapp: await publicWhatsAppStatus(prisma).catch(() => ({ enabled: false, configured: false }))
     });
   } catch (error) {
     res.status(500).json({ maintenance: { enabled: false }, error: error.message || 'Unable to read platform status' });
@@ -460,6 +462,9 @@ app.use('/graphql', expressMiddleware(server, {
 
 app.listen(port, () => {
   console.log(`Tiwlo X GraphQL API ready at http://localhost:${port}/graphql`);
+  ensureWhatsAppAuthSchema(prisma).catch((error) => {
+    console.warn('[whatsapp] schema prepare failed:', error?.message || error);
+  });
   startBackupAutomation({ prisma, rootDir: join(__dirname, '../..') });
   startSslAutomation({ prisma, rootDir: join(__dirname, '../..') });
   startPowerDnsAutomation({ prisma });

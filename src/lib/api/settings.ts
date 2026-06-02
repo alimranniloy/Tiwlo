@@ -5,6 +5,10 @@ export type PlatformStatus = {
     enabled: boolean;
     updatedAt?: string | null;
   };
+  whatsapp?: {
+    enabled: boolean;
+    configured?: boolean;
+  };
 };
 
 export async function fetchPlatformStatusWithApi(): Promise<PlatformStatus> {

@@ -72,6 +72,7 @@ const AdminSupport = lazy(() => import('./pages/management/AdminSupport'));
 const AdminIdentityVerification = lazy(() => import('./pages/management/AdminIdentityVerification'));
 const AdminNotifications = lazy(() => import('./pages/management/AdminNotifications'));
 const AdminEmail = lazy(() => import('./pages/management/AdminEmail'));
+const AdminWhatsAppApi = lazy(() => import('./pages/management/AdminWhatsAppApi'));
 const AdminPlans = lazy(() => import('./pages/management/AdminPlans'));
 const AdminCurrencies = lazy(() => import('./pages/management/AdminCurrencies'));
 const AdminResourcesPage = lazy(() => import('./pages/management/AdminResourcesPage'));
@@ -91,6 +92,7 @@ const FloatingAIWidget = lazy(() => import('./components/FloatingAIWidget'));
 const ISPStorefront = lazy(() => import('./pages/isp/ISPStorefront'));
 const ISPAddRouter = lazy(() => import('./pages/isp/ISPAddRouter'));
 const ISPAdminRoot = lazy(() => import('./pages/isp/admin/ISPAdminRoot'));
+const WhatsAppVerificationRequired = lazy(() => import('./pages/WhatsAppVerificationRequired'));
 import { clearAuthToken, fetchAdminModules, fetchConsoleData, fetchCurrentUserWithApi, fetchPlatformStatusWithApi, getAuthToken } from './lib/tiwloApi';
 import { getStorefrontHostContext } from './lib/storefrontHost';
 import { isProfileComplete } from './lib/countries';
@@ -243,6 +245,7 @@ function AppContent({
                 <Route path="/management/statistics" element={<AdminServiceStatistics />} />
                 <Route path="/management/notifications" element={<AdminNotifications />} />
                 <Route path="/management/email" element={<AdminEmail />} />
+                <Route path="/management/whatsapp-api" element={<AdminWhatsAppApi />} />
                 <Route path="/management/payments" element={<AdminPayments />} />
                 <Route path="/management/tiwlo-pay" element={<AdminTiwloPay />} />
                 <Route path="/management/tpanel/*" element={<AdminTPanel />} />
@@ -347,9 +350,10 @@ export default function App() {
   const isEmailHost = typeof window !== 'undefined' && /^(?:tmail|email)\./.test(window.location.hostname.toLowerCase());
   const [showWelcome, setShowWelcome] = useState(false);
   const [routerResetKey, setRouterResetKey] = useState(0);
-  const [platformStatus, setPlatformStatus] = useState<{ loading: boolean; maintenance: boolean }>({
+  const [platformStatus, setPlatformStatus] = useState<{ loading: boolean; maintenance: boolean; whatsappEnabled: boolean }>({
     loading: true,
-    maintenance: false
+    maintenance: false,
+    whatsappEnabled: false
   });
 
   const [user, setUser] = useState<User | null>(() => {
@@ -378,10 +382,14 @@ export default function App() {
       try {
         const status = await fetchPlatformStatusWithApi();
         if (isMounted) {
-          setPlatformStatus({ loading: false, maintenance: Boolean(status.maintenance?.enabled) });
+          setPlatformStatus({
+            loading: false,
+            maintenance: Boolean(status.maintenance?.enabled),
+            whatsappEnabled: Boolean(status.whatsapp?.enabled)
+          });
         }
       } catch {
-        if (isMounted) setPlatformStatus({ loading: false, maintenance: false });
+        if (isMounted) setPlatformStatus({ loading: false, maintenance: false, whatsappEnabled: false });
       }
     };
 
@@ -576,6 +584,16 @@ export default function App() {
       <ResettableRouter routerKey={`profile-${routerResetKey}`}>
         <Suspense fallback={<RouteLoader />}>
           <CompleteProfile user={user} setUser={setUser} onLogout={handleLogout} />
+        </Suspense>
+      </ResettableRouter>
+    );
+  }
+
+  if (!isAdminRole(user) && platformStatus.whatsappEnabled && user.whatsappVerificationRequired !== false && !user.whatsappVerifiedAt) {
+    return (
+      <ResettableRouter routerKey={`whatsapp-${routerResetKey}`}>
+        <Suspense fallback={<RouteLoader />}>
+          <WhatsAppVerificationRequired user={user} setUser={setUser} onLogout={handleLogout} />
         </Suspense>
       </ResettableRouter>
     );
