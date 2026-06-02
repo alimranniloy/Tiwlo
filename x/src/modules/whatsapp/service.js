@@ -37,6 +37,7 @@ const json = (value, fallback = {}) => JSON.stringify(value ?? fallback);
 const secret = () => process.env.JWT_SECRET || process.env.WHATSAPP_OTP_SECRET || 'dev-secret';
 const codeHash = (challengeId, code) => crypto.createHmac('sha256', secret()).update(`${challengeId}:${code}`).digest('hex');
 const otpCode = () => String(crypto.randomInt(0, 1000000)).padStart(6, '0');
+const templateDefinitionCache = new Map();
 
 export const defaultWhatsAppConfig = () => ({
   enabled: false,
@@ -46,10 +47,10 @@ export const defaultWhatsAppConfig = () => ({
   businessId: '',
   fromNumber: '',
   templates: {
-    otp: { name: '', language: 'en_US', button: true, buttonType: 'copy_code' },
-    invoice: { name: '', language: 'en_US', button: true, buttonType: 'url' },
-    forgotPassword: { name: '', language: 'en_US', button: true, buttonType: 'url' },
-    security: { name: '', language: 'en_US', button: true, buttonType: 'url' }
+    otp: { name: '', language: 'en_US', button: true, buttonType: 'auto' },
+    invoice: { name: '', language: 'en_US', button: true, buttonType: 'auto' },
+    forgotPassword: { name: '', language: 'en_US', button: true, buttonType: 'auto' },
+    security: { name: '', language: 'en_US', button: true, buttonType: 'auto' }
   }
 });
 
@@ -193,6 +194,135 @@ export const signupAvailability = async (ctx, input = {}) => {
   };
 };
 
+const placeholderCount = (text = '') => {
+  const content = String(text || '');
+  const numbers = [...content.matchAll(/{{\s*(\d+)\s*}}/g)].map((match) => Number(match[1] || 0)).filter(Boolean);
+  if (numbers.length) return Math.max(...numbers);
+  return (content.match(/{{[^}]+}}/g) || []).length;
+};
+
+const templateLanguage = (template) => clean(template?.language || 'en_US');
+
+const resolveTemplateBusinessId = async (config) => {
+  if (config.businessId) return config.businessId;
+  if (!config.phoneNumberId || !config.accessToken) return '';
+  const cacheKey = `phone:${config.apiVersion}:${config.phoneNumberId}`;
+  const cached = templateDefinitionCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.value || '';
+  const response = await fetch(`https://graph.facebook.com/${config.apiVersion || 'v20.0'}/${config.phoneNumberId}?fields=whatsapp_business_account`, {
+    headers: { Authorization: `Bearer ${config.accessToken}` }
+  }).catch(() => null);
+  const payload = await response?.json?.().catch(() => ({}));
+  const value = payload?.whatsapp_business_account?.id || '';
+  templateDefinitionCache.set(cacheKey, { value, expiresAt: Date.now() + 10 * 60 * 1000 });
+  return value;
+};
+
+const fetchTemplateDefinition = async (config, template) => {
+  const name = clean(template?.name);
+  if (!name || !config.accessToken) return null;
+  const businessId = await resolveTemplateBusinessId(config);
+  if (!businessId) return null;
+  const language = templateLanguage(template);
+  const cacheKey = `template:${config.apiVersion}:${businessId}:${name}:${language}`;
+  const cached = templateDefinitionCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+  const url = new URL(`https://graph.facebook.com/${config.apiVersion || 'v20.0'}/${businessId}/message_templates`);
+  url.searchParams.set('name', name);
+  url.searchParams.set('fields', 'name,language,status,category,components');
+  url.searchParams.set('limit', '100');
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${config.accessToken}` }
+  }).catch(() => null);
+  const payload = await response?.json?.().catch(() => ({}));
+  if (!response?.ok) {
+    console.warn('[whatsapp] template auto-detect failed:', payload?.error?.message || 'unable to read template');
+    templateDefinitionCache.set(cacheKey, { value: null, expiresAt: Date.now() + 60 * 1000 });
+    return null;
+  }
+  const rows = Array.isArray(payload?.data) ? payload.data : [];
+  const exact = rows.find((item) => item.name === name && String(item.language || '').toLowerCase() === language.toLowerCase());
+  const sameName = rows.find((item) => item.name === name);
+  const value = exact || sameName || null;
+  templateDefinitionCache.set(cacheKey, { value, expiresAt: Date.now() + 5 * 60 * 1000 });
+  return value;
+};
+
+const inferTemplateShape = (definition, kind, template) => {
+  const components = Array.isArray(definition?.components) ? definition.components : [];
+  const componentOf = (type) => components.find((component) => String(component.type || '').toUpperCase() === type);
+  const body = componentOf('BODY');
+  const header = componentOf('HEADER');
+  const buttons = componentOf('BUTTONS');
+  const inferredButtons = [];
+
+  for (const [index, button] of (buttons?.buttons || []).entries()) {
+    const type = String(button.type || '').toUpperCase();
+    const otpType = String(button.otp_type || button.otpType || '').toLowerCase();
+    if (type === 'OTP' || otpType.includes('copy')) {
+      inferredButtons.push({ index, subType: 'copy_code', count: 1 });
+    } else if (type === 'URL') {
+      const count = placeholderCount(button.url || button.text || '');
+      if (count > 0) inferredButtons.push({ index, subType: 'url', count });
+    } else if (type === 'COPY_CODE') {
+      inferredButtons.push({ index, subType: 'copy_code', count: 1 });
+    }
+  }
+
+  if (!definition && template.button !== false) {
+    const rawButtonType = clean(template.buttonType).toLowerCase();
+    const selected = !rawButtonType || rawButtonType === 'auto' ? (kind === 'otp' ? 'copy_code' : 'url') : rawButtonType;
+    inferredButtons.push({ index: 0, subType: selected === 'copy_code' ? 'copy_code' : 'url', count: 1 });
+  }
+  const fallbackButtonType = clean(template.buttonType).toLowerCase();
+  const fallbackOtpCopyCode = kind === 'otp' && (!fallbackButtonType || fallbackButtonType === 'auto' || fallbackButtonType === 'copy_code');
+
+  return {
+    headerTextCount: String(header?.format || '').toUpperCase() === 'TEXT' ? placeholderCount(header?.text || '') : 0,
+    bodyCount: definition ? placeholderCount(body?.text || '') : (fallbackOtpCopyCode ? 0 : null),
+    buttons: inferredButtons
+  };
+};
+
+const exactTextParams = (values = [], count = 0, fallback = '') => Array.from({ length: Math.max(0, count) }, (_, index) => ({
+  type: 'text',
+  text: String(values[index] ?? values[0] ?? fallback ?? '')
+}));
+
+const buildTemplateComponents = async (config, kind, template, bodyParams, buttonParams) => {
+  const definition = await fetchTemplateDefinition(config, template);
+  const shape = inferTemplateShape(definition, kind, template);
+  const components = [];
+  const fallback = bodyParams[0] || buttonParams[0] || '';
+
+  if (shape.headerTextCount > 0) {
+    components.push({ type: 'header', parameters: exactTextParams(bodyParams, shape.headerTextCount, fallback) });
+  }
+
+  if (shape.bodyCount === null) {
+    if (bodyParams.length) {
+      components.push({ type: 'body', parameters: bodyParams.map((item) => ({ type: 'text', text: String(item ?? '') })) });
+    }
+  } else if (shape.bodyCount > 0) {
+    components.push({ type: 'body', parameters: exactTextParams(bodyParams, shape.bodyCount, fallback) });
+  }
+
+  for (const button of shape.buttons) {
+    if (template.button === false || button.count <= 0) continue;
+    const buttonValue = String(buttonParams[0] ?? bodyParams[0] ?? fallback ?? '');
+    components.push({
+      type: 'button',
+      sub_type: button.subType,
+      index: String(button.index || 0),
+      parameters: button.subType === 'copy_code'
+        ? [{ type: 'coupon_code', coupon_code: buttonValue.slice(0, 15) }]
+        : exactTextParams(buttonParams, button.count, buttonValue)
+    });
+  }
+
+  return components;
+};
+
 const sendTemplate = async (ctx, kind, toPhoneE164, { bodyParams = [], buttonParams = [] } = {}) => {
   const config = await getWhatsAppConfig(ctx.prisma);
   if (!config.enabled) return { sent: false, reason: 'disabled' };
@@ -203,28 +333,7 @@ const sendTemplate = async (ctx, kind, toPhoneE164, { bodyParams = [], buttonPar
   if (!template.name) {
     throw new AppError(`WhatsApp ${kind} template name is missing.`, 'WHATSAPP_CONFIGURATION_REQUIRED');
   }
-  const buttonType = clean(template.buttonType || (kind === 'otp' ? 'copy_code' : 'url')).toLowerCase();
-  const effectiveBodyParams = kind === 'otp' && buttonType === 'copy_code' ? [] : bodyParams;
-
-  const components = [];
-  if (effectiveBodyParams.length) {
-    components.push({
-      type: 'body',
-      parameters: effectiveBodyParams.map((item) => ({ type: 'text', text: String(item ?? '') }))
-    });
-  }
-  if (template.button !== false && buttonParams.length) {
-    components.push({
-      type: 'button',
-      sub_type: buttonType === 'copy_code' ? 'copy_code' : 'url',
-      index: '0',
-      parameters: buttonParams.map((item) => (
-        buttonType === 'copy_code'
-          ? { type: 'coupon_code', coupon_code: String(item ?? '').slice(0, 15) }
-          : { type: 'text', text: String(item ?? '') }
-      ))
-    });
-  }
+  const components = await buildTemplateComponents(config, kind, template, bodyParams, buttonParams);
 
   const response = await fetch(`https://graph.facebook.com/${config.apiVersion || 'v20.0'}/${config.phoneNumberId}/messages`, {
     method: 'POST',
@@ -245,7 +354,8 @@ const sendTemplate = async (ctx, kind, toPhoneE164, { bodyParams = [], buttonPar
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new AppError(payload?.error?.message || 'WhatsApp API message failed.', 'WHATSAPP_SEND_FAILED');
+    const details = payload?.error?.error_data?.details || payload?.error?.message || 'WhatsApp API message failed.';
+    throw new AppError(details, 'WHATSAPP_SEND_FAILED');
   }
   return { sent: true, payload };
 };

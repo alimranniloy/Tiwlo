@@ -12,7 +12,7 @@ type WhatsAppTemplate = {
   name: string;
   language: string;
   button: boolean;
-  buttonType: 'url' | 'copy_code';
+  buttonType: 'auto' | 'url' | 'copy_code';
 };
 
 type WhatsAppConfig = {
@@ -29,7 +29,7 @@ const defaultTemplate = (): WhatsAppTemplate => ({
   name: '',
   language: 'en_US',
   button: true,
-  buttonType: 'url'
+  buttonType: 'auto'
 });
 
 const defaultConfig = (): WhatsAppConfig => ({
@@ -40,7 +40,7 @@ const defaultConfig = (): WhatsAppConfig => ({
   businessId: '',
   fromNumber: '',
   templates: {
-    otp: { ...defaultTemplate(), buttonType: 'copy_code' },
+    otp: defaultTemplate(),
     invoice: defaultTemplate(),
     forgotPassword: defaultTemplate(),
     security: defaultTemplate()
@@ -281,10 +281,11 @@ export default function AdminWhatsAppApi() {
                     className="w-full rounded border border-[#D1D5DB] px-4 py-3 text-sm outline-none focus:border-[#128c7e]"
                   />
                   <select
-                    value={template.buttonType || (row.key === 'otp' ? 'copy_code' : 'url')}
+                    value={template.buttonType || 'auto'}
                     onChange={(event) => setTemplateValue(row.key, 'buttonType', event.target.value as WhatsAppTemplate['buttonType'])}
                     className="w-full rounded border border-[#D1D5DB] px-3 py-3 text-sm font-bold outline-none focus:border-[#128c7e]"
                   >
+                    <option value="auto">Auto Detect</option>
                     <option value="url">URL Button</option>
                     <option value="copy_code">Copy Code</option>
                   </select>
