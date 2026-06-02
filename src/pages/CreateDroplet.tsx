@@ -1,16 +1,13 @@
 import React, { useState } from 'react';
 import {
   ArrowLeft,
-  ChevronRight,
-  CheckCircle2,
-  Cpu,
-  Globe2,
-  HardDrive,
+  Database,
+  KeyRound,
   Lock,
-  MapPin,
-  Package,
+  Minus,
+  Plus,
   Server,
-  Sparkles,
+  TerminalSquare,
   User,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
@@ -80,17 +77,7 @@ function moduleLogo(module: string) {
   return module === 'tpanel' ? '/brand/icon.png' : '';
 }
 
-function moduleGradient(module: string) {
-  if (module === 'tpanel') return 'from-[#071f4a] via-[#0f5dd8] to-[#00a884]';
-  return 'from-[#111827] via-[#334155] to-[#0069ff]';
-}
-
-function flagUrl(countryCode?: string | null) {
-  const code = String(countryCode || '').trim().toLowerCase();
-  return /^[a-z]{2}$/.test(code) ? `https://flagcdn.com/w40/${code}.png` : '';
-}
-
-function accountDomain(hostname: string, username: string) {
+function accountDomain(hostname: string) {
   const cleanHost = hostname.trim().toLowerCase();
   return cleanHost;
 }
@@ -177,6 +164,10 @@ export default function CreateDroplet() {
   const selectedPlanRecord = plans.find((plan) => plan.code === selectedPlan) || plans[0] || null;
   const selectedNode = moduleNodes.find((node) => node.id === selectedNodeId) || moduleNodes[0] || null;
   const selectedHourly = hourlyPrice(Number(selectedPlanRecord?.price || 0));
+  const selectedCpu = limitValue(selectedPlanRecord, 'cpu', fallbackLimits.cpu);
+  const selectedRam = limitValue(selectedPlanRecord, 'ram', fallbackLimits.ram);
+  const selectedDisk = limitValue(selectedPlanRecord, 'disk', fallbackLimits.disk);
+  const selectedFeatures = selectedPlanRecord ? featureList(selectedPlanRecord) : [];
   const creditBalance = Number(billingOverview?.credits || 0);
   const creditEmpty = Boolean(billingOverview) && creditBalance <= 0;
 
@@ -290,7 +281,7 @@ export default function CreateDroplet() {
               module: selectedModule,
               username: username.trim().toLowerCase(),
               password,
-              domain: accountDomain(hostname, username),
+              domain: accountDomain(hostname),
               limits: selectedPlanRecord.limits || {},
               packageCode: selectedPlanRecord.code,
               packageName: selectedPlanRecord.name
@@ -348,342 +339,404 @@ export default function CreateDroplet() {
   }
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6 pb-20">
-      <div className="overflow-hidden rounded-lg border border-[#dbe4f0] bg-white">
-        <div className={`bg-gradient-to-r ${moduleGradient(selectedModule)} px-5 py-6 text-white md:px-7`}>
-          <div className="flex items-start gap-4">
-            <button
-              onClick={() => navigate('/droplets')}
-              className="rounded-md bg-white/10 p-2 transition-colors hover:bg-white/20"
-              id="back-button"
-            >
-              <ArrowLeft className="h-4 w-4 text-white" />
-            </button>
-            <div className="min-w-0">
-              <div className="mb-3 inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-[11px] font-black uppercase tracking-widest text-white/90">
-                <Sparkles className="h-3.5 w-3.5" />
-                Managed deployment
-              </div>
-              <h1 className="text-2xl font-black tracking-tight md:text-3xl">Create Droplet</h1>
-              <p className="mt-2 max-w-2xl text-sm leading-6 text-white/80">Deploy a production-ready {moduleLabel(selectedModule)} hosting account from administrator connected regions with credit billing.</p>
-            </div>
+    <div className="min-h-screen bg-white pb-20 text-[#031b4e]">
+      <div className="mx-auto max-w-[980px] px-4 pt-5 md:px-6">
+        <button
+          onClick={() => navigate('/droplets')}
+          className="mb-10 inline-flex items-center gap-2 text-[14px] font-medium text-[#2d4473] transition-colors hover:text-[#0069ff]"
+          id="back-button"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Back to Droplets
+        </button>
+
+        {error && (
+          <div className="mb-5 border border-red-200 bg-red-50 px-4 py-3 text-[13px] font-semibold text-red-700">
+            {error}
           </div>
-        </div>
-        <div className="grid grid-cols-1 divide-y divide-[#edf1f7] bg-white md:grid-cols-3 md:divide-x md:divide-y-0">
-          <TopMetric label="Module" value={moduleLabel(selectedModule)} />
-          <TopMetric label="Selected plan" value={selectedPlanRecord?.name || 'Choose plan'} />
-          <TopMetric label="Region" value={selectedNode?.location || 'Choose location'} />
+        )}
+
+        {creditEmpty && (
+          <div className="mb-5 flex flex-col gap-3 border border-red-200 bg-red-50 px-4 py-3 text-red-700 md:flex-row md:items-center md:justify-between">
+            <div>
+              <p className="text-[13px] font-bold">Add Credit Now</p>
+              <p className="text-[12px]">Droplet deployment uses credit only. Add balance before ordering.</p>
+            </div>
+            <button onClick={() => navigate('/billing')} className="bg-red-600 px-4 py-2 text-[12px] font-bold text-white hover:bg-red-700">
+              Add Credit
+            </button>
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 gap-10 lg:grid-cols-[minmax(0,560px)_360px]">
+          <main className="min-w-0">
+            <h1 className="mb-10 text-[40px] font-bold leading-tight tracking-normal text-[#031b4e]">Create Droplet</h1>
+
+            <section className="mb-14">
+              <SectionTitle title="Choose a datacenter region" />
+              <div className="border border-[#94a3c7] bg-white">
+                <select
+                  value={selectedNodeId}
+                  onChange={(event) => setSelectedNodeId(event.target.value)}
+                  disabled={nodesLoading || moduleNodes.length === 0}
+                  className="h-[54px] w-full bg-white px-4 text-[15px] font-semibold text-[#031b4e] outline-none disabled:bg-[#f3f5fa]"
+                >
+                  {nodesLoading && <option>Loading regions...</option>}
+                  {!nodesLoading && moduleNodes.length === 0 && <option>No active region available</option>}
+                  {moduleNodes.map((node) => (
+                    <option key={node.id} value={node.id}>
+                      {node.location || 'Global'}{node.countryCode ? ` - ${node.countryCode.toUpperCase()}` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </section>
+
+            <section className="mb-14">
+              <SectionTitle title="Choose an image" />
+              <TabBar items={['OS', 'Solutions', 'Custom Images']} active="OS" />
+              <div className="space-y-2">
+                {nodesLoading ? (
+                  <EmptyRow text="Loading available modules..." />
+                ) : modules.length === 0 ? (
+                  <EmptyRow text="No active deployment module is available." warning />
+                ) : (
+                  modules.map((module, index) => {
+                    const selected = selectedModule === module.key;
+                    const logo = moduleLogo(module.key);
+                    return (
+                      <button
+                        key={module.key}
+                        onClick={() => setSelectedModule(module.key)}
+                        className={`flex h-[58px] w-full items-center border text-left transition-colors ${
+                          selected ? 'border-[#0069ff] bg-[#f2f7ff]' : 'border-[#94a3c7] bg-white hover:border-[#0069ff]'
+                        }`}
+                      >
+                        <span className="flex h-full w-[44px] items-center justify-center">
+                          <RadioDot selected={selected} />
+                        </span>
+                        <span className="flex h-full flex-1 items-center gap-3 border-l border-transparent px-1">
+                          <span className="grid h-6 w-6 place-items-center">
+                            {logo ? <img src={logo} alt={moduleLabel(module.key)} className="h-6 w-6 object-contain" /> : <Server className="h-5 w-5 text-[#62708f]" />}
+                          </span>
+                          <span className="w-[135px] text-[14px] font-bold text-[#031b4e]">{moduleLabel(module.key)}</span>
+                          {index === 0 && (
+                            <span className="hidden bg-[#6f7c9d] px-4 py-1 text-[11px] font-bold uppercase text-white sm:inline-flex">
+                              Recommended
+                            </span>
+                          )}
+                        </span>
+                        <span className="flex h-full min-w-[108px] items-center justify-end border-l border-[#94a3c7] px-4 text-[14px] font-semibold text-[#4b5d87]">
+                          {module.count} region{module.count === 1 ? '' : 's'}
+                        </span>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+              <button type="button" className="mt-5 text-[14px] font-bold text-[#0069ff]">Show all images</button>
+            </section>
+
+            <section className="mb-14">
+              <SectionTitle title="Choose a Droplet Plan" />
+              <TabBar items={['Basic', 'General Purpose', 'CPU-Optimized', 'Memory-Optimized']} active="Basic" />
+              <p className="mb-3 mt-6 text-[13px] font-bold text-[#031b4e]">CPU Options</p>
+              <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                {['Regular', 'Premium AMD', 'Premium Intel'].map((item, index) => (
+                  <button
+                    key={item}
+                    type="button"
+                    className={`flex min-h-[52px] items-center gap-3 border px-3 text-left ${
+                      index === 2 ? 'border-[#0069ff] bg-[#f2f7ff]' : 'border-[#94a3c7] bg-white'
+                    }`}
+                  >
+                    <RadioDot selected={index === 2} />
+                    <span>
+                      <span className="block text-[14px] font-bold text-[#031b4e]">{item}</span>
+                      <span className="block text-[12px] text-[#4d5f85]">Disk Type: {index === 0 ? 'SSD' : 'NVMe SSD'}</span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+              <div className="mb-8 border border-[#a58cff] bg-[#f7f4ff] px-4 py-4 text-[13px] leading-5 text-[#031b4e]">
+                <span className="font-bold">Basic - Premium plans</span> are available only in administrator connected tPanel regions.
+              </div>
+
+              <p className="mb-3 text-[13px] font-bold text-[#031b4e]">Select a Plan</p>
+              <div className="space-y-2">
+                {plansLoading ? (
+                  <EmptyRow text="Loading active cloud packages..." />
+                ) : plans.length === 0 ? (
+                  <EmptyRow text="No active cloud package is configured. Add cloud plans from Administrator Plans first." warning />
+                ) : (
+                  plans.map((plan) => {
+                    const selected = selectedPlan === plan.code;
+                    const ram = limitValue(plan, 'ram', fallbackLimits.ram);
+                    const cpu = limitValue(plan, 'cpu', fallbackLimits.cpu);
+                    const disk = limitValue(plan, 'disk', fallbackLimits.disk);
+                    const features = featureList(plan);
+                    return (
+                      <button
+                        key={plan.id || plan.code}
+                        onClick={() => setSelectedPlan(plan.code)}
+                        className={`flex min-h-[58px] w-full items-center gap-3 border px-3 text-left transition-colors ${
+                          selected ? 'border-[#0069ff] bg-[#f2f7ff]' : 'border-[#d7deed] bg-[#f5f7fb] hover:border-[#0069ff]'
+                        }`}
+                        id={`plan-${plan.code}`}
+                      >
+                        <RadioDot selected={selected} />
+                        <span className="min-w-0">
+                          <span className="block text-[15px] font-bold text-[#566992]">${Number(plan.price || 0).toFixed(2)}/mo</span>
+                          <span className="block truncate text-[13px] text-[#46577c]">
+                            {cpu} - {ram} - {disk} NVMe SSD{features.length > 0 ? ` - ${features.slice(0, 1).join('')}` : ''}
+                          </span>
+                        </span>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+              <button type="button" className="mt-5 text-[14px] font-bold text-[#0069ff]">Show all plans</button>
+            </section>
+
+            <section className="mb-14 space-y-8">
+              <OptionalBox title="Add additional storage" description="Volumes are network block storage. You can attach storage after deployment." />
+              <OptionalBox title="Enable automated backups" description="Restore your Droplet if it fails. Configure backup frequency and retention." />
+            </section>
+
+            <section className="mb-14">
+              <SectionTitle title="Authentication" />
+              <TabBar items={['SSH Keys', 'Password']} active="Password" />
+              <div className="mt-5 border border-[#e4e8f2] bg-white p-5">
+                <div className="mb-5 flex items-start gap-3">
+                  <span className="grid h-10 w-10 place-items-center border border-[#cdd8ee] text-[#0069ff]">
+                    <Lock className="h-5 w-5" />
+                  </span>
+                  <div>
+                    <p className="text-[14px] font-bold text-[#031b4e]">Create secure account credentials</p>
+                    <p className="mt-1 text-[13px] leading-5 text-[#536489]">This account is created on the selected tPanel server after billing is confirmed.</p>
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <label className="space-y-2">
+                    <span className="block text-[13px] font-bold text-[#031b4e]">Username</span>
+                    <div className="flex h-[46px] items-center gap-2 border border-[#94a3c7] bg-white px-3 focus-within:border-[#0069ff]">
+                      <User className="h-4 w-4 text-[#62708f]" />
+                      <input
+                        value={username}
+                        onChange={(event) => setUsername(event.target.value)}
+                        placeholder="account username"
+                        className="w-full bg-transparent text-[14px] outline-none"
+                      />
+                    </div>
+                    {(usernameChecking || usernameCheck) && (
+                      <p className={`text-[12px] font-semibold ${usernameCheck?.available ? 'text-emerald-600' : 'text-amber-600'}`}>
+                        {usernameChecking ? 'Checking username...' : usernameCheck?.message}
+                      </p>
+                    )}
+                    {usernameCheck?.suggestions?.length > 0 && (
+                      <div className="flex flex-wrap gap-2">
+                        {usernameCheck.suggestions.map((item: string) => (
+                          <button key={item} type="button" onClick={() => setUsername(item)} className="border border-[#b8c8eb] bg-[#f7faff] px-2 py-1 text-[12px] font-semibold text-[#0069ff]">
+                            {item}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </label>
+                  <label className="space-y-2">
+                    <span className="block text-[13px] font-bold text-[#031b4e]">Password</span>
+                    <input
+                      type="password"
+                      value={password}
+                      onChange={(event) => setPassword(event.target.value)}
+                      placeholder="Minimum 8 characters"
+                      className="h-[46px] w-full border border-[#94a3c7] bg-white px-3 text-[14px] outline-none focus:border-[#0069ff]"
+                    />
+                  </label>
+                </div>
+              </div>
+            </section>
+
+            <section className="mb-14 space-y-8">
+              <OptionalBox
+                title="Improved Metrics and monitoring (Free)"
+                description="Install lightweight metrics to graph performance and set up alerts inside the control panel."
+                icon={TerminalSquare}
+              />
+              <OptionalBox
+                title="Add a worry-free Managed Database"
+                description="Add a separate database service with backups, SSL, and restore controls."
+                price="$15.00 / month"
+                icon={Database}
+              />
+            </section>
+
+            <section className="mb-14">
+              <SectionTitle title="Finalize" />
+              <label className="block">
+                <span className="mb-2 block text-[13px] font-bold text-[#031b4e]">Give your Droplet a domain name</span>
+                <span className="mb-3 block text-[12px] text-[#536489]">Must be a real domain such as example.com. Auto local subdomains are disabled.</span>
+                <input
+                  value={hostname}
+                  onChange={(event) => setHostname(event.target.value)}
+                  placeholder="example.com"
+                  className="h-[46px] w-full border border-[#94a3c7] bg-white px-3 text-[14px] outline-none focus:border-[#0069ff]"
+                />
+              </label>
+              <div className="mt-7">
+                <span className="mb-2 block text-[13px] font-bold text-[#031b4e]">Quantity</span>
+                <p className="mb-3 text-[12px] text-[#536489]">Deploy one managed tPanel account with this configuration.</p>
+                <div className="inline-flex h-[42px] border border-[#94a3c7]">
+                  <button type="button" className="grid w-44 place-items-center border-r border-[#94a3c7] text-[#9aa8c2]">
+                    <Minus className="h-4 w-4" />
+                  </button>
+                  <span className="grid w-[70px] place-items-center text-[14px] font-semibold">1</span>
+                  <button type="button" className="grid w-11 place-items-center border-l border-[#94a3c7] text-[#355180]">
+                    <Plus className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+            </section>
+          </main>
+
+          <aside className="lg:sticky lg:top-5 lg:self-start">
+            <div className="border border-[#94a3c7] bg-white">
+              <div className="border-b border-[#94a3c7] px-6 py-5">
+                <h2 className="text-[15px] font-bold text-[#031b4e]">Summary</h2>
+              </div>
+              <div className="max-h-[245px] overflow-y-auto border-b border-[#94a3c7] px-6 py-5">
+                <div className="flex items-start gap-4">
+                  <span className="mt-1 grid h-5 w-5 place-items-center text-[#0069ff]">
+                    <Server className="h-5 w-5" />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-start justify-between gap-3">
+                      <p className="text-[15px] font-bold text-[#031b4e]">Compute</p>
+                      <p className="whitespace-nowrap text-[14px] font-medium text-[#233b66]">${Number(selectedPlanRecord?.price || 0).toFixed(2)}/mo</p>
+                    </div>
+                    <div className="mt-1 space-y-1 text-[13px] leading-5 text-[#284265]">
+                      <SummaryLine label="Plan Type" value="Basic" />
+                      <SummaryLine label="Module" value={moduleLabel(selectedModule)} />
+                      <SummaryLine label="CPU" value={selectedCpu} />
+                      <SummaryLine label="RAM" value={selectedRam} />
+                      <SummaryLine label="Disk" value={selectedDisk} />
+                      <SummaryLine label="Region" value={selectedNode?.location || 'Select region'} />
+                      <SummaryLine label="Slug" value={selectedPlanRecord?.code || 'select-plan'} />
+                      {hostname && <SummaryLine label="Domain" value={hostname} />}
+                      {username && <SummaryLine label="User" value={username} />}
+                      {selectedFeatures.length > 0 && <SummaryLine label="Includes" value={selectedFeatures.slice(0, 2).join(', ')} />}
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div className="border-b border-[#94a3c7] px-6 py-5">
+                <div className="flex items-start justify-between gap-3">
+                  <p className="text-[14px] font-bold text-[#031b4e]">Total cost</p>
+                  <div className="text-right">
+                    <p className="text-[15px] font-bold text-[#031b4e]">${Number(selectedPlanRecord?.price || 0).toFixed(2)}/month</p>
+                    <p className="text-[13px] text-[#566992]">${selectedHourly.toFixed(2)}/hour</p>
+                  </div>
+                </div>
+                <button
+                  onClick={handleCreate}
+                  disabled={creditEmpty || plansLoading || nodesLoading || !selectedPlanRecord || !selectedNode}
+                  className="mt-5 h-[44px] w-full bg-[#80b4f8] px-4 text-[14px] font-bold text-white transition-colors hover:bg-[#0069ff] disabled:cursor-not-allowed disabled:bg-[#b8c5d8]"
+                >
+                  {creditEmpty ? 'Add Payment Method and Create Droplet' : 'Create Droplet'}
+                </button>
+                <p className="mt-4 flex items-center gap-2 text-[12px] text-[#536489]">
+                  <KeyRound className="h-4 w-4 text-[#6d63ff]" />
+                  Password authentication is enabled for this Droplet
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-4 grid min-h-[96px] grid-cols-[88px_1fr] border border-[#cfd7e6] bg-white">
+              <div className="grid place-items-center bg-[#ffd6f4]">
+                <TerminalSquare className="h-8 w-8 text-black" />
+              </div>
+              <div className="px-4 py-4">
+                <p className="text-[14px] font-bold leading-5 text-[#031b4e]">Want to maximize efficiency and cost?</p>
+                <p className="mt-3 text-[12px] leading-5 text-[#284265]">
+                  Programmatically manage Droplets in a repeatable and reusable way with our API. <span className="font-semibold text-[#0069ff]">Create via API</span>
+                </p>
+              </div>
+            </div>
+          </aside>
         </div>
       </div>
-
-      {error && (
-        <div className="rounded-sm border border-red-100 bg-red-50 px-4 py-3 text-[13px] font-bold text-red-600">
-          {error}
-        </div>
-      )}
-
-      {creditEmpty && (
-        <div className="flex flex-col gap-3 rounded-sm border border-red-100 bg-red-50 px-4 py-3 text-red-700 md:flex-row md:items-center md:justify-between">
-          <div>
-            <p className="text-[13px] font-bold">Add Credit Now</p>
-            <p className="text-[12px]">Droplet deployment uses credit only. Add balance before ordering.</p>
-          </div>
-          <button onClick={() => navigate('/billing')} className="rounded-sm bg-red-600 px-4 py-2 text-[12px] font-bold text-white hover:bg-red-700">
-            Add Credit
-          </button>
-        </div>
-      )}
-
-      <section className="space-y-3">
-        <StepTitle number="1" title="Choose module" />
-        <div className="rounded-lg border border-[#dbe4f0] bg-white p-5">
-          {nodesLoading ? (
-            <div className="rounded-sm border border-[#e5e8ed] bg-[#f8f9fa] px-4 py-5 text-[13px] font-bold text-[#4a4a4a]">
-              Loading available modules...
-            </div>
-          ) : modules.length === 0 ? (
-            <div className="rounded-sm border border-amber-200 bg-amber-50 px-4 py-5 text-[13px] font-bold text-amber-700">
-              No active deployment module is available.
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {modules.map((module) => {
-                const logo = moduleLogo(module.key);
-                const selected = selectedModule === module.key;
-                return (
-                <button
-                  key={module.key}
-                  onClick={() => setSelectedModule(module.key)}
-                    className={`group relative overflow-hidden rounded-lg border p-5 text-left transition-all ${
-                      selected
-                        ? 'border-[#0069ff] bg-[#f3f7ff] ring-2 ring-[#0069ff]/20'
-                        : 'border-[#e5e8ed] bg-white hover:border-[#8bbcff]'
-                  }`}
-                >
-                    <span className={`absolute inset-x-0 top-0 h-1 bg-gradient-to-r ${moduleGradient(module.key)}`} />
-                    <span className="flex items-center gap-4">
-                      <span className={`grid h-14 w-14 place-items-center rounded-lg border ${selected ? 'border-[#cfe1ff] bg-white' : 'border-[#e5e8ed] bg-[#f8fbff]'}`}>
-                        {logo ? <img src={logo} alt="tPanel" className="h-9 w-9 object-contain" /> : <Server className="h-6 w-6 text-[#0069ff]" />}
-                      </span>
-                      <span className="min-w-0">
-                        <span className="block text-[16px] font-black text-[#111827]">{moduleLabel(module.key)}</span>
-                        <span className="mt-1 block text-[12px] font-bold text-gray-500">{module.count} location{module.count === 1 ? '' : 's'} available</span>
-                        {module.key === 'tpanel' && <span className="mt-2 inline-flex rounded-full bg-[#e8fff6] px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-[#128c7e]">Panel managed</span>}
-                      </span>
-                    </span>
-                    {selected && <CheckCircle2 className="absolute right-4 top-4 h-5 w-5 text-[#0069ff]" />}
-                </button>
-              );})}
-            </div>
-          )}
-        </div>
-      </section>
-
-      <section className="space-y-3">
-        <StepTitle number="2" title="Choose package size" />
-        <div className="overflow-hidden rounded-lg border border-[#dbe4f0] bg-white">
-          <div className="flex items-center gap-3 border-b border-[#edf1f7] bg-[#f8fbff] px-5 py-4">
-            <span className="grid h-9 w-9 place-items-center rounded-md bg-white text-[#0069ff]">
-              <Package className="h-5 w-5" />
-            </span>
-            <div>
-              <p className="text-[13px] font-black text-[#111827]">Size packages from Administrator tPanel</p>
-              <p className="text-[11px] font-bold text-[#6B7280]">Choose the resource limit for this managed account.</p>
-            </div>
-          </div>
-          <div className="p-5">
-            {plansLoading ? (
-              <div className="rounded-sm border border-[#e5e8ed] bg-[#f8f9fa] px-4 py-5 text-[13px] font-bold text-[#4a4a4a]">
-                Loading active cloud packages...
-              </div>
-            ) : plans.length === 0 ? (
-              <div className="rounded-sm border border-amber-200 bg-amber-50 px-4 py-5 text-[13px] font-bold text-amber-700">
-                No active cloud package is configured. Add cloud plans from Administrator Plans first.
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                {plans.map((plan) => {
-                  const features = featureList(plan);
-                  const ram = limitValue(plan, 'ram', fallbackLimits.ram);
-                  const cpu = limitValue(plan, 'cpu', fallbackLimits.cpu);
-                  const disk = limitValue(plan, 'disk', fallbackLimits.disk);
-                  return (
-                    <button
-                      key={plan.id || plan.code}
-                      onClick={() => setSelectedPlan(plan.code)}
-                      className={`relative overflow-hidden rounded-lg border p-5 text-left transition-all ${
-                        selectedPlan === plan.code
-                          ? 'border-[#0069ff] bg-[#f3f7ff] ring-2 ring-[#0069ff]/20'
-                          : 'border-[#e5e8ed] hover:border-[#8bbcff]'
-                      }`}
-                      id={`plan-${plan.code}`}
-                    >
-                      {selectedPlan === plan.code && <CheckCircle2 className="absolute right-4 top-4 h-5 w-5 text-[#0069ff]" />}
-                      <p className="mb-3 inline-block rounded-full border border-[#e5e8ed] bg-white px-2.5 py-1 text-[11px] font-black uppercase tracking-wide text-gray-500">{plan.name}</p>
-                      <div className="mb-4 flex items-baseline gap-1">
-                        <span className="text-3xl font-black text-[#111827]">${Number(plan.price || 0).toFixed(2)}</span>
-                        <span className="text-[11px] font-bold capitalize text-gray-400">/ mo</span>
-                      </div>
-                      <p className="mb-4 rounded-md bg-white px-3 py-2 text-[11px] font-black text-[#0069ff]">
-                        ${hourlyPrice(Number(plan.price || 0)).toFixed(2)} / hour
-                      </p>
-                      <div className="space-y-2 text-[12px] font-bold text-gray-600">
-                        <PlanSpec icon={HardDrive} label="RAM" value={ram} />
-                        <PlanSpec icon={Cpu} label="CPU" value={cpu} />
-                        <PlanSpec icon={Server} label="Disk" value={disk} />
-                      </div>
-                      {features.length > 0 && (
-                        <p className="mt-4 line-clamp-2 text-[11px] font-medium text-gray-500">{features.slice(0, 2).join(' / ')}</p>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        </div>
-      </section>
-
-      <section className="space-y-3">
-        <StepTitle number="3" title={`Select ${moduleLabel(selectedModule)} server location`} />
-        <div className="rounded-lg border border-[#dbe4f0] bg-white p-5">
-          {nodesLoading ? (
-            <div className="rounded-sm border border-[#e5e8ed] bg-[#f8f9fa] px-4 py-5 text-[13px] font-bold text-[#4a4a4a]">
-              Loading connected servers...
-            </div>
-          ) : moduleNodes.length === 0 ? (
-            <div className="rounded-sm border border-amber-200 bg-amber-50 px-4 py-5 text-[13px] font-bold text-amber-700">
-              No active {moduleLabel(selectedModule)} location is connected. Add a compute node from Administrator Hosting Account Module first.
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              {moduleNodes.map((node) => {
-                const flag = flagUrl(node.countryCode);
-                return (
-                <button
-                  key={node.id}
-                  onClick={() => setSelectedNodeId(node.id)}
-                  className={`relative overflow-hidden rounded-lg border p-5 text-left transition-all ${
-                    selectedNodeId === node.id
-                      ? 'border-[#0069ff] bg-[#f3f7ff] ring-2 ring-[#0069ff]/20'
-                      : 'border-[#e5e8ed] bg-white hover:border-[#8bbcff]'
-                  }`}
-                  id={`node-${node.id}`}
-                >
-                  {selectedNodeId === node.id && <CheckCircle2 className="absolute right-4 top-4 h-5 w-5 text-[#0069ff]" />}
-                  <span className="flex min-w-0 items-center gap-4">
-                    {flag ? <img src={flag} alt={node.countryCode || ''} className="h-11 w-16 rounded-md border border-[#e5e8ed] object-cover" /> : <span className="grid h-11 w-16 place-items-center rounded-md border border-[#e5e8ed] bg-[#f3f5f9]"><Globe2 className="h-5 w-5 text-gray-400" /></span>}
-                    <span className="min-w-0">
-                      <span className="flex items-center gap-2 text-[15px] font-black text-[#111827]">
-                        <MapPin className="h-4 w-4 shrink-0 text-[#0069ff]" />
-                        <span className="truncate">{node.location || 'Global'}</span>
-                      </span>
-                      <span className="mt-1 block text-[11px] font-black uppercase tracking-wider text-gray-400">{node.countryCode || 'Global'} region</span>
-                      <span className="mt-2 inline-flex rounded-full bg-[#f8fafc] px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-[#64748b]">{Number(node.remainingAccounts ?? (Number(node.maxAccounts || 0) - Number(node.activeAccounts || 0))) || 'Ready'} slots</span>
-                    </span>
-                  </span>
-                </button>
-              );})}
-            </div>
-          )}
-        </div>
-      </section>
-
-      <section className="space-y-3">
-        <StepTitle number="4" title="Authentication" />
-        <div className="space-y-5 rounded-lg border border-[#dbe4f0] bg-white p-5">
-          <div className="flex items-start gap-3 rounded-lg border border-[#d8e6ff] bg-[#f3f7ff] px-4 py-3">
-            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-white text-[#0069ff]">
-              <Lock className="h-4 w-4" />
-            </span>
-            <div>
-              <p className="text-[13px] font-black text-[#111827]">Secure account credentials</p>
-              <p className="text-[12px] leading-5 text-[#4a4a4a]">Selected {moduleLabel(selectedModule)} server will receive this deployment after billing is confirmed.</p>
-            </div>
-          </div>
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <label className="space-y-2">
-              <span className="block text-[12px] font-bold text-[#2e3d49]">Username</span>
-              <div className="flex items-center gap-2 rounded-md border border-[#e5e8ed] bg-[#f8f9fa] px-3 focus-within:border-[#0069ff]">
-                <User className="h-4 w-4 text-gray-400" />
-                <input
-                  value={username}
-                  onChange={(event) => setUsername(event.target.value)}
-                  placeholder="account username"
-                  className="w-full bg-transparent py-2.5 text-[14px] outline-none"
-                />
-              </div>
-              {(usernameChecking || usernameCheck) && (
-                <p className={`text-[11px] font-bold ${usernameCheck?.available ? 'text-emerald-600' : 'text-amber-600'}`}>
-                  {usernameChecking ? 'Checking username...' : usernameCheck?.message}
-                </p>
-              )}
-              {usernameCheck?.suggestions?.length > 0 && (
-                <div className="flex flex-wrap gap-2">
-                  {usernameCheck.suggestions.map((item: string) => (
-                    <button key={item} type="button" onClick={() => setUsername(item)} className="rounded-md border border-[#d8e6ff] bg-[#f8fbff] px-2 py-1 text-[11px] font-bold text-[#0069ff]">
-                      {item}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </label>
-            <label className="space-y-2">
-              <span className="block text-[12px] font-bold text-[#2e3d49]">Password</span>
-              <input
-                type="password"
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                placeholder="Minimum 8 characters"
-                className="w-full rounded-md border border-[#e5e8ed] bg-[#f8f9fa] px-4 py-2.5 text-[14px] outline-none focus:border-[#0069ff]"
-              />
-            </label>
-          </div>
-          <label className="space-y-2">
-            <span className="block text-[12px] font-bold text-[#2e3d49]">Domain name</span>
-            <input
-              value={hostname}
-              onChange={(event) => setHostname(event.target.value)}
-              placeholder="example.com"
-              className="w-full rounded-md border border-[#e5e8ed] bg-[#f8f9fa] px-4 py-2.5 text-[14px] outline-none focus:border-[#0069ff]"
-            />
-          </label>
-        </div>
-      </section>
-
-      <section className="overflow-hidden rounded-lg border border-[#dbe4f0] bg-white">
-        <div className="grid grid-cols-1 divide-y divide-[#edf1f7] md:grid-cols-[1fr_280px] md:divide-x md:divide-y-0">
-          <div className="p-5 md:p-6">
-            <div className="mb-5 flex items-center gap-3">
-              <span className={`grid h-11 w-11 place-items-center rounded-lg bg-gradient-to-r ${moduleGradient(selectedModule)}`}>
-                {moduleLogo(selectedModule) ? <img src={moduleLogo(selectedModule)} alt="tPanel" className="h-7 w-7 object-contain" /> : <Server className="h-5 w-5 text-white" />}
-              </span>
-              <div>
-                <p className="text-[11px] font-black uppercase tracking-wider text-[#94A3B8]">Ready to deploy</p>
-                <h3 className="text-lg font-black text-[#111827]">{hostname || 'New droplet'}</h3>
-              </div>
-            </div>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-              <RecapBox label="Module" value={moduleLabel(selectedModule)} />
-              <RecapBox label="Package" value={selectedPlanRecord ? selectedPlanRecord.name : 'No plan'} />
-              <RecapBox label="Location" value={selectedNode ? selectedNode.location || 'Global' : 'No server'} />
-            </div>
-          </div>
-          <div className="flex flex-col justify-between bg-[#f8fbff] p-5 md:p-6">
-            <div>
-              <p className="text-[11px] font-black uppercase tracking-wider text-[#64748b]">Credit charge</p>
-              <p className="mt-2 text-4xl font-black leading-none text-[#111827]">${selectedHourly.toFixed(2)}</p>
-              <p className="mt-1 text-[12px] font-bold text-[#64748b]">first hour now, ${Number(selectedPlanRecord?.price || 0).toFixed(2)}/mo cap</p>
-            </div>
-            <button
-              onClick={handleCreate}
-              disabled={creditEmpty || plansLoading || nodesLoading || !selectedPlanRecord || !selectedNode}
-              className="mt-5 flex w-full items-center justify-center gap-2 rounded-md bg-[#0069ff] px-6 py-3.5 text-[14px] font-black text-white transition-all hover:bg-[#0056cc] disabled:cursor-not-allowed disabled:bg-gray-300"
-            >
-              Deploy Droplet <ChevronRight className="h-4 w-4" />
-            </button>
-          </div>
-        </div>
-      </section>
     </div>
   );
 }
 
-function StepTitle({ number, title }: { number: string; title: string }) {
+function SectionTitle({ title }: { title: string }) {
+  return <h2 className="mb-3 text-[14px] font-bold text-[#031b4e]">{title}</h2>;
+}
+
+function TabBar({ items, active }: { items: string[]; active: string }) {
   return (
-    <div className="flex items-center gap-2">
-      <div className="flex h-6 w-6 items-center justify-center rounded-md bg-[#111827] text-[11px] font-black text-white">{number}</div>
-      <h2 className="text-[13px] font-bold uppercase tracking-wide text-[#2e3d49]">{title}</h2>
+    <div className="mb-5 flex overflow-x-auto border-b border-[#94a3c7]">
+      {items.map((item) => (
+        <button
+          key={item}
+          type="button"
+          className={`h-[42px] shrink-0 border-r border-t border-[#94a3c7] px-7 text-[13px] font-bold ${
+            item === active ? 'border-l bg-white text-[#031b4e]' : 'bg-[#f8f9fc] text-[#566992]'
+          }`}
+        >
+          {item}
+        </button>
+      ))}
     </div>
   );
 }
 
-function TopMetric({ label, value }: { label: string; value: string }) {
+function RadioDot({ selected }: { selected: boolean }) {
   return (
-    <div className="px-5 py-4">
-      <p className="text-[10px] font-black uppercase tracking-wider text-[#94A3B8]">{label}</p>
-      <p className="mt-1 truncate text-[14px] font-black text-[#111827]">{value}</p>
+    <span className={`grid h-4 w-4 place-items-center rounded-full border ${selected ? 'border-[#0069ff]' : 'border-[#a6b3cf]'}`}>
+      {selected && <span className="h-2 w-2 rounded-full bg-[#0069ff]" />}
+    </span>
+  );
+}
+
+function EmptyRow({ text, warning = false }: { text: string; warning?: boolean }) {
+  return (
+    <div className={`border px-4 py-5 text-[13px] font-semibold ${warning ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-[#d7deed] bg-[#f5f7fb] text-[#4d5f85]'}`}>
+      {text}
     </div>
   );
 }
 
-function PlanSpec({ icon: Icon, label, value }: { icon: React.ElementType; label: string; value: string }) {
+function OptionalBox({
+  title,
+  description,
+  price,
+  icon: Icon
+}: {
+  title: string;
+  description: string;
+  price?: string;
+  icon?: React.ElementType;
+}) {
   return (
-    <div className="flex items-center justify-between gap-3 rounded-md bg-white px-3 py-2">
-      <span className="inline-flex items-center gap-2 text-gray-500">
-        <Icon className="h-4 w-4 text-[#0069ff]" />
-        {label}
-      </span>
-      <span className="text-right font-black text-[#111827]">{value}</span>
+    <div className="flex min-h-[78px] items-start gap-3 border border-[#94a3c7] bg-white px-4 py-4">
+      <input type="checkbox" className="mt-1 h-4 w-4 border-[#94a3c7]" />
+      <div className="min-w-0 flex-1">
+        <p className="text-[14px] font-bold text-[#031b4e]">{title}</p>
+        <p className="mt-1 max-w-[420px] text-[13px] leading-5 text-[#536489]">{description}</p>
+        {price && <p className="mt-3 text-[14px] font-bold text-[#031b4e]">{price}</p>}
+      </div>
+      {Icon && <Icon className="mt-3 h-8 w-8 shrink-0 text-[#0069ff]" />}
     </div>
   );
 }
 
-function RecapBox({ label, value }: { label: string; value: string }) {
+function SummaryLine({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-lg border border-[#e5e8ed] bg-[#f8fafc] px-4 py-3">
-      <p className="text-[10px] font-black uppercase tracking-wider text-[#94A3B8]">{label}</p>
-      <p className="mt-1 truncate text-[13px] font-black text-[#111827]">{value}</p>
-    </div>
+    <p>
+      <span className="font-bold">{label}: </span>
+      <span>{value}</span>
+    </p>
   );
 }
