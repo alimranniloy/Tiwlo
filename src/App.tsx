@@ -88,6 +88,7 @@ const ModulePlaceholder = lazy(() => import('./pages/management/ecommerce/Module
 const IspLayout = lazy(() => import('./pages/management/IspLayout'));
 const IspDashboard = lazy(() => import('./pages/management/isp/IspDashboard'));
 const IspClientManagement = lazy(() => import('./pages/management/isp/IspClientManagement'));
+const MarketingInfoPage = lazy(() => import('./pages/MarketingInfoPage'));
 const FloatingAIWidget = lazy(() => import('./components/FloatingAIWidget'));
 const ISPStorefront = lazy(() => import('./pages/isp/ISPStorefront'));
 const ISPAddRouter = lazy(() => import('./pages/isp/ISPAddRouter'));
@@ -327,6 +328,8 @@ function AppContent({
             <Route path="/services" element={<ServicesPage />} />
             <Route path="/products" element={<ProductsPage />} />
             <Route path="/commerce" element={<CommercePage />} />
+            <Route path="/partners" element={<MarketingInfoPage variant="partners" />} />
+            <Route path="/pricing" element={<MarketingInfoPage variant="pricing" />} />
             <Route path="/broadband" element={<BroadbandPage />} />
             <Route path="/documentation" element={<DocumentationPage />} />
             <Route path="/team" element={<TeamPage user={user} />} />
@@ -545,8 +548,13 @@ export default function App() {
         <Suspense fallback={<RouteLoader />}>
         <Routes>
           <Route path="/" element={<LandingPage />} />
-          <Route path="/services" element={<ServicesPage />} />
-          <Route path="/products" element={<ProductsPage />} />
+          <Route path="/services" element={<MarketingInfoPage variant="solutions" />} />
+          <Route path="/products" element={<MarketingInfoPage variant="products" />} />
+          <Route path="/api" element={<MarketingInfoPage variant="developers" />} />
+          <Route path="/partners" element={<MarketingInfoPage variant="partners" />} />
+          <Route path="/pricing" element={<MarketingInfoPage variant="pricing" />} />
+          <Route path="/support" element={<MarketingInfoPage variant="support" />} />
+          <Route path="/documentation" element={<DocumentationPage />} />
           <Route path="/commerce" element={<CommercePage />} />
           <Route path="/broadband" element={<BroadbandPage />} />
           <Route path="/pay/:slug" element={<TiwloPayCheckout />} />
