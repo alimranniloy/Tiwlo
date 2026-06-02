@@ -199,9 +199,9 @@ export default function Support() {
   };
 
   return (
-    <div className="space-y-8 pb-16">
+    <div className="mx-auto max-w-[1220px] space-y-8 pb-16">
       {/* Header & Search */}
-      <div className="relative bg-[#111827] rounded-xl p-8 md:p-12 overflow-hidden">
+      <div className="relative overflow-hidden rounded-md bg-[#031b4e] p-8 shadow-[0_12px_28px_rgba(3,27,78,0.15)] md:p-12">
         <div className="absolute top-0 right-0 w-64 h-64 bg-blue-600/20 rounded-full blur-3xl -mr-32 -mt-32"></div>
         <div className="absolute bottom-0 left-0 w-48 h-48 bg-indigo-600/10 rounded-full blur-3xl -ml-24 -mb-24"></div>
         
@@ -218,7 +218,7 @@ export default function Support() {
             <input 
               type="text" 
               placeholder="Search documentation, guides, and tutorials..."
-              className="w-full bg-white/10 border border-white/10 rounded-lg py-4 pl-12 pr-6 text-white focus:bg-white/15 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all backdrop-blur-md"
+            className="w-full rounded-md border border-white/10 bg-white/10 py-4 pl-12 pr-6 text-white backdrop-blur-md transition-all placeholder:text-white/45 focus:bg-white/15 focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
         </div>
@@ -227,7 +227,7 @@ export default function Support() {
       {/* Main Support Options */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div 
-          className="bg-white p-8 rounded-xl border border-gray-200 shadow-sm transition-all hover:shadow-xl hover:border-blue-100 group"
+          className="group rounded-md border border-[#d9e1ec] bg-white p-8 shadow-[0_1px_2px_rgba(3,27,78,0.04)] transition-all hover:border-[#0069ff] hover:shadow-md"
         >
           <div className="w-14 h-14 bg-blue-50 rounded-lg flex items-center justify-center mb-6 transition-transform">
             <MessageCircle className="h-7 w-7 text-blue-600" />
@@ -244,7 +244,7 @@ export default function Support() {
 
         <div 
           onClick={() => setIsTicketDrawerOpen(true)}
-          className="bg-white p-8 rounded-xl border border-gray-200 shadow-sm transition-all hover:shadow-xl hover:border-blue-100 group cursor-pointer"
+          className="group cursor-pointer rounded-md border border-[#d9e1ec] bg-white p-8 shadow-[0_1px_2px_rgba(3,27,78,0.04)] transition-all hover:border-[#0069ff] hover:shadow-md"
         >
           <div className="w-14 h-14 bg-indigo-50 rounded-lg flex items-center justify-center mb-6 transition-transform">
             <Ticket className="h-7 w-7 text-indigo-600" />
@@ -260,7 +260,7 @@ export default function Support() {
         </div>
 
         <div 
-          className="bg-white p-8 rounded-xl border border-gray-200 shadow-sm transition-all hover:shadow-xl hover:border-blue-100 group"
+          className="group rounded-md border border-[#d9e1ec] bg-white p-8 shadow-[0_1px_2px_rgba(3,27,78,0.04)] transition-all hover:border-[#0069ff] hover:shadow-md"
         >
           <div className="w-14 h-14 bg-purple-50 rounded-lg flex items-center justify-center mb-6 transition-transform">
             <Users className="h-7 w-7 text-purple-600" />
@@ -286,7 +286,7 @@ export default function Support() {
           
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {faqs.map((faq, idx) => (
-              <div key={idx} className="bg-white p-5 rounded-lg border border-gray-200 hover:border-blue-300 transition-colors group cursor-pointer">
+              <div key={idx} className="group cursor-pointer rounded-md border border-[#d9e1ec] bg-white p-5 transition-colors hover:border-[#0069ff] hover:bg-[#f7faff]">
                 <div className="flex items-start justify-between">
                   <div className="space-y-1">
                     <span className="text-[10px] font-black uppercase tracking-widest text-blue-500">{faq.category}</span>
@@ -299,7 +299,7 @@ export default function Support() {
           </div>
 
           {/* Featured Tutorial Section */}
-          <div className="bg-gradient-to-r from-blue-600 to-indigo-700 rounded-xl p-8 text-white relative overflow-hidden group">
+          <div className="group relative overflow-hidden rounded-md bg-gradient-to-r from-blue-600 to-indigo-700 p-8 text-white shadow-[0_12px_28px_rgba(3,27,78,0.15)]">
             <div className="absolute top-0 right-0 p-8 opacity-10 transition-transform duration-700">
                <HelpCircle className="h-40 w-40" />
             </div>
@@ -314,7 +314,7 @@ export default function Support() {
               <p className="text-blue-100 text-sm mb-6 max-w-lg leading-relaxed">
                 Learn how to deploy your containers to 15 global regions and reduce latency by up to 80% using our integrated load balancing.
               </p>
-              <button className="bg-white text-blue-700 px-6 py-2.5 rounded-lg font-black text-sm hover:bg-blue-50 transition-colors flex items-center gap-2">
+              <button className="flex items-center gap-2 rounded-md bg-white px-6 py-2.5 text-sm font-black text-blue-700 transition-colors hover:bg-blue-50">
                 Start Learning <ChevronRight className="h-4 w-4" />
               </button>
             </div>
@@ -324,7 +324,7 @@ export default function Support() {
         {/* Status & Recent Tickets */}
         <div className="lg:col-span-4 space-y-8">
           {/* Support Status */}
-          <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
+          <div className="rounded-md border border-[#d9e1ec] bg-white p-6 shadow-[0_1px_2px_rgba(3,27,78,0.04)]">
              <h3 className="text-sm font-black uppercase tracking-widest text-[#6B7280] mb-6">Service Continuity</h3>
              <div className="space-y-6">
                 <div className="flex items-center justify-between">
@@ -351,7 +351,7 @@ export default function Support() {
           </div>
 
           {/* Recent Tickets */}
-          <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
+          <div className="rounded-md border border-[#d9e1ec] bg-white p-6 shadow-[0_1px_2px_rgba(3,27,78,0.04)]">
              <div className="flex items-center justify-between mb-6">
                 <h3 className="text-sm font-black uppercase tracking-widest text-[#6B7280]">Your Tickets</h3>
                 <button className="text-xs font-bold text-blue-600 hover:underline">View All</button>
@@ -384,7 +384,7 @@ export default function Support() {
              </div>
           </div>
 
-          <div className="bg-blue-50 rounded-xl p-6 border border-blue-100">
+          <div className="rounded-md border border-blue-100 bg-blue-50 p-6 shadow-sm">
              <div className="flex items-center gap-3 mb-3">
                 <ShieldCheck className="h-5 w-5 text-blue-600" />
                 <h4 className="text-sm font-bold text-blue-900">Priority Support</h4>
@@ -407,7 +407,7 @@ export default function Support() {
             className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[100]"
           />
           <div 
-            className="fixed top-0 right-0 h-full w-full max-w-[500px] bg-white shadow-2xl z-[101] flex flex-col"
+            className="fixed right-0 top-0 z-[101] flex h-full w-full max-w-[500px] flex-col bg-white shadow-[0_24px_80px_rgba(3,27,78,0.24)]"
           >
             <div className="px-6 py-5 border-b border-gray-100 flex items-center justify-between bg-[#f8f9fa]">
               <div>
@@ -502,7 +502,7 @@ export default function Support() {
                  form="support-ticket-form"
                  type="submit"
                  disabled={isSubmitting}
-                 className="w-full bg-[#0069ff] text-white py-4 rounded-xl font-bold text-sm hover:bg-[#0056cc] transition-all flex items-center justify-center gap-2 shadow-lg shadow-blue-200 disabled:opacity-50"
+                 className="flex w-full items-center justify-center gap-2 rounded-md bg-[#0069ff] py-4 text-sm font-bold text-white shadow-lg shadow-blue-200 transition-all hover:bg-[#0056cc] disabled:opacity-50"
                >
                  {isSubmitting ? (
                    <>
@@ -522,7 +522,7 @@ export default function Support() {
       {selectedTicket && (
         <>
           <div onClick={() => setSelectedTicket(null)} className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[100]" />
-          <div className="fixed top-0 right-0 z-[101] flex h-full w-full max-w-[560px] flex-col bg-white shadow-2xl">
+          <div className="fixed right-0 top-0 z-[101] flex h-full w-full max-w-[560px] flex-col bg-white shadow-[0_24px_80px_rgba(3,27,78,0.24)]">
             <div className="border-b border-gray-100 bg-[#f8f9fa] px-6 py-5">
               <div className="flex items-start justify-between gap-4">
                 <div>
@@ -595,7 +595,7 @@ export default function Support() {
                 placeholder="Reply to this ticket..."
                 className="w-full resize-none rounded-md border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-medium transition-all focus:border-blue-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-100"
               />
-              <button disabled={isReplying || !ticketReply.trim()} className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-[#0069ff] py-3 text-sm font-bold text-white shadow-lg shadow-blue-100 transition-all hover:bg-[#0056cc] disabled:opacity-50">
+              <button disabled={isReplying || !ticketReply.trim()} className="mt-3 flex w-full items-center justify-center gap-2 rounded-md bg-[#0069ff] py-3 text-sm font-bold text-white shadow-lg shadow-blue-100 transition-all hover:bg-[#0056cc] disabled:opacity-50">
                 <Send className="h-4 w-4" /> {isReplying ? 'Sending...' : 'Send Reply'}
               </button>
             </form>

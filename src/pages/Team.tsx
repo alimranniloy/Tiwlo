@@ -114,10 +114,10 @@ export default function TeamPage({ user }: TeamPageProps) {
 
   if (!isAdminUser) {
     return (
-      <div className="space-y-8 pb-12">
+      <div className="mx-auto max-w-[1220px] space-y-8 pb-12">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-[#111827]">Team Access</h1>
-          <p className="mt-0.5 text-sm text-[#6B7280]">Your user dashboard does not include administrator user-management controls.</p>
+          <h1 className="text-2xl font-bold tracking-tight text-[#031b4e] md:text-3xl">Team Access</h1>
+          <p className="mt-1 text-sm font-medium text-[#52637a]">Your user dashboard does not include administrator user-management controls.</p>
         </div>
 
         <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
@@ -126,7 +126,7 @@ export default function TeamPage({ user }: TeamPageProps) {
             { title: 'Billing Access', description: 'Add credit, pay invoices, and review usage from the billing dashboard.', icon: Shield },
             { title: 'Need More Access?', description: 'Open a support ticket if you need team or organization features enabled.', icon: Users }
           ].map((item) => (
-            <div key={item.title} className="space-y-4 rounded-md border border-[#E5E7EB] bg-white p-6">
+            <div key={item.title} className="space-y-4 rounded-md border border-[#d9e1ec] bg-white p-6 shadow-[0_1px_2px_rgba(3,27,78,0.04)]">
               <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
                 <item.icon className="h-5 w-5" />
               </div>
@@ -142,11 +142,11 @@ export default function TeamPage({ user }: TeamPageProps) {
   }
 
   return (
-    <div className="space-y-8 pb-12">
+    <div className="mx-auto max-w-[1220px] space-y-8 pb-12">
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-[#111827]">Team Management</h1>
-          <p className="mt-0.5 text-sm text-[#6B7280]">Users and roles are loaded from the real users API.</p>
+          <h1 className="text-2xl font-bold tracking-tight text-[#031b4e] md:text-3xl">Team Management</h1>
+          <p className="mt-1 text-sm font-medium text-[#52637a]">Users and roles are loaded from the real users API.</p>
         </div>
         <div className="relative">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
@@ -155,27 +155,27 @@ export default function TeamPage({ user }: TeamPageProps) {
             placeholder="Search members..."
             value={search}
             onChange={(event) => setSearch(event.target.value)}
-            className="w-full rounded-md border border-[#D1D5DB] bg-white py-2 pl-10 pr-4 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-blue-600 md:w-72"
+            className="w-full rounded-md border border-[#cdd6e3] bg-white py-2 pl-10 pr-4 text-sm shadow-sm focus:border-[#0069ff] focus:outline-none focus:ring-2 focus:ring-[#0069ff]/10 md:w-72"
           />
         </div>
       </div>
 
       {error && (
-        <div className="flex items-start gap-2 rounded border border-red-100 bg-red-50 px-4 py-3 text-[13px] font-bold text-red-600">
+        <div className="flex items-start gap-2 rounded-md border border-red-100 bg-red-50 px-4 py-3 text-[13px] font-bold text-red-600 shadow-sm">
           <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /> {error}
         </div>
       )}
       {success && (
-        <div className="flex items-start gap-2 rounded border border-green-100 bg-green-50 px-4 py-3 text-[13px] font-bold text-green-700">
+        <div className="flex items-start gap-2 rounded-md border border-green-100 bg-green-50 px-4 py-3 text-[13px] font-bold text-green-700 shadow-sm">
           <Check className="mt-0.5 h-4 w-4 shrink-0" /> {success}
         </div>
       )}
 
-      <div className="overflow-hidden rounded-md border border-[#E5E7EB] bg-white">
+      <div className="overflow-hidden rounded-md border border-[#d9e1ec] bg-white shadow-[0_1px_2px_rgba(3,27,78,0.04)]">
         <div className="overflow-x-auto">
           <table className="w-full text-left">
             <thead>
-              <tr className="border-b border-[#E5E7EB] bg-[#F9FAFB]">
+              <tr className="border-b border-[#e4e9f1] bg-[#f7f9fc]">
                 <th className="px-6 py-4 text-[11px] font-bold uppercase tracking-wider text-[#6B7280]">Member</th>
                 <th className="px-6 py-4 text-[11px] font-bold uppercase tracking-wider text-[#6B7280]">Role</th>
                 <th className="px-6 py-4 text-[11px] font-bold uppercase tracking-wider text-[#6B7280]">Status</th>
@@ -187,7 +187,7 @@ export default function TeamPage({ user }: TeamPageProps) {
               {isLoading && <tr><td colSpan={5} className="px-6 py-12 text-center text-sm font-bold text-gray-400">Loading team from API...</td></tr>}
               {!isLoading && members.length === 0 && <tr><td colSpan={5} className="px-6 py-12 text-center text-sm font-bold text-gray-400">No team members found.</td></tr>}
               {!isLoading && members.map((member) => (
-                <tr key={member.id} className="transition-colors hover:bg-gray-50">
+                <tr key={member.id} className="transition-colors hover:bg-[#f7faff]">
                   <td className="px-6 py-4">
                     <div className="flex items-center gap-3">
                       <div className="flex h-9 w-9 items-center justify-center rounded-md bg-[#111827] text-sm font-bold text-white">
@@ -238,7 +238,7 @@ export default function TeamPage({ user }: TeamPageProps) {
           { title: 'Manager', description: 'Operational access for resource and account handling.', icon: ShieldAlert },
           { title: 'Developer', description: 'Limited technical access for infrastructure work.', icon: Users }
         ].map((item) => (
-          <div key={item.title} className="space-y-4 rounded-md border border-[#E5E7EB] bg-white p-6">
+          <div key={item.title} className="space-y-4 rounded-md border border-[#d9e1ec] bg-white p-6 shadow-[0_1px_2px_rgba(3,27,78,0.04)]">
             <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
               <item.icon className="h-5 w-5" />
             </div>

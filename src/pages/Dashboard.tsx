@@ -129,28 +129,28 @@ export default function Dashboard({ user, droplets, domains }: DashboardProps) {
   ];
 
   return (
-    <div className="space-y-6 pb-12 md:space-y-8">
-      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+    <div className="mx-auto max-w-[1220px] space-y-7 pb-12 md:space-y-8">
+      <div className="flex flex-col gap-4 pt-1 md:flex-row md:items-center md:justify-between">
         <div>
-          <h1 className="text-xl font-bold tracking-tight text-[#2e3d49] md:text-2xl">
+          <h1 className="text-2xl font-bold tracking-tight text-[#031b4e] md:text-3xl">
             Welcome, <span className="text-[#0069ff]">{user.name.split(' ')[0]}</span>
           </h1>
-          <p className="mt-1 text-[13px] text-[#4a4a4a]">Monitor services, billing, support, and recent account activity.</p>
+          <p className="mt-1 text-[14px] font-medium text-[#52637a]">Monitor services, billing, support, and recent account activity.</p>
         </div>
         <div className="flex items-center gap-2">
-          <Link to="/documentation" className="rounded border border-[#e5e8ed] bg-[#f8f9fa] px-4 py-2 text-center text-[13px] font-bold text-[#4a4a4a] transition-all hover:bg-white">
+          <Link to="/documentation" className="rounded-md border border-[#b9cdf8] bg-white px-4 py-2 text-center text-[13px] font-bold text-[#0069ff] transition-all hover:border-[#0069ff] hover:bg-[#f7faff]">
             Documentation
           </Link>
-          <Link to="/droplets/create" className="flex items-center gap-2 rounded-sm bg-[#0069ff] px-5 py-2 text-[13px] font-bold text-white transition-all hover:bg-[#0056cc]">
+          <Link to="/droplets/create" className="flex items-center gap-2 rounded-md bg-[#11843b] px-5 py-2 text-[13px] font-bold text-white shadow-sm transition-all hover:bg-[#0b6b30]">
             <Plus className="h-4 w-4" /> Create Resource
           </Link>
         </div>
       </div>
 
-      {error && <div className="rounded border border-red-100 bg-red-50 px-4 py-3 text-[13px] font-bold text-red-600">{error}</div>}
+      {error && <div className="rounded-md border border-red-100 bg-red-50 px-4 py-3 text-[13px] font-bold text-red-600 shadow-sm">{error}</div>}
 
       {(dueAmount > 0 || creditEmpty) && (
-        <div className={`flex flex-col gap-3 rounded-sm border px-4 py-3 md:flex-row md:items-center md:justify-between ${
+        <div className={`flex flex-col gap-3 rounded-md border px-4 py-3 shadow-sm md:flex-row md:items-center md:justify-between ${
           creditEmpty ? 'border-red-100 bg-red-50 text-red-900' : 'border-amber-100 bg-amber-50 text-amber-900'
         }`}>
           <div>
@@ -165,8 +165,8 @@ export default function Dashboard({ user, droplets, domains }: DashboardProps) {
         </div>
       )}
 
-      <section className="overflow-hidden rounded-sm border border-[#c7e0f4] bg-white">
-        <div className="border-b border-[#deecf9] bg-[#f3f9fd] px-4 py-3 md:px-5">
+      <section className="overflow-hidden rounded-md border border-[#c7dcff] bg-white shadow-[0_1px_2px_rgba(3,27,78,0.04)]">
+        <div className="border-b border-[#d9e6ff] bg-[#eef5ff] px-4 py-4 md:px-5">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <p className="text-[11px] font-black uppercase tracking-widest text-[#0078d4]">Live account overview</p>
@@ -179,7 +179,7 @@ export default function Dashboard({ user, droplets, domains }: DashboardProps) {
                 ['Monthly spend', money(monthlySpend)],
                 ['Credit', money(creditBalance)]
               ].map(([label, value]) => (
-                <div key={label} className="border border-[#deecf9] bg-white px-3 py-2">
+                <div key={label} className="rounded-md border border-[#d9e6ff] bg-white px-3 py-2 shadow-sm">
                   <p className="text-[10px] font-bold uppercase tracking-wide text-[#605e5c]">{label}</p>
                   <p className="mt-0.5 font-black text-[#1f1f1f]">{value}</p>
                 </div>
@@ -188,7 +188,7 @@ export default function Dashboard({ user, droplets, domains }: DashboardProps) {
           </div>
         </div>
         <div className="grid grid-cols-1 gap-4 p-4 md:grid-cols-[260px_1fr] md:p-5">
-          <div className="border border-[#edebe9] p-4">
+          <div className="rounded-md border border-[#d9e1ec] p-4">
             <div
               className="mx-auto grid h-28 w-28 place-items-center rounded-full"
               style={{ background: `conic-gradient(#0078d4 ${creditRatio}%, #e1dfdd ${creditRatio}% 100%)` }}
@@ -203,12 +203,12 @@ export default function Dashboard({ user, droplets, domains }: DashboardProps) {
                 {creditEmpty ? 'Add credit to resume orders and services.' : `${money(creditBalance)} available for new orders.`}
               </p>
             </div>
-            <Link to="/billing" className="mt-4 flex w-full items-center justify-center border border-[#0078d4] px-3 py-2 text-[12px] font-bold text-[#0078d4] hover:bg-[#eff6fc]">
+            <Link to="/billing" className="mt-4 flex w-full items-center justify-center rounded-md border border-[#0069ff] px-3 py-2 text-[12px] font-bold text-[#0069ff] hover:bg-[#eef5ff]">
               Manage billing
             </Link>
           </div>
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-            <div className="border border-[#edebe9] p-4">
+            <div className="rounded-md border border-[#d9e1ec] p-4">
               <div className="flex items-center justify-between">
                 <p className="text-[11px] font-black uppercase tracking-widest text-[#605e5c]">Invoice coverage</p>
                 <span className="text-sm font-black text-[#0078d4]">{paidRatio}% paid</span>
@@ -217,17 +217,17 @@ export default function Dashboard({ user, droplets, domains }: DashboardProps) {
                 <div className="h-full bg-[#0078d4]" style={{ width: `${paidRatio}%` }} />
               </div>
               <div className="mt-4 grid grid-cols-2 gap-3">
-                <div className="border border-[#edebe9] p-3">
+                <div className="rounded-md border border-[#e4e9f1] p-3">
                   <p className="text-[10px] font-bold uppercase text-[#605e5c]">Outstanding</p>
                   <p className="mt-1 text-base font-black text-[#a4262c]">{money(outstanding)}</p>
                 </div>
-                <div className="border border-[#edebe9] p-3">
+                <div className="rounded-md border border-[#e4e9f1] p-3">
                   <p className="text-[10px] font-bold uppercase text-[#605e5c]">Due now</p>
                   <p className="mt-1 text-base font-black text-[#1f1f1f]">{money(dueAmount)}</p>
                 </div>
               </div>
             </div>
-            <div className="border border-[#edebe9] p-4">
+            <div className="rounded-md border border-[#d9e1ec] p-4">
               <p className="text-[11px] font-black uppercase tracking-widest text-[#605e5c]">Resource mix</p>
               <div className="mt-4 space-y-3">
                 {resourceMix.map((item) => {
@@ -252,8 +252,8 @@ export default function Dashboard({ user, droplets, domains }: DashboardProps) {
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         {quickActions.map((action) => (
-          <Link key={action.label} to={action.link} className="group rounded-sm border border-[#e5e8ed] bg-white p-4 transition-all hover:border-[#0078d4] hover:bg-[#f3f9fd]">
-            <div className={`mb-3 flex h-10 w-10 items-center justify-center rounded-sm ${action.bg}`}>
+          <Link key={action.label} to={action.link} className="group rounded-md border border-[#d9e1ec] bg-white p-4 shadow-[0_1px_2px_rgba(3,27,78,0.04)] transition-all hover:border-[#0069ff] hover:bg-[#f7faff] hover:shadow-md">
+            <div className={`mb-3 flex h-10 w-10 items-center justify-center rounded-md ${action.bg}`}>
               <action.icon className={`h-5 w-5 ${action.color}`} />
             </div>
             <p className="text-[12px] font-bold text-[#2e3d49]">{action.label}</p>
@@ -264,7 +264,7 @@ export default function Dashboard({ user, droplets, domains }: DashboardProps) {
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3 xl:grid-cols-6">
         {stats.map((stat) => (
-          <Link key={stat.label} to={stat.link} className="rounded-sm border border-[#e5e8ed] bg-white p-5 transition-all hover:border-[#0078d4] hover:bg-[#f3f9fd]">
+          <Link key={stat.label} to={stat.link} className="rounded-md border border-[#d9e1ec] bg-white p-5 shadow-[0_1px_2px_rgba(3,27,78,0.04)] transition-all hover:border-[#0069ff] hover:bg-[#f7faff] hover:shadow-md">
             <div className="mb-2 flex items-center justify-between">
               <div className="rounded bg-blue-50 p-2">
                 <stat.icon className="h-4 w-4 text-blue-600" />
@@ -279,8 +279,8 @@ export default function Dashboard({ user, droplets, domains }: DashboardProps) {
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <div className="space-y-6 lg:col-span-2">
-          <div className="overflow-hidden rounded-sm border border-[#e5e8ed] bg-white">
-            <div className="flex items-center justify-between border-b border-[#f3f5f9] bg-[#f8f9fa] px-6 py-4">
+          <div className="overflow-hidden rounded-md border border-[#d9e1ec] bg-white shadow-[0_1px_2px_rgba(3,27,78,0.04)]">
+            <div className="flex items-center justify-between border-b border-[#e4e9f1] bg-[#f7f9fc] px-6 py-4">
               <h3 className="text-[14px] font-bold text-[#2e3d49]">Active Droplets</h3>
               <Link to="/droplets" className="flex items-center gap-1 text-[13px] font-bold text-[#0069ff] hover:underline">
                 View All <ChevronRight className="h-4 w-4" />
@@ -288,9 +288,9 @@ export default function Dashboard({ user, droplets, domains }: DashboardProps) {
             </div>
             <div className="divide-y divide-[#e5e8ed]">
               {dashboardDroplets.length > 0 ? dashboardDroplets.slice(0, 6).map((droplet) => (
-                <div key={droplet.id} className="flex items-center justify-between px-6 py-4 transition-colors hover:bg-[#f3f5f9]">
+                <div key={droplet.id} className="flex items-center justify-between px-6 py-4 transition-colors hover:bg-[#f7faff]">
                   <div className="flex items-center gap-4">
-                    <div className="flex h-9 w-9 items-center justify-center rounded border border-[#e5e8ed] bg-[#f3f5f9] text-[#8ba2ad]">
+                    <div className="flex h-9 w-9 items-center justify-center rounded-md border border-[#d9e1ec] bg-[#f3f6fb] text-[#71809a]">
                       <Server className="h-5 w-5" />
                     </div>
                     <div>
@@ -319,7 +319,7 @@ export default function Dashboard({ user, droplets, domains }: DashboardProps) {
           </div>
 
           <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-            <div className="rounded-sm border border-[#e5e8ed] bg-white p-6">
+            <div className="rounded-md border border-[#d9e1ec] bg-white p-6 shadow-[0_1px_2px_rgba(3,27,78,0.04)]">
               <div className="mb-4 flex items-center gap-2">
                 <CreditCard className="h-4 w-4 text-[#24ad5f]" />
                 <h3 className="text-[13px] font-bold uppercase tracking-wide text-[#2e3d49]">Billing Snapshot</h3>
@@ -340,7 +340,7 @@ export default function Dashboard({ user, droplets, domains }: DashboardProps) {
               </div>
             </div>
 
-            <div className="rounded-sm border border-[#e5e8ed] bg-white p-6">
+            <div className="rounded-md border border-[#d9e1ec] bg-white p-6 shadow-[0_1px_2px_rgba(3,27,78,0.04)]">
               <div className="mb-4 flex items-center gap-2">
                 <ShieldAlert className="h-4 w-4 text-amber-500" />
                 <h3 className="text-[13px] font-bold uppercase tracking-wide text-[#2e3d49]">Service Health</h3>
@@ -360,7 +360,7 @@ export default function Dashboard({ user, droplets, domains }: DashboardProps) {
         </div>
 
         <div className="space-y-6">
-          <div className="rounded-sm border border-[#e5e8ed] bg-white p-6">
+          <div className="rounded-md border border-[#d9e1ec] bg-white p-6 shadow-[0_1px_2px_rgba(3,27,78,0.04)]">
             <h3 className="mb-5 flex items-center gap-2 text-[14px] font-bold uppercase tracking-wide text-[#2e3d49]">
               <Activity className="h-4 w-4 text-[#8ba2ad]" /> Recent Activity
             </h3>
@@ -369,7 +369,7 @@ export default function Dashboard({ user, droplets, domains }: DashboardProps) {
               {!loading && logs.length === 0 && <div className="text-sm font-bold text-gray-400">No audit logs found.</div>}
               {!loading && logs.slice(0, 6).map((log) => (
                 <div key={log.id} className="flex gap-4">
-                  <div className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-sm border border-gray-100 bg-gray-50">
+                  <div className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-gray-100 bg-gray-50">
                     <Activity className="h-4 w-4 text-blue-500" />
                   </div>
                   <div>
@@ -383,13 +383,13 @@ export default function Dashboard({ user, droplets, domains }: DashboardProps) {
                 </div>
               ))}
             </div>
-            <Link to="/activity" className="mt-6 block w-full rounded-sm border border-[#e5e8ed] bg-[#f8f9fa] py-2.5 text-center text-[11px] font-bold uppercase tracking-widest text-[#4a4a4a] transition-all hover:border-[#0069ff] hover:text-[#0069ff]">
+            <Link to="/activity" className="mt-6 block w-full rounded-md border border-[#d9e1ec] bg-[#f7f9fc] py-2.5 text-center text-[11px] font-bold uppercase tracking-widest text-[#52637a] transition-all hover:border-[#0069ff] hover:bg-white hover:text-[#0069ff]">
               Full Audit Trail
             </Link>
           </div>
 
-          <div className="overflow-hidden rounded-sm border border-[#e5e8ed] bg-white">
-            <div className="border-b border-[#e5e8ed] bg-[#f8f9fa] px-6 py-4">
+          <div className="overflow-hidden rounded-md border border-[#d9e1ec] bg-white shadow-[0_1px_2px_rgba(3,27,78,0.04)]">
+            <div className="border-b border-[#e4e9f1] bg-[#f7f9fc] px-6 py-4">
               <h3 className="text-[13px] font-bold uppercase tracking-wide text-[#2e3d49]">Resources & Help</h3>
             </div>
             <div className="divide-y divide-[#e5e8ed]">
@@ -398,7 +398,7 @@ export default function Dashboard({ user, droplets, domains }: DashboardProps) {
                 { label: 'Support Tickets', sub: `${openTickets} open tickets`, path: '/support' },
                 { label: 'Invoices', sub: `${invoices.length} billing records`, path: '/invoices' }
               ].map((item) => (
-                <Link key={item.path} to={item.path} className="flex items-center justify-between px-6 py-4 transition-colors hover:bg-[#f3f5f9]">
+                <Link key={item.path} to={item.path} className="flex items-center justify-between px-6 py-4 transition-colors hover:bg-[#f7faff]">
                   <div>
                     <p className="text-[13px] font-bold text-[#2e3d49]">{item.label}</p>
                     <p className="text-[11px] text-gray-400">{item.sub}</p>
@@ -409,12 +409,12 @@ export default function Dashboard({ user, droplets, domains }: DashboardProps) {
             </div>
           </div>
 
-          <Link to="/kubernetes" className="block rounded-sm border border-[#064ea8] bg-[#002050] p-6 text-white">
+          <Link to="/kubernetes" className="block rounded-md border border-[#064ea8] bg-[#002050] p-6 text-white shadow-[0_12px_28px_rgba(3,27,78,0.15)]">
             <h3 className="mb-2 flex items-center gap-2 text-[16px] font-bold uppercase tracking-wide">
               <Layers className="h-4 w-4 text-blue-400" /> Kubernetes
             </h3>
             <p className="mb-6 text-[13px] leading-relaxed text-blue-100">Manage cluster records through the API-backed Kubernetes page.</p>
-            <span className="block w-full rounded-sm bg-white py-2.5 text-center text-[13px] font-bold text-[#031b4e]">
+            <span className="block w-full rounded-md bg-white py-2.5 text-center text-[13px] font-bold text-[#031b4e]">
               Open Clusters
             </span>
           </Link>

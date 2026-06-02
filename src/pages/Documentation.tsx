@@ -484,9 +484,9 @@ export default function Documentation() {
   const currentSection = sections.find(s => s.id === activeSection) || sections[0];
 
   return (
-    <div className="space-y-6 pb-32">
+    <div className="mx-auto max-w-[1220px] space-y-6 pb-32">
       {/* Header with Search */}
-      <div className="bg-[#031b4e] -mx-8 -mt-8 px-8 py-10 text-white relative border-b border-white/5">
+      <div className="relative rounded-md border-b border-white/5 bg-[#031b4e] px-6 py-10 text-white shadow-[0_12px_28px_rgba(3,27,78,0.15)] md:px-8">
          <div className="max-w-4xl mx-auto text-center space-y-4">
             <h1 className="text-xl font-black tracking-tight uppercase">
                Developer Documentation
@@ -501,7 +501,7 @@ export default function Documentation() {
                  placeholder="Search docs..."
                  value={searchQuery}
                  onChange={(e) => setSearchQuery(e.target.value)}
-                 className="w-full bg-white/10 py-2.5 pl-12 pr-4 text-white placeholder-blue-300 focus:outline-none focus:bg-white/20 transition-all text-xs rounded border border-white/10"
+                 className="w-full rounded-md border border-white/10 bg-white/10 py-2.5 pl-12 pr-4 text-xs text-white placeholder-blue-300 transition-all focus:bg-white/20 focus:outline-none"
                />
             </div>
          </div>
@@ -548,7 +548,7 @@ export default function Documentation() {
 
         {/* Content Area */}
         <div className="lg:col-span-3">
-           <div className="bg-white p-8 min-h-[800px] border border-gray-100 rounded-lg">
+           <div className="min-h-[800px] rounded-md border border-[#d9e1ec] bg-white p-8 shadow-[0_1px_2px_rgba(3,27,78,0.04)]">
               <div className="flex items-center gap-4 mb-8 pb-6 border-b border-gray-100">
                  <div className="p-3 bg-gray-100 rounded-lg">
                     <currentSection.icon className="h-8 w-8 text-blue-600" />
@@ -597,4 +597,3 @@ export default function Documentation() {
     </div>
   );
 }
-

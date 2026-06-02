@@ -205,51 +205,51 @@ export default function Invoices({ adminMode = false }: InvoicesProps) {
     .reduce((sum, invoice) => sum + Number(invoice.amount || 0), 0);
 
   return (
-    <div className="space-y-6 pb-12 md:space-y-8">
+    <div className="mx-auto max-w-[1220px] space-y-6 pb-12 md:space-y-8">
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-[#2e3d49]">Billing & Invoices</h1>
-          <p className="mt-1 text-[13px] text-[#4a4a4a]">
+          <h1 className="text-2xl font-bold tracking-tight text-[#031b4e] md:text-3xl">Billing & Invoices</h1>
+          <p className="mt-1 text-[13px] font-medium text-[#52637a]">
             {adminMode ? 'Administrator invoice records and manual actions.' : 'Your invoices, checkout links, and payment history from the billing API.'}
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={exportCsv} className="flex items-center gap-2 rounded border border-[#e5e8ed] bg-white px-4 py-2 text-[13px] font-bold text-[#4a4a4a] hover:bg-[#f3f5f9]">
+          <button onClick={exportCsv} className="flex items-center gap-2 rounded-md border border-[#b9cdf8] bg-white px-4 py-2 text-[13px] font-bold text-[#0069ff] hover:border-[#0069ff] hover:bg-[#f7faff]">
             <Download className="h-4 w-4" /> Export CSV
           </button>
-          <button onClick={loadInvoices} className="flex items-center gap-2 rounded bg-[#0069ff] px-5 py-2 text-[13px] font-bold text-white hover:bg-[#0056cc]">
+          <button onClick={loadInvoices} className="flex items-center gap-2 rounded-md bg-[#0069ff] px-5 py-2 text-[13px] font-bold text-white hover:bg-[#0056cc]">
             <CreditCard className="h-4 w-4" /> Refresh
           </button>
         </div>
       </div>
 
-      {error && <div className="rounded border border-red-100 bg-red-50 px-4 py-3 text-[13px] font-bold text-red-600">{error}</div>}
-      {success && <div className="rounded border border-green-100 bg-green-50 px-4 py-3 text-[13px] font-bold text-green-700">{success}</div>}
+      {error && <div className="rounded-md border border-red-100 bg-red-50 px-4 py-3 text-[13px] font-bold text-red-600 shadow-sm">{error}</div>}
+      {success && <div className="rounded-md border border-green-100 bg-green-50 px-4 py-3 text-[13px] font-bold text-green-700 shadow-sm">{success}</div>}
 
       <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
-        <div className="rounded-xl border border-[#e5e8ed] bg-white p-6 shadow-sm">
+        <div className="rounded-md border border-[#d9e1ec] bg-white p-6 shadow-[0_1px_2px_rgba(3,27,78,0.04)]">
           <div className="mb-4 flex items-center justify-between">
             <AlertCircle className="h-4 w-4 text-red-500" />
             <span className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Outstanding</span>
           </div>
           <p className="text-3xl font-bold tracking-tight text-[#2e3d49]">USD {outstanding.toFixed(2)}</p>
         </div>
-        <div className="rounded-xl border border-[#e5e8ed] bg-white p-6 shadow-sm">
+        <div className="rounded-md border border-[#d9e1ec] bg-white p-6 shadow-[0_1px_2px_rgba(3,27,78,0.04)]">
           <div className="mb-4 flex items-center justify-between">
             <CheckCircle2 className="h-4 w-4 text-[#24ad5f]" />
             <span className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Paid Total</span>
           </div>
           <p className="text-3xl font-bold tracking-tight text-[#2e3d49]">USD {paid.toFixed(2)}</p>
         </div>
-        <div className="rounded-xl bg-[#031b4e] p-6 text-white shadow-xl">
+        <div className="rounded-md bg-[#031b4e] p-6 text-white shadow-[0_12px_28px_rgba(3,27,78,0.15)]">
           <p className="mb-4 text-[10px] font-bold uppercase tracking-widest text-blue-200/60">Invoice Records</p>
           <p className="text-3xl font-bold tracking-tight">{invoices.length}</p>
           <p className="mt-2 text-xs text-blue-100/70">Total records visible to this account.</p>
         </div>
       </div>
 
-      <div className="overflow-hidden rounded-xl border border-[#e5e8ed] bg-white shadow-sm">
-        <div className="flex flex-col gap-4 border-b border-[#f3f5f9] bg-[#f8f9fa] px-6 py-5 md:flex-row md:items-center md:justify-between">
+      <div className="overflow-hidden rounded-md border border-[#d9e1ec] bg-white shadow-[0_1px_2px_rgba(3,27,78,0.04)]">
+        <div className="flex flex-col gap-4 border-b border-[#e4e9f1] bg-[#f7f9fc] px-6 py-5 md:flex-row md:items-center md:justify-between">
           <div>
             <h2 className="text-[14px] font-bold uppercase tracking-wide text-[#2e3d49]">Invoice List</h2>
             <p className="text-[11px] font-medium text-gray-400">{adminMode ? 'Admin controls are available only on this management route.' : 'Manual admin controls are hidden on the user dashboard.'}</p>
@@ -262,7 +262,7 @@ export default function Invoices({ adminMode = false }: InvoicesProps) {
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
                 placeholder="Search invoices..."
-                className="w-full rounded-md border border-[#e5e8ed] bg-white py-1.5 pl-9 pr-3 text-[12px] focus:outline-none focus:ring-1 focus:ring-blue-500 md:w-64"
+                className="w-full rounded-md border border-[#cdd6e3] bg-white py-1.5 pl-9 pr-3 text-[12px] focus:border-[#0069ff] focus:outline-none focus:ring-2 focus:ring-[#0069ff]/10 md:w-64"
               />
             </div>
             <button className="rounded border border-[#e5e8ed] p-1.5 hover:bg-gray-100"><Filter className="h-4 w-4 text-[#4a4a4a]" /></button>
@@ -284,7 +284,7 @@ export default function Invoices({ adminMode = false }: InvoicesProps) {
               {loading && <tr><td colSpan={6} className="px-6 py-12 text-center text-sm font-bold text-gray-400">Loading invoices from API...</td></tr>}
               {!loading && filteredInvoices.length === 0 && <tr><td colSpan={6} className="px-6 py-12 text-center text-sm font-bold text-gray-400">No invoices found.</td></tr>}
               {!loading && filteredInvoices.map((invoice) => (
-                <tr key={invoice.id} className="group transition-colors hover:bg-[#f3f5f9]">
+                <tr key={invoice.id} className="group transition-colors hover:bg-[#f7faff]">
                   <td className="px-6 py-5">
                     <div className="flex items-center gap-3">
                       <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-gray-50 text-[#8ba2ad] transition-all group-hover:bg-[#0069ff] group-hover:text-white">

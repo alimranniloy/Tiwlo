@@ -233,31 +233,31 @@ export default function TPanel() {
   const selected = packages.find((pkg) => pkg.id === selectedPackage);
 
   return (
-    <div className="space-y-6 pb-12">
+    <div className="mx-auto max-w-[1220px] space-y-6 pb-12">
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div className="flex items-start gap-3">
           <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded border border-blue-100 bg-blue-50 text-blue-600">
             <Server className="h-5 w-5" />
           </div>
           <div>
-            <h1 className="text-2xl font-bold text-[#111827]">tPanel</h1>
-            <p className="mt-1 max-w-3xl text-sm text-[#4B5563]">Buy a monthly tPanel Pro license, allowlist one server IP, then install the panel with a signed command from Tiwlo.</p>
+            <h1 className="text-2xl font-bold text-[#031b4e] md:text-3xl">tPanel</h1>
+            <p className="mt-1 max-w-3xl text-sm font-medium text-[#52637a]">Buy a monthly tPanel Pro license, allowlist one server IP, then install the panel with a signed command from Tiwlo.</p>
           </div>
         </div>
-        <button onClick={load} className="flex items-center justify-center gap-2 rounded border border-[#DDE3EA] bg-white px-4 py-2 text-[13px] font-bold text-[#374151] hover:border-blue-400">
+        <button onClick={load} className="flex items-center justify-center gap-2 rounded-md border border-[#b9cdf8] bg-white px-4 py-2 text-[13px] font-bold text-[#0069ff] hover:border-[#0069ff] hover:bg-[#f7faff]">
           <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> Refresh
         </button>
       </div>
 
       {(error || notice) && (
-        <div className={`flex items-center gap-2 rounded border px-4 py-3 text-[13px] font-bold ${error ? 'border-red-100 bg-red-50 text-red-700' : 'border-emerald-100 bg-emerald-50 text-emerald-700'}`}>
+        <div className={`flex items-center gap-2 rounded-md border px-4 py-3 text-[13px] font-bold shadow-sm ${error ? 'border-red-100 bg-red-50 text-red-700' : 'border-emerald-100 bg-emerald-50 text-emerald-700'}`}>
           {error ? <AlertCircle className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
           {error || notice}
         </div>
       )}
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1fr_0.8fr]">
-        <section className="rounded border border-[#DDE3EA] bg-white p-5">
+        <section className="rounded-md border border-[#d9e1ec] bg-white p-5 shadow-[0_1px_2px_rgba(3,27,78,0.04)]">
           <div className="mb-5 flex items-center gap-3">
             <Wallet className="h-5 w-5 text-blue-600" />
             <div>
@@ -305,7 +305,7 @@ export default function TPanel() {
           </form>
         </section>
 
-        <section className="rounded border border-[#111827] bg-[#111827] p-5 text-white">
+        <section className="rounded-md border border-[#064ea8] bg-[#031b4e] p-5 text-white shadow-[0_12px_28px_rgba(3,27,78,0.15)]">
           <div className="mb-4 flex items-center gap-3">
             <Terminal className="h-5 w-5 text-emerald-300" />
             <div>

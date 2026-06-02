@@ -88,22 +88,22 @@ export default function APIPage() {
   };
 
   return (
-    <div className="space-y-8 pb-12">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+    <div className="mx-auto max-w-[1220px] space-y-8 pb-12">
+      <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-[#111827]">API Tokens</h1>
-          <p className="text-[#6B7280] text-sm mt-0.5">Generate API tokens to interact with the Tiwlo Cloud API programmatically.</p>
+          <h1 className="text-2xl font-bold tracking-tight text-[#031b4e] md:text-3xl">API Tokens</h1>
+          <p className="mt-1 text-sm font-medium text-[#52637a]">Generate API tokens to interact with the Tiwlo Cloud API programmatically.</p>
         </div>
-        <button onClick={handleGenerate} className="bg-blue-600 text-white px-5 py-2 rounded-md font-bold text-sm hover:bg-blue-700 shadow-sm flex items-center gap-2">
+        <button onClick={handleGenerate} className="flex items-center gap-2 rounded-md bg-[#11843b] px-5 py-2 text-sm font-bold text-white shadow-sm hover:bg-[#0b6b30]">
           <Plus className="h-4 w-4" /> Generate New Token
         </button>
       </div>
 
-      <div className="bg-white rounded-md border border-[#E5E7EB] overflow-hidden">
+      <div className="overflow-hidden rounded-md border border-[#d9e1ec] bg-white shadow-[0_1px_2px_rgba(3,27,78,0.04)]">
         {error && <div className="border-b border-red-100 bg-red-50 px-5 py-3 text-[13px] font-bold text-red-600">{error}</div>}
-        <div className="p-5 border-b border-[#E5E7EB] bg-[#F9FAFB] flex items-center justify-between">
+        <div className="flex items-center justify-between border-b border-[#e4e9f1] bg-[#f7f9fc] p-5">
            <div className="flex items-center gap-3">
-              <Key className="h-4.5 w-4.5 text-[#111827]" />
+              <Key className="h-4 w-4 text-[#111827]" />
               <h2 className="font-bold text-[#111827] text-sm uppercase tracking-wide">Personal Access Tokens</h2>
            </div>
         </div>
@@ -113,7 +113,7 @@ export default function APIPage() {
           ) : tokens.length === 0 ? (
             <div className="p-8 text-center text-sm font-bold text-[#6B7280]">No API tokens found in the database.</div>
           ) : tokens.map((token) => (
-            <div key={token.id} className="p-6 hover:bg-gray-50 transition-colors flex flex-col md:flex-row md:items-center justify-between gap-6 overflow-hidden">
+            <div key={token.id} className="flex flex-col justify-between gap-6 overflow-hidden p-6 transition-colors hover:bg-[#f7faff] md:flex-row md:items-center">
                <div className="space-y-3 flex-1 min-w-0">
                   <div className="flex items-center gap-3">
                      <h3 className="font-bold text-[#111827] text-[15px]">{token.name}</h3>
@@ -150,7 +150,7 @@ export default function APIPage() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-         <div className="bg-[#111827] p-8 rounded-md text-white relative overflow-hidden">
+         <div className="relative overflow-hidden rounded-md bg-[#031b4e] p-8 text-white shadow-[0_12px_28px_rgba(3,27,78,0.15)]">
             <Zap className="absolute -top-10 -right-10 h-48 w-48 text-blue-600 opacity-20" />
             <h3 className="text-xl font-bold mb-4 flex items-center gap-2">
                <Code className="h-5 w-5 text-blue-400" /> API Documentation
@@ -163,7 +163,7 @@ export default function APIPage() {
             </button>
          </div>
 
-         <div className="bg-white p-8 rounded-md border border-[#E5E7EB] flex flex-col justify-between">
+         <div className="flex flex-col justify-between rounded-md border border-[#d9e1ec] bg-white p-8 shadow-[0_1px_2px_rgba(3,27,78,0.04)]">
             <div>
                <h3 className="text-[16px] font-bold text-[#111827] mb-4 flex items-center gap-2">
                   <Shield className="h-5 w-5 text-blue-600" /> Security Best Practices

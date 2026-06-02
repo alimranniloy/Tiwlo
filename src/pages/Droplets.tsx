@@ -109,11 +109,11 @@ export default function DropletsPage({ droplets, setDroplets }: DropletsProps) {
   );
 
   return (
-    <div className="space-y-6 pb-12">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+    <div className="mx-auto max-w-[1220px] space-y-6 pb-12">
+      <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-[#2e3d49]">Droplets</h1>
-          <p className="text-[13px] text-[#4a4a4a] mt-1">Manage and monitor your cloud servers.</p>
+          <h1 className="text-2xl font-bold tracking-tight text-[#031b4e] md:text-3xl">Droplets</h1>
+          <p className="mt-1 text-sm font-medium text-[#52637a]">Manage and monitor your cloud servers.</p>
         </div>
         <div className="flex items-center gap-2">
           <div className="relative hidden sm:block">
@@ -123,12 +123,12 @@ export default function DropletsPage({ droplets, setDroplets }: DropletsProps) {
               placeholder="Search droplets..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="bg-white border border-[#e5e8ed] rounded py-1.5 pl-10 pr-3 text-[13px] focus:outline-none focus:border-[#0069ff] w-48 transition-all"
+              className="w-56 rounded-md border border-[#cdd6e3] bg-white py-2 pl-10 pr-3 text-[13px] shadow-sm transition-all focus:border-[#0069ff] focus:outline-none focus:ring-2 focus:ring-[#0069ff]/10"
             />
           </div>
           <Link 
             to="/droplets/create"
-            className="bg-[#0069ff] text-white px-5 py-2 rounded font-bold text-[13px] hover:bg-[#0056cc] transition-all flex items-center gap-2"
+            className="flex items-center gap-2 rounded-md bg-[#11843b] px-5 py-2.5 text-[13px] font-bold text-white shadow-sm transition-all hover:bg-[#0b6b30]"
           >
             <Plus className="h-4 w-4" /> Create Droplet
           </Link>
@@ -136,10 +136,10 @@ export default function DropletsPage({ droplets, setDroplets }: DropletsProps) {
       </div>
 
       {error && (
-        <div className="rounded border border-red-100 bg-red-50 px-4 py-3 text-[13px] font-bold text-red-600">{error}</div>
+        <div className="rounded-md border border-red-100 bg-red-50 px-4 py-3 text-[13px] font-bold text-red-600 shadow-sm">{error}</div>
       )}
 
-      <div className="bg-white border border-[#e5e8ed] rounded-lg overflow-hidden">
+      <div className="overflow-hidden rounded-md border border-[#d9e1ec] bg-white shadow-[0_1px_2px_rgba(3,27,78,0.04)]">
         {filteredDroplets.length === 0 ? (
           <div className="p-16 text-center">
             <Server className="h-12 w-12 text-[#e5e8ed] mx-auto mb-4" />
@@ -150,7 +150,7 @@ export default function DropletsPage({ droplets, setDroplets }: DropletsProps) {
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead>
-                <tr className="bg-[#f8f9fa] border-b border-[#e5e8ed]">
+                <tr className="border-b border-[#e4e9f1] bg-[#f7f9fc]">
                   <th className="px-6 py-3 text-[11px] font-bold text-[#4a4a4a] uppercase tracking-wider">Name</th>
                   <th className="px-6 py-3 text-[11px] font-bold text-[#4a4a4a] uppercase tracking-wider">IP Address</th>
                   <th className="px-6 py-3 text-[11px] font-bold text-[#4a4a4a] uppercase tracking-wider">Resources</th>
@@ -160,10 +160,10 @@ export default function DropletsPage({ droplets, setDroplets }: DropletsProps) {
               </thead>
               <tbody className="divide-y divide-[#e5e8ed]">
                 {filteredDroplets.map((droplet) => (
-                  <tr key={droplet.id} className="hover:bg-[#f3f5f9] transition-colors group">
+                  <tr key={droplet.id} className="group transition-colors hover:bg-[#f7faff]">
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-3">
-                        <div className={`w-10 h-10 rounded-lg bg-[#f3f5f9] border border-[#e5e8ed] flex items-center justify-center text-[#8ba2ad] group-hover:bg-[#0069ff] group-hover:text-white transition-all`}>
+                        <div className="flex h-10 w-10 items-center justify-center rounded-md border border-[#d9e1ec] bg-[#f3f6fb] text-[#71809a] transition-all group-hover:bg-[#0069ff] group-hover:text-white">
                           <Server className="h-5 w-5" />
                         </div>
                         <div>
@@ -191,14 +191,14 @@ export default function DropletsPage({ droplets, setDroplets }: DropletsProps) {
                         </button>
                         <div className="flex items-center gap-2">
                             <span className="text-[11px] font-bold text-gray-400 uppercase w-7 font-mono">CPU</span>
-                            <div className="w-16 h-1 w-24 bg-[#e5e8ed] rounded-full overflow-hidden">
+                            <div className="h-1.5 w-24 overflow-hidden rounded-full bg-[#e5e8ed]">
                               <div className="h-full bg-[#0069ff] w-[24%]"></div>
                             </div>
                             <span className="text-[10px] text-gray-500 font-bold">24%</span>
                         </div>
                         <div className="flex items-center gap-2">
                             <span className="text-[11px] font-bold text-gray-400 uppercase w-7 font-mono">RAM</span>
-                            <div className="w-16 h-1 w-24 bg-[#e5e8ed] rounded-full overflow-hidden">
+                            <div className="h-1.5 w-24 overflow-hidden rounded-full bg-[#e5e8ed]">
                               <div className="h-full bg-indigo-500 w-[56%]"></div>
                             </div>
                             <span className="text-[10px] text-gray-500 font-bold">56%</span>
@@ -212,33 +212,33 @@ export default function DropletsPage({ droplets, setDroplets }: DropletsProps) {
                       <div className="flex items-center justify-end gap-1">
                          <button 
                           onClick={() => toggleStatus(droplet.id)}
-                          className={`p-2 rounded hover:bg-[#f3f5f9] transition-all ${
+                          className={`rounded-md p-2 transition-all hover:bg-[#eef5ff] ${
                             droplet.status === 'active' ? 'text-amber-500' : 'text-green-500'
                           }`}
                           title={droplet.status === 'active' ? 'Power Off' : 'Power On'}
                          >
-                           <Power className="h-4.5 w-4.5" />
+                           <Power className="h-4 w-4" />
                          </button>
                          {isTPanelDroplet(droplet) && (
                           <button
                             onClick={() => openTPanelLogin(droplet)}
                             disabled={actionLoading === `login:${droplet.id}`}
-                            className="p-2 text-[#0069ff] hover:bg-[#f3f5f9] rounded transition-all disabled:opacity-50"
+                            className="rounded-md p-2 text-[#0069ff] transition-all hover:bg-[#eef5ff] disabled:opacity-50"
                             title="tPanel Login"
                           >
-                            <ExternalLink className="h-4.5 w-4.5" />
+                            <ExternalLink className="h-4 w-4" />
                           </button>
                          )}
-                         <button onClick={() => setSelectedDroplet(droplet)} className="p-2 text-gray-400 hover:text-[#0069ff] hover:bg-[#f3f5f9] rounded transition-all" title="Access Console">
-                           <Terminal className="h-4.5 w-4.5" />
+                         <button onClick={() => setSelectedDroplet(droplet)} className="rounded-md p-2 text-gray-400 transition-all hover:bg-[#eef5ff] hover:text-[#0069ff]" title="Access Console">
+                           <Terminal className="h-4 w-4" />
                          </button>
                          <div className="w-px h-4 bg-[#e5e8ed] mx-1"></div>
                          <button 
                           onClick={() => deleteDroplet(droplet.id)}
-                          className="p-2 text-red-500 hover:bg-red-50 rounded transition-all"
+                          className="rounded-md p-2 text-red-500 transition-all hover:bg-red-50"
                           title="Destroy"
                          >
-                           <Trash2 className="h-4.5 w-4.5" />
+                           <Trash2 className="h-4 w-4" />
                          </button>
                       </div>
                     </td>
@@ -251,8 +251,8 @@ export default function DropletsPage({ droplets, setDroplets }: DropletsProps) {
       </div>
 
       {selectedDroplet && (
-        <div className="fixed inset-0 z-50 flex items-end justify-end bg-black/30 p-0 md:p-6" onClick={() => setSelectedDroplet(null)}>
-          <section className="h-full w-full overflow-y-auto bg-white p-6 shadow-xl md:h-auto md:max-h-[calc(100vh-48px)] md:max-w-xl md:rounded" onClick={(event) => event.stopPropagation()}>
+        <div className="fixed inset-0 z-50 flex items-end justify-end bg-[#031b4e]/35 p-0 md:p-6" onClick={() => setSelectedDroplet(null)}>
+          <section className="h-full w-full overflow-y-auto bg-white p-6 shadow-[0_24px_80px_rgba(3,27,78,0.22)] md:h-auto md:max-h-[calc(100vh-48px)] md:max-w-xl md:rounded-lg" onClick={(event) => event.stopPropagation()}>
             <div className="mb-5 flex items-start justify-between gap-4 border-b border-[#e5e8ed] pb-4">
               <div>
                 <p className="text-[11px] font-black uppercase tracking-widest text-[#0069ff]">Resource portal</p>
@@ -275,7 +275,7 @@ export default function DropletsPage({ droplets, setDroplets }: DropletsProps) {
                 ['Disk', selectedDroplet.disk || '-'],
                 ['Account', tPanelAccount(selectedDroplet)?.username || 'Pending']
               ].map(([label, value]) => (
-                <div key={label} className="rounded border border-[#e5e8ed] bg-[#f8f9fa] p-3">
+                <div key={label} className="rounded-md border border-[#d9e1ec] bg-[#f7f9fc] p-3">
                   <p className="text-[10px] font-black uppercase text-gray-400">{label}</p>
                   <p className="mt-1 break-words font-bold text-[#2e3d49]">{value}</p>
                 </div>
@@ -286,7 +286,7 @@ export default function DropletsPage({ droplets, setDroplets }: DropletsProps) {
               {isTPanelDroplet(selectedDroplet) && (
                 <button
                   onClick={() => openTPanelLogin(selectedDroplet)}
-                  className="flex items-center justify-center gap-2 rounded bg-[#0069ff] px-4 py-3 text-[13px] font-bold text-white hover:bg-[#0056cc]"
+                  className="flex items-center justify-center gap-2 rounded-md bg-[#0069ff] px-4 py-3 text-[13px] font-bold text-white hover:bg-[#0056cc]"
                 >
                   <ExternalLink className="h-4 w-4" /> tPanel Login
                 </button>
@@ -294,14 +294,14 @@ export default function DropletsPage({ droplets, setDroplets }: DropletsProps) {
               <button
                 onClick={() => toggleStatus(selectedDroplet.id)}
                 disabled={actionLoading === `power:${selectedDroplet.id}`}
-                className="flex items-center justify-center gap-2 rounded border border-[#e5e8ed] px-4 py-3 text-[13px] font-bold text-[#2e3d49] hover:bg-[#f3f5f9] disabled:opacity-60"
+                className="flex items-center justify-center gap-2 rounded-md border border-[#d9e1ec] px-4 py-3 text-[13px] font-bold text-[#031b4e] hover:bg-[#f7faff] disabled:opacity-60"
               >
                 <Power className="h-4 w-4" /> {selectedDroplet.status === 'active' ? 'Turn Off Account' : 'Turn On Account'}
               </button>
             </div>
 
             {isTPanelDroplet(selectedDroplet) && (
-              <div className="mt-5 rounded border border-[#e5e8ed] p-4">
+              <div className="mt-5 rounded-md border border-[#d9e1ec] p-4">
                 <div className="mb-3 flex items-center gap-2">
                   <KeyRound className="h-4 w-4 text-[#0069ff]" />
                   <h3 className="text-[13px] font-black uppercase text-[#2e3d49]">Change tPanel password</h3>
@@ -312,12 +312,12 @@ export default function DropletsPage({ droplets, setDroplets }: DropletsProps) {
                     value={newPassword}
                     onChange={(event) => setNewPassword(event.target.value)}
                     placeholder="New password"
-                    className="flex-1 rounded border border-[#e5e8ed] px-3 py-2 text-sm outline-none focus:border-[#0069ff]"
+                    className="flex-1 rounded-md border border-[#cdd6e3] px-3 py-2 text-sm outline-none focus:border-[#0069ff] focus:ring-2 focus:ring-[#0069ff]/10"
                   />
                   <button
                     onClick={changePassword}
                     disabled={actionLoading === `password:${selectedDroplet.id}`}
-                    className="rounded bg-[#2e3d49] px-4 py-2 text-[12px] font-bold text-white hover:bg-[#1f2933] disabled:opacity-60"
+                    className="rounded-md bg-[#031b4e] px-4 py-2 text-[12px] font-bold text-white hover:bg-[#08204f] disabled:opacity-60"
                   >
                     Update
                   </button>

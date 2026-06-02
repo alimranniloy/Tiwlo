@@ -81,14 +81,14 @@ export default function BillingPage() {
   ];
 
   return (
-    <div className="space-y-6 pb-12">
-      <div className="border-b border-[#edebe9] pb-4">
+    <div className="mx-auto max-w-[1220px] space-y-6 pb-12">
+      <div className="border-b border-[#d9e1ec] pb-4">
         <p className="text-[11px] font-black uppercase tracking-widest text-[#0078d4]">Account billing</p>
-        <h1 className="mt-1 text-2xl font-bold tracking-tight text-[#1f1f1f]">Billing overview</h1>
-        <p className="mt-1 text-sm text-[#605e5c]">Manage credits, active usage, and invoices for your Tiwlo services.</p>
+        <h1 className="mt-1 text-2xl font-bold tracking-tight text-[#031b4e] md:text-3xl">Billing overview</h1>
+        <p className="mt-1 text-sm font-medium text-[#52637a]">Manage credits, active usage, and invoices for your Tiwlo services.</p>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2 border border-[#edebe9] bg-white p-2">
+      <div className="flex flex-wrap items-center gap-2 rounded-md border border-[#d9e1ec] bg-white p-2 shadow-[0_1px_2px_rgba(3,27,78,0.04)]">
         {['Overview', 'Add credit', 'Usage', 'Invoices'].map((item, index) => (
           <a
             key={item}
@@ -102,10 +102,10 @@ export default function BillingPage() {
         ))}
       </div>
 
-      {error && <div className="rounded border border-red-100 bg-red-50 px-4 py-3 text-[13px] font-bold text-red-600">{error}</div>}
+      {error && <div className="rounded-md border border-red-100 bg-red-50 px-4 py-3 text-[13px] font-bold text-red-600 shadow-sm">{error}</div>}
 
       {overview && Number(overview.credits || 0) <= 0 && !loading && (
-        <div className="flex flex-col gap-3 rounded border border-red-100 bg-red-50 px-4 py-3 text-red-700 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-col gap-3 rounded-md border border-red-100 bg-red-50 px-4 py-3 text-red-700 shadow-sm sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-start gap-3">
             <AlertCircle className="mt-0.5 h-5 w-5 shrink-0" />
             <p className="text-[13px] font-bold leading-5">
@@ -120,15 +120,15 @@ export default function BillingPage() {
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {billingTiles.map((tile) => (
-          <div key={tile.label} className="border border-[#edebe9] bg-white p-4">
+          <div key={tile.label} className="rounded-md border border-[#d9e1ec] bg-white p-4 shadow-[0_1px_2px_rgba(3,27,78,0.04)]">
             <p className="text-[10px] font-black uppercase tracking-widest text-[#605e5c]">{tile.label}</p>
             <p className={`mt-2 text-2xl font-black ${tile.tone}`}>{loading ? '...' : tile.value}</p>
           </div>
         ))}
       </div>
 
-      <section id="overview" className="grid grid-cols-1 gap-4 border border-[#c7e0f4] bg-[#f3f9fd] p-4 lg:grid-cols-[260px_1fr]">
-        <div className="flex items-center gap-4 border border-[#deecf9] bg-white p-4">
+      <section id="overview" className="grid grid-cols-1 gap-4 rounded-md border border-[#c7dcff] bg-[#eef5ff] p-4 lg:grid-cols-[260px_1fr]">
+        <div className="flex items-center gap-4 rounded-md border border-[#d9e6ff] bg-white p-4">
           <div
             className="grid h-24 w-24 shrink-0 place-items-center rounded-full"
             style={{ background: `conic-gradient(#0078d4 ${creditHealth}%, #e1dfdd ${creditHealth}% 100%)` }}
@@ -148,7 +148,7 @@ export default function BillingPage() {
             ['Paid invoices', money(paid)],
             ['Invoice count', invoices.length]
           ].map(([label, value]) => (
-            <div key={label} className="border border-[#deecf9] bg-white p-4">
+            <div key={label} className="rounded-md border border-[#d9e6ff] bg-white p-4">
               <p className="text-[10px] font-black uppercase tracking-widest text-[#605e5c]">{label}</p>
               <p className="mt-2 text-xl font-black text-[#1f1f1f]">{loading ? '...' : value}</p>
             </div>
@@ -158,7 +158,7 @@ export default function BillingPage() {
 
       <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
         <div className="space-y-8 md:col-span-2">
-          <section id="add-credit" className="grid grid-cols-1 gap-6 rounded-sm border border-[#E5E7EB] bg-white p-5 lg:grid-cols-[1fr_1.1fr] md:p-6">
+          <section id="add-credit" className="grid grid-cols-1 gap-6 rounded-md border border-[#d9e1ec] bg-white p-5 shadow-[0_1px_2px_rgba(3,27,78,0.04)] lg:grid-cols-[1fr_1.1fr] md:p-6">
             <div className="border-b border-[#edebe9] pb-5 lg:border-b-0 lg:border-r lg:pb-0 lg:pr-6">
               <p className="text-[11px] font-black uppercase tracking-widest text-[#605e5c]">Balance due</p>
               <p className="mt-2 text-4xl font-black tracking-tight text-[#1f1f1f]">{loading ? '...' : money(outstanding)}</p>
@@ -195,7 +195,7 @@ export default function BillingPage() {
                     key={option.key}
                     type="button"
                     onClick={() => setTopUpCurrency(option.key)}
-                    className={`rounded-sm border px-4 py-3 text-left transition-colors ${
+                    className={`rounded-md border px-4 py-3 text-left transition-colors ${
                       topUpCurrency === option.key
                         ? 'border-blue-500 bg-blue-50 text-blue-700'
                         : 'border-gray-200 bg-white text-[#111827] hover:bg-gray-50'
@@ -214,27 +214,27 @@ export default function BillingPage() {
                 type="number"
                 min="1"
                 step="0.01"
-                className="rounded-sm border border-gray-200 px-3 py-2 text-sm outline-none focus:border-[#0078d4]"
+                className="rounded-md border border-[#cdd6e3] px-3 py-2 text-sm outline-none focus:border-[#0078d4] focus:ring-2 focus:ring-[#0078d4]/10"
                 placeholder={topUpCurrency === 'BDT' ? 'Amount in BDT' : 'Amount in USD'}
               />
               <select
                 value={topUpProvider}
                 onChange={(event) => setTopUpProvider(event.target.value)}
-                className="rounded-sm border border-gray-200 px-3 py-2 text-sm font-bold outline-none focus:border-[#0078d4]"
+                className="rounded-md border border-[#cdd6e3] px-3 py-2 text-sm font-bold outline-none focus:border-[#0078d4] focus:ring-2 focus:ring-[#0078d4]/10"
               >
                 <option value="bkash">bKash</option>
                 <option value="stripe">Stripe</option>
                 <option value="paypal">PayPal</option>
               </select>
-              <button onClick={addCredit} disabled={processing} className="rounded-sm bg-[#0078d4] px-5 py-2 text-sm font-bold text-white hover:bg-[#106ebe] disabled:opacity-60">
+              <button onClick={addCredit} disabled={processing} className="rounded-md bg-[#0069ff] px-5 py-2 text-sm font-bold text-white hover:bg-[#0056cc] disabled:opacity-60">
                 {processing ? 'Starting...' : 'Top Up'}
               </button>
               </div>
             </div>
           </section>
 
-          <section id="usage" className="overflow-hidden rounded-sm border border-[#E5E7EB] bg-white">
-            <div className="flex items-center justify-between border-b border-[#E5E7EB] bg-[#F9FAFB] p-5">
+          <section id="usage" className="overflow-hidden rounded-md border border-[#d9e1ec] bg-white shadow-[0_1px_2px_rgba(3,27,78,0.04)]">
+            <div className="flex items-center justify-between border-b border-[#e4e9f1] bg-[#f7f9fc] p-5">
               <h2 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-[#111827]">
                 <History className="h-4 w-4" /> Active Hourly Billing
               </h2>
@@ -257,8 +257,8 @@ export default function BillingPage() {
             </div>
           </section>
 
-          <section id="invoices" className="overflow-hidden rounded-sm border border-[#E5E7EB] bg-white">
-            <div className="flex items-center justify-between border-b border-[#E5E7EB] bg-[#F9FAFB] p-5">
+          <section id="invoices" className="overflow-hidden rounded-md border border-[#d9e1ec] bg-white shadow-[0_1px_2px_rgba(3,27,78,0.04)]">
+            <div className="flex items-center justify-between border-b border-[#e4e9f1] bg-[#f7f9fc] p-5">
               <h2 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-[#111827]">
                 <History className="h-4 w-4" /> Recent Invoices
               </h2>
@@ -285,7 +285,7 @@ export default function BillingPage() {
         </div>
 
         <div className="space-y-6">
-          <div className="relative overflow-hidden rounded-sm border border-[#004578] bg-[#002050] p-8 text-white">
+          <div className="relative overflow-hidden rounded-md border border-[#064ea8] bg-[#002050] p-8 text-white shadow-[0_12px_28px_rgba(3,27,78,0.15)]">
             <Shield className="absolute -bottom-10 -right-10 h-48 w-48 text-white opacity-5" />
             <h3 className="mb-2 text-xl font-bold">Automated Billing</h3>
             <p className="mb-6 text-sm leading-relaxed text-gray-400">Monthly caps and hourly usage are tracked against your credit balance.</p>
@@ -295,7 +295,7 @@ export default function BillingPage() {
           </div>
 
           {(outstanding > 0 || Number(overview?.dueAmount || 0) > 0) && (
-            <div className="rounded-sm border border-orange-100 bg-orange-50 p-6">
+            <div className="rounded-md border border-orange-100 bg-orange-50 p-6 shadow-sm">
               <div className="mb-2 flex items-center gap-3 text-orange-800">
                 <AlertCircle className="h-5 w-5" />
                 <h4 className="text-sm font-bold">Payment Pending</h4>

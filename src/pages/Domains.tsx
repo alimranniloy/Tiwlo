@@ -142,16 +142,16 @@ export default function DomainsPage({ domains, setDomains }: DomainsProps) {
   };
 
   return (
-    <div className="space-y-6 pb-12">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+    <div className="mx-auto max-w-[1220px] space-y-6 pb-12">
+      <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-[#111827]">Domains</h1>
-          <p className="text-[#6B7280] text-sm mt-0.5">Manage your domain names and DNS records across our global infrastructure.</p>
+          <h1 className="text-2xl font-bold tracking-tight text-[#031b4e] md:text-3xl">Domains</h1>
+          <p className="mt-1 text-sm font-medium text-[#52637a]">Manage your domain names and DNS records across our global infrastructure.</p>
         </div>
         <div className="flex items-center gap-3">
           <button 
             onClick={() => setIsDrawerOpen(true)}
-            className="bg-[#0069ff] text-white px-6 py-2.5 rounded font-bold text-sm hover:bg-[#0056cc] shadow-sm shadow-blue-100 flex items-center gap-2 transition-all"
+            className="flex items-center gap-2 rounded-md bg-[#11843b] px-6 py-2.5 text-sm font-bold text-white shadow-sm transition-all hover:bg-[#0b6b30]"
           >
             <Plus className="h-4 w-4" /> Register New Domain
           </button>
@@ -159,14 +159,14 @@ export default function DomainsPage({ domains, setDomains }: DomainsProps) {
       </div>
 
       {error && (
-        <div className="rounded border border-red-100 bg-red-50 px-4 py-3 text-[13px] font-bold text-red-600">{error}</div>
+        <div className="rounded-md border border-red-100 bg-red-50 px-4 py-3 text-[13px] font-bold text-red-600 shadow-sm">{error}</div>
       )}
 
-      <div className="bg-white rounded-md border border-[#E5E7EB] overflow-hidden">
+      <div className="overflow-hidden rounded-md border border-[#d9e1ec] bg-white shadow-[0_1px_2px_rgba(3,27,78,0.04)]">
         <div className="overflow-x-auto">
           <table className="w-full border-collapse min-w-[700px]">
             <thead>
-              <tr className="bg-[#F9FAFB] border-b border-[#E5E7EB]">
+              <tr className="border-b border-[#e4e9f1] bg-[#f7f9fc]">
                 <th className="text-left px-6 py-4 text-[11px] font-bold text-[#6B7280] uppercase tracking-wider">Domain</th>
                 <th className="text-left px-6 py-4 text-[11px] font-bold text-[#6B7280] uppercase tracking-wider">Status</th>
                 <th className="text-left px-6 py-4 text-[11px] font-bold text-[#6B7280] uppercase tracking-wider">Nameservers</th>
@@ -185,10 +185,10 @@ export default function DomainsPage({ domains, setDomains }: DomainsProps) {
                 </tr>
               ) : (
                 domains.map((domain) => (
-                  <tr key={domain.id} className="hover:bg-gray-50 transition-colors group">
+                  <tr key={domain.id} className="group transition-colors hover:bg-[#f7faff]">
                     <td className="px-6 py-5">
                       <div className="flex items-center gap-3">
-                        <div className="p-2 bg-blue-50 text-blue-600 rounded-md group-hover:bg-blue-600 group-hover:text-white transition-all">
+                        <div className="rounded-md bg-blue-50 p-2 text-blue-600 transition-all group-hover:bg-blue-600 group-hover:text-white">
                           <Globe className="h-4 w-4" />
                         </div>
                         <span className="font-bold text-[#111827] text-[15px]">{domain.name}</span>
@@ -221,17 +221,17 @@ export default function DomainsPage({ domains, setDomains }: DomainsProps) {
                     </td>
                     <td className="px-6 py-5 text-right space-x-1">
                        <button onClick={() => openDns(domain)} className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-all" title="Manage DNS">
-                         <Search className="h-4.5 w-4.5" />
+                         <Search className="h-4 w-4" />
                        </button>
                        <button className="p-2 text-gray-400 hover:text-[#111827] hover:bg-gray-100 rounded-md transition-all" title="Open Site">
-                         <ExternalLink className="h-4.5 w-4.5" />
+                         <ExternalLink className="h-4 w-4" />
                        </button>
                        <button 
                         onClick={() => removeDomain(domain.id)}
                         className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-all" 
                         title="Delete Domain"
                        >
-                         <Trash2 className="h-4.5 w-4.5" />
+                         <Trash2 className="h-4 w-4" />
                        </button>
                     </td>
                   </tr>

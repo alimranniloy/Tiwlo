@@ -203,7 +203,7 @@ function AppContent({
                      location.pathname === '/email';
 
   return (
-    <div className="flex min-h-screen bg-[#F3F5F9] font-sans text-[#141414]">
+    <div className="flex min-h-screen bg-[#f7f8fb] font-sans text-[#031b4e]">
       {!hideLayout && (
         <Sidebar 
           user={user}
@@ -223,7 +223,7 @@ function AppContent({
           />
         )}
         
-        <main className={`flex-1 overflow-y-auto ${hideLayout ? '' : 'p-3 md:p-8'}`}>
+        <main className={`flex-1 overflow-y-auto ${hideLayout ? '' : 'tiwlo-console-main px-3 py-4 sm:px-5 md:px-7 md:py-7'}`}>
           <Suspense fallback={<RouteLoader />}>
           <Routes>
             {isAdminUser ? (

@@ -105,11 +105,11 @@ export default function SettingsPage({ user, setUser }: SettingsProps) {
   ];
 
   return (
-    <div className="mx-auto max-w-6xl space-y-10 pb-20">
+    <div className="mx-auto max-w-[1220px] space-y-8 pb-20">
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight text-[#111827]">Account Settings</h1>
-          <p className="mt-1 text-[#6B7280]">Profile updates are saved through the user API.</p>
+          <h1 className="text-2xl font-bold tracking-tight text-[#031b4e] md:text-3xl">Account Settings</h1>
+          <p className="mt-1 text-sm font-medium text-[#52637a]">Profile updates are saved through the user API.</p>
         </div>
         <div className="hidden items-center gap-2 rounded-lg border border-blue-100 bg-blue-50 px-4 py-2 md:flex">
           <Shield className="h-4 w-4 text-blue-600" />
@@ -118,15 +118,15 @@ export default function SettingsPage({ user, setUser }: SettingsProps) {
       </div>
 
       {error && (
-        <div className="flex items-start gap-2 rounded border border-red-100 bg-red-50 px-4 py-3 text-[13px] font-bold text-red-600">
+        <div className="flex items-start gap-2 rounded-md border border-red-100 bg-red-50 px-4 py-3 text-[13px] font-bold text-red-600 shadow-sm">
           <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /> {error}
         </div>
       )}
 
       <div className="grid grid-cols-1 gap-10 lg:grid-cols-12">
         <div className="space-y-10 lg:col-span-8">
-          <section className="overflow-hidden rounded-md border border-[#E5E7EB] bg-white">
-            <div className="flex items-center justify-between border-b border-[#E5E7EB] bg-[#F9FAFB] p-8">
+          <section className="overflow-hidden rounded-md border border-[#d9e1ec] bg-white shadow-[0_1px_2px_rgba(3,27,78,0.04)]">
+            <div className="flex items-center justify-between border-b border-[#e4e9f1] bg-[#f7f9fc] p-8">
               <div className="flex items-center gap-3">
                 <div className="rounded-lg border border-[#E5E7EB] bg-white p-2">
                   <UserIcon className="h-5 w-5 text-[#111827]" />
@@ -153,7 +153,7 @@ export default function SettingsPage({ user, setUser }: SettingsProps) {
                       type="text"
                       value={name}
                       onChange={(event) => setName(event.target.value)}
-                      className="w-full rounded-md border border-[#D1D5DB] bg-[#F9FAFB] px-5 py-3 text-[14px] transition-all focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-600/20"
+                      className="w-full rounded-md border border-[#cdd6e3] bg-[#F9FAFB] px-5 py-3 text-[14px] transition-all focus:border-[#0069ff] focus:outline-none focus:ring-2 focus:ring-[#0069ff]/10"
                     />
                   </label>
                   <label className="space-y-2">
@@ -164,7 +164,7 @@ export default function SettingsPage({ user, setUser }: SettingsProps) {
                         type="email"
                         disabled
                         value={user.email}
-                        className="w-full cursor-not-allowed rounded-md border border-[#D1D5DB] bg-gray-50 px-5 py-3 pl-12 text-[14px] text-gray-500"
+                        className="w-full cursor-not-allowed rounded-md border border-[#cdd6e3] bg-gray-50 px-5 py-3 pl-12 text-[14px] text-gray-500"
                       />
                     </div>
                   </label>
@@ -177,7 +177,7 @@ export default function SettingsPage({ user, setUser }: SettingsProps) {
                         value={phone}
                         onChange={(event) => setPhone(event.target.value)}
                         placeholder={country === 'BD' ? '1712345678' : 'Mobile number'}
-                        className="w-full rounded-md border border-[#D1D5DB] bg-[#F9FAFB] px-5 py-3 pl-12 text-[14px] transition-all focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-600/20"
+                        className="w-full rounded-md border border-[#cdd6e3] bg-[#F9FAFB] px-5 py-3 pl-12 text-[14px] transition-all focus:border-[#0069ff] focus:outline-none focus:ring-2 focus:ring-[#0069ff]/10"
                       />
                     </div>
                   </label>
@@ -186,7 +186,7 @@ export default function SettingsPage({ user, setUser }: SettingsProps) {
                     <select
                       value={country}
                       onChange={(event) => setCountry(event.target.value)}
-                      className="w-full rounded-md border border-[#D1D5DB] bg-[#F9FAFB] px-5 py-3 text-[14px] font-bold transition-all focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-600/20"
+                      className="w-full rounded-md border border-[#cdd6e3] bg-[#F9FAFB] px-5 py-3 text-[14px] font-bold transition-all focus:border-[#0069ff] focus:outline-none focus:ring-2 focus:ring-[#0069ff]/10"
                     >
                       {COUNTRIES.map((item) => <option key={item.code} value={item.code}>{item.flag} {item.name}</option>)}
                     </select>
@@ -197,7 +197,7 @@ export default function SettingsPage({ user, setUser }: SettingsProps) {
                       type="text"
                       value={billingName}
                       onChange={(event) => setBillingName(event.target.value)}
-                      className="w-full rounded-md border border-[#D1D5DB] bg-[#F9FAFB] px-5 py-3 text-[14px] transition-all focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-600/20"
+                      className="w-full rounded-md border border-[#cdd6e3] bg-[#F9FAFB] px-5 py-3 text-[14px] transition-all focus:border-[#0069ff] focus:outline-none focus:ring-2 focus:ring-[#0069ff]/10"
                     />
                   </label>
                   <label className="space-y-2 md:col-span-2">
@@ -206,7 +206,7 @@ export default function SettingsPage({ user, setUser }: SettingsProps) {
                       type="text"
                       value={addressLine1}
                       onChange={(event) => setAddressLine1(event.target.value)}
-                      className="w-full rounded-md border border-[#D1D5DB] bg-[#F9FAFB] px-5 py-3 text-[14px] transition-all focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-600/20"
+                      className="w-full rounded-md border border-[#cdd6e3] bg-[#F9FAFB] px-5 py-3 text-[14px] transition-all focus:border-[#0069ff] focus:outline-none focus:ring-2 focus:ring-[#0069ff]/10"
                     />
                   </label>
                   <label className="space-y-2">
@@ -215,7 +215,7 @@ export default function SettingsPage({ user, setUser }: SettingsProps) {
                       type="text"
                       value={city}
                       onChange={(event) => setCity(event.target.value)}
-                      className="w-full rounded-md border border-[#D1D5DB] bg-[#F9FAFB] px-5 py-3 text-[14px] transition-all focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-600/20"
+                      className="w-full rounded-md border border-[#cdd6e3] bg-[#F9FAFB] px-5 py-3 text-[14px] transition-all focus:border-[#0069ff] focus:outline-none focus:ring-2 focus:ring-[#0069ff]/10"
                     />
                   </label>
                   <label className="space-y-2">
@@ -224,7 +224,7 @@ export default function SettingsPage({ user, setUser }: SettingsProps) {
                       type="text"
                       value={state}
                       onChange={(event) => setState(event.target.value)}
-                      className="w-full rounded-md border border-[#D1D5DB] bg-[#F9FAFB] px-5 py-3 text-[14px] transition-all focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-600/20"
+                      className="w-full rounded-md border border-[#cdd6e3] bg-[#F9FAFB] px-5 py-3 text-[14px] transition-all focus:border-[#0069ff] focus:outline-none focus:ring-2 focus:ring-[#0069ff]/10"
                     />
                   </label>
                   <label className="space-y-2">
@@ -233,7 +233,7 @@ export default function SettingsPage({ user, setUser }: SettingsProps) {
                       type="text"
                       value={postalCode}
                       onChange={(event) => setPostalCode(event.target.value)}
-                      className="w-full rounded-md border border-[#D1D5DB] bg-[#F9FAFB] px-5 py-3 text-[14px] transition-all focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-600/20"
+                      className="w-full rounded-md border border-[#cdd6e3] bg-[#F9FAFB] px-5 py-3 text-[14px] transition-all focus:border-[#0069ff] focus:outline-none focus:ring-2 focus:ring-[#0069ff]/10"
                     />
                   </label>
                   <label className="space-y-2">
@@ -243,7 +243,7 @@ export default function SettingsPage({ user, setUser }: SettingsProps) {
                       <select
                         value={primaryRegion}
                         onChange={(event) => setPrimaryRegion(event.target.value)}
-                        className="w-full appearance-none rounded-md border border-[#D1D5DB] bg-[#F9FAFB] px-5 py-3 pl-12 text-[14px] transition-all focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-600/20"
+                        className="w-full appearance-none rounded-md border border-[#cdd6e3] bg-[#F9FAFB] px-5 py-3 pl-12 text-[14px] transition-all focus:border-[#0069ff] focus:outline-none focus:ring-2 focus:ring-[#0069ff]/10"
                       >
                         <option>New York 3</option>
                         <option>San Francisco 2</option>

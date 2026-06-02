@@ -82,8 +82,8 @@ export default function Marketplace() {
   };
 
   return (
-    <div className="space-y-8 pb-20">
-      <div className="-mx-8 -mt-8 overflow-hidden bg-[#031b4e] px-8 py-14 text-white">
+    <div className="mx-auto max-w-[1220px] space-y-8 pb-20">
+      <div className="overflow-hidden rounded-md bg-[#031b4e] px-6 py-12 text-white shadow-[0_12px_28px_rgba(3,27,78,0.15)] md:px-8 md:py-14">
         <div className="relative z-10 max-w-4xl">
           <h1 className="mb-4 text-3xl font-bold tracking-tight md:text-4xl">Marketplace</h1>
           <p className="mb-8 max-w-2xl text-lg leading-relaxed text-blue-100/70">
@@ -97,10 +97,10 @@ export default function Marketplace() {
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
                 placeholder="Search plans..."
-                className="w-full rounded-lg border border-white/20 bg-white/10 py-3 pl-12 pr-4 font-medium text-white placeholder-blue-300 transition-all focus:bg-white/20 focus:outline-none"
+                className="w-full rounded-md border border-white/20 bg-white/10 py-3 pl-12 pr-4 font-medium text-white placeholder-blue-300 transition-all focus:bg-white/20 focus:outline-none"
               />
             </div>
-            <button className="flex items-center gap-2 rounded-lg bg-white px-6 py-3 font-bold text-[#031b4e] shadow-xl shadow-black/20">
+            <button className="flex items-center gap-2 rounded-md bg-white px-6 py-3 font-bold text-[#031b4e] shadow-xl shadow-black/20">
               <CreditCard className="h-5 w-5" /> {plans.length} Plans
             </button>
           </div>
@@ -108,12 +108,12 @@ export default function Marketplace() {
       </div>
 
       {error && (
-        <div className="flex items-start gap-2 rounded border border-red-100 bg-red-50 px-4 py-3 text-[13px] font-bold text-red-600">
+        <div className="flex items-start gap-2 rounded-md border border-red-100 bg-red-50 px-4 py-3 text-[13px] font-bold text-red-600 shadow-sm">
           <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /> {error}
         </div>
       )}
       {success && (
-        <div className="flex items-start gap-2 rounded border border-green-100 bg-green-50 px-4 py-3 text-[13px] font-bold text-green-700">
+        <div className="flex items-start gap-2 rounded-md border border-green-100 bg-green-50 px-4 py-3 text-[13px] font-bold text-green-700 shadow-sm">
           <Check className="mt-0.5 h-4 w-4 shrink-0" /> {success}
         </div>
       )}
@@ -121,8 +121,8 @@ export default function Marketplace() {
       <div className="flex items-center gap-2 overflow-x-auto pb-4">
         <button
           onClick={() => setSelectedProduct('all')}
-          className={`flex shrink-0 items-center gap-3 rounded-xl border px-6 py-4 text-left transition-all ${
-            selectedProduct === 'all' ? 'border-[#0069ff] bg-white shadow-md shadow-blue-100 ring-4 ring-blue-50' : 'border-transparent bg-white hover:bg-gray-50'
+          className={`flex shrink-0 items-center gap-3 rounded-md border px-6 py-4 text-left transition-all ${
+            selectedProduct === 'all' ? 'border-[#0069ff] bg-white shadow-md shadow-blue-100 ring-4 ring-blue-50' : 'border-[#d9e1ec] bg-white hover:bg-[#f7faff]'
           }`}
         >
           <div className={`flex h-10 w-10 items-center justify-center rounded-lg ${selectedProduct === 'all' ? 'bg-[#0069ff] text-white' : 'bg-gray-100 text-gray-400'}`}>
@@ -140,8 +140,8 @@ export default function Marketplace() {
             <button
               key={product}
               onClick={() => setSelectedProduct(product)}
-              className={`flex shrink-0 items-center gap-3 rounded-xl border px-6 py-4 text-left transition-all ${
-                selectedProduct === product ? 'border-[#0069ff] bg-white shadow-md shadow-blue-100 ring-4 ring-blue-50' : 'border-transparent bg-white hover:bg-gray-50'
+              className={`flex shrink-0 items-center gap-3 rounded-md border px-6 py-4 text-left transition-all ${
+                selectedProduct === product ? 'border-[#0069ff] bg-white shadow-md shadow-blue-100 ring-4 ring-blue-50' : 'border-[#d9e1ec] bg-white hover:bg-[#f7faff]'
               }`}
             >
               <div className={`flex h-10 w-10 items-center justify-center rounded-lg ${selectedProduct === product ? 'bg-[#0069ff] text-white' : 'bg-gray-100 text-gray-400'}`}>
@@ -162,9 +162,9 @@ export default function Marketplace() {
         </div>
 
         {loading ? (
-          <div className="rounded-lg border border-gray-100 bg-white p-12 text-center text-sm font-bold text-gray-400">Loading marketplace from API...</div>
+          <div className="rounded-md border border-[#d9e1ec] bg-white p-12 text-center text-sm font-bold text-gray-400 shadow-[0_1px_2px_rgba(3,27,78,0.04)]">Loading marketplace from API...</div>
         ) : filteredPlans.length === 0 ? (
-          <div className="rounded-lg border border-dashed border-gray-200 bg-white p-12 text-center">
+          <div className="rounded-md border border-dashed border-gray-200 bg-white p-12 text-center shadow-[0_1px_2px_rgba(3,27,78,0.04)]">
             <Sparkles className="mx-auto mb-4 h-10 w-10 text-gray-300" />
             <h3 className="text-lg font-bold text-[#2e3d49]">No plans found</h3>
             <p className="mt-1 text-sm text-gray-500">Plans will appear here when they exist in the database.</p>
@@ -175,7 +175,7 @@ export default function Marketplace() {
               const Icon = productIcons[plan.product] || Zap;
               const features = featureList(plan.features);
               return (
-                <div key={plan.id} className="flex flex-col justify-between rounded-2xl border border-[#e5e8ed] bg-white p-8 transition-all hover:border-[#0069ff] hover:shadow-lg">
+                <div key={plan.id} className="flex flex-col justify-between rounded-md border border-[#d9e1ec] bg-white p-8 shadow-[0_1px_2px_rgba(3,27,78,0.04)] transition-all hover:border-[#0069ff] hover:shadow-md">
                   <div>
                     <div className="mb-8 flex items-center justify-between">
                       <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-50 text-[#0069ff]">
@@ -204,7 +204,7 @@ export default function Marketplace() {
 
                   <button
                     onClick={() => addToProject(plan)}
-                    className="flex w-full items-center justify-center gap-2 rounded-xl border-2 border-[#0069ff] bg-white py-4 text-sm font-extrabold text-[#0069ff] transition-all hover:bg-blue-50"
+                    className="flex w-full items-center justify-center gap-2 rounded-md border-2 border-[#0069ff] bg-white py-4 text-sm font-extrabold text-[#0069ff] transition-all hover:bg-blue-50"
                   >
                     Add to Project <ArrowRight className="h-4 w-4" />
                   </button>

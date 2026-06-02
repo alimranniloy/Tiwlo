@@ -119,7 +119,7 @@ function StatCard({ label, value, detail, icon: Icon, tone }: {
   tone: string;
 }) {
   return (
-    <div className="rounded border border-[#DDE3EA] bg-white p-4">
+    <div className="rounded-md border border-[#d9e1ec] bg-white p-4 shadow-[0_1px_2px_rgba(3,27,78,0.04)]">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="text-[11px] font-bold uppercase text-[#6B7280]">{label}</p>
@@ -151,7 +151,7 @@ function EmptyState({ icon: Icon, title, detail }: { icon: React.ElementType; ti
 function VerificationNotice({ isLive, status, verificationStatus }: { isLive: boolean; status: string; verificationStatus: string }) {
   if (isLive) return null;
   return (
-    <div className="rounded border border-amber-200 bg-amber-50 p-4 text-amber-900">
+    <div className="rounded-md border border-amber-200 bg-amber-50 p-4 text-amber-900 shadow-sm">
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div className="flex items-start gap-3">
           <LockKeyhole className="mt-0.5 h-5 w-5 shrink-0" />
@@ -918,15 +918,15 @@ export default function TiwloPay() {
 
   if (loading && !overview) {
     return (
-      <div className="flex min-h-[520px] items-center justify-center rounded border border-[#DDE3EA] bg-white text-[13px] font-bold text-gray-500">
+      <div className="mx-auto flex min-h-[520px] max-w-[1220px] items-center justify-center rounded-md border border-[#d9e1ec] bg-white text-[13px] font-bold text-gray-500 shadow-[0_1px_2px_rgba(3,27,78,0.04)]">
         <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> Loading Tiwlo Pay
       </div>
     );
   }
 
   return (
-    <div className="space-y-5 pb-12">
-      <section className="rounded border border-[#DDE3EA] bg-white">
+    <div className="mx-auto max-w-[1220px] space-y-5 pb-12">
+      <section className="rounded-md border border-[#d9e1ec] bg-white shadow-[0_1px_2px_rgba(3,27,78,0.04)]">
         <div className="flex flex-col gap-5 border-b border-[#E5E7EB] p-5 xl:flex-row xl:items-start xl:justify-between">
           <div className="flex items-start gap-3">
             <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded border border-blue-100 bg-blue-50 text-blue-600">

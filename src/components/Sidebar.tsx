@@ -207,47 +207,47 @@ export default function Sidebar({ user, isOpen, setIsOpen, onLogout }: SidebarPr
     .filter((section) => section.items.length > 0);
 
   const NavContent = () => (
-    <div className="flex flex-col h-full bg-[#031b4e] text-[#94a3b8]">
-      <div className="p-5 md:p-6 flex items-center gap-3 mb-2">
-        <BrandLogo variant="dark" className="h-12 w-36" />
+    <div className="flex h-full flex-col bg-[#08204f] text-[#9fb1d1] shadow-[inset_-1px_0_0_rgba(255,255,255,0.06)]">
+      <div className="flex items-center gap-3 px-4 pb-3 pt-4">
+        <BrandLogo variant="dark" className="h-10 w-28" />
         <div className="sr-only">
           <span>{isAdminUser ? 'Tiwlo Admin' : 'Tiwlo Console'}</span>
           <span className="text-[9px] font-bold text-indigo-400 uppercase tracking-widest mt-0.5">SaaS Infrastructure</span>
         </div>
       </div>
 
-      <div className="px-5 mb-8">
+      <div className="px-3 pb-4">
         <NavLink 
           to={isAdminUser ? '/management/servers' : '/droplets/create'}
-          className="w-full bg-[#0069ff] text-white py-3 rounded font-bold text-[14px] flex items-center justify-center gap-2 hover:bg-[#0056cc] transition-all"
+          className="flex w-full items-center justify-center gap-2 rounded bg-[#11843b] px-3 py-2.5 text-[13px] font-bold text-white transition-all hover:bg-[#0b6b30]"
         >
-          <Plus className="h-5 w-5" />
+          <Plus className="h-4 w-4" />
           <span>Server Create</span>
         </NavLink>
       </div>
 
-      <nav className="flex-1 px-3 overflow-y-auto no-scrollbar pb-10">
+      <nav className="no-scrollbar flex-1 overflow-y-auto px-2 pb-8">
         {visibleSections.map((section) => (
-          <div key={section.label} className="mt-6 first:mt-0 mb-2">
-            <h3 className="px-4 text-[10px] font-bold text-[#5b6e96] uppercase tracking-[0.1em] mb-2">{section.label}</h3>
+          <div key={section.label} className="mb-3 mt-5 first:mt-1">
+            <h3 className="mb-1.5 px-2.5 text-[10px] font-black uppercase tracking-[0.12em] text-[#7f95bd]">{section.label}</h3>
             <div className="space-y-0.5">
               {section.items.map((item) => (
                 <NavLink
                   key={item.path}
                   to={item.path}
                   className={({ isActive }) =>
-                    `flex items-center gap-3 px-4 py-2 rounded transition-all duration-150 group ${
+                    `group flex items-center gap-2.5 rounded px-2.5 py-2 text-[13px] transition-all duration-150 ${
                       isActive
-                        ? 'bg-[#0069ff] text-white font-bold'
-                        : 'hover:bg-white/5 hover:text-white'
+                        ? 'bg-white/[0.12] text-white font-bold shadow-[inset_3px_0_0_#4f9cff]'
+                        : 'text-[#d5def0] hover:bg-white/[0.07] hover:text-white'
                     }`
                   }
                   onClick={() => setIsOpen(false)}
                 >
                   {({ isActive }) => (
                     <>
-                      <item.icon className={`h-4 w-4 ${isActive ? 'text-white' : 'text-[#8ba2ad] group-hover:text-white'}`} />
-                      <span className="text-[14px] tracking-tight">{item.name}</span>
+                      <item.icon className={`h-4 w-4 shrink-0 ${isActive ? 'text-white' : 'text-[#9fb1d1] group-hover:text-white'}`} />
+                      <span className="truncate tracking-tight">{item.name}</span>
                     </>
                   )}
                 </NavLink>
@@ -257,10 +257,10 @@ export default function Sidebar({ user, isOpen, setIsOpen, onLogout }: SidebarPr
         ))}
       </nav>
 
-      <div className="p-4 border-t border-white/5 bg-[#02143a]">
+      <div className="border-t border-white/[0.08] bg-[#06183f] p-3">
         <button
           onClick={onLogout}
-          className="flex w-full items-center gap-3 px-4 py-2 text-[#94A3B8] hover:text-red-400 hover:bg-red-500/10 rounded transition-all duration-200 text-[13px] font-medium"
+          className="flex w-full items-center gap-3 rounded px-3 py-2 text-[13px] font-bold text-[#b9c6df] transition-all duration-200 hover:bg-red-500/10 hover:text-red-300"
         >
           <LogOut className="h-4 w-4" />
           <span>Logout</span>
@@ -272,7 +272,7 @@ export default function Sidebar({ user, isOpen, setIsOpen, onLogout }: SidebarPr
   return (
     <>
       {/* Desktop Sidebar */}
-      <aside className="hidden lg:block w-72 shrink-0 h-screen sticky top-0">
+      <aside className="sticky top-0 hidden h-screen w-[224px] shrink-0 lg:block">
         <NavContent />
       </aside>
 
@@ -284,7 +284,7 @@ export default function Sidebar({ user, isOpen, setIsOpen, onLogout }: SidebarPr
               className="fixed inset-0 bg-black opacity-50 z-40 lg:hidden"
             />
             <aside
-              className="fixed top-0 left-0 h-full w-80 z-50 lg:hidden"
+              className="fixed left-0 top-0 z-50 h-full w-[min(20rem,86vw)] lg:hidden"
             >
               <NavContent />
             </aside>

@@ -151,11 +151,11 @@ export default function Header({ user, onLogout, isSidebarOpen, setIsSidebarOpen
   };
 
   return (
-    <header className="h-14 md:h-16 bg-white border-b border-[#e5e8ed] px-2 sm:px-4 md:px-8 flex items-center justify-between sticky top-0 z-30">
+    <header className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-[#d9e1ec] bg-white px-2 shadow-[0_1px_4px_rgba(3,27,78,0.06)] sm:px-4 md:h-16 md:px-6">
       <div className="flex items-center gap-2 lg:hidden">
         <button 
           onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-          className="p-1.5 text-[#2e3d49] hover:bg-gray-100 rounded-md transition-colors"
+          className="rounded-md p-1.5 text-[#52637a] transition-colors hover:bg-[#f3f6fb] hover:text-[#031b4e]"
         >
           {isSidebarOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
         </button>
@@ -165,18 +165,18 @@ export default function Header({ user, onLogout, isSidebarOpen, setIsSidebarOpen
         </div>
       </div>
 
-      <div className="flex-1 max-w-sm hidden lg:block">
+      <div className="hidden flex-1 lg:block">
         <div className="relative group">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#94a3b8]" />
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#71809a]" />
           <input
             type="text"
-            placeholder="Search resources..."
-            className="w-full bg-[#f8f9fa] border border-[#e5e8ed] focus:bg-white focus:border-[#0069ff] rounded-md py-1.5 pl-10 pr-4 text-[13px] focus:outline-none transition-all"
+            placeholder="Search by resource name or public IP"
+            className="h-10 w-full max-w-xl rounded-md border border-transparent bg-transparent py-2 pl-10 pr-4 text-[14px] text-[#031b4e] transition-all placeholder:text-[#7b8798] focus:border-[#b9cdf8] focus:bg-[#f7faff] focus:outline-none focus:ring-2 focus:ring-[#0069ff]/10"
           />
         </div>
       </div>
 
-      <div className="flex items-center gap-1.5 md:gap-5 ml-auto">
+      <div className="ml-auto flex items-center gap-1.5 md:gap-4">
         <CurrencySwitcher
           policy={currencyPolicy}
           storageKey={currencyStorageKey}
@@ -192,10 +192,10 @@ export default function Header({ user, onLogout, isSidebarOpen, setIsSidebarOpen
 
         <Link
           to="/billing"
-          className={`flex items-center gap-1.5 rounded-lg border px-2 py-1 md:px-3 shrink-0 ${
+          className={`flex h-9 shrink-0 items-center gap-1.5 rounded-full border px-2 md:px-3 ${
             isCreditEmpty
               ? 'border-red-200 bg-red-50 text-red-700 hover:bg-red-100/70'
-              : 'border-green-100 bg-green-50 text-green-700 hover:border-green-200 hover:bg-green-100/70'
+              : 'border-[#d9d2ff] bg-[#ede9ff] text-[#5b45ff] hover:border-[#c7bcff] hover:bg-[#e4ddff]'
           }`}
         >
           {isCreditEmpty ? <AlertTriangle className="h-3.5 w-3.5" /> : <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>}
@@ -211,7 +211,7 @@ export default function Header({ user, onLogout, isSidebarOpen, setIsSidebarOpen
           <button
             type="button"
             onClick={() => setIsNotificationOpen((value) => !value)}
-            className="p-1.5 sm:p-2 text-[#6B7280] hover:bg-gray-50 rounded-md transition-colors relative"
+            className="relative rounded-md p-1.5 text-[#5d6b85] transition-colors hover:bg-[#f3f6fb] hover:text-[#031b4e] sm:p-2"
             aria-label="Notifications"
             aria-expanded={isNotificationOpen}
           >
@@ -226,7 +226,7 @@ export default function Header({ user, onLogout, isSidebarOpen, setIsSidebarOpen
           {isNotificationOpen && (
             <>
               <div className="fixed inset-0 z-[60]" onClick={() => setIsNotificationOpen(false)}></div>
-              <div className="absolute right-0 top-full z-[100] mt-2 w-[min(20rem,calc(100vw-1rem))] overflow-hidden rounded border border-[#e5e8ed] bg-white">
+              <div className="absolute right-0 top-full z-[100] mt-2 w-[min(20rem,calc(100vw-1rem))] overflow-hidden rounded-md border border-[#d9e1ec] bg-white shadow-[0_16px_40px_rgba(3,27,78,0.14)]">
                 <div className="flex items-center justify-between border-b border-[#f3f5f9] bg-[#f8f9fa] px-4 py-3">
                   <p className="text-[12px] font-black uppercase tracking-wider text-[#2e3d49]">Notifications</p>
                   <Link to="/alerts" onClick={() => setIsNotificationOpen(false)} className="text-[11px] font-bold text-[#0069ff]">View all</Link>
@@ -251,27 +251,27 @@ export default function Header({ user, onLogout, isSidebarOpen, setIsSidebarOpen
           )}
         </div>
         
-        <div className="h-6 w-[1px] bg-[#e5e8ed] mx-1 hidden sm:block"></div>
+        <div className="mx-1 hidden h-7 w-px bg-[#d9e1ec] sm:block"></div>
 
         <div className="flex items-center gap-2 md:gap-3 group focus:outline-none">
           <div 
-            className="hidden sm:block text-right cursor-pointer"
+            className="hidden cursor-pointer text-right sm:block"
             onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
           >
-            <p className="text-[13px] font-bold text-[#2e3d49] leading-none transition-colors group-hover:text-[#0069ff]">{user.name}</p>
+            <p className="text-[13px] font-bold leading-none text-[#031b4e] transition-colors group-hover:text-[#0069ff]">{user.name}</p>
             {['admin', 'super_admin'].includes(user.role) && (
               <span className="text-[10px] font-bold text-[#0069ff] uppercase tracking-wider bg-blue-50 px-1 rounded border border-blue-100 mt-1 inline-block">Admin</span>
             )}
           </div>
           <div className="relative">
             <div 
-              className="w-8 h-8 md:w-9 md:h-9 rounded-full bg-[#2e3d49] border border-[#e5e8ed] overflow-hidden transition-all group-hover:border-[#0069ff] cursor-pointer"
+              className="h-8 w-8 cursor-pointer overflow-hidden rounded-full border border-[#d9e1ec] bg-[#0069ff] transition-all group-hover:border-[#0069ff] md:h-9 md:w-9"
               onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
             >
                {user.avatar ? (
                  <img src={user.avatar} className="w-full h-full object-cover" alt="" />
                ) : (
-                 <div className="w-full h-full flex items-center justify-center bg-[#2e3d49] text-white text-[13px] font-bold">
+                 <div className="flex h-full w-full items-center justify-center bg-[#0069ff] text-[13px] font-bold text-white">
                     {user.name.charAt(0)}
                  </div>
                )}
@@ -287,7 +287,7 @@ export default function Header({ user, onLogout, isSidebarOpen, setIsSidebarOpen
 
                 {/* DigitalOcean Style Dropdown */}
                 <div
-                  className="absolute right-0 top-full mt-2 w-64 bg-white border border-[#e5e8ed] rounded shadow-[0_8px_24px_rgba(3,27,78,0.12)] z-[100] overflow-hidden origin-top-right"
+                  className="absolute right-0 top-full z-[100] mt-2 w-64 origin-top-right overflow-hidden rounded-md border border-[#d9e1ec] bg-white shadow-[0_16px_40px_rgba(3,27,78,0.14)]"
                 >
                     {/* User Info Section */}
                     <div className="px-5 py-4 border-b border-[#f3f5f9] flex items-center gap-3 bg-[#f8f9fa]">

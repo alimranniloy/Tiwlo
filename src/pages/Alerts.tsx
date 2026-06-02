@@ -34,17 +34,17 @@ export default function AlertsPage() {
   };
 
   return (
-    <div className="space-y-8 pb-12">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+    <div className="mx-auto max-w-[1220px] space-y-8 pb-12">
+      <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-[#111827]">Alerts & Uptime</h1>
-          <p className="text-[#6B7280] text-sm mt-0.5">Stay informed about your infrastructure's health and performance.</p>
+          <h1 className="text-2xl font-bold tracking-tight text-[#031b4e] md:text-3xl">Alerts & Uptime</h1>
+          <p className="mt-1 text-sm font-medium text-[#52637a]">Stay informed about your infrastructure's health and performance.</p>
         </div>
         <div className="flex items-center gap-3">
-          <button className="flex items-center gap-2 px-4 py-2 bg-white border border-[#E5E7EB] rounded-md text-sm font-bold text-[#374151] hover:bg-gray-50 transition-colors">
+          <button className="flex items-center gap-2 rounded-md border border-[#b9cdf8] bg-white px-4 py-2 text-sm font-bold text-[#0069ff] transition-colors hover:border-[#0069ff] hover:bg-[#f7faff]">
             <Settings className="h-4 w-4" /> Policy Settings
           </button>
-          <button className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-md text-sm font-bold hover:bg-blue-700 transition-colors">
+          <button className="flex items-center gap-2 rounded-md bg-[#11843b] px-4 py-2 text-sm font-bold text-white transition-colors hover:bg-[#0b6b30]">
             <Plus className="h-4 w-4" /> Create Uptime Check
           </button>
         </div>
@@ -52,8 +52,8 @@ export default function AlertsPage() {
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
         <div className="md:col-span-2 space-y-6">
-           <div className="bg-white rounded-md border border-[#E5E7EB] overflow-hidden">
-              <div className="p-6 border-b border-[#E5E7EB] bg-[#F9FAFB] flex items-center justify-between">
+           <div className="overflow-hidden rounded-md border border-[#d9e1ec] bg-white shadow-[0_1px_2px_rgba(3,27,78,0.04)]">
+              <div className="flex items-center justify-between border-b border-[#e4e9f1] bg-[#f7f9fc] p-6">
                  <h2 className="font-bold text-[#111827] text-sm uppercase tracking-wide flex items-center gap-2">
                     <ShieldAlert className="h-4 w-4 text-red-500" /> Active Alerts
                  </h2>
@@ -68,7 +68,7 @@ export default function AlertsPage() {
                 ) : alerts.length === 0 ? (
                   <div className="p-8 text-center text-sm font-bold text-[#6B7280]">No unread alerts found in the database.</div>
                 ) : alerts.map((alert) => (
-                  <div key={alert.id} className="p-6 flex items-start gap-5 hover:bg-red-50/20 transition-colors">
+                  <div key={alert.id} className="flex items-start gap-5 p-6 transition-colors hover:bg-[#f7faff]">
                     <div className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 ${
                       alert.severity === 'critical' ? 'bg-red-100 text-red-600' : 'bg-orange-100 text-orange-600'
                     }`}>
@@ -93,7 +93,7 @@ export default function AlertsPage() {
         </div>
 
         <div className="space-y-6">
-           <div className="bg-[#111827] p-8 rounded-md text-white">
+           <div className="rounded-md bg-[#031b4e] p-8 text-white shadow-[0_12px_28px_rgba(3,27,78,0.15)]">
               <h3 className="text-xl font-bold mb-4">Uptime Monitoring</h3>
              <div className="space-y-6">
                  {[
@@ -112,12 +112,12 @@ export default function AlertsPage() {
                    </div>
                  ))}
               </div>
-              <button className="w-full mt-10 bg-white/10 hover:bg-white/20 py-3 rounded-md font-bold text-sm transition-all border border-white/10">
+              <button className="mt-10 w-full rounded-md border border-white/10 bg-white/10 py-3 text-sm font-bold transition-all hover:bg-white/20">
                  View All Status
               </button>
            </div>
 
-           <div className="bg-blue-50 p-6 rounded-md border border-blue-100">
+           <div className="rounded-md border border-blue-100 bg-blue-50 p-6 shadow-sm">
               <div className="flex items-center gap-3 text-blue-800 mb-2">
                  <Zap className="h-5 w-5" />
                  <h4 className="font-bold text-sm">Smart Alerts</h4>
