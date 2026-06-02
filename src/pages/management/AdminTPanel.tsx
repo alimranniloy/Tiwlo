@@ -904,8 +904,14 @@ export default function AdminTPanel() {
                   {sizePackagePlanFamilies.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}
                 </select>
               </label>
-              <input required value={sizePackageForm.name} onChange={(event) => setSizePackageForm((current) => ({ ...current, name: event.target.value }))} className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="Basic Droplet" />
-              <input value={sizePackageForm.code} onChange={(event) => setSizePackageForm((current) => ({ ...current, code: event.target.value }))} className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="Code auto generated if empty" />
+              <label className="space-y-1.5">
+                <span className="text-[11px] font-bold uppercase text-[#6B7280]">Package name</span>
+                <input required value={sizePackageForm.name} onChange={(event) => setSizePackageForm((current) => ({ ...current, name: event.target.value }))} className="w-full rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="Basic Droplet" />
+              </label>
+              <label className="space-y-1.5">
+                <span className="text-[11px] font-bold uppercase text-[#6B7280]">Package code</span>
+                <input value={sizePackageForm.code} onChange={(event) => setSizePackageForm((current) => ({ ...current, code: event.target.value }))} className="w-full rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="Auto generated if empty" />
+              </label>
               <label className="space-y-1.5 md:col-span-2">
                 <span className="text-[11px] font-bold uppercase text-[#6B7280]">CPU option category</span>
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
@@ -922,22 +928,49 @@ export default function AdminTPanel() {
                   ))}
                 </div>
               </label>
-              <input required type="number" min="0" step="0.01" value={sizePackageForm.price} onChange={(event) => setSizePackageForm((current) => ({ ...current, price: event.target.value }))} className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="Monthly price" />
-              <select value={sizePackageForm.status} onChange={(event) => setSizePackageForm((current) => ({ ...current, status: event.target.value }))} className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500">
-                <option value="active">Active</option>
-                <option value="draft">Draft</option>
-              </select>
-              <input required type="number" min="1" value={sizePackageForm.vcpu} onChange={(event) => setSizePackageForm((current) => ({ ...current, vcpu: event.target.value }))} className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="vCPU count" />
-              <input required type="number" min="1" value={sizePackageForm.ramGb} onChange={(event) => setSizePackageForm((current) => ({ ...current, ramGb: event.target.value }))} className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="RAM GB" />
-              <input required type="number" min="1" value={sizePackageForm.diskGb} onChange={(event) => setSizePackageForm((current) => ({ ...current, diskGb: event.target.value }))} className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="Disk GB" />
-              <input required type="number" min="1" value={sizePackageForm.bandwidthGb} onChange={(event) => setSizePackageForm((current) => ({ ...current, bandwidthGb: event.target.value }))} className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="Bandwidth GB" />
-              <select value={sizePackageForm.cpuBrand} onChange={(event) => setSizePackageForm((current) => ({ ...current, cpuBrand: event.target.value }))} className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500">
-                <option value="Intel">Intel</option>
-                <option value="Ryzen">Ryzen</option>
-                <option value="AMD EPYC">AMD EPYC</option>
-              </select>
-              <input required type="number" min="0" step="0.01" value={sizePackageForm.extraStoragePricePerGb} onChange={(event) => setSizePackageForm((current) => ({ ...current, extraStoragePricePerGb: event.target.value }))} className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="Extra storage price per 1 GB" />
-              <textarea value={sizePackageForm.features} onChange={(event) => setSizePackageForm((current) => ({ ...current, features: event.target.value }))} className="min-h-28 rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500 md:col-span-2" placeholder="Features, one per line" />
+              <label className="space-y-1.5">
+                <span className="text-[11px] font-bold uppercase text-[#6B7280]">Monthly price</span>
+                <input required type="number" min="0" step="0.01" value={sizePackageForm.price} onChange={(event) => setSizePackageForm((current) => ({ ...current, price: event.target.value }))} className="w-full rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="5.00" />
+              </label>
+              <label className="space-y-1.5">
+                <span className="text-[11px] font-bold uppercase text-[#6B7280]">Package status</span>
+                <select value={sizePackageForm.status} onChange={(event) => setSizePackageForm((current) => ({ ...current, status: event.target.value }))} className="w-full rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500">
+                  <option value="active">Active</option>
+                  <option value="draft">Draft</option>
+                </select>
+              </label>
+              <label className="space-y-1.5">
+                <span className="text-[11px] font-bold uppercase text-[#6B7280]">vCPU count</span>
+                <input required type="number" min="1" value={sizePackageForm.vcpu} onChange={(event) => setSizePackageForm((current) => ({ ...current, vcpu: event.target.value }))} className="w-full rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="1" />
+              </label>
+              <label className="space-y-1.5">
+                <span className="text-[11px] font-bold uppercase text-[#6B7280]">RAM limit (GB)</span>
+                <input required type="number" min="1" value={sizePackageForm.ramGb} onChange={(event) => setSizePackageForm((current) => ({ ...current, ramGb: event.target.value }))} className="w-full rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="1" />
+              </label>
+              <label className="space-y-1.5">
+                <span className="text-[11px] font-bold uppercase text-[#6B7280]">Disk limit (GB)</span>
+                <input required type="number" min="1" value={sizePackageForm.diskGb} onChange={(event) => setSizePackageForm((current) => ({ ...current, diskGb: event.target.value }))} className="w-full rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="25" />
+              </label>
+              <label className="space-y-1.5">
+                <span className="text-[11px] font-bold uppercase text-[#6B7280]">Bandwidth limit (GB)</span>
+                <input required type="number" min="1" value={sizePackageForm.bandwidthGb} onChange={(event) => setSizePackageForm((current) => ({ ...current, bandwidthGb: event.target.value }))} className="w-full rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="1000" />
+              </label>
+              <label className="space-y-1.5">
+                <span className="text-[11px] font-bold uppercase text-[#6B7280]">CPU brand</span>
+                <select value={sizePackageForm.cpuBrand} onChange={(event) => setSizePackageForm((current) => ({ ...current, cpuBrand: event.target.value }))} className="w-full rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500">
+                  <option value="Intel">Intel</option>
+                  <option value="Ryzen">Ryzen</option>
+                  <option value="AMD EPYC">AMD EPYC</option>
+                </select>
+              </label>
+              <label className="space-y-1.5">
+                <span className="text-[11px] font-bold uppercase text-[#6B7280]">Extra storage price / 1 GB</span>
+                <input required type="number" min="0" step="0.01" value={sizePackageForm.extraStoragePricePerGb} onChange={(event) => setSizePackageForm((current) => ({ ...current, extraStoragePricePerGb: event.target.value }))} className="w-full rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="0.10" />
+              </label>
+              <label className="space-y-1.5 md:col-span-2">
+                <span className="text-[11px] font-bold uppercase text-[#6B7280]">Package features</span>
+                <textarea value={sizePackageForm.features} onChange={(event) => setSizePackageForm((current) => ({ ...current, features: event.target.value }))} className="min-h-28 w-full rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="Features, one per line" />
+              </label>
               <button disabled={saving === 'size-package'} className="flex items-center justify-center gap-2 rounded bg-[#0069ff] px-4 py-3 text-sm font-bold text-white hover:bg-[#0056cc] disabled:opacity-60 md:col-span-2">
                 <Plus className="h-4 w-4" /> Save size package
               </button>

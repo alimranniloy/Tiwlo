@@ -151,7 +151,8 @@ export default function CreateDroplet() {
   const [orderSummary, setOrderSummary] = useState<OrderSummary | null>(null);
   const [usernameCheck, setUsernameCheck] = useState<any | null>(null);
   const [usernameChecking, setUsernameChecking] = useState(false);
-  const [unavailableNotice, setUnavailableNotice] = useState('');
+  const [selectedImageTab, setSelectedImageTab] = useState('OS');
+  const [selectedAuthTab, setSelectedAuthTab] = useState('Password');
   const [storageEnabled, setStorageEnabled] = useState(false);
   const [storageSize, setStorageSize] = useState('10');
   const [storageMode, setStorageMode] = useState<'create' | 'attach'>('create');
@@ -187,6 +188,10 @@ export default function CreateDroplet() {
         const activePlans = (records || []).filter((plan: CloudPlan) => Number(plan.price || 0) > 0);
         setPlans(activePlans);
         setSelectedPlan(activePlans[0]?.code || '');
+        if (activePlans[0]) {
+          setSelectedPlanFamily(planFamily(activePlans[0]));
+          setSelectedCpuCategory(planCpuCategory(activePlans[0]));
+        }
       })
       .catch((err) => {
         setError(err instanceof Error ? err.message : 'Unable to load cloud plans.');
@@ -217,7 +222,7 @@ export default function CreateDroplet() {
   const modulePlans = React.useMemo(() => plans.filter((plan) => planModule(plan) === selectedModule), [plans, selectedModule]);
   const familyPlans = React.useMemo(() => modulePlans.filter((plan) => planFamily(plan) === selectedPlanFamily), [modulePlans, selectedPlanFamily]);
   const categoryPlans = React.useMemo(() => familyPlans.filter((plan) => planCpuCategory(plan) === selectedCpuCategory), [familyPlans, selectedCpuCategory]);
-  const selectedPlanRecord = categoryPlans.find((plan) => plan.code === selectedPlan) || categoryPlans[0] || familyPlans[0] || modulePlans[0] || null;
+  const selectedPlanRecord = categoryPlans.find((plan) => plan.code === selectedPlan) || categoryPlans[0] || null;
   const selectedNode = moduleNodes.find((node) => node.id === selectedNodeId) || moduleNodes[0] || null;
   const extraStorageMonthly = storageEnabled ? Math.max(Number(storageSize || 0), 0) * storagePricePerGb(selectedPlanRecord) : 0;
   const selectedMonthly = Number(selectedPlanRecord?.price || 0) + extraStorageMonthly;
@@ -233,21 +238,28 @@ export default function CreateDroplet() {
   const activeCpuCategoryKeys = React.useMemo(() => new Set(familyPlans.map(planCpuCategory)), [familyPlans]);
   const selectedFlag = flagUrl(selectedNode?.countryCode);
 
+  const previousModuleRef = React.useRef(selectedModule);
   React.useEffect(() => {
     if (modulePlans.length === 0) {
       setSelectedPlan('');
+      previousModuleRef.current = selectedModule;
       return;
     }
-    const nextFamily = activeFamilyKeys.has(selectedPlanFamily) ? selectedPlanFamily : planFamily(modulePlans[0]);
-    const nextFamilyPlans = modulePlans.filter((plan) => planFamily(plan) === nextFamily);
-    const nextCategorySet = new Set(nextFamilyPlans.map(planCpuCategory));
-    const nextCategory = nextCategorySet.has(selectedCpuCategory) ? selectedCpuCategory : planCpuCategory(nextFamilyPlans[0]);
-    const nextCategoryPlans = nextFamilyPlans.filter((plan) => planCpuCategory(plan) === nextCategory);
-    const nextPlan = nextCategoryPlans.find((plan) => plan.code === selectedPlan) || nextCategoryPlans[0] || nextFamilyPlans[0] || modulePlans[0];
-    if (selectedPlanFamily !== nextFamily) setSelectedPlanFamily(nextFamily);
-    if (selectedCpuCategory !== nextCategory) setSelectedCpuCategory(nextCategory);
-    if (nextPlan && selectedPlan !== nextPlan.code) setSelectedPlan(nextPlan.code);
-  }, [activeFamilyKeys, modulePlans, selectedCpuCategory, selectedPlan, selectedPlanFamily]);
+    if (previousModuleRef.current !== selectedModule) {
+      const firstPlan = modulePlans[0];
+      setSelectedPlanFamily(planFamily(firstPlan));
+      setSelectedCpuCategory(planCpuCategory(firstPlan));
+      setSelectedPlan(firstPlan.code);
+      previousModuleRef.current = selectedModule;
+      return;
+    }
+    if (categoryPlans.length > 0 && !categoryPlans.some((plan) => plan.code === selectedPlan)) {
+      setSelectedPlan(categoryPlans[0].code);
+    }
+    if (categoryPlans.length === 0 && selectedPlan) {
+      setSelectedPlan('');
+    }
+  }, [categoryPlans, modulePlans, selectedModule, selectedPlan]);
 
   React.useEffect(() => {
     const clean = username.trim();
@@ -438,7 +450,7 @@ export default function CreateDroplet() {
   }
 
   return (
-    <div className="-m-3 min-h-[calc(100vh-4rem)] bg-white pb-20 text-[#031b4e] md:-m-8">
+    <div className="-m-3 min-h-[calc(100vh-4rem)] bg-white pb-32 text-[#031b4e] md:-m-8 lg:pb-20">
       <div className="mx-auto max-w-[980px] px-4 pt-5 md:px-6">
         <button
           onClick={() => navigate('/droplets')}
@@ -464,13 +476,6 @@ export default function CreateDroplet() {
             <button onClick={() => navigate('/billing')} className="bg-red-600 px-4 py-2 text-[12px] font-bold text-white hover:bg-red-700">
               Add Credit
             </button>
-          </div>
-        )}
-
-        {unavailableNotice && (
-          <div className="mb-5 flex items-center gap-2 border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] font-semibold text-amber-700">
-            <span className="grid h-5 w-5 place-items-center rounded-full bg-amber-100 text-[11px] font-bold">!</span>
-            {unavailableNotice}
           </div>
         )}
 
@@ -509,11 +514,13 @@ export default function CreateDroplet() {
               <SectionTitle title="Choose an image" />
               <TabBar
                 items={['OS', 'Solutions', 'Custom Images']}
-                active="OS"
+                active={selectedImageTab}
                 unavailableItems={['Solutions', 'Custom Images']}
-                onUnavailable={(item) => setUnavailableNotice(`${item} is unavailable for the selected module right now.`)}
+                onSelect={setSelectedImageTab}
               />
-              <div className="space-y-2">
+              {selectedImageTab !== 'OS' ? (
+                <UnavailableBox title={`${selectedImageTab} unavailable`} text="No image source is available for the selected module right now." />
+              ) : <div className="space-y-2">
                 {nodesLoading ? (
                   <EmptyRow text="Loading available modules..." />
                 ) : modules.length === 0 ? (
@@ -551,8 +558,8 @@ export default function CreateDroplet() {
                     );
                   })
                 )}
-              </div>
-              <button type="button" onClick={() => setUnavailableNotice('Only administrator connected modules are available on this page.')} className="mt-5 text-[14px] font-bold text-[#0069ff]">Show all images</button>
+              </div>}
+              <button type="button" className="mt-5 text-[14px] font-bold text-[#0069ff]">Show all images</button>
             </section>
 
             <section className="mb-14">
@@ -567,7 +574,8 @@ export default function CreateDroplet() {
                       type="button"
                       onClick={() => {
                         if (!available) {
-                          setUnavailableNotice(`${family.label} packages are unavailable for ${moduleLabel(selectedModule)}.`);
+                          setSelectedPlanFamily(family.key);
+                          setSelectedPlan('');
                           return;
                         }
                         const nextFamilyPlans = modulePlans.filter((plan) => planFamily(plan) === family.key);
@@ -576,10 +584,9 @@ export default function CreateDroplet() {
                         setSelectedPlanFamily(family.key);
                         setSelectedCpuCategory(nextCategory);
                         setSelectedPlan(nextPlan?.code || '');
-                        setUnavailableNotice('');
                       }}
                       className={`h-[42px] border-r border-t border-[#94a3c7] px-5 text-[13px] font-bold md:px-7 ${
-                        selected ? 'border-l bg-white text-[#031b4e]' : available ? 'bg-[#f8f9fc] text-[#566992]' : 'cursor-not-allowed bg-[#f3f5f9] text-[#9aa8c2]'
+                        selected ? 'border-l bg-white text-[#031b4e]' : available ? 'bg-[#f8f9fc] text-[#566992]' : 'bg-[#f3f5f9] text-[#9aa8c2]'
                       }`}
                     >
                       {family.label}
@@ -598,16 +605,16 @@ export default function CreateDroplet() {
                     type="button"
                     onClick={() => {
                       if (!available) {
-                        setUnavailableNotice(`${item.label} packages are unavailable in ${planFamilyLabel(selectedPlanFamily)}.`);
+                        setSelectedCpuCategory(item.key);
+                        setSelectedPlan('');
                         return;
                       }
                       const nextPlans = familyPlans.filter((plan) => planCpuCategory(plan) === item.key);
                       setSelectedCpuCategory(item.key);
                       setSelectedPlan(nextPlans[0]?.code || '');
-                      setUnavailableNotice('');
                     }}
                     className={`flex min-h-[52px] items-center gap-3 border px-3 text-left ${
-                      selected ? 'border-[#0069ff] bg-[#f2f7ff]' : available ? 'border-[#94a3c7] bg-white' : 'cursor-not-allowed border-[#d7deed] bg-[#f3f5f9] text-[#9aa8c2]'
+                      selected ? 'border-[#0069ff] bg-[#f2f7ff]' : available ? 'border-[#94a3c7] bg-white' : 'border-[#d7deed] bg-[#f3f5f9] text-[#9aa8c2]'
                     }`}
                   >
                     <RadioDot selected={selected} />
@@ -629,7 +636,7 @@ export default function CreateDroplet() {
                 ) : modulePlans.length === 0 ? (
                   <EmptyRow text="No active cloud package is configured. Add cloud plans from Administrator Plans first." warning />
                 ) : categoryPlans.length === 0 ? (
-                  <EmptyRow text="No package is active for this plan family and CPU option." warning />
+                  <UnavailableBox title="Package unavailable" text={`${planFamilyLabel(selectedPlanFamily)} / ${cpuCategoryLabel(selectedCpuCategory)} has no active package for ${moduleLabel(selectedModule)}.`} />
                 ) : (
                   categoryPlans.map((plan) => {
                     const selected = selectedPlan === plan.code;
@@ -659,7 +666,7 @@ export default function CreateDroplet() {
                   })
                 )}
               </div>
-              <button type="button" onClick={() => setUnavailableNotice('All matching packages for the selected module, plan family, and CPU option are already shown.')} className="mt-5 text-[14px] font-bold text-[#0069ff]">Show all plans</button>
+              <button type="button" className="mt-5 text-[14px] font-bold text-[#0069ff]">Show all plans</button>
             </section>
 
             <section className="mb-14 space-y-8">
@@ -686,11 +693,13 @@ export default function CreateDroplet() {
               <SectionTitle title="Authentication" />
               <TabBar
                 items={['SSH Keys', 'Password']}
-                active="Password"
+                active={selectedAuthTab}
                 unavailableItems={selectedModule === 'tpanel' ? ['SSH Keys'] : ['SSH Keys']}
-                onUnavailable={(item) => setUnavailableNotice(`${item} is unavailable for ${moduleLabel(selectedModule)} deployments. Use password authentication for this module.`)}
+                onSelect={setSelectedAuthTab}
               />
-              <div className="mt-5 border border-[#e4e8f2] bg-white p-5">
+              {selectedAuthTab !== 'Password' ? (
+                <UnavailableBox title="SSH Keys unavailable" text={`${moduleLabel(selectedModule)} deployments use password authentication only.`} />
+              ) : <div className="mt-5 border border-[#e4e8f2] bg-white p-5">
                 <div className="mb-5 flex items-start gap-3">
                   <span className="grid h-10 w-10 place-items-center border border-[#cdd8ee] text-[#0069ff]">
                     <Lock className="h-5 w-5" />
@@ -738,7 +747,7 @@ export default function CreateDroplet() {
                     />
                   </label>
                 </div>
-              </div>
+              </div>}
             </section>
 
             <section className="mb-14 space-y-8">
@@ -783,7 +792,7 @@ export default function CreateDroplet() {
             </section>
           </main>
 
-          <aside className="lg:sticky lg:top-5 lg:self-start">
+          <aside className="hidden lg:sticky lg:top-5 lg:block lg:self-start">
             <div className="border border-[#94a3c7] bg-white">
               <div className="border-b border-[#94a3c7] px-6 py-5">
                 <h2 className="text-[15px] font-bold text-[#031b4e]">Summary</h2>
@@ -852,6 +861,22 @@ export default function CreateDroplet() {
           </aside>
         </div>
       </div>
+      <div className="fixed inset-x-0 bottom-0 z-40 border-t border-[#d7deed] bg-white px-4 py-3 shadow-[0_-8px_24px_rgba(3,27,78,0.08)] lg:hidden">
+        <div className="mx-auto flex max-w-[980px] items-center justify-between gap-4">
+          <div className="min-w-0">
+            <p className="text-[11px] font-bold uppercase text-[#6B7280]">Total cost</p>
+            <p className="truncate text-[16px] font-bold text-[#031b4e]">${selectedMonthly.toFixed(2)}/mo</p>
+            <p className="text-[11px] text-[#566992]">${selectedHourly.toFixed(2)}/hour</p>
+          </div>
+          <button
+            onClick={handleCreate}
+            disabled={creditEmpty || plansLoading || nodesLoading || !selectedPlanRecord || !selectedNode}
+            className="h-[44px] shrink-0 bg-[#0069ff] px-5 text-[13px] font-bold text-white transition-colors hover:bg-[#0056cc] disabled:cursor-not-allowed disabled:bg-[#b8c5d8]"
+          >
+            {creditEmpty ? 'Add Credit' : 'Create Droplet'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -864,12 +889,12 @@ function TabBar({
   items,
   active,
   unavailableItems = [],
-  onUnavailable
+  onSelect
 }: {
   items: string[];
   active: string;
   unavailableItems?: string[];
-  onUnavailable?: (item: string) => void;
+  onSelect?: (item: string) => void;
 }) {
   return (
     <div className="mb-5 flex flex-wrap border-b border-[#94a3c7]">
@@ -879,17 +904,24 @@ function TabBar({
           <button
             key={item}
             type="button"
-            onClick={() => {
-              if (item !== active && unavailable) onUnavailable?.(item);
-            }}
+            onClick={() => onSelect?.(item)}
             className={`h-[42px] border-r border-t border-[#94a3c7] px-5 text-[13px] font-bold md:px-7 ${
-              item === active ? 'border-l bg-white text-[#031b4e]' : unavailable ? 'cursor-not-allowed bg-[#f3f5f9] text-[#9aa8c2]' : 'bg-[#f8f9fc] text-[#566992]'
+              item === active ? 'border-l bg-white text-[#031b4e]' : unavailable ? 'bg-[#f3f5f9] text-[#9aa8c2]' : 'bg-[#f8f9fc] text-[#566992]'
             }`}
           >
             {item}
           </button>
         );
       })}
+    </div>
+  );
+}
+
+function UnavailableBox({ title, text }: { title: string; text: string }) {
+  return (
+    <div className="border border-[#d7deed] bg-[#f8f9fc] px-4 py-8 text-center">
+      <p className="text-[14px] font-bold text-[#031b4e]">{title}</p>
+      <p className="mx-auto mt-2 max-w-sm text-[13px] leading-5 text-[#566992]">{text}</p>
     </div>
   );
 }
@@ -989,8 +1021,8 @@ function AdditionalStorageBox({
                   className="w-full px-3 text-center text-[14px] outline-none"
                 />
                 <div className="grid grid-rows-2 border-l border-[#94a3c7]">
-                  <button type="button" onClick={() => onSizeChange(String(Number(size || 0) + 1))} className="grid place-items-center border-b border-[#94a3c7] text-[#536489]">⌃</button>
-                  <button type="button" onClick={() => onSizeChange(String(Math.max(Number(size || 0) - 1, 1)))} className="grid place-items-center text-[#536489]">⌄</button>
+                  <button type="button" onClick={() => onSizeChange(String(Number(size || 0) + 1))} className="grid place-items-center border-b border-[#94a3c7] text-[#536489]">+</button>
+                  <button type="button" onClick={() => onSizeChange(String(Math.max(Number(size || 0) - 1, 1)))} className="grid place-items-center text-[#536489]">-</button>
                 </div>
               </div>
             </label>
