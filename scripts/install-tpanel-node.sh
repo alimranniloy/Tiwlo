@@ -211,11 +211,11 @@ step "Installing runtime packages"
 if have apt-get; then
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -y
-  apt-get install -y git curl wget ca-certificates openssl xz-utils nginx ufw certbot python3 python3-certbot-nginx build-essential software-properties-common apt-transport-https lsb-release gnupg php-fpm php-cli php-common php-mysql php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache php-imagick php-redis php-gmp php-ldap php-imap php-readline phpmyadmin mariadb-server postgresql postgresql-contrib pdns-server pdns-backend-mysql dnsutils postfix dovecot-core dovecot-imapd dovecot-pop3d opendkim opendkim-tools rspamd mailutils libsasl2-modules zip unzip tar rsync logrotate cron acl || true
+  apt-get install -y git curl wget ca-certificates openssl xz-utils nginx ufw certbot python3 python3-certbot-nginx build-essential software-properties-common apt-transport-https lsb-release gnupg php-fpm php-cli php-common php-mysql php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache php-imagick php-redis php-gmp php-ldap php-imap php-readline phpmyadmin mariadb-server postgresql postgresql-contrib vsftpd composer pdns-server pdns-backend-mysql dnsutils postfix dovecot-core dovecot-imapd dovecot-pop3d opendkim opendkim-tools rspamd mailutils libsasl2-modules zip unzip tar rsync logrotate cron acl || true
 elif have dnf; then
-  dnf install -y git curl wget ca-certificates openssl xz nginx firewalld certbot python3 python3-certbot-nginx gcc gcc-c++ make php-fpm php-cli php-common php-mysqlnd php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache php-pecl-imagick php-pecl-redis php-gmp php-ldap php-imap php-readline phpMyAdmin mariadb-server postgresql postgresql-contrib pdns pdns-backend-mysql bind-utils postfix dovecot opendkim opendkim-tools rspamd mailx cyrus-sasl cyrus-sasl-plain zip unzip tar rsync logrotate cronie acl || true
+  dnf install -y git curl wget ca-certificates openssl xz nginx firewalld certbot python3 python3-certbot-nginx gcc gcc-c++ make php-fpm php-cli php-common php-mysqlnd php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache php-pecl-imagick php-pecl-redis php-gmp php-ldap php-imap php-readline phpMyAdmin mariadb-server postgresql postgresql-contrib vsftpd composer pdns pdns-backend-mysql bind-utils postfix dovecot opendkim opendkim-tools rspamd mailx cyrus-sasl cyrus-sasl-plain zip unzip tar rsync logrotate cronie acl || true
 elif have yum; then
-  yum install -y git curl wget ca-certificates openssl xz nginx firewalld certbot python3 python3-certbot-nginx gcc gcc-c++ make php-fpm php-cli php-common php-mysqlnd php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache php-pecl-imagick php-pecl-redis php-gmp php-ldap php-imap php-readline phpMyAdmin mariadb-server postgresql postgresql-contrib pdns pdns-backend-mysql bind-utils postfix dovecot opendkim opendkim-tools rspamd mailx cyrus-sasl cyrus-sasl-plain zip unzip tar rsync logrotate cronie acl || true
+  yum install -y git curl wget ca-certificates openssl xz nginx firewalld certbot python3 python3-certbot-nginx gcc gcc-c++ make php-fpm php-cli php-common php-mysqlnd php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache php-pecl-imagick php-pecl-redis php-gmp php-ldap php-imap php-readline phpMyAdmin mariadb-server postgresql postgresql-contrib vsftpd composer pdns pdns-backend-mysql bind-utils postfix dovecot opendkim opendkim-tools rspamd mailx cyrus-sasl cyrus-sasl-plain zip unzip tar rsync logrotate cronie acl || true
 else
   echo "Unsupported Linux package manager. Install git, curl, xz, and nginx, then rerun."
   exit 1
@@ -264,8 +264,14 @@ fi
 mkdir -p /etc/tpanel /var/lib/tpanel /var/log/tpanel
 if [ -f /root/tpanel-admin-password.txt ]; then
   ADMIN_PASSWORD="$(cat /root/tpanel-admin-password.txt)"
+elif [ -f /etc/tpanel/agent.env ]; then
+  ADMIN_PASSWORD="$(grep -E '^TPANEL_ADMIN_PASSWORD=' /etc/tpanel/agent.env | tail -n1 | cut -d= -f2- || true)"
 else
   ADMIN_PASSWORD="$(openssl rand -base64 32 | tr -dc 'A-Za-z0-9' | head -c 20)"
+  echo "$ADMIN_PASSWORD" >/root/tpanel-admin-password.txt
+  chmod 600 /root/tpanel-admin-password.txt
+fi
+if [ -n "${ADMIN_PASSWORD:-}" ]; then
   echo "$ADMIN_PASSWORD" >/root/tpanel-admin-password.txt
   chmod 600 /root/tpanel-admin-password.txt
 fi
@@ -526,17 +532,18 @@ install_runtime_packages() {
   if command -v apt-get >/dev/null 2>&1; then
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -y
-    apt-get install -y software-properties-common apt-transport-https lsb-release gnupg php-fpm php-cli php-common php-mysql php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache php-imagick php-redis php-gmp php-ldap php-imap php-readline phpmyadmin mariadb-server postgresql postgresql-contrib zip unzip || true
+    apt-get install -y software-properties-common apt-transport-https lsb-release gnupg php-fpm php-cli php-common php-mysql php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache php-imagick php-redis php-gmp php-ldap php-imap php-readline phpmyadmin mariadb-server postgresql postgresql-contrib vsftpd composer zip unzip || true
   elif command -v dnf >/dev/null 2>&1; then
-    dnf install -y php-fpm php-cli php-common php-mysqlnd php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache php-pecl-imagick php-pecl-redis php-gmp php-ldap php-imap php-readline phpMyAdmin mariadb-server postgresql postgresql-contrib zip unzip || true
+    dnf install -y php-fpm php-cli php-common php-mysqlnd php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache php-pecl-imagick php-pecl-redis php-gmp php-ldap php-imap php-readline phpMyAdmin mariadb-server postgresql postgresql-contrib vsftpd composer zip unzip || true
   elif command -v yum >/dev/null 2>&1; then
-    yum install -y php-fpm php-cli php-common php-mysqlnd php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache php-pecl-imagick php-pecl-redis php-gmp php-ldap php-imap php-readline phpMyAdmin mariadb-server postgresql postgresql-contrib zip unzip || true
+    yum install -y php-fpm php-cli php-common php-mysqlnd php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache php-pecl-imagick php-pecl-redis php-gmp php-ldap php-imap php-readline phpMyAdmin mariadb-server postgresql postgresql-contrib vsftpd composer zip unzip || true
   fi
   for svc in $(systemctl list-unit-files --type=service 'php*-fpm.service' 2>/dev/null | awk '/php.*-fpm\.service/ {print $1}'); do
     systemctl enable --now "$svc" >/dev/null 2>&1 || true
   done
   systemctl enable --now mariadb >/dev/null 2>&1 || systemctl enable --now mysql >/dev/null 2>&1 || true
   systemctl enable --now postgresql >/dev/null 2>&1 || true
+  systemctl enable --now vsftpd >/dev/null 2>&1 || true
 }
 install_runtime_packages
 install_php_selector_versions
@@ -715,6 +722,7 @@ systemctl daemon-reload
 systemctl enable --now nginx >/dev/null 2>&1 || true
 systemctl enable --now mariadb >/dev/null 2>&1 || systemctl enable --now mysql >/dev/null 2>&1 || true
 systemctl enable --now pdns >/dev/null 2>&1 || true
+systemctl enable --now vsftpd >/dev/null 2>&1 || true
 systemctl enable --now postfix >/dev/null 2>&1 || true
 systemctl enable --now dovecot >/dev/null 2>&1 || true
 systemctl enable --now opendkim >/dev/null 2>&1 || true
@@ -729,6 +737,7 @@ systemctl enable --now tpanel-auto-update.timer >/dev/null 2>&1 || true
 
 if have ufw; then
   ufw allow OpenSSH >/dev/null 2>&1 || true
+  ufw allow 21/tcp >/dev/null 2>&1 || true
   ufw allow 80/tcp >/dev/null 2>&1 || true
   ufw allow 443/tcp >/dev/null 2>&1 || true
   ufw allow 53/tcp >/dev/null 2>&1 || true
@@ -741,6 +750,14 @@ if have ufw; then
   ufw allow 993/tcp >/dev/null 2>&1 || true
   ufw allow 995/tcp >/dev/null 2>&1 || true
   ufw allow "$TPANEL_PORT/tcp" >/dev/null 2>&1 || true
+fi
+
+if have firewall-cmd; then
+  firewall-cmd --permanent --add-service=ftp >/dev/null 2>&1 || true
+  firewall-cmd --permanent --add-service=http >/dev/null 2>&1 || true
+  firewall-cmd --permanent --add-service=https >/dev/null 2>&1 || true
+  firewall-cmd --permanent --add-port="$TPANEL_PORT/tcp" >/dev/null 2>&1 || true
+  firewall-cmd --reload >/dev/null 2>&1 || true
 fi
 
 printf '\n'

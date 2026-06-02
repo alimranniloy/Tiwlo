@@ -2629,17 +2629,18 @@ fi
 if command -v apt-get >/dev/null 2>&1; then
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -y
-  apt-get install -y software-properties-common apt-transport-https lsb-release gnupg php-fpm php-cli php-common php-mysql php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache php-imagick php-redis php-gmp php-ldap php-imap php-readline phpmyadmin mariadb-server postgresql postgresql-contrib zip unzip || true
+  apt-get install -y software-properties-common apt-transport-https lsb-release gnupg php-fpm php-cli php-common php-mysql php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache php-imagick php-redis php-gmp php-ldap php-imap php-readline phpmyadmin mariadb-server postgresql postgresql-contrib vsftpd composer zip unzip || true
 elif command -v dnf >/dev/null 2>&1; then
-  dnf install -y php-fpm php-cli php-common php-mysqlnd php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache php-pecl-imagick php-pecl-redis php-gmp php-ldap php-imap php-readline phpMyAdmin mariadb-server postgresql postgresql-contrib zip unzip || true
+  dnf install -y php-fpm php-cli php-common php-mysqlnd php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache php-pecl-imagick php-pecl-redis php-gmp php-ldap php-imap php-readline phpMyAdmin mariadb-server postgresql postgresql-contrib vsftpd composer zip unzip || true
 elif command -v yum >/dev/null 2>&1; then
-  yum install -y php-fpm php-cli php-common php-mysqlnd php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache php-pecl-imagick php-pecl-redis php-gmp php-ldap php-imap php-readline phpMyAdmin mariadb-server postgresql postgresql-contrib zip unzip || true
+  yum install -y php-fpm php-cli php-common php-mysqlnd php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache php-pecl-imagick php-pecl-redis php-gmp php-ldap php-imap php-readline phpMyAdmin mariadb-server postgresql postgresql-contrib vsftpd composer zip unzip || true
 fi
 for svc in $(systemctl list-unit-files --type=service 'php*-fpm.service' 2>/dev/null | awk '/php.*-fpm\.service/ {print $1}'); do
   systemctl enable --now "$svc" >/dev/null 2>&1 || true
 done
 systemctl enable --now mariadb >/dev/null 2>&1 || systemctl enable --now mysql >/dev/null 2>&1 || true
 systemctl enable --now postgresql >/dev/null 2>&1 || true
+systemctl enable --now vsftpd >/dev/null 2>&1 || true
 cd "$SOURCE_DIR"
 git pull --ff-only
 cd "$APP_DIR"
@@ -2655,6 +2656,7 @@ BASH
 chmod 700 /usr/local/sbin/tpanel-update
 
 systemctl daemon-reload
+systemctl enable --now vsftpd >/dev/null 2>&1 || true
 systemctl enable --now postfix >/dev/null 2>&1 || true
 systemctl enable --now dovecot >/dev/null 2>&1 || true
 systemctl enable --now opendkim >/dev/null 2>&1 || true
@@ -2663,6 +2665,7 @@ systemctl enable --now tpanel
 
 if command -v ufw >/dev/null 2>&1; then
   ufw allow OpenSSH >/dev/null 2>&1 || true
+  ufw allow 21/tcp >/dev/null 2>&1 || true
   ufw allow 80/tcp >/dev/null 2>&1 || true
   ufw allow 443/tcp >/dev/null 2>&1 || true
   ufw allow 25/tcp >/dev/null 2>&1 || true
@@ -2676,6 +2679,7 @@ if command -v ufw >/dev/null 2>&1; then
 fi
 
 if command -v firewall-cmd >/dev/null 2>&1; then
+  firewall-cmd --permanent --add-service=ftp >/dev/null 2>&1 || true
   firewall-cmd --permanent --add-service=http >/dev/null 2>&1 || true
   firewall-cmd --permanent --add-service=https >/dev/null 2>&1 || true
   firewall-cmd --permanent --add-port="$TPANEL_PORT/tcp" >/dev/null 2>&1 || true

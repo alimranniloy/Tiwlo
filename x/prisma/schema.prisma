@@ -867,6 +867,7 @@ model HostingComputeNode {
   panel          String   @default("whm")
   port           Int      @default(2087)
   username       String
+  passwordSecret String?
   apiToken       String?
   accessHash     String?
   nameservers    Json?

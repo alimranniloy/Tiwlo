@@ -64,6 +64,7 @@ const LICENSE_CHECK_QUERY = `mutation Check($input: TPanelLicenseCheckInput!) {
 }`;
 const REQUIRED_PORTS = [
   { port: 22, protocol: "tcp", service: "SSH", purpose: "server login and recovery", public: true },
+  { port: 21, protocol: "tcp", service: "FTP", purpose: "FTP account access", public: true },
   { port: 25, protocol: "tcp", service: "SMTP", purpose: "mail delivery", public: true },
   { port: 53, protocol: "tcp/udp", service: "DNS", purpose: "authoritative DNS", public: true },
   { port: 80, protocol: "tcp", service: "HTTP", purpose: "websites and SSL challenge", public: true },
@@ -85,19 +86,19 @@ const HOSTING_STACK_PACKAGES = {
     "nginx", "certbot", "python3-certbot-nginx", "php-fpm", "php-cli", "php-common", "php-mysql", "php-pgsql", "php-sqlite3", "php-curl", "php-zip", "php-mbstring",
     "php-xml", "php-gd", "php-intl", "php-bcmath", "php-soap", "php-opcache", "php-imagick", "php-redis", "php-gmp", "php-ldap", "php-imap", "php-readline", "mariadb-server", "pdns-server", "pdns-backend-mysql", "dnsutils",
     "postfix", "dovecot-core", "dovecot-imapd", "dovecot-pop3d", "opendkim", "opendkim-tools", "rspamd", "mailutils", "libsasl2-modules",
-    "phpmyadmin", "postgresql", "postgresql-contrib", "zip", "unzip", "tar", "rsync", "logrotate", "cron", "acl"
+    "phpmyadmin", "postgresql", "postgresql-contrib", "vsftpd", "composer", "zip", "unzip", "tar", "rsync", "logrotate", "cron", "acl"
   ],
   dnf: [
     "nginx", "certbot", "python3-certbot-nginx", "php-fpm", "php-cli", "php-common", "php-mysqlnd", "php-pgsql", "php-sqlite3", "php-curl", "php-zip", "php-mbstring",
     "php-xml", "php-gd", "php-intl", "php-bcmath", "php-soap", "php-opcache", "php-pecl-imagick", "php-pecl-redis", "php-gmp", "php-ldap", "php-imap", "php-readline", "mariadb-server", "pdns", "pdns-backend-mysql", "bind-utils",
     "postfix", "dovecot", "opendkim", "opendkim-tools", "rspamd", "mailx", "cyrus-sasl", "cyrus-sasl-plain",
-    "phpMyAdmin", "postgresql", "postgresql-contrib", "zip", "unzip", "tar", "rsync", "logrotate", "cronie", "acl"
+    "phpMyAdmin", "postgresql", "postgresql-contrib", "vsftpd", "composer", "zip", "unzip", "tar", "rsync", "logrotate", "cronie", "acl"
   ],
   yum: [
     "nginx", "certbot", "python3-certbot-nginx", "php-fpm", "php-cli", "php-common", "php-mysqlnd", "php-pgsql", "php-sqlite3", "php-curl", "php-zip", "php-mbstring",
     "php-xml", "php-gd", "php-intl", "php-bcmath", "php-soap", "php-opcache", "php-pecl-imagick", "php-pecl-redis", "php-gmp", "php-ldap", "php-imap", "php-readline", "mariadb-server", "pdns", "pdns-backend-mysql", "bind-utils",
     "postfix", "dovecot", "opendkim", "opendkim-tools", "rspamd", "mailx", "cyrus-sasl", "cyrus-sasl-plain",
-    "phpMyAdmin", "postgresql", "postgresql-contrib", "zip", "unzip", "tar", "rsync", "logrotate", "cronie", "acl"
+    "phpMyAdmin", "postgresql", "postgresql-contrib", "vsftpd", "composer", "zip", "unzip", "tar", "rsync", "logrotate", "cronie", "acl"
   ]
 };
 
@@ -108,6 +109,7 @@ const HOSTING_STACK_CHECKS = [
   { id: "phpmyadmin", label: "phpMyAdmin", command: "php", services: [], packageNames: { apt: "phpmyadmin", dnf: "phpMyAdmin", yum: "phpMyAdmin" } },
   { id: "mysql", label: "MariaDB/MySQL", command: "mysql", services: ["mariadb", "mysql"], packageNames: { apt: "mariadb-server", dnf: "mariadb-server", yum: "mariadb-server" } },
   { id: "postgresql", label: "PostgreSQL", command: "psql", services: ["postgresql"], packageNames: { apt: "postgresql", dnf: "postgresql", yum: "postgresql" } },
+  { id: "ftp", label: "FTP Server", command: "vsftpd", services: ["vsftpd"], packageNames: { apt: "vsftpd", dnf: "vsftpd", yum: "vsftpd" } },
   { id: "dns", label: "PowerDNS Authoritative", command: "pdns_server", services: ["pdns"], packageNames: { apt: "pdns-server", dnf: "pdns", yum: "pdns" } },
   { id: "mail", label: "Mail Stack", command: "postfix", services: ["postfix", "dovecot"], packageNames: { apt: "postfix", dnf: "postfix", yum: "postfix" } },
   { id: "node", label: "Node.js Runtime", command: "node", services: [], packageNames: { apt: "nodejs", dnf: "nodejs", yum: "nodejs" } }
@@ -160,6 +162,90 @@ const DATABASE_PRIVILEGES = [
   "LOCK TABLES", "REFERENCES", "SELECT", "SHOW VIEW", "TRIGGER", "UPDATE"
 ];
 const DB_ENGINES = new Set(["mysql", "postgresql"]);
+const APP_INSTALL_CATALOG = [
+  {
+    id: "wordpress",
+    name: "WordPress",
+    version: "latest",
+    category: "CMS",
+    description: "Blog, store, portfolio, and content publishing.",
+    runtime: "php",
+    archiveUrl: "https://wordpress.org/latest.tar.gz",
+    archiveType: "tar.gz",
+    archiveRoot: "wordpress",
+    database: true,
+    automatedAdmin: true,
+    logoColor: "#21759b"
+  },
+  {
+    id: "nextcloud",
+    name: "Nextcloud",
+    version: "latest",
+    category: "Cloud",
+    description: "Private files, sharing, calendar, and collaboration.",
+    runtime: "php",
+    archiveUrl: "https://download.nextcloud.com/server/releases/latest.zip",
+    archiveType: "zip",
+    archiveRoot: "nextcloud",
+    database: true,
+    automatedAdmin: false,
+    logoColor: "#0082c9"
+  },
+  {
+    id: "drupal",
+    name: "Drupal",
+    version: "latest",
+    category: "CMS",
+    description: "Advanced content management framework.",
+    runtime: "php",
+    archiveUrl: "https://www.drupal.org/download-latest/tar.gz",
+    archiveType: "tar.gz",
+    archiveRoot: "",
+    database: true,
+    automatedAdmin: false,
+    logoColor: "#0678be"
+  },
+  {
+    id: "joomla",
+    name: "Joomla",
+    version: "latest",
+    category: "CMS",
+    description: "Flexible website and portal publishing.",
+    runtime: "php",
+    archiveUrl: "https://downloads.joomla.org/cms/joomla5/5-2-3/Joomla_5-2-3-Stable-Full_Package.zip?format=zip",
+    archiveType: "zip",
+    archiveRoot: "",
+    database: true,
+    automatedAdmin: false,
+    logoColor: "#5091cd"
+  },
+  {
+    id: "laravel",
+    name: "Laravel",
+    version: "latest",
+    category: "Framework",
+    description: "PHP application starter with Composer dependencies.",
+    runtime: "php",
+    installMode: "composer",
+    database: true,
+    automatedAdmin: false,
+    logoColor: "#ff2d20"
+  },
+  {
+    id: "phpbb",
+    name: "phpBB",
+    version: "3.3",
+    category: "Forum",
+    description: "Community discussion board package.",
+    runtime: "php",
+    archiveUrl: "https://download.phpbb.com/pub/release/3.3/3.3.13/phpBB-3.3.13.zip",
+    archiveType: "zip",
+    archiveRoot: "phpBB3",
+    database: true,
+    automatedAdmin: false,
+    logoColor: "#536482"
+  }
+];
 
 app.use(express.json({ limit: "25mb" }));
 
@@ -2801,6 +2887,434 @@ async function setShellPassword(account: any, password: unknown) {
   return updated || account;
 }
 
+function appLogoDataUri(app: any) {
+  const initials = String(app.name || "App").split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase();
+  const color = String(app.logoColor || "#4f46e5");
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96"><rect width="96" height="96" rx="20" fill="${color}"/><circle cx="48" cy="48" r="34" fill="rgba(255,255,255,.12)"/><text x="48" y="57" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="28" font-weight="800" fill="#fff">${initials}</text></svg>`;
+  return `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
+}
+
+function appCatalogPayload() {
+  return APP_INSTALL_CATALOG.map((app: any) => ({
+    id: app.id,
+    name: app.name,
+    version: app.version,
+    category: app.category,
+    description: app.description,
+    runtime: app.runtime,
+    database: Boolean(app.database),
+    automatedAdmin: Boolean(app.automatedAdmin),
+    logo: appLogoDataUri(app)
+  }));
+}
+
+function storedFtpAccounts(account: any) {
+  return Array.isArray(account?.ftpProvisioning?.accounts) ? account.ftpProvisioning.accounts : [];
+}
+
+function parseQuotaMb(value: unknown) {
+  const raw = String(value || "").toLowerCase().trim();
+  if (!raw || raw === "unlimited") return 0;
+  const amount = Number(raw.match(/[\d.]+/)?.[0] || value || 0);
+  if (!Number.isFinite(amount) || amount <= 0) return 0;
+  if (raw.includes("tb")) return Math.round(amount * 1024 * 1024);
+  if (raw.includes("gb")) return Math.round(amount * 1024);
+  return Math.round(amount);
+}
+
+function displayQuota(quotaMb: number) {
+  return quotaMb > 0 ? `${quotaMb} MB` : "Unlimited";
+}
+
+function ftpLinuxUsername(account: any, suffixInput: unknown) {
+  const accountPart = sanitizeSlug(account?.username, "acct").replace(/[^a-z0-9]/g, "").slice(0, 10) || "acct";
+  const suffix = sanitizeSlug(suffixInput, "ftp").replace(/[^a-z0-9]/g, "").slice(0, 14) || "ftp";
+  return `ftp_${accountPart}_${suffix}`.slice(0, 31);
+}
+
+function ftpPayload(account: any) {
+  const host = cleanDomain(account.domain) || TPANEL_SERVER_IP || os.hostname();
+  const accounts = storedFtpAccounts(account).map((entry: any) => {
+    const homeDirectory = ensureInside(account.homeDirectory, path.resolve(entry.homeDirectory || path.join(account.homeDirectory, "public_html")));
+    const usageBytes = directorySizeBytes(homeDirectory);
+    return {
+      id: entry.id || entry.username,
+      username: entry.username,
+      path: entry.path || path.relative(path.resolve(account.homeDirectory), homeDirectory).replace(/\\/g, "/") || "public_html",
+      homeDirectory,
+      quotaMb: Number(entry.quotaMb || 0),
+      quota: displayQuota(Number(entry.quotaMb || 0)),
+      usage: formatBytes(usageBytes),
+      usageMb: Number((usageBytes / 1024 / 1024).toFixed(2)),
+      createdAt: entry.createdAt || null
+    };
+  });
+  return {
+    ok: true,
+    host,
+    port: 21,
+    accounts,
+    limits: {
+      maxFtpAccounts: Number(account.maxFtpAccounts || account.ftpAccounts || 0),
+      usedFtpAccounts: accounts.length
+    }
+  };
+}
+
+async function ensureFtpServerReady() {
+  if (process.platform === "win32") throw new Error("Real FTP provisioning is available on Linux tPanel nodes only.");
+  if (!(await commandExists("vsftpd"))) {
+    const manager = await packageManager();
+    if (!manager) throw new Error("vsftpd is not installed and no supported package manager was detected.");
+    const install = manager === "apt"
+      ? "export DEBIAN_FRONTEND=noninteractive; apt-get update -y && apt-get install -y vsftpd"
+      : `${manager} install -y vsftpd`;
+    await execFileAsync("sh", ["-lc", install], { timeout: 600000, maxBuffer: 2 * 1024 * 1024 });
+  }
+  const configPath = "/etc/vsftpd.conf";
+  const marker = "# tPanel managed FTP settings";
+  try {
+    const current = fs.existsSync(configPath) ? fs.readFileSync(configPath, "utf8") : "";
+    if (!current.includes(marker)) {
+      fs.appendFileSync(configPath, `\n${marker}\nlisten=NO\nlisten_ipv6=YES\nanonymous_enable=NO\nlocal_enable=YES\nwrite_enable=YES\nlocal_umask=002\nchroot_local_user=YES\nallow_writeable_chroot=YES\npasv_enable=YES\nseccomp_sandbox=NO\n`);
+    }
+    const nologin = fs.existsSync("/usr/sbin/nologin") ? "/usr/sbin/nologin" : "/bin/false";
+    if (fs.existsSync("/etc/shells")) {
+      const shells = fs.readFileSync("/etc/shells", "utf8");
+      if (!shells.split(/\r?\n/).includes(nologin)) fs.appendFileSync("/etc/shells", `\n${nologin}\n`);
+    }
+  } catch {
+    // vsftpd may still work with the distribution defaults.
+  }
+  await execFileAsync("sh", ["-lc", "systemctl enable --now vsftpd >/dev/null 2>&1 || service vsftpd restart >/dev/null 2>&1 || true"], { timeout: 60000 });
+}
+
+async function grantFtpFilesystemAccess(account: any, username: string, homeDirectory: string) {
+  if (process.platform === "win32") return;
+  await execFileAsync("sh", ["-lc", `
+if command -v setfacl >/dev/null 2>&1; then
+  setfacl -R -m "u:$FTP_USER:rwX" "$FTP_HOME" >/dev/null 2>&1 || true
+  setfacl -d -m "u:$FTP_USER:rwX" "$FTP_HOME" >/dev/null 2>&1 || true
+else
+  chmod -R g+rwX "$FTP_HOME" >/dev/null 2>&1 || true
+fi
+`], { env: { ...process.env, FTP_USER: username, FTP_HOME: homeDirectory }, timeout: 120000 }).catch(() => undefined);
+  applyAccountFileOwnership(account, path.resolve(account.homeDirectory));
+}
+
+async function createFtpAccount(account: any, input: any) {
+  if (!normalizeAccountPermissions(account.permissions, account).ftp) {
+    throw new Error("FTP access is disabled for this account.");
+  }
+  const current = storedFtpAccounts(account);
+  const maxAccounts = Number(account.maxFtpAccounts || account.ftpAccounts || 0);
+  if (maxAccounts > 0 && current.length >= maxAccounts) {
+    throw new Error("FTP account limit reached. Upgrade the package to create more FTP users.");
+  }
+  const password = String(input.password || "");
+  if (password.length < 8) throw new Error("FTP password must be at least 8 characters.");
+  if (/[\r\n:]/.test(password)) throw new Error("FTP password cannot contain line breaks or colon characters.");
+  const username = ftpLinuxUsername(account, input.username);
+  if (current.some((entry: any) => entry.username === username)) {
+    throw new Error("This FTP username already exists for the account.");
+  }
+  const relativePath = safeRelativePath(input.path || "public_html") || "public_html";
+  const homeDirectory = ensureInside(account.homeDirectory, path.join(account.homeDirectory, relativePath));
+  fs.mkdirSync(homeDirectory, { recursive: true });
+  await ensureFtpServerReady();
+  ensureSystemAccountUser(account);
+  const accountUser = accountShellUsername(account);
+  const accountGroup = runLocalShell(`id -gn ${shellSingleQuote(accountUser)} 2>/dev/null || true`) || accountUser;
+  const nologin = fs.existsSync("/usr/sbin/nologin") ? "/usr/sbin/nologin" : "/bin/false";
+  const exists = await execFileAsync("id", ["-u", username], { timeout: 10000 }).then(() => true).catch(() => false);
+  if (!exists) {
+    await execFileAsync("useradd", ["-M", "-d", homeDirectory, "-s", nologin, "-g", accountGroup, username], { timeout: 120000 });
+  } else {
+    await execFileAsync("usermod", ["-d", homeDirectory, "-s", nologin, "-g", accountGroup, username], { timeout: 120000 }).catch(() => undefined);
+  }
+  await execFileAsync("sh", ["-lc", `printf '%s:%s\\n' ${shellSingleQuote(username)} ${shellSingleQuote(password)} | chpasswd`], { timeout: 60000 });
+  await grantFtpFilesystemAccess(account, username, homeDirectory);
+  const quotaMb = parseQuotaMb(input.quotaMb || input.quota);
+  if (quotaMb > 0) {
+    await execFileAsync("sh", ["-lc", `if command -v setquota >/dev/null 2>&1; then setquota -u ${shellSingleQuote(username)} 0 $(( ${quotaMb} * 1024 )) 0 0 -a >/dev/null 2>&1 || true; fi`], { timeout: 60000 }).catch(() => undefined);
+  }
+  const entry = {
+    id: `ftp-${Date.now().toString(36)}-${randomBytes(3).toString("hex")}`,
+    username,
+    path: relativePath,
+    homeDirectory,
+    quotaMb,
+    createdAt: new Date().toISOString()
+  };
+  return updateStoredAccount(account.username, (currentAccount: any) => ({
+    ...currentAccount,
+    ftpProvisioning: {
+      ...(currentAccount.ftpProvisioning || {}),
+      accounts: [...storedFtpAccounts(currentAccount).filter((item: any) => item.username !== username), entry]
+    },
+    updatedAt: new Date().toISOString()
+  })) || account;
+}
+
+async function deleteFtpAccount(account: any, usernameInput: unknown) {
+  const username = String(usernameInput || "");
+  const current = storedFtpAccounts(account);
+  const entry = current.find((item: any) => item.username === username);
+  if (!entry) throw new Error("FTP account was not found.");
+  if (process.platform !== "win32") {
+    await execFileAsync("userdel", ["-f", username], { timeout: 120000 }).catch(() => undefined);
+  }
+  return updateStoredAccount(account.username, (currentAccount: any) => ({
+    ...currentAccount,
+    ftpProvisioning: {
+      ...(currentAccount.ftpProvisioning || {}),
+      accounts: storedFtpAccounts(currentAccount).filter((item: any) => item.username !== username)
+    },
+    updatedAt: new Date().toISOString()
+  })) || account;
+}
+
+async function setFtpPassword(account: any, usernameInput: unknown, passwordInput: unknown) {
+  const username = String(usernameInput || "");
+  if (!storedFtpAccounts(account).some((item: any) => item.username === username)) throw new Error("FTP account was not found.");
+  const password = String(passwordInput || "");
+  if (password.length < 8) throw new Error("FTP password must be at least 8 characters.");
+  if (/[\r\n:]/.test(password)) throw new Error("FTP password cannot contain line breaks or colon characters.");
+  await execFileAsync("sh", ["-lc", `printf '%s:%s\\n' ${shellSingleQuote(username)} ${shellSingleQuote(password)} | chpasswd`], { timeout: 60000 });
+}
+
+async function runAccountProvisionCommand(account: any, command: string, cwd?: string, timeout = 900000) {
+  if (process.platform === "win32") throw new Error("Application installation runs on Linux tPanel nodes only.");
+  ensureSystemAccountUser(account);
+  const username = accountShellUsername(account);
+  const home = path.resolve(account.homeDirectory);
+  const workdir = ensureInside(home, cwd || home);
+  const runner = `cd ${shellSingleQuote(workdir)} && export HOME=${shellSingleQuote(home)} USER=${shellSingleQuote(username)} LOGNAME=${shellSingleQuote(username)} COMPOSER_HOME=${shellSingleQuote(path.join(home, ".composer"))} PATH=/usr/local/bin:/usr/bin:/bin:${shellSingleQuote(path.join(home, "node_modules", ".bin"))} && ${command}`;
+  const wrapped = `if command -v runuser >/dev/null 2>&1; then runuser -u ${shellSingleQuote(username)} -- bash -lc ${shellSingleQuote(runner)}; else su -s /bin/bash ${shellSingleQuote(username)} -c ${shellSingleQuote(runner)}; fi`;
+  return execFileAsync("sh", ["-lc", wrapped], { timeout, maxBuffer: 8 * 1024 * 1024 });
+}
+
+function appInstallations(account: any) {
+  return Array.isArray(account?.appInstallations) ? account.appInstallations : [];
+}
+
+function installedAppsPayload(account: any) {
+  return appInstallations(account).map((item: any) => ({
+    id: item.id,
+    appId: item.appId,
+    name: item.name,
+    version: item.version,
+    domain: item.domain,
+    path: item.path || "",
+    url: item.url,
+    documentRoot: item.documentRoot,
+    adminUsername: item.adminUsername || "",
+    adminEmail: item.adminEmail || "",
+    database: item.database || null,
+    status: item.status || "installed",
+    installedAt: item.installedAt || item.createdAt || null
+  }));
+}
+
+function installTargetForDomain(account: any, domainInput: unknown, installPathInput: unknown) {
+  const domain = cleanDomain(domainInput || account.domain);
+  const route = accountRuntimeDomains(account).find((entry: any) => cleanDomain(entry.domain) === domain);
+  if (!route) throw new Error("Select a domain that belongs to this hosting account.");
+  const home = path.resolve(account.homeDirectory);
+  const documentRoot = ensureInside(home, path.resolve(route.documentRoot || account.documentRoot || path.join(home, "public_html")));
+  const relativePath = safeRelativePath(installPathInput || "");
+  const destination = ensureInside(home, path.join(documentRoot, relativePath));
+  const urlPath = relativePath ? `/${relativePath.replace(/\/+$/, "")}/` : "/";
+  return {
+    domain,
+    relativePath,
+    documentRoot,
+    destination,
+    url: `https://${domain}${urlPath}`
+  };
+}
+
+function prepareAppInstallDirectory(destination: string) {
+  fs.mkdirSync(destination, { recursive: true });
+  const allowedStarter = new Set(["index.html", "index.htm", "default.html", ".user.ini"]);
+  const entries = fs.readdirSync(destination).filter((name) => !name.startsWith(".well-known"));
+  const blocked = entries.filter((name) => !allowedStarter.has(name));
+  if (blocked.length) {
+    throw new Error("Install folder is not empty. Choose an empty folder or remove existing files first.");
+  }
+  for (const entry of entries) {
+    const target = path.join(destination, entry);
+    if (allowedStarter.has(entry) && fs.existsSync(target)) fs.rmSync(target, { recursive: true, force: true });
+  }
+}
+
+async function downloadArchive(url: string, destination: string) {
+  const command = `if command -v curl >/dev/null 2>&1; then curl -fL "$APP_URL" -o "$APP_ARCHIVE"; elif command -v wget >/dev/null 2>&1; then wget -O "$APP_ARCHIVE" "$APP_URL"; else echo "curl or wget is required"; exit 1; fi`;
+  await execFileAsync("sh", ["-lc", command], { env: { ...process.env, APP_URL: url, APP_ARCHIVE: destination }, timeout: 900000, maxBuffer: 4 * 1024 * 1024 });
+}
+
+async function extractAppArchive(app: any, archivePath: string, extractDir: string) {
+  fs.mkdirSync(extractDir, { recursive: true });
+  if (app.archiveType === "zip") {
+    await execFileAsync("unzip", ["-q", archivePath, "-d", extractDir], { timeout: 900000, maxBuffer: 4 * 1024 * 1024 });
+  } else {
+    await execFileAsync("tar", ["-xzf", archivePath, "-C", extractDir], { timeout: 900000, maxBuffer: 4 * 1024 * 1024 });
+  }
+  const root = app.archiveRoot ? path.join(extractDir, app.archiveRoot) : extractionContentRoot(extractDir);
+  if (!fs.existsSync(root)) throw new Error("Downloaded package did not contain the expected application files.");
+  return root;
+}
+
+async function ensureWpCli() {
+  const target = path.join(TPANEL_TOOLS_DIR, "wp-cli.phar");
+  if (fs.existsSync(target)) return target;
+  fs.mkdirSync(TPANEL_TOOLS_DIR, { recursive: true });
+  await downloadArchive("https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar", target);
+  if (process.platform !== "win32") fs.chmodSync(target, 0o755);
+  return target;
+}
+
+async function createAppDatabase(account: any, app: any, target: any) {
+  if (!app.database) return null;
+  if (!normalizeAccountPermissions(account.permissions, account).databases) {
+    throw new Error("Database access is disabled for this account.");
+  }
+  const current = await databasePayload(account, "mysql").catch(() => ({ databases: [] as any[] }));
+  const maxDatabases = Number(account.maxDatabases || 0);
+  if (maxDatabases > 0 && current.databases.length >= maxDatabases) {
+    throw new Error("Database limit reached. Upgrade the package before installing database apps.");
+  }
+  const suffixBase = `${app.id}_${target.domain.replace(/[^a-z0-9]/gi, "_")}_${target.relativePath || "root"}`.toLowerCase().slice(0, 24);
+  const dbSuffixName = dbSuffix(suffixBase, app.id);
+  const userSuffixName = dbSuffix(`${app.id}_${randomBytes(3).toString("hex")}`, app.id).slice(0, 24);
+  const password = randomBytes(18).toString("base64url");
+  const database = await createDatabase(account, "mysql", dbSuffixName);
+  const username = await createDatabaseUser(account, "mysql", userSuffixName, password);
+  await grantDatabaseAccess(account, "mysql", userSuffixName, dbSuffixName, DATABASE_PRIVILEGES);
+  return { engine: "mysql", database, username, password, host: "localhost" };
+}
+
+function writeWordPressConfig(destination: string, db: any) {
+  const salts = ["AUTH_KEY", "SECURE_AUTH_KEY", "LOGGED_IN_KEY", "NONCE_KEY", "AUTH_SALT", "SECURE_AUTH_SALT", "LOGGED_IN_SALT", "NONCE_SALT"]
+    .map((key) => `define( '${key}', '${randomBytes(48).toString("base64").replace(/['\\]/g, "")}' );`)
+    .join("\n");
+  fs.writeFileSync(path.join(destination, "wp-config.php"), `<?php
+define( 'DB_NAME', '${String(db.database).replace(/'/g, "\\'")}' );
+define( 'DB_USER', '${String(db.username).replace(/'/g, "\\'")}' );
+define( 'DB_PASSWORD', '${String(db.password).replace(/'/g, "\\'")}' );
+define( 'DB_HOST', 'localhost' );
+define( 'DB_CHARSET', 'utf8mb4' );
+define( 'DB_COLLATE', '' );
+${salts}
+$table_prefix = 'wp_';
+define( 'WP_DEBUG', false );
+if ( ! defined( 'ABSPATH' ) ) {
+  define( 'ABSPATH', __DIR__ . '/' );
+}
+require_once ABSPATH . 'wp-settings.php';
+`);
+}
+
+async function installOneClickApp(account: any, body: any) {
+  if (!normalizeAccountPermissions(account.permissions, account).marketplace) {
+    throw new Error("App Marketplace access is disabled for this account.");
+  }
+  const app = (APP_INSTALL_CATALOG as any[]).find((item: any) => item.id === String(body.appId || body.id || "").toLowerCase());
+  if (!app) throw new Error("Select a valid app package.");
+  await ensureAccountStorageAvailable(account, 0, `${app.name} install`);
+  const target = installTargetForDomain(account, body.domain, body.path || body.installPath);
+  prepareAppInstallDirectory(target.destination);
+  let database = null;
+  let installOutput = "";
+  const tempDir = ensureInside(account.homeDirectory, path.join(account.homeDirectory, ".tpanel-tmp", `app-${app.id}-${Date.now()}-${randomBytes(3).toString("hex")}`));
+  fs.mkdirSync(tempDir, { recursive: true });
+  try {
+    database = await createAppDatabase(account, app, target);
+    let adminUsername = "";
+    let adminPassword = "";
+    let adminEmail = "";
+    if (app.installMode === "composer") {
+      if (!(await commandExists("composer"))) throw new Error("Composer is not installed on this server. Run tpanel-update first.");
+      const { stdout, stderr } = await runAccountProvisionCommand(account, `composer create-project laravel/laravel ${shellSingleQuote(target.destination)} --no-interaction`, account.homeDirectory, 1200000);
+      installOutput = `${stdout || ""}${stderr || ""}`.trim();
+    } else {
+      const archivePath = path.join(tempDir, `package.${app.archiveType === "zip" ? "zip" : "tar.gz"}`);
+      await downloadArchive(app.archiveUrl, archivePath);
+      const sourceRoot = await extractAppArchive(app, archivePath, path.join(tempDir, "extract"));
+      await ensureAccountStorageAvailable(account, directorySizeBytes(sourceRoot), `${app.name} install`);
+      moveExtractedEntries(sourceRoot, target.destination, account.homeDirectory);
+    }
+    if (app.id === "wordpress" && database) {
+      writeWordPressConfig(target.destination, database);
+      adminUsername = dbSuffix(body.adminUsername || "admin", "admin").slice(0, 24);
+      adminPassword = String(body.adminPassword || randomBytes(14).toString("base64url"));
+      adminEmail = String(body.adminEmail || account.contactEmail || account.ownerEmail || `admin@${target.domain}`).trim();
+      const title = String(body.siteTitle || `${target.domain} Website`).replace(/[\r\n]/g, " ").slice(0, 120);
+      const wpCli = await ensureWpCli();
+      try {
+        const { stdout, stderr } = await runAccountProvisionCommand(account,
+          `php ${shellSingleQuote(wpCli)} core install --path=${shellSingleQuote(target.destination)} --url=${shellSingleQuote(target.url)} --title=${shellSingleQuote(title)} --admin_user=${shellSingleQuote(adminUsername)} --admin_password=${shellSingleQuote(adminPassword)} --admin_email=${shellSingleQuote(adminEmail)} --skip-email`,
+          target.destination,
+          900000
+        );
+        installOutput = `${installOutput}\n${stdout || ""}${stderr || ""}`.trim();
+      } catch (error: any) {
+        installOutput = `${installOutput}\n${error.stdout || ""}${error.stderr || error.message || ""}`.trim();
+      }
+    }
+    const installSecret = {
+      app: app.name,
+      url: target.url,
+      adminUsername,
+      adminPassword,
+      adminEmail,
+      database
+    };
+    fs.writeFileSync(path.join(target.destination, ".tpanel-install.json"), JSON.stringify(installSecret, null, 2));
+    if (process.platform !== "win32") fs.chmodSync(path.join(target.destination, ".tpanel-install.json"), 0o600);
+    await finalizeExtractedFiles(account, target.destination);
+    ensureWebReadableAccount(account);
+    const entry = {
+      id: `app-${Date.now().toString(36)}-${randomBytes(3).toString("hex")}`,
+      appId: app.id,
+      name: app.name,
+      version: app.version,
+      domain: target.domain,
+      path: target.relativePath,
+      url: target.url,
+      documentRoot: target.destination,
+      adminUsername,
+      adminEmail,
+      database: database ? { engine: database.engine, database: database.database, username: database.username, host: database.host } : null,
+      status: app.id === "wordpress" ? "installed" : "files_ready",
+      installOutput,
+      installedAt: new Date().toISOString()
+    };
+    const updated = updateStoredAccount(account.username, (current: any) => ({
+      ...current,
+      appInstallations: [entry, ...appInstallations(current).filter((item: any) => !(item.domain === entry.domain && item.path === entry.path && item.appId === entry.appId))],
+      updatedAt: new Date().toISOString()
+    })) || account;
+    return { account: updated, installation: { ...entry, adminPassword } };
+  } finally {
+    removeIfExists(tempDir);
+  }
+}
+
+function appInstallerPayload(account: any) {
+  return {
+    ok: true,
+    catalog: appCatalogPayload(),
+    domains: accountRuntimeDomains(account).map((entry: any) => ({
+      domain: entry.domain,
+      label: entry.label,
+      documentRoot: entry.documentRoot,
+      webPath: entry.webPath
+    })),
+    installedApps: installedAppsPayload(account)
+  };
+}
+
 async function hostingStackStatus() {
   const manager = await packageManager();
   const checks = await Promise.all(HOSTING_STACK_CHECKS.map(async (check) => {
@@ -3036,6 +3550,7 @@ app.get("/api/user/summary", requireLicense, async (req, res) => {
       domains: account.maxDomains,
       emailAccounts: account.maxEmailAccounts,
       databases: account.maxDatabases,
+      ftpAccounts: account.maxFtpAccounts || account.ftpAccounts || 0,
       nodeApps: account.maxNodeApps || account.nodeApps || 1
     },
     provisioning: account.provisioning || null,
@@ -3443,6 +3958,82 @@ app.post("/api/user/terminal", requireLicense, async (req, res) => {
     res.json({ ok: true, ...result, cwd: account.homeDirectory, user: accountShellUsername(account) });
   } catch (error: any) {
     res.status(403).json({ ok: false, message: error.message || "Unable to run terminal command." });
+  }
+});
+
+app.get("/api/user/ftp-accounts", requireLicense, async (req, res) => {
+  const account = requireUserAccount(req, res);
+  if (!account) return;
+  if (!normalizeAccountPermissions(account.permissions, account).ftp) {
+    res.status(403).json({ ok: false, message: "FTP access is disabled for this account." });
+    return;
+  }
+  try {
+    res.json(ftpPayload(account));
+  } catch (error: any) {
+    res.status(500).json({ ok: false, message: error.message || "Unable to load FTP accounts." });
+  }
+});
+
+app.post("/api/user/ftp-accounts", requireLicense, async (req, res) => {
+  const account = requireUserAccount(req, res);
+  if (!account) return;
+  try {
+    const updated = await createFtpAccount(account, req.body || {});
+    res.json(ftpPayload(updated));
+  } catch (error: any) {
+    res.status(500).json({ ok: false, message: error.message || "Unable to create FTP account." });
+  }
+});
+
+app.post("/api/user/ftp-accounts/:username/password", requireLicense, async (req, res) => {
+  const account = requireUserAccount(req, res);
+  if (!account) return;
+  try {
+    await setFtpPassword(account, req.params.username, req.body?.password);
+    res.json(ftpPayload(account));
+  } catch (error: any) {
+    res.status(500).json({ ok: false, message: error.message || "Unable to update FTP password." });
+  }
+});
+
+app.delete("/api/user/ftp-accounts/:username", requireLicense, async (req, res) => {
+  const account = requireUserAccount(req, res);
+  if (!account) return;
+  try {
+    const updated = await deleteFtpAccount(account, req.params.username);
+    res.json(ftpPayload(updated));
+  } catch (error: any) {
+    res.status(500).json({ ok: false, message: error.message || "Unable to delete FTP account." });
+  }
+});
+
+app.get("/api/user/app-installer", requireLicense, async (req, res) => {
+  const account = requireUserAccount(req, res);
+  if (!account) return;
+  if (!normalizeAccountPermissions(account.permissions, account).marketplace) {
+    res.status(403).json({ ok: false, message: "App Marketplace access is disabled for this account." });
+    return;
+  }
+  try {
+    res.json(appInstallerPayload(account));
+  } catch (error: any) {
+    res.status(500).json({ ok: false, message: error.message || "Unable to load app installer." });
+  }
+});
+
+app.post("/api/user/app-installer/install", requireLicense, async (req, res) => {
+  const account = requireUserAccount(req, res);
+  if (!account) return;
+  try {
+    const { account: updated, installation } = await installOneClickApp(account, req.body || {});
+    res.json({
+      ...appInstallerPayload(updated),
+      installation,
+      account: publicAccount(updated)
+    });
+  } catch (error: any) {
+    res.status(500).json({ ok: false, message: error.message || "Unable to install application." });
   }
 });
 
@@ -4171,7 +4762,7 @@ app.post("/api/panel/hosting-stack/install", requireCapability("software"), asyn
     ? `export DEBIAN_FRONTEND=noninteractive; apt-get update -y && apt-get install -y ${quoted}`
     : `${manager} install -y ${quoted}`;
   try {
-    const { stdout, stderr } = await execFileAsync("sh", ["-lc", `${installCommand}; systemctl enable --now nginx >/dev/null 2>&1 || true; systemctl enable --now mariadb >/dev/null 2>&1 || systemctl enable --now mysql >/dev/null 2>&1 || true; systemctl enable --now postgresql >/dev/null 2>&1 || true; systemctl enable --now postfix >/dev/null 2>&1 || true; systemctl enable --now dovecot >/dev/null 2>&1 || true; systemctl enable --now opendkim >/dev/null 2>&1 || true; systemctl enable --now rspamd >/dev/null 2>&1 || true; if command -v ufw >/dev/null 2>&1; then ufw allow 80/tcp >/dev/null 2>&1 || true; ufw allow 443/tcp >/dev/null 2>&1 || true; fi; if command -v firewall-cmd >/dev/null 2>&1; then firewall-cmd --permanent --add-service=http >/dev/null 2>&1 || true; firewall-cmd --permanent --add-service=https >/dev/null 2>&1 || true; firewall-cmd --reload >/dev/null 2>&1 || true; fi; for svc in $(systemctl list-unit-files --type=service 'php*-fpm.service' 2>/dev/null | awk '/php.*-fpm\\.service/ {print $1}'); do systemctl enable --now "$svc" >/dev/null 2>&1 || true; done`], { timeout: 900000 });
+    const { stdout, stderr } = await execFileAsync("sh", ["-lc", `${installCommand}; systemctl enable --now nginx >/dev/null 2>&1 || true; systemctl enable --now mariadb >/dev/null 2>&1 || systemctl enable --now mysql >/dev/null 2>&1 || true; systemctl enable --now postgresql >/dev/null 2>&1 || true; systemctl enable --now vsftpd >/dev/null 2>&1 || true; systemctl enable --now postfix >/dev/null 2>&1 || true; systemctl enable --now dovecot >/dev/null 2>&1 || true; systemctl enable --now opendkim >/dev/null 2>&1 || true; systemctl enable --now rspamd >/dev/null 2>&1 || true; if command -v ufw >/dev/null 2>&1; then ufw allow 21/tcp >/dev/null 2>&1 || true; ufw allow 80/tcp >/dev/null 2>&1 || true; ufw allow 443/tcp >/dev/null 2>&1 || true; fi; if command -v firewall-cmd >/dev/null 2>&1; then firewall-cmd --permanent --add-service=ftp >/dev/null 2>&1 || true; firewall-cmd --permanent --add-service=http >/dev/null 2>&1 || true; firewall-cmd --permanent --add-service=https >/dev/null 2>&1 || true; firewall-cmd --reload >/dev/null 2>&1 || true; fi; for svc in $(systemctl list-unit-files --type=service 'php*-fpm.service' 2>/dev/null | awk '/php.*-fpm\\.service/ {print $1}'); do systemctl enable --now "$svc" >/dev/null 2>&1 || true; done`], { timeout: 900000 });
     res.json({ ok: true, packages, output: `${stdout || ""}${stderr || ""}`.trim(), stack: await hostingStackStatus() });
   } catch (error: any) {
     res.status(500).json({ ok: false, packages, message: error.message || "Package installation failed.", output: `${error.stdout || ""}${error.stderr || ""}`.trim() });
@@ -4316,6 +4907,7 @@ app.post("/api/panel/accounts", requireCapability("accounts"), async (req, res) 
     maxDomains: Number(req.body?.maxDomains || selectedPackage.domains),
     maxEmailAccounts: Number(req.body?.maxEmailAccounts || selectedPackage.emailAccounts),
     maxDatabases: Number(req.body?.maxDatabases || selectedPackage.databases),
+    maxFtpAccounts: Number(req.body?.maxFtpAccounts || req.body?.ftpAccounts || selectedPackage.ftpAccounts),
     maxNodeApps: Number(req.body?.maxNodeApps || selectedPackage.nodeApps),
     permissionProfile: normalizePermissionProfile(req.body?.permissionProfile),
     ftpEnabled: req.body?.ftpEnabled !== false,

@@ -1156,7 +1156,7 @@ export default function AdminPanel({ onLogout }: AdminPanelProps) {
                        <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
                          <div>
                            <h1 className="text-3xl font-black text-slate-100 tracking-tight">Create a New Account</h1>
-                           <p className="text-sm text-slate-500 mt-2">Provision a cPanel-style hosting account with login access, package limits, website runtime, DNS, email, FTP, database, and automatic SSL.</p>
+                           <p className="text-sm text-slate-500 mt-2">Provision a full hosting account with login access, package limits, website runtime, DNS, email, FTP, database, and automatic SSL.</p>
                          </div>
                          <button className="px-5 py-2.5 bg-[#0069ff] text-white font-bold rounded-lg hover:bg-[#0055d4] transition-all text-sm">Create Account</button>
                        </div>
@@ -1537,7 +1537,7 @@ function HostingStackManager({ stack, output, isInstalling, onRefresh, onInstall
       <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
         <div>
           <h1 className="text-3xl font-black text-slate-100 tracking-tight">Hosting Stack Manager</h1>
-          <p className="text-sm text-slate-500 mt-2">Install and verify the packages required for cPanel-style PHP, Node.js, database, DNS, Nginx, and Auto SSL hosting.</p>
+          <p className="text-sm text-slate-500 mt-2">Install and verify the packages required for PHP, Node.js, database, DNS, Nginx, and Auto SSL hosting.</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <button onClick={onRefresh} className="px-4 py-2 rounded-lg border border-slate-800 bg-slate-950 text-xs font-black text-slate-200 hover:border-[#0069ff]">Refresh</button>

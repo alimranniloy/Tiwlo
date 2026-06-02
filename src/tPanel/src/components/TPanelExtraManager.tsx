@@ -62,11 +62,12 @@ export default function TPanelExtraManager({ activeTab, domains, setDomains, add
   };
 
   // 1. FTP Accounts
-  const [ftpAccounts, setFtpAccounts] = useState(() => getPersisted("ftp", [
-    { username: "ftp_niloy", path: "/public_html", quota: "Unlimited", usage: "34 MB" },
-    { username: "ftp_backup", path: "/backups", quota: "2048 MB", usage: "1.2 GB" }
-  ]));
+  const [ftpAccounts, setFtpAccounts] = useState<any[]>([]);
+  const [ftpConnection, setFtpConnection] = useState<any>(null);
+  const [ftpStatus, setFtpStatus] = useState("");
+  const [isFtpBusy, setIsFtpBusy] = useState(false);
   const [newFtpUser, setNewFtpUser] = useState("");
+  const [newFtpPassword, setNewFtpPassword] = useState("");
   const [newFtpPath, setNewFtpPath] = useState("/public_html");
   const [newFtpQuota, setNewFtpQuota] = useState("Unlimited");
 
@@ -188,12 +189,19 @@ export default function TPanelExtraManager({ activeTab, domains, setDomains, add
   const [newRubyPort, setNewRubyPort] = useState("5000");
 
   // 13. App Marketplace
+  const [appCatalog, setAppCatalog] = useState<any[]>([]);
+  const [marketDomains, setMarketDomains] = useState<any[]>([]);
   const [installingApp, setInstallingApp] = useState<string | null>(null);
   const [marketInstallProgress, setMarketInstallProgress] = useState(0);
-  const [installedApps, setInstalledApps] = useState(() => getPersisted("installed_apps", [
-    { name: "WordPress", version: "6.4.3", domain: "my-portfolio.com", dir: "/public_html", date: "2026-05-20" }
-  ]));
+  const [marketStatus, setMarketStatus] = useState("");
+  const [lastInstallCredentials, setLastInstallCredentials] = useState<any>(null);
+  const [installedApps, setInstalledApps] = useState<any[]>([]);
   const [appToInstallDomain, setAppToInstallDomain] = useState(() => domains[0]?.domainName || "");
+  const [appToInstallPath, setAppToInstallPath] = useState("");
+  const [appSiteTitle, setAppSiteTitle] = useState("");
+  const [appAdminUsername, setAppAdminUsername] = useState("admin");
+  const [appAdminPassword, setAppAdminPassword] = useState("");
+  const [appAdminEmail, setAppAdminEmail] = useState("");
 
   // 14. Cron Jobs State
   const [cronJobs, setCronJobs] = useState(() => getPersisted("cron_jobs", [
@@ -214,7 +222,6 @@ export default function TPanelExtraManager({ activeTab, domains, setDomains, add
   const terminalBottomRef = useRef<HTMLDivElement>(null);
 
   // Sync state modifications to disk persistence
-  useEffect(() => { savePersisted("ftp", ftpAccounts); }, [ftpAccounts]);
   useEffect(() => { savePersisted("disk_alloc", currentDiskUsage); }, [currentDiskUsage]);
   useEffect(() => { savePersisted("postgre_db", pgDatabases); }, [pgDatabases]);
   useEffect(() => { savePersisted("forwarders", emailForwarders); }, [emailForwarders]);
@@ -224,18 +231,77 @@ export default function TPanelExtraManager({ activeTab, domains, setDomains, add
   useEffect(() => { savePersisted("php_ext", phpExtensions); }, [phpExtensions]);
   useEffect(() => { savePersisted("node_version", selectedNodeVersion); }, [selectedNodeVersion]);
   useEffect(() => { savePersisted("ruby_apps", rubyApps); }, [rubyApps]);
-  useEffect(() => { savePersisted("installed_apps", installedApps); }, [installedApps]);
   useEffect(() => { savePersisted("cron_jobs", cronJobs); }, [cronJobs]);
   useEffect(() => {
     if (!selectedDNSDomain && domains[0]?.domainName) setSelectedDNSDomain(domains[0].domainName);
     if (!selectedSubDomain && domains[0]?.domainName) setSelectedSubDomain(domains[0].domainName);
-  }, [domains, selectedDNSDomain, selectedSubDomain]);
+    if (!appToInstallDomain && domains[0]?.domainName) setAppToInstallDomain(domains[0].domainName);
+  }, [domains, selectedDNSDomain, selectedSubDomain, appToInstallDomain]);
 
   const authToken = () => {
     try {
       return JSON.parse(localStorage.getItem("tpanel_auth") || "null")?.token || "";
     } catch {
       return "";
+    }
+  };
+
+  const applyFtpPayload = (data: any) => {
+    setFtpAccounts(Array.isArray(data.accounts) ? data.accounts : []);
+    setFtpConnection({
+      host: data.host || account?.domain || "",
+      port: Number(data.port || 21),
+      limits: data.limits || {}
+    });
+  };
+
+  const loadFtpAccounts = async () => {
+    const token = authToken();
+    if (!token) return;
+    setIsFtpBusy(true);
+    setFtpStatus("Loading FTP accounts from this tPanel server...");
+    try {
+      const response = await fetch("/api/user/ftp-accounts", {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.ok) throw new Error(data.message || "Unable to load FTP accounts.");
+      applyFtpPayload(data);
+      const used = Number(data.limits?.usedFtpAccounts || 0);
+      const max = Number(data.limits?.maxFtpAccounts || 0);
+      setFtpStatus(`FTP service ready. ${used}${max > 0 ? `/${max}` : ""} accounts in use.`);
+    } catch (error) {
+      setFtpStatus(error instanceof Error ? error.message : "Unable to load FTP accounts.");
+    } finally {
+      setIsFtpBusy(false);
+    }
+  };
+
+  const applyAppInstallerPayload = (data: any) => {
+    setAppCatalog(Array.isArray(data.catalog) ? data.catalog : []);
+    const nextDomains = Array.isArray(data.domains) ? data.domains : [];
+    setMarketDomains(nextDomains);
+    setInstalledApps(Array.isArray(data.installedApps) ? data.installedApps : []);
+    if (nextDomains[0]?.domain && (!appToInstallDomain || !nextDomains.some((item: any) => item.domain === appToInstallDomain))) {
+      setAppToInstallDomain(nextDomains[0].domain);
+    }
+    if (data.account && onAccountUpdate) onAccountUpdate(data.account);
+  };
+
+  const loadAppInstaller = async () => {
+    const token = authToken();
+    if (!token) return;
+    setMarketStatus("Loading installer catalog from this server...");
+    try {
+      const response = await fetch("/api/user/app-installer", {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.ok) throw new Error(data.message || "Unable to load app installer.");
+      applyAppInstallerPayload(data);
+      setMarketStatus("Installer catalog is ready.");
+    } catch (error) {
+      setMarketStatus(error instanceof Error ? error.message : "Unable to load app installer.");
     }
   };
 
@@ -432,6 +498,16 @@ export default function TPanelExtraManager({ activeTab, domains, setDomains, add
     loadSshAccess(activeTab === "terminal").catch(() => undefined);
   }, [activeTab, account?.username]);
 
+  useEffect(() => {
+    if (activeTab !== "ftp") return;
+    loadFtpAccounts().catch(() => undefined);
+  }, [activeTab, account?.username]);
+
+  useEffect(() => {
+    if (activeTab !== "marketplace") return;
+    loadAppInstaller().catch(() => undefined);
+  }, [activeTab, account?.username]);
+
   // Terminal scroll helper
   useEffect(() => {
     if (terminalBottomRef.current && terminalBottomRef.current.parentElement) {
@@ -440,23 +516,71 @@ export default function TPanelExtraManager({ activeTab, domains, setDomains, add
   }, [terminalLogs]);
 
   // Actions trigger: FTP account builder
-  const handleCreateFtpUser = (e: FormEvent) => {
+  const handleCreateFtpUser = async (e: FormEvent) => {
     e.preventDefault();
-    if (!newFtpUser.trim()) return;
-    const item = {
-      username: "ftp_" + newFtpUser.toLowerCase().replace(/\s+/g, ""),
-      path: newFtpPath,
-      quota: newFtpQuota,
-      usage: "0 KB"
-    };
-    setFtpAccounts(prev => [...prev, item]);
-    addActivity("file", `FTP username ${item.username} provisioned for ${item.path}`);
-    setNewFtpUser("");
+    if (!newFtpUser.trim() || !newFtpPassword.trim()) {
+      setFtpStatus("FTP username and password are required.");
+      return;
+    }
+    const token = authToken();
+    if (!token) {
+      setFtpStatus("User session expired. Log in again.");
+      return;
+    }
+    setIsFtpBusy(true);
+    setFtpStatus("Creating real FTP user, setting password, and binding folder permissions...");
+    try {
+      const response = await fetch("/api/user/ftp-accounts", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          username: newFtpUser,
+          password: newFtpPassword,
+          path: newFtpPath,
+          quota: newFtpQuota
+        })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.ok) throw new Error(data.message || "Unable to create FTP account.");
+      applyFtpPayload(data);
+      const created = data.accounts?.[data.accounts.length - 1]?.username || newFtpUser;
+      setFtpStatus(`FTP account ${created} is ready on ${data.host || ftpConnection?.host || "server"}:21.`);
+      addActivity("file", `FTP username ${created} provisioned for ${newFtpPath}`);
+      setNewFtpUser("");
+      setNewFtpPassword("");
+    } catch (error) {
+      setFtpStatus(error instanceof Error ? error.message : "Unable to create FTP account.");
+    } finally {
+      setIsFtpBusy(false);
+    }
   };
 
-  const handleDeleteFtpUser = (username: string) => {
-    setFtpAccounts(prev => prev.filter(c => c.username !== username));
-    addActivity("file", `FTP User ${username} terminated`);
+  const handleDeleteFtpUser = async (username: string) => {
+    const token = authToken();
+    if (!token) {
+      setFtpStatus("User session expired. Log in again.");
+      return;
+    }
+    setIsFtpBusy(true);
+    setFtpStatus(`Deleting FTP user ${username} from the server...`);
+    try {
+      const response = await fetch(`/api/user/ftp-accounts/${encodeURIComponent(username)}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.ok) throw new Error(data.message || "Unable to delete FTP account.");
+      applyFtpPayload(data);
+      setFtpStatus(`FTP user ${username} was permanently removed.`);
+      addActivity("file", `FTP User ${username} terminated`);
+    } catch (error) {
+      setFtpStatus(error instanceof Error ? error.message : "Unable to delete FTP account.");
+    } finally {
+      setIsFtpBusy(false);
+    }
   };
 
   // Disk Cleaner
@@ -569,31 +693,59 @@ export default function TPanelExtraManager({ activeTab, domains, setDomains, add
   };
 
   // Install application marketplace
-  const triggerAppInstallation = (appName: string, officialVersion: string) => {
+  const triggerAppInstallation = async (app: any) => {
     if (installingApp) return;
-    setInstallingApp(appName);
-    setMarketInstallProgress(0);
-    const interval = setInterval(() => {
-      setMarketInstallProgress(p => {
-        if (p >= 100) {
-          clearInterval(interval);
-          setTimeout(() => {
-            const newItem = {
-              name: appName,
-              version: officialVersion,
-              domain: appToInstallDomain || "my-portfolio.com",
-              dir: `/public_html/${appName.toLowerCase()}`,
-              date: new Date().toISOString().split('T')[0]
-            };
-            setInstalledApps(prev => [newItem, ...prev]);
-            setInstallingApp(null);
-            addActivity("file", `Marketplace deployment: configured ${appName} ${officialVersion} successfully!`);
-          }, 400);
-          return 100;
-        }
-        return p + 25;
+    if (!appToInstallDomain) {
+      setMarketStatus("Select a domain before installing an app.");
+      return;
+    }
+    const token = authToken();
+    if (!token) {
+      setMarketStatus("User session expired. Log in again.");
+      return;
+    }
+    setInstallingApp(app.id);
+    setMarketInstallProgress(8);
+    setLastInstallCredentials(null);
+    setMarketStatus(`Installing ${app.name} on ${appToInstallDomain}. This may take a few minutes...`);
+    const ticker = window.setInterval(() => {
+      setMarketInstallProgress((value) => Math.min(value + 7, 90));
+    }, 900);
+    try {
+      const response = await fetch("/api/user/app-installer/install", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          appId: app.id,
+          domain: appToInstallDomain,
+          path: appToInstallPath,
+          siteTitle: appSiteTitle,
+          adminUsername: appAdminUsername,
+          adminPassword: appAdminPassword,
+          adminEmail: appAdminEmail
+        })
       });
-    }, 400);
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.ok) throw new Error(data.message || "Unable to install application.");
+      applyAppInstallerPayload(data);
+      setMarketInstallProgress(100);
+      const url = data.installation?.url || `https://${appToInstallDomain}`;
+      if (data.installation?.adminUsername || data.installation?.adminPassword) {
+        setLastInstallCredentials(data.installation);
+      }
+      setMarketStatus(`${app.name} installed at ${url}.`);
+      addActivity("file", `Marketplace deployment: installed ${app.name} on ${appToInstallDomain}`);
+      setAppAdminPassword("");
+    } catch (error) {
+      setMarketStatus(error instanceof Error ? error.message : "Unable to install application.");
+      setMarketInstallProgress(0);
+    } finally {
+      window.clearInterval(ticker);
+      setInstallingApp(null);
+    }
   };
 
   // Block Host IP blocker Add
@@ -761,6 +913,10 @@ export default function TPanelExtraManager({ activeTab, domains, setDomains, add
     }
   };
 
+  const appDomainOptions = marketDomains.length
+    ? marketDomains
+    : domains.map((domain) => ({ domain: domain.domainName, label: domain.domainName, documentRoot: domain.documentRoot || "/public_html" }));
+
   return (
     <div className="space-y-6">
       
@@ -778,19 +934,53 @@ export default function TPanelExtraManager({ activeTab, domains, setDomains, add
               </div>
             </div>
 
-            <form onSubmit={handleCreateFtpUser} className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end mb-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-5">
+              <div className="bg-slate-950 border border-slate-900/40 rounded-xl p-3">
+                <span className="block text-[10px] uppercase tracking-widest text-slate-500 font-bold">FTP Host</span>
+                <span className="mt-1 block text-xs text-slate-100 font-mono">{ftpConnection?.host || "Loading..."}</span>
+              </div>
+              <div className="bg-slate-950 border border-slate-900/40 rounded-xl p-3">
+                <span className="block text-[10px] uppercase tracking-widest text-slate-500 font-bold">Port</span>
+                <span className="mt-1 block text-xs text-indigo-400 font-mono">{ftpConnection?.port || 21}</span>
+              </div>
+              <div className="bg-slate-950 border border-slate-900/40 rounded-xl p-3">
+                <span className="block text-[10px] uppercase tracking-widest text-slate-500 font-bold">Account Limit</span>
+                <span className="mt-1 block text-xs text-slate-100 font-mono">
+                  {ftpConnection?.limits?.usedFtpAccounts ?? ftpAccounts.length}
+                  {Number(ftpConnection?.limits?.maxFtpAccounts || 0) > 0 ? ` / ${ftpConnection.limits.maxFtpAccounts}` : " / Unlimited"}
+                </span>
+              </div>
+            </div>
+
+            {ftpStatus && (
+              <div className="mb-5 rounded-xl border border-indigo-500/20 bg-indigo-500/10 px-4 py-3 text-xs text-indigo-100">
+                {ftpStatus}
+              </div>
+            )}
+
+            <form onSubmit={handleCreateFtpUser} className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end mb-6">
               <div>
                 <label className="block text-xs font-semibold text-slate-400 mb-1.5">Log-In User ID</label>
                 <div className="relative flex items-center">
-                  <span className="absolute left-3 text-xs text-slate-500 font-mono">ftp_</span>
+                  <span className="absolute left-3 text-xs text-slate-500 font-mono">user</span>
                   <input
                     type="text"
                     value={newFtpUser}
                     onChange={(e) => setNewFtpUser(e.target.value)}
                     placeholder="niloy"
-                    className="w-full bg-slate-950 border border-slate-900/40 rounded-xl pl-11 pr-3 py-2 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-indigo-500/50"
+                    className="w-full bg-slate-950 border border-slate-900/40 rounded-xl pl-12 pr-3 py-2 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-indigo-500/50"
                   />
                 </div>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-400 mb-1.5">FTP Password</label>
+                <input
+                  type="password"
+                  value={newFtpPassword}
+                  onChange={(e) => setNewFtpPassword(e.target.value)}
+                  placeholder="8+ characters"
+                  className="w-full bg-slate-950 border border-slate-900/40 rounded-xl px-3 py-2 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-indigo-500/50"
+                />
               </div>
               <div>
                 <label className="block text-xs font-semibold text-slate-400 mb-1.5">Directory Authorization</label>
@@ -816,9 +1006,10 @@ export default function TPanelExtraManager({ activeTab, domains, setDomains, add
               </div>
               <button
                 type="submit"
-                className="bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs px-4 py-2.5 rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer"
+                disabled={isFtpBusy}
+                className="bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-500 text-white font-semibold text-xs px-4 py-2.5 rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer"
               >
-                <Plus className="w-4 h-4" /> Create Account
+                {isFtpBusy ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} Create Account
               </button>
             </form>
 
@@ -837,12 +1028,13 @@ export default function TPanelExtraManager({ activeTab, domains, setDomains, add
                   {ftpAccounts.map((account: any, idx: number) => (
                     <tr key={idx} className="hover:bg-white/5">
                       <td className="p-4 font-mono font-medium text-slate-100">{account.username}</td>
-                      <td className="p-4 text-slate-400">{account.path}</td>
+                      <td className="p-4 text-slate-400">{account.path || account.homeDirectory}</td>
                       <td className="p-4">{account.quota}</td>
                       <td className="p-4 text-center font-mono text-indigo-400">{account.usage}</td>
                       <td className="p-4 text-right">
                         <button
                           onClick={() => handleDeleteFtpUser(account.username)}
+                          disabled={isFtpBusy}
                           className="p-1 text-slate-500 hover:text-rose-500 transition-colors cursor-pointer"
                         >
                           <Trash2 className="w-4 h-4" />
@@ -850,6 +1042,13 @@ export default function TPanelExtraManager({ activeTab, domains, setDomains, add
                       </td>
                     </tr>
                   ))}
+                  {!ftpAccounts.length && (
+                    <tr>
+                      <td colSpan={5} className="p-6 text-center text-slate-500">
+                        No FTP accounts yet. Create one to get real remote file access.
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>
@@ -2054,70 +2253,164 @@ export default function TPanelExtraManager({ activeTab, domains, setDomains, add
       {activeTab === "marketplace" && (
         <div className="space-y-6 animate-fade-in">
           <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6">
-            <div className="flex items-center justify-between mb-6 border-b border-slate-700 pb-4">
+            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-6 border-b border-slate-700 pb-4">
               <div className="flex items-center gap-3">
                 <div className="p-3 bg-indigo-600/10 rounded-xl text-indigo-400">
                   <ShoppingBag className="w-5 h-5" />
                 </div>
                 <div>
                   <h2 className="text-lg font-bold text-slate-100">One-Click App Installer Marketplace</h2>
-                  <p className="text-xs text-slate-400">Install WordPress, Ghost, Nextcloud, Laravel with a single click</p>
+                  <p className="text-xs text-slate-400">Install real PHP and Node-ready app packages on your selected domain</p>
                 </div>
               </div>
-              <div className="w-56">
-                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Install Destination Domain</label>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => loadAppInstaller()}
+                  disabled={Boolean(installingApp)}
+                  className="bg-slate-950 hover:bg-slate-800 disabled:opacity-60 border border-slate-700 text-slate-200 font-semibold text-xs px-3 py-2 rounded-lg flex items-center gap-2 transition-colors cursor-pointer"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${installingApp ? "animate-spin" : ""}`} /> Refresh
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-6 gap-4 mb-6">
+              <div className="lg:col-span-2">
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Install Domain</label>
                 <select
                   value={appToInstallDomain}
                   onChange={(e) => setAppToInstallDomain(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-100"
+                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-2 text-xs text-slate-100"
                 >
-                  {domains.map((dom, i) => (
-                    <option key={i} value={dom.domainName}>{dom.domainName}</option>
+                  {appDomainOptions.map((dom: any, i: number) => (
+                    <option key={i} value={dom.domain}>{dom.label || dom.domain}</option>
                   ))}
                 </select>
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Subfolder</label>
+                <input
+                  type="text"
+                  value={appToInstallPath}
+                  onChange={(e) => setAppToInstallPath(e.target.value)}
+                  placeholder="blank = root"
+                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-2 text-xs text-slate-100 placeholder-slate-600"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Site Title</label>
+                <input
+                  type="text"
+                  value={appSiteTitle}
+                  onChange={(e) => setAppSiteTitle(e.target.value)}
+                  placeholder="Website title"
+                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-2 text-xs text-slate-100 placeholder-slate-600"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Admin User</label>
+                <input
+                  type="text"
+                  value={appAdminUsername}
+                  onChange={(e) => setAppAdminUsername(e.target.value)}
+                  placeholder="admin"
+                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-2 text-xs text-slate-100 placeholder-slate-600"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Admin Password</label>
+                <input
+                  type="password"
+                  value={appAdminPassword}
+                  onChange={(e) => setAppAdminPassword(e.target.value)}
+                  placeholder="auto if blank"
+                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-2 text-xs text-slate-100 placeholder-slate-600"
+                />
+              </div>
+              <div className="lg:col-span-2">
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Admin Email</label>
+                <input
+                  type="email"
+                  value={appAdminEmail}
+                  onChange={(e) => setAppAdminEmail(e.target.value)}
+                  placeholder={`admin@${appToInstallDomain || "domain.com"}`}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-2 text-xs text-slate-100 placeholder-slate-600"
+                />
               </div>
             </div>
 
             {/* Installation Indicator Progress Area */}
-            {installingApp && (
+            {(installingApp || marketStatus) && (
               <div className="bg-slate-950 border border-indigo-500/10 p-5 rounded-xl mb-6">
                 <div className="flex justify-between items-center mb-2">
-                  <span className="text-xs text-slate-300 font-semibold">Running package install query for {installingApp}...</span>
-                  <span className="text-xs text-indigo-400 font-mono font-bold">{marketInstallProgress}%</span>
+                  <span className="text-xs text-slate-300 font-semibold">{marketStatus || "Preparing installer..."}</span>
+                  {installingApp && <span className="text-xs text-indigo-400 font-mono font-bold">{marketInstallProgress}%</span>}
                 </div>
-                <div className="w-full bg-white/5 h-2 rounded-full overflow-hidden">
-                  <div className="bg-indigo-500 h-full transition-all duration-300" style={{ width: `${marketInstallProgress}%` }} />
+                {installingApp && (
+                  <div className="w-full bg-white/5 h-2 rounded-full overflow-hidden">
+                    <div className="bg-indigo-500 h-full transition-all duration-300" style={{ width: `${marketInstallProgress}%` }} />
+                  </div>
+                )}
+              </div>
+            )}
+
+            {lastInstallCredentials && (
+              <div className="bg-emerald-500/10 border border-emerald-500/20 p-4 rounded-xl mb-6">
+                <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 text-xs">
+                  <div>
+                    <span className="block text-emerald-300 font-bold">{lastInstallCredentials.name} admin login is ready</span>
+                    <span className="text-slate-300 font-mono break-all">{lastInstallCredentials.url}</span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-slate-200">
+                    <span className="font-mono">user: {lastInstallCredentials.adminUsername || "n/a"}</span>
+                    <span className="font-mono">pass: {lastInstallCredentials.adminPassword || "set by installer"}</span>
+                    <span className="font-mono">email: {lastInstallCredentials.adminEmail || "n/a"}</span>
+                  </div>
                 </div>
               </div>
             )}
 
             {/* Catalog Grid */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              {[
-                { name: "WordPress", desc: "Global sovereign blogging & content system suite", ver: "6.4.3", color: "from-blue-600 to-indigo-600" },
-                { name: "Nextcloud", desc: "Private host file coordination cloud storage", ver: "28.0.3", color: "from-sky-500 to-blue-500" },
-                { name: "Ghost App", desc: "Aesthetic digital magazine blog publish engine", ver: "5.79.0", color: "from-emerald-500 to-teal-500" },
-                { name: "Laravel", desc: "The legendary robust PHP structural development framework", ver: "11.0.1", color: "from-rose-500 to-red-500" },
-                { name: "NextJS React", desc: "React template with edge deployment configurations", ver: "14.1.0", color: "from-slate-600 to-gray-800" },
-                { name: "Drupal", desc: "Enterprise modular enterprise CMS suite", ver: "10.2.1", color: "from-blue-400 to-sky-600" }
-              ].map((app, i) => (
-                <div key={i} className="bg-slate-950 border border-slate-700 p-5 rounded-2xl flex flex-col justify-between h-48 hover:border-slate-700 transition-colors">
+              {appCatalog.map((app, i) => (
+                <div key={app.id || i} className="bg-slate-950 border border-slate-700 p-5 rounded-2xl flex flex-col justify-between min-h-56 hover:border-indigo-500/40 transition-colors">
                   <div>
-                    <div className="flex justify-between items-start">
-                      <h3 className="text-base font-bold text-slate-100">{app.name}</h3>
-                      <span className="text-[10px] text-slate-500 font-mono">v{app.ver}</span>
+                    <div className="flex justify-between items-start gap-3">
+                      <div className="flex items-center gap-3 min-w-0">
+                        {app.logo ? (
+                          <img src={app.logo} alt={`${app.name} logo`} className="w-11 h-11 rounded-xl bg-white object-cover shrink-0" draggable={false} />
+                        ) : (
+                          <div className="w-11 h-11 rounded-xl bg-indigo-600/20 flex items-center justify-center text-indigo-300 font-bold shrink-0">
+                            {String(app.name || "A").slice(0, 1)}
+                          </div>
+                        )}
+                        <div className="min-w-0">
+                          <h3 className="text-base font-bold text-slate-100 truncate">{app.name}</h3>
+                          <span className="text-[10px] text-slate-500 font-mono">{app.runtime} / {app.category}</span>
+                        </div>
+                      </div>
+                      <span className="text-[10px] text-slate-500 font-mono shrink-0">v{app.version}</span>
                     </div>
-                    <p className="text-xs text-slate-400 mt-2">{app.desc}</p>
+                    <p className="text-xs text-slate-400 mt-4 leading-relaxed">{app.description}</p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {app.database && <span className="px-2 py-1 rounded-lg bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 text-[10px] font-bold">Database</span>}
+                      {app.automatedAdmin && <span className="px-2 py-1 rounded-lg bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 text-[10px] font-bold">Auto Admin</span>}
+                    </div>
                   </div>
                   <button
-                    onClick={() => triggerAppInstallation(app.name, app.ver)}
-                    disabled={installingApp !== null}
+                    onClick={() => triggerAppInstallation(app)}
+                    disabled={Boolean(installingApp) || !appToInstallDomain}
                     className="bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs px-3 py-2 rounded-lg text-center transition-colors disabled:bg-slate-800 disabled:text-slate-500 cursor-pointer"
                   >
-                    Deploy to {appToInstallDomain || "domain"}
+                    {installingApp === app.id ? "Installing..." : `Deploy to ${appToInstallDomain || "domain"}`}
                   </button>
                 </div>
               ))}
+              {!appCatalog.length && (
+                <div className="md:col-span-3 bg-slate-950 border border-slate-700 p-8 rounded-2xl text-center text-sm text-slate-400">
+                  {marketStatus || "No app packages are available yet."}
+                </div>
+              )}
             </div>
 
             {/* Activated Instances List */}
@@ -2129,12 +2422,23 @@ export default function TPanelExtraManager({ activeTab, domains, setDomains, add
                     <div>
                       <span className="font-bold text-slate-100 mr-3">{app.name}</span>
                       <span className="text-[10px] text-slate-500">v{app.version}</span>
+                      {app.adminUsername && <span className="text-[10px] text-indigo-400 ml-3">admin: {app.adminUsername}</span>}
                     </div>
-                    <div className="font-mono text-[11px] text-slate-400">
-                      Domain: <span className="text-indigo-400">{app.domain}</span> | path: <span className="text-amber-500">{app.dir}</span>
+                    <div className="font-mono text-[11px] text-slate-400 text-right">
+                      Domain: <span className="text-indigo-400">{app.domain}</span> | path: <span className="text-amber-500">{app.path || "/"}</span>
+                      {app.url && (
+                        <a href={app.url} target="_blank" rel="noreferrer" className="ml-3 text-emerald-400 hover:text-emerald-300 inline-flex items-center gap-1">
+                          Open <ArrowUpRight className="w-3 h-3" />
+                        </a>
+                      )}
                     </div>
                   </div>
                 ))}
+                {!installedApps.length && (
+                  <div className="py-5 text-center text-slate-500">
+                    Installed apps will appear here after the server finishes provisioning.
+                  </div>
+                )}
               </div>
             </div>
           </div>
