@@ -2,8 +2,15 @@ import React, { useState } from 'react';
 import {
   ArrowLeft,
   ChevronRight,
+  CheckCircle2,
+  Cpu,
+  Globe2,
+  HardDrive,
   Lock,
+  MapPin,
+  Package,
   Server,
+  Sparkles,
   User,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
@@ -67,6 +74,15 @@ function featureList(plan: CloudPlan) {
 function moduleLabel(module: string) {
   if (module === 'tpanel') return 'tPanel';
   return module ? module.replace(/(^|-)([a-z])/g, (_match, prefix, letter) => `${prefix ? ' ' : ''}${letter.toUpperCase()}`) : 'Module';
+}
+
+function moduleLogo(module: string) {
+  return module === 'tpanel' ? '/brand/icon.png' : '';
+}
+
+function moduleGradient(module: string) {
+  if (module === 'tpanel') return 'from-[#071f4a] via-[#0f5dd8] to-[#00a884]';
+  return 'from-[#111827] via-[#334155] to-[#0069ff]';
 }
 
 function flagUrl(countryCode?: string | null) {
@@ -332,35 +348,50 @@ export default function CreateDroplet() {
   }
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6 pb-20">
-      <div className="flex flex-col gap-4 border-b border-[#e5e8ed] pb-5 md:flex-row md:items-center md:justify-between">
-        <div className="flex items-center gap-2">
+    <div className="mx-auto max-w-6xl space-y-6 pb-20">
+      <div className="overflow-hidden rounded-lg border border-[#dbe4f0] bg-white">
+        <div className={`bg-gradient-to-r ${moduleGradient(selectedModule)} px-5 py-6 text-white md:px-7`}>
+          <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
+            <div className="flex items-start gap-4">
           <button
             onClick={() => navigate('/droplets')}
-            className="rounded-sm border border-transparent p-1.5 transition-colors hover:border-[#e5e8ed] hover:bg-[#f3f5f9]"
+                className="rounded-md border border-white/15 bg-white/10 p-2 transition-colors hover:bg-white/20"
             id="back-button"
           >
-            <ArrowLeft className="h-4 w-4 text-[#4a4a4a]" />
+                <ArrowLeft className="h-4 w-4 text-white" />
           </button>
+              <div className="min-w-0">
+                <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1 text-[11px] font-black uppercase tracking-widest text-white/90">
+                  <Sparkles className="h-3.5 w-3.5" />
+                  Managed deployment
+                </div>
           <div>
-            <h1 className="text-xl font-bold tracking-tight text-[#2e3d49]">Create Droplet</h1>
-            <p className="text-[12px] text-[#4a4a4a]">Credit billed tPanel deployment from administrator server regions.</p>
+                  <h1 className="text-2xl font-black tracking-tight md:text-3xl">Create Droplet</h1>
+                  <p className="mt-2 max-w-2xl text-sm leading-6 text-white/80">Deploy a production-ready {moduleLabel(selectedModule)} hosting account from administrator connected regions with credit billing.</p>
+                </div>
           </div>
         </div>
-        <div className="flex items-center justify-between gap-4 md:justify-end">
-          <div className="text-right">
-            <p className="mb-1 text-[10px] font-bold uppercase leading-none tracking-wider text-gray-400">Credit billing</p>
-            <p className="text-lg font-bold leading-none text-[#2e3d49]">${selectedHourly.toFixed(2)}/hr</p>
-            <p className="mt-1 text-[10px] font-bold uppercase text-gray-400">${Number(selectedPlanRecord?.price || 0).toFixed(2)}/mo cap</p>
+            <div className="flex items-center justify-between gap-4 rounded-lg border border-white/15 bg-white/10 p-4 md:min-w-[260px]">
+              <div>
+                <p className="mb-1 text-[10px] font-black uppercase leading-none tracking-wider text-white/60">Credit billing</p>
+                <p className="text-2xl font-black leading-none">${selectedHourly.toFixed(2)}<span className="text-sm text-white/60">/hr</span></p>
+                <p className="mt-1 text-[10px] font-black uppercase text-white/60">${Number(selectedPlanRecord?.price || 0).toFixed(2)}/mo cap</p>
           </div>
           <button
             onClick={handleCreate}
             disabled={creditEmpty || plansLoading || nodesLoading || !selectedPlanRecord || !selectedNode}
-            className="group flex items-center gap-2 rounded-sm bg-[#0069ff] px-5 py-2 text-[13px] font-bold text-white transition-all hover:bg-[#0056cc] disabled:cursor-not-allowed disabled:bg-gray-300"
+                className="group flex items-center gap-2 rounded-md bg-white px-4 py-2.5 text-[13px] font-black text-[#0f4db8] transition-all hover:bg-[#eff6ff] disabled:cursor-not-allowed disabled:bg-white/40"
             id="create-droplet-top"
           >
             Create <ChevronRight className="h-4 w-4" />
           </button>
+        </div>
+      </div>
+        </div>
+        <div className="grid grid-cols-1 divide-y divide-[#edf1f7] bg-white md:grid-cols-3 md:divide-x md:divide-y-0">
+          <TopMetric label="Module" value={moduleLabel(selectedModule)} />
+          <TopMetric label="Selected plan" value={selectedPlanRecord?.name || 'Choose plan'} />
+          <TopMetric label="Region" value={selectedNode?.location || 'Choose location'} />
         </div>
       </div>
 
@@ -384,7 +415,7 @@ export default function CreateDroplet() {
 
       <section className="space-y-3">
         <StepTitle number="1" title="Choose module" />
-        <div className="rounded-sm border border-[#e5e8ed] bg-white p-5">
+        <div className="rounded-lg border border-[#dbe4f0] bg-white p-5">
           {nodesLoading ? (
             <div className="rounded-sm border border-[#e5e8ed] bg-[#f8f9fa] px-4 py-5 text-[13px] font-bold text-[#4a4a4a]">
               Loading available modules...
@@ -394,26 +425,34 @@ export default function CreateDroplet() {
               No active deployment module is available.
             </div>
           ) : (
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {modules.map((module) => (
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {modules.map((module) => {
+                const logo = moduleLogo(module.key);
+                const selected = selectedModule === module.key;
+                return (
                 <button
                   key={module.key}
                   onClick={() => setSelectedModule(module.key)}
-                  className={`flex items-center gap-4 rounded-sm border p-4 text-left transition-all ${
-                    selectedModule === module.key
-                      ? 'border-[#0069ff] bg-[#f3f7ff] ring-1 ring-[#0069ff]'
-                      : 'border-[#e5e8ed] bg-white hover:border-[#0069ff]'
+                    className={`group relative overflow-hidden rounded-lg border p-5 text-left transition-all ${
+                      selected
+                        ? 'border-[#0069ff] bg-[#f3f7ff] ring-2 ring-[#0069ff]/20'
+                        : 'border-[#e5e8ed] bg-white hover:border-[#8bbcff]'
                   }`}
                 >
-                  <span className="grid h-10 w-10 place-items-center rounded-sm bg-[#eef5ff] text-[#0069ff]">
-                    <Server className="h-5 w-5" />
-                  </span>
-                  <span>
-                    <span className="block text-[14px] font-black text-[#2e3d49]">{moduleLabel(module.key)}</span>
-                    <span className="mt-1 block text-[12px] font-bold text-gray-500">{module.count} location{module.count === 1 ? '' : 's'} available</span>
-                  </span>
+                    <span className={`absolute inset-x-0 top-0 h-1 bg-gradient-to-r ${moduleGradient(module.key)}`} />
+                    <span className="flex items-center gap-4">
+                      <span className={`grid h-14 w-14 place-items-center rounded-lg border ${selected ? 'border-[#cfe1ff] bg-white' : 'border-[#e5e8ed] bg-[#f8fbff]'}`}>
+                        {logo ? <img src={logo} alt="tPanel" className="h-9 w-9 object-contain" /> : <Server className="h-6 w-6 text-[#0069ff]" />}
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block text-[16px] font-black text-[#111827]">{moduleLabel(module.key)}</span>
+                        <span className="mt-1 block text-[12px] font-bold text-gray-500">{module.count} location{module.count === 1 ? '' : 's'} available</span>
+                        {module.key === 'tpanel' && <span className="mt-2 inline-flex rounded-full bg-[#e8fff6] px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-[#128c7e]">Panel managed</span>}
+                      </span>
+                    </span>
+                    {selected && <CheckCircle2 className="absolute right-4 top-4 h-5 w-5 text-[#0069ff]" />}
                 </button>
-              ))}
+              );})}
             </div>
           )}
         </div>
@@ -421,9 +460,15 @@ export default function CreateDroplet() {
 
       <section className="space-y-3">
         <StepTitle number="2" title="Choose package size" />
-        <div className="overflow-hidden rounded-sm border border-[#e5e8ed] bg-white">
-          <div className="border-b border-[#f3f5f9] bg-[#f8f9fa] px-5 py-3">
-            <p className="text-[12px] font-bold text-[#2e3d49]">Size packages from Administrator tPanel</p>
+        <div className="overflow-hidden rounded-lg border border-[#dbe4f0] bg-white">
+          <div className="flex items-center gap-3 border-b border-[#edf1f7] bg-[#f8fbff] px-5 py-4">
+            <span className="grid h-9 w-9 place-items-center rounded-md bg-white text-[#0069ff]">
+              <Package className="h-5 w-5" />
+            </span>
+            <div>
+              <p className="text-[13px] font-black text-[#111827]">Size packages from Administrator tPanel</p>
+              <p className="text-[11px] font-bold text-[#6B7280]">Choose the resource limit for this managed account.</p>
+            </div>
           </div>
           <div className="p-5">
             {plansLoading ? (
@@ -435,7 +480,7 @@ export default function CreateDroplet() {
                 No active cloud package is configured. Add cloud plans from Administrator Plans first.
               </div>
             ) : (
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
                 {plans.map((plan) => {
                   const features = featureList(plan);
                   const ram = limitValue(plan, 'ram', fallbackLimits.ram);
@@ -445,28 +490,26 @@ export default function CreateDroplet() {
                     <button
                       key={plan.id || plan.code}
                       onClick={() => setSelectedPlan(plan.code)}
-                      className={`relative rounded-sm border p-5 text-left transition-all ${
+                      className={`relative overflow-hidden rounded-lg border p-5 text-left transition-all ${
                         selectedPlan === plan.code
-                          ? 'border-[#0069ff] bg-[#f3f7ff] ring-1 ring-[#0069ff]'
-                          : 'border-[#e5e8ed] hover:border-[#0069ff]'
+                          ? 'border-[#0069ff] bg-[#f3f7ff] ring-2 ring-[#0069ff]/20'
+                          : 'border-[#e5e8ed] hover:border-[#8bbcff]'
                       }`}
                       id={`plan-${plan.code}`}
                     >
-                      <p className="mb-3 inline-block rounded-sm border border-gray-100 px-1 py-0.5 text-[11px] font-bold uppercase text-gray-500">{plan.name}</p>
+                      {selectedPlan === plan.code && <CheckCircle2 className="absolute right-4 top-4 h-5 w-5 text-[#0069ff]" />}
+                      <p className="mb-3 inline-block rounded-full border border-[#e5e8ed] bg-white px-2.5 py-1 text-[11px] font-black uppercase tracking-wide text-gray-500">{plan.name}</p>
                       <div className="mb-4 flex items-baseline gap-1">
-                        <span className="text-2xl font-bold text-[#2e3d49]">${Number(plan.price || 0).toFixed(2)}</span>
-                        <span className="text-[11px] font-medium capitalize text-gray-400">/ mo</span>
+                        <span className="text-3xl font-black text-[#111827]">${Number(plan.price || 0).toFixed(2)}</span>
+                        <span className="text-[11px] font-bold capitalize text-gray-400">/ mo</span>
                       </div>
-                      <p className="mb-3 rounded-sm bg-white px-2 py-1 text-[11px] font-bold text-[#0069ff]">
+                      <p className="mb-4 rounded-md bg-white px-3 py-2 text-[11px] font-black text-[#0069ff]">
                         ${hourlyPrice(Number(plan.price || 0)).toFixed(2)} / hour
                       </p>
-                      <div className="grid grid-cols-2 gap-y-2 text-[12px] font-medium text-gray-600">
-                        <span className="text-gray-400">RAM</span>
-                        <span className="text-right font-bold text-[#2e3d49]">{ram}</span>
-                        <span className="text-gray-400">CPU</span>
-                        <span className="text-right font-bold text-[#2e3d49]">{cpu}</span>
-                        <span className="text-gray-400">Disk</span>
-                        <span className="text-right font-bold text-[#2e3d49]">{disk}</span>
+                      <div className="space-y-2 text-[12px] font-bold text-gray-600">
+                        <PlanSpec icon={HardDrive} label="RAM" value={ram} />
+                        <PlanSpec icon={Cpu} label="CPU" value={cpu} />
+                        <PlanSpec icon={Server} label="Disk" value={disk} />
                       </div>
                       {features.length > 0 && (
                         <p className="mt-4 line-clamp-2 text-[11px] font-medium text-gray-500">{features.slice(0, 2).join(' / ')}</p>
@@ -482,7 +525,7 @@ export default function CreateDroplet() {
 
       <section className="space-y-3">
         <StepTitle number="3" title={`Select ${moduleLabel(selectedModule)} server location`} />
-        <div className="rounded-sm border border-[#e5e8ed] bg-white p-5">
+        <div className="rounded-lg border border-[#dbe4f0] bg-white p-5">
           {nodesLoading ? (
             <div className="rounded-sm border border-[#e5e8ed] bg-[#f8f9fa] px-4 py-5 text-[13px] font-bold text-[#4a4a4a]">
               Loading connected servers...
@@ -492,25 +535,30 @@ export default function CreateDroplet() {
               No active {moduleLabel(selectedModule)} location is connected. Add a compute node from Administrator Hosting Account Module first.
             </div>
           ) : (
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               {moduleNodes.map((node) => {
                 const flag = flagUrl(node.countryCode);
                 return (
                 <button
                   key={node.id}
                   onClick={() => setSelectedNodeId(node.id)}
-                  className={`rounded-sm border p-4 text-left transition-all ${
+                  className={`relative overflow-hidden rounded-lg border p-5 text-left transition-all ${
                     selectedNodeId === node.id
-                      ? 'border-[#0069ff] bg-[#f3f7ff] ring-1 ring-[#0069ff]'
-                      : 'border-[#e5e8ed] bg-white hover:border-[#0069ff]'
+                      ? 'border-[#0069ff] bg-[#f3f7ff] ring-2 ring-[#0069ff]/20'
+                      : 'border-[#e5e8ed] bg-white hover:border-[#8bbcff]'
                   }`}
                   id={`node-${node.id}`}
                 >
-                  <span className="flex min-w-0 items-center gap-3">
-                    {flag ? <img src={flag} alt={node.countryCode || ''} className="h-7 w-10 rounded-sm border border-[#e5e8ed] object-cover" /> : <span className="h-7 w-10 rounded-sm border border-[#e5e8ed] bg-[#f3f5f9]" />}
-                    <span>
-                      <span className="block truncate text-[14px] font-black text-[#2e3d49]">{node.location || 'Global'}</span>
-                      <span className="mt-1 block text-[11px] font-bold uppercase text-gray-400">{node.countryCode || 'Global'}</span>
+                  {selectedNodeId === node.id && <CheckCircle2 className="absolute right-4 top-4 h-5 w-5 text-[#0069ff]" />}
+                  <span className="flex min-w-0 items-center gap-4">
+                    {flag ? <img src={flag} alt={node.countryCode || ''} className="h-11 w-16 rounded-md border border-[#e5e8ed] object-cover" /> : <span className="grid h-11 w-16 place-items-center rounded-md border border-[#e5e8ed] bg-[#f3f5f9]"><Globe2 className="h-5 w-5 text-gray-400" /></span>}
+                    <span className="min-w-0">
+                      <span className="flex items-center gap-2 text-[15px] font-black text-[#111827]">
+                        <MapPin className="h-4 w-4 shrink-0 text-[#0069ff]" />
+                        <span className="truncate">{node.location || 'Global'}</span>
+                      </span>
+                      <span className="mt-1 block text-[11px] font-black uppercase tracking-wider text-gray-400">{node.countryCode || 'Global'} region</span>
+                      <span className="mt-2 inline-flex rounded-full bg-[#f8fafc] px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-[#64748b]">{Number(node.remainingAccounts ?? (Number(node.maxAccounts || 0) - Number(node.activeAccounts || 0))) || 'Ready'} slots</span>
                     </span>
                   </span>
                 </button>
@@ -522,18 +570,20 @@ export default function CreateDroplet() {
 
       <section className="space-y-3">
         <StepTitle number="4" title="Authentication" />
-        <div className="space-y-5 rounded-sm border border-[#e5e8ed] bg-white p-5">
-          <div className="flex items-start gap-3 rounded-sm border border-[#d8e6ff] bg-[#f3f7ff] px-4 py-3">
-            <Lock className="mt-0.5 h-4 w-4 text-[#0069ff]" />
+        <div className="space-y-5 rounded-lg border border-[#dbe4f0] bg-white p-5">
+          <div className="flex items-start gap-3 rounded-lg border border-[#d8e6ff] bg-[#f3f7ff] px-4 py-3">
+            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-white text-[#0069ff]">
+              <Lock className="h-4 w-4" />
+            </span>
             <div>
-              <p className="text-[13px] font-bold text-[#2e3d49]">Password login required</p>
-              <p className="text-[12px] text-[#4a4a4a]">Selected tPanel server will receive this deployment after billing is confirmed.</p>
+              <p className="text-[13px] font-black text-[#111827]">Secure account credentials</p>
+              <p className="text-[12px] leading-5 text-[#4a4a4a]">Selected {moduleLabel(selectedModule)} server will receive this deployment after billing is confirmed.</p>
             </div>
           </div>
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <label className="space-y-2">
               <span className="block text-[12px] font-bold text-[#2e3d49]">Username</span>
-              <div className="flex items-center gap-2 rounded-sm border border-[#e5e8ed] bg-[#f8f9fa] px-3">
+              <div className="flex items-center gap-2 rounded-md border border-[#e5e8ed] bg-[#f8f9fa] px-3 focus-within:border-[#0069ff]">
                 <User className="h-4 w-4 text-gray-400" />
                 <input
                   value={username}
@@ -550,7 +600,7 @@ export default function CreateDroplet() {
               {usernameCheck?.suggestions?.length > 0 && (
                 <div className="flex flex-wrap gap-2">
                   {usernameCheck.suggestions.map((item: string) => (
-                    <button key={item} type="button" onClick={() => setUsername(item)} className="rounded-sm border border-[#d8e6ff] px-2 py-1 text-[11px] font-bold text-[#0069ff]">
+                    <button key={item} type="button" onClick={() => setUsername(item)} className="rounded-md border border-[#d8e6ff] bg-[#f8fbff] px-2 py-1 text-[11px] font-bold text-[#0069ff]">
                       {item}
                     </button>
                   ))}
@@ -564,7 +614,7 @@ export default function CreateDroplet() {
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
                 placeholder="Minimum 8 characters"
-                className="w-full rounded-sm border border-[#e5e8ed] bg-[#f8f9fa] px-4 py-2.5 text-[14px] outline-none focus:border-[#0069ff]"
+                className="w-full rounded-md border border-[#e5e8ed] bg-[#f8f9fa] px-4 py-2.5 text-[14px] outline-none focus:border-[#0069ff]"
               />
             </label>
           </div>
@@ -574,13 +624,13 @@ export default function CreateDroplet() {
                 value={hostname}
                 onChange={(event) => setHostname(event.target.value)}
                 placeholder="example.com"
-                className="w-full rounded-sm border border-[#e5e8ed] bg-[#f8f9fa] px-4 py-2.5 text-[14px] outline-none focus:border-[#0069ff]"
+                className="w-full rounded-md border border-[#e5e8ed] bg-[#f8f9fa] px-4 py-2.5 text-[14px] outline-none focus:border-[#0069ff]"
               />
           </label>
         </div>
       </section>
 
-      <section className="flex flex-col gap-6 rounded-sm bg-[#031b4e] p-6 text-white md:flex-row md:items-center md:justify-between">
+      <section className={`flex flex-col gap-6 overflow-hidden rounded-lg bg-gradient-to-r ${moduleGradient(selectedModule)} p-6 text-white md:flex-row md:items-center md:justify-between`}>
         <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
           <RecapItem label="Module" value={moduleLabel(selectedModule)} />
           <RecapItem label="Package" value={selectedPlanRecord ? `${limitValue(selectedPlanRecord, 'ram', fallbackLimits.ram)} / ${limitValue(selectedPlanRecord, 'cpu', fallbackLimits.cpu)}` : 'No plan'} />
@@ -595,9 +645,9 @@ export default function CreateDroplet() {
           <button
             onClick={handleCreate}
             disabled={creditEmpty || plansLoading || nodesLoading || !selectedPlanRecord || !selectedNode}
-            className="flex flex-1 items-center justify-center gap-2 rounded-sm bg-[#0069ff] px-8 py-3.5 text-[15px] font-bold text-white transition-all hover:bg-[#0056cc] disabled:cursor-not-allowed disabled:bg-gray-500 md:flex-none"
+            className="flex flex-1 items-center justify-center gap-2 rounded-md bg-white px-8 py-3.5 text-[15px] font-black text-[#0f4db8] transition-all hover:bg-[#eff6ff] disabled:cursor-not-allowed disabled:bg-white/40 md:flex-none"
           >
-            Deploy Droplet
+            Deploy Droplet <ChevronRight className="h-4 w-4" />
           </button>
         </div>
       </section>
@@ -608,8 +658,29 @@ export default function CreateDroplet() {
 function StepTitle({ number, title }: { number: string; title: string }) {
   return (
     <div className="flex items-center gap-2">
-      <div className="flex h-5 w-5 items-center justify-center rounded-sm bg-[#2e3d49] text-[10px] font-bold text-white">{number}</div>
+      <div className="flex h-6 w-6 items-center justify-center rounded-md bg-[#111827] text-[11px] font-black text-white">{number}</div>
       <h2 className="text-[13px] font-bold uppercase tracking-wide text-[#2e3d49]">{title}</h2>
+    </div>
+  );
+}
+
+function TopMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="px-5 py-4">
+      <p className="text-[10px] font-black uppercase tracking-wider text-[#94A3B8]">{label}</p>
+      <p className="mt-1 truncate text-[14px] font-black text-[#111827]">{value}</p>
+    </div>
+  );
+}
+
+function PlanSpec({ icon: Icon, label, value }: { icon: React.ElementType; label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-md bg-white px-3 py-2">
+      <span className="inline-flex items-center gap-2 text-gray-500">
+        <Icon className="h-4 w-4 text-[#0069ff]" />
+        {label}
+      </span>
+      <span className="text-right font-black text-[#111827]">{value}</span>
     </div>
   );
 }
