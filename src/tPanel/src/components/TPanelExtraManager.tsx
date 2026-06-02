@@ -173,7 +173,7 @@ export default function TPanelExtraManager({ activeTab, domains, setDomains, add
   const [runtimeDomains, setRuntimeDomains] = useState<any[]>([]);
 
   // 12. Node.js selector
-  const [selectedNodeVersion, setSelectedNodeVersion] = useState(() => account?.nodeVersion || getPersisted("node_version", "24.15.0"));
+  const [selectedNodeVersion, setSelectedNodeVersion] = useState(() => account?.nodeVersion || getPersisted("node_version", "24.16.0"));
   const [nodeAvailableVersions, setNodeAvailableVersions] = useState<string[]>([]);
   const [nodeTargetDomain, setNodeTargetDomain] = useState("all");
   const [nodePort, setNodePort] = useState(() => String(account?.nodePort || 3000));
@@ -363,7 +363,8 @@ export default function TPanelExtraManager({ activeTab, domains, setDomains, add
     if (ini.post_max_size) setPhpPostLimit(ini.post_max_size);
     if (ini.max_execution_time) setPhpMaxExecution(ini.max_execution_time);
     if (ini.max_input_vars) setPhpMaxInputVars(ini.max_input_vars);
-    if (Array.isArray(data.installedVersions)) setPhpAvailableVersions(data.installedVersions);
+    if (Array.isArray(data.availableVersions)) setPhpAvailableVersions(data.availableVersions);
+    else if (Array.isArray(data.installedVersions)) setPhpAvailableVersions(data.installedVersions);
     if (Array.isArray(data.extensions)) {
       setPhpExtensionRows(data.extensions);
       setPhpExtensions(Object.fromEntries(data.extensions.map((item: any) => [item.name, Boolean(item.selected)])));
@@ -377,7 +378,8 @@ export default function TPanelExtraManager({ activeTab, domains, setDomains, add
     const settings = data?.settings || {};
     if (settings.version) setSelectedNodeVersion(settings.version);
     if (settings.nodePort) setNodePort(String(settings.nodePort));
-    if (Array.isArray(data.installedVersions)) setNodeAvailableVersions(data.installedVersions);
+    if (Array.isArray(data.availableVersions)) setNodeAvailableVersions(data.availableVersions);
+    else if (Array.isArray(data.installedVersions)) setNodeAvailableVersions(data.installedVersions);
     if (Array.isArray(data.domains)) setRuntimeDomains(data.domains);
     setNodeDiagnostics(data.diagnostics || null);
     if (data.account && onAccountUpdate) onAccountUpdate(data.account);
@@ -1947,7 +1949,7 @@ export default function TPanelExtraManager({ activeTab, domains, setDomains, add
                 {phpDiagnostics?.phpErrorLog ? (
                   <p className="mt-1 text-[11px] text-amber-400">Recent PHP error log detected below.</p>
                 ) : (
-                  <p className="mt-1 text-[11px] text-emerald-400">Per-account PHP-FPM pool will be used after apply.</p>
+                  <p className="mt-1 text-[11px] text-emerald-400">Missing PHP versions and selected extensions install automatically on apply.</p>
                 )}
               </div>
               <select
@@ -1965,7 +1967,7 @@ export default function TPanelExtraManager({ activeTab, domains, setDomains, add
                 onChange={(e) => setSelectedPhpVersion(e.target.value)}
                 className="bg-slate-900 border border-slate-700 rounded-xl px-4 py-2 text-xs text-slate-100"
               >
-                {(phpAvailableVersions.length ? phpAvailableVersions : ["8.3", "8.2", "8.1", "8.0", "7.4"]).map((version) => (
+                {(phpAvailableVersions.length ? phpAvailableVersions : ["8.4", "8.3", "8.2", "8.1", "8.0", "7.4"]).map((version) => (
                   <option key={version} value={version}>PHP {version}</option>
                 ))}
               </select>
@@ -2111,7 +2113,7 @@ export default function TPanelExtraManager({ activeTab, domains, setDomains, add
                   Node.js {selectedNodeVersion}
                   {account?.domain ? <span className="ml-2 text-xs font-semibold text-slate-500">for {account.domain}</span> : null}
                 </span>
-                <p className="mt-1 text-[11px] text-emerald-400">Missing versions are downloaded automatically on apply.</p>
+                <p className="mt-1 text-[11px] text-emerald-400">Missing Node.js versions are downloaded automatically on apply.</p>
               </div>
               <select
                 value={nodeTargetDomain}
@@ -2128,7 +2130,7 @@ export default function TPanelExtraManager({ activeTab, domains, setDomains, add
                 onChange={(e) => setSelectedNodeVersion(e.target.value)}
                 className="bg-slate-900 border border-slate-700 rounded-xl px-4 py-2 text-xs text-slate-100"
               >
-                {(nodeAvailableVersions.length ? nodeAvailableVersions : ["24.15.0", "22.11.0", "20.18.1", "18.20.4", "16.20.2", "14.21.3"]).map((version) => (
+                {(nodeAvailableVersions.length ? nodeAvailableVersions : ["26.3.0", "24.16.0", "22.22.3", "20.20.2", "18.20.8", "16.20.2"]).map((version) => (
                   <option key={version} value={version}>Node.js {version}</option>
                 ))}
               </select>
@@ -2359,12 +2361,17 @@ export default function TPanelExtraManager({ activeTab, domains, setDomains, add
                 <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 text-xs">
                   <div>
                     <span className="block text-emerald-300 font-bold">{lastInstallCredentials.name} admin login is ready</span>
-                    <span className="text-slate-300 font-mono break-all">{lastInstallCredentials.url}</span>
+                    <span className="text-slate-300 font-mono break-all">{lastInstallCredentials.adminUrl || lastInstallCredentials.url}</span>
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-slate-200">
+                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-2 text-slate-200">
                     <span className="font-mono">user: {lastInstallCredentials.adminUsername || "n/a"}</span>
                     <span className="font-mono">pass: {lastInstallCredentials.adminPassword || "set by installer"}</span>
                     <span className="font-mono">email: {lastInstallCredentials.adminEmail || "n/a"}</span>
+                    {(lastInstallCredentials.adminUrl || lastInstallCredentials.url) && (
+                      <a href={lastInstallCredentials.adminUrl || lastInstallCredentials.url} target="_blank" rel="noreferrer" className="font-bold text-emerald-300 hover:text-emerald-200 inline-flex items-center gap-1">
+                        Admin Login <ArrowUpRight className="w-3 h-3" />
+                      </a>
+                    )}
                   </div>
                 </div>
               </div>
@@ -2429,6 +2436,11 @@ export default function TPanelExtraManager({ activeTab, domains, setDomains, add
                       {app.url && (
                         <a href={app.url} target="_blank" rel="noreferrer" className="ml-3 text-emerald-400 hover:text-emerald-300 inline-flex items-center gap-1">
                           Open <ArrowUpRight className="w-3 h-3" />
+                        </a>
+                      )}
+                      {app.adminUrl && (
+                        <a href={app.adminUrl} target="_blank" rel="noreferrer" className="ml-3 text-indigo-400 hover:text-indigo-300 inline-flex items-center gap-1">
+                          Admin Login <ArrowUpRight className="w-3 h-3" />
                         </a>
                       )}
                     </div>

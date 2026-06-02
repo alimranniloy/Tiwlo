@@ -215,7 +215,7 @@ export const requiredServerPackages = [
   'nginx', 'apache2', 'php', 'php-fpm', 'php-cli', 'php-mysql', 'php-pgsql',
   'php-curl', 'php-gd', 'php-mbstring', 'php-xml', 'php-zip', 'php-bcmath',
   'php-intl', 'php-soap', 'php-imagick', 'php-redis', 'php-opcache',
-  'php-sqlite3', 'php-gmp', 'php-ldap', 'php-imap', 'php-readline',
+  'php-sqlite3', 'php-gmp', 'php-ldap', 'php-imap', 'php-readline', 'php-bz2', 'php-xsl',
   'mariadb-server', 'mariadb-client', 'mysql-server', 'mysql-client',
   'postgresql', 'postgresql-contrib', 'redis-server', 'memcached', 'nodejs',
   'npm', 'pm2', 'python3', 'python3-pip', 'python3-venv', 'python3-dev',
@@ -2626,15 +2626,85 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 . /etc/tpanel/agent.env
+PHP_SELECTOR_VERSIONS="\${TPANEL_PHP_SELECTOR_VERSIONS:-8.4 8.3 8.2 8.1 8.0 7.4}"
+TOOLS_DIR="\${TPANEL_DIR:-/opt/tpanel}/tools"
+DOWNLOADS_DIR="$TOOLS_DIR/downloads"
+NODE_SELECTOR_DIR="$TOOLS_DIR/node-selector"
+
+install_php_selector_versions() {
+  command -v apt-get >/dev/null 2>&1 || return 0
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get install -y software-properties-common apt-transport-https lsb-release gnupg >/dev/null 2>&1 || true
+  if [ -r /etc/os-release ] && . /etc/os-release && [ "\${ID:-}" = "ubuntu" ]; then
+    command -v add-apt-repository >/dev/null 2>&1 && add-apt-repository -y ppa:ondrej/php >/dev/null 2>&1 || true
+    apt-get update -y || true
+  fi
+  for version in $PHP_SELECTOR_VERSIONS; do
+    apt-get install -y "php\${version}-fpm" "php\${version}-cli" "php\${version}-common" "php\${version}-mysql" "php\${version}-pgsql" "php\${version}-sqlite3" "php\${version}-curl" "php\${version}-zip" "php\${version}-mbstring" "php\${version}-xml" "php\${version}-gd" "php\${version}-intl" "php\${version}-bcmath" "php\${version}-soap" "php\${version}-opcache" || true
+    for extension in imagick redis gmp ldap imap readline bz2 xsl; do
+      apt-get install -y "php\${version}-\${extension}" || true
+    done
+  done
+}
+
+install_node_selector_versions() {
+  command -v node >/dev/null 2>&1 || return 0
+  local index_file="$DOWNLOADS_DIR/node-index.json"
+  mkdir -p "$NODE_SELECTOR_DIR" "$DOWNLOADS_DIR"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL https://nodejs.org/dist/index.json -o "$index_file" || return 0
+  elif command -v wget >/dev/null 2>&1; then
+    wget -qO "$index_file" https://nodejs.org/dist/index.json || return 0
+  else
+    return 0
+  fi
+  local node_arch
+  case "$(uname -m)" in
+    x86_64|amd64) node_arch="x64" ;;
+    arm64|aarch64) node_arch="arm64" ;;
+    *) return 0 ;;
+  esac
+  local versions
+  versions="$(node - "$index_file" <<'NODE'
+const fs = require("fs");
+const rows = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+const selected = [];
+const majors = new Set();
+for (const row of rows) {
+  const version = String(row.version || "").replace(/^v/, "");
+  const major = Number(version.split(".")[0]);
+  if (!Number.isFinite(major) || major < 14 || major % 2 !== 0 || majors.has(major)) continue;
+  majors.add(major);
+  selected.push(version);
+  if (selected.length >= 6) break;
+}
+console.log(selected.join(" "));
+NODE
+)"
+  for version in $versions; do
+    local folder="node-v\${version}-linux-\${node_arch}"
+    local tarball="\${folder}.tar.xz"
+    [ -x "$NODE_SELECTOR_DIR/$folder/bin/node" ] && continue
+    if command -v curl >/dev/null 2>&1; then
+      curl -fL "https://nodejs.org/dist/v\${version}/\${tarball}" -o "$DOWNLOADS_DIR/$tarball" || true
+    elif command -v wget >/dev/null 2>&1; then
+      wget -O "$DOWNLOADS_DIR/$tarball" "https://nodejs.org/dist/v\${version}/\${tarball}" || true
+    fi
+    [ -f "$DOWNLOADS_DIR/$tarball" ] && tar -xJf "$DOWNLOADS_DIR/$tarball" -C "$NODE_SELECTOR_DIR" || true
+  done
+}
+
 if command -v apt-get >/dev/null 2>&1; then
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -y
-  apt-get install -y software-properties-common apt-transport-https lsb-release gnupg php-fpm php-cli php-common php-mysql php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache php-imagick php-redis php-gmp php-ldap php-imap php-readline phpmyadmin mariadb-server postgresql postgresql-contrib vsftpd composer zip unzip || true
+  apt-get install -y software-properties-common apt-transport-https lsb-release gnupg php-fpm php-cli php-common php-mysql php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache php-imagick php-redis php-gmp php-ldap php-imap php-readline php-bz2 php-xsl phpmyadmin mariadb-server postgresql postgresql-contrib vsftpd composer zip unzip || true
 elif command -v dnf >/dev/null 2>&1; then
-  dnf install -y php-fpm php-cli php-common php-mysqlnd php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache php-pecl-imagick php-pecl-redis php-gmp php-ldap php-imap php-readline phpMyAdmin mariadb-server postgresql postgresql-contrib vsftpd composer zip unzip || true
+  dnf install -y php-fpm php-cli php-common php-mysqlnd php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-bz2 php-xml php-gd php-intl php-bcmath php-soap php-opcache php-pecl-imagick php-pecl-redis php-gmp php-ldap php-imap php-readline phpMyAdmin mariadb-server postgresql postgresql-contrib vsftpd composer zip unzip || true
 elif command -v yum >/dev/null 2>&1; then
-  yum install -y php-fpm php-cli php-common php-mysqlnd php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache php-pecl-imagick php-pecl-redis php-gmp php-ldap php-imap php-readline phpMyAdmin mariadb-server postgresql postgresql-contrib vsftpd composer zip unzip || true
+  yum install -y php-fpm php-cli php-common php-mysqlnd php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-bz2 php-xml php-gd php-intl php-bcmath php-soap php-opcache php-pecl-imagick php-pecl-redis php-gmp php-ldap php-imap php-readline phpMyAdmin mariadb-server postgresql postgresql-contrib vsftpd composer zip unzip || true
 fi
+install_php_selector_versions
+install_node_selector_versions
 for svc in $(systemctl list-unit-files --type=service 'php*-fpm.service' 2>/dev/null | awk '/php.*-fpm\.service/ {print $1}'); do
   systemctl enable --now "$svc" >/dev/null 2>&1 || true
 done

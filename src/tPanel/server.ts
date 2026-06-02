@@ -83,19 +83,19 @@ const REQUIRED_PORTS = [
 
 const HOSTING_STACK_PACKAGES = {
   apt: [
-    "nginx", "certbot", "python3-certbot-nginx", "php-fpm", "php-cli", "php-common", "php-mysql", "php-pgsql", "php-sqlite3", "php-curl", "php-zip", "php-mbstring",
+    "nginx", "certbot", "python3-certbot-nginx", "php-fpm", "php-cli", "php-common", "php-mysql", "php-pgsql", "php-sqlite3", "php-curl", "php-zip", "php-mbstring", "php-bz2", "php-xsl",
     "php-xml", "php-gd", "php-intl", "php-bcmath", "php-soap", "php-opcache", "php-imagick", "php-redis", "php-gmp", "php-ldap", "php-imap", "php-readline", "mariadb-server", "pdns-server", "pdns-backend-mysql", "dnsutils",
     "postfix", "dovecot-core", "dovecot-imapd", "dovecot-pop3d", "opendkim", "opendkim-tools", "rspamd", "mailutils", "libsasl2-modules",
     "phpmyadmin", "postgresql", "postgresql-contrib", "vsftpd", "composer", "zip", "unzip", "tar", "rsync", "logrotate", "cron", "acl"
   ],
   dnf: [
-    "nginx", "certbot", "python3-certbot-nginx", "php-fpm", "php-cli", "php-common", "php-mysqlnd", "php-pgsql", "php-sqlite3", "php-curl", "php-zip", "php-mbstring",
+    "nginx", "certbot", "python3-certbot-nginx", "php-fpm", "php-cli", "php-common", "php-mysqlnd", "php-pgsql", "php-sqlite3", "php-curl", "php-zip", "php-mbstring", "php-bz2",
     "php-xml", "php-gd", "php-intl", "php-bcmath", "php-soap", "php-opcache", "php-pecl-imagick", "php-pecl-redis", "php-gmp", "php-ldap", "php-imap", "php-readline", "mariadb-server", "pdns", "pdns-backend-mysql", "bind-utils",
     "postfix", "dovecot", "opendkim", "opendkim-tools", "rspamd", "mailx", "cyrus-sasl", "cyrus-sasl-plain",
     "phpMyAdmin", "postgresql", "postgresql-contrib", "vsftpd", "composer", "zip", "unzip", "tar", "rsync", "logrotate", "cronie", "acl"
   ],
   yum: [
-    "nginx", "certbot", "python3-certbot-nginx", "php-fpm", "php-cli", "php-common", "php-mysqlnd", "php-pgsql", "php-sqlite3", "php-curl", "php-zip", "php-mbstring",
+    "nginx", "certbot", "python3-certbot-nginx", "php-fpm", "php-cli", "php-common", "php-mysqlnd", "php-pgsql", "php-sqlite3", "php-curl", "php-zip", "php-mbstring", "php-bz2",
     "php-xml", "php-gd", "php-intl", "php-bcmath", "php-soap", "php-opcache", "php-pecl-imagick", "php-pecl-redis", "php-gmp", "php-ldap", "php-imap", "php-readline", "mariadb-server", "pdns", "pdns-backend-mysql", "bind-utils",
     "postfix", "dovecot", "opendkim", "opendkim-tools", "rspamd", "mailx", "cyrus-sasl", "cyrus-sasl-plain",
     "phpMyAdmin", "postgresql", "postgresql-contrib", "vsftpd", "composer", "zip", "unzip", "tar", "rsync", "logrotate", "cronie", "acl"
@@ -116,6 +116,7 @@ const HOSTING_STACK_CHECKS = [
 ];
 
 const DEFAULT_PHP_VERSION = "8.3";
+const DEFAULT_PHP_SELECTOR_VERSION_INPUT = process.env.TPANEL_PHP_SELECTOR_VERSIONS || "8.4 8.3 8.2 8.1 8.0 7.4";
 const DEFAULT_PHP_EXTENSIONS = [
   "bcmath", "bz2", "calendar", "ctype", "curl", "dom", "exif", "fileinfo", "ftp", "gd",
   "gettext", "gmp", "iconv", "imagick", "intl", "mbstring", "mysqli", "mysqlnd", "opcache",
@@ -130,9 +131,17 @@ const DEFAULT_SELECTED_PHP_EXTENSIONS = [
 const PHP_EXTENSION_PACKAGES: Record<string, string> = {
   bcmath: "bcmath",
   bz2: "bz2",
+  calendar: "common",
+  ctype: "common",
   curl: "curl",
+  dom: "xml",
+  exif: "common",
+  fileinfo: "common",
+  ftp: "common",
   gd: "gd",
+  gettext: "common",
   gmp: "gmp",
+  iconv: "common",
   imagick: "imagick",
   imap: "imap",
   intl: "intl",
@@ -144,17 +153,30 @@ const PHP_EXTENSION_PACKAGES: Record<string, string> = {
   pdo_mysql: "mysql",
   pdo_pgsql: "pgsql",
   pdo_sqlite: "sqlite3",
+  pcntl: "common",
   pgsql: "pgsql",
+  phar: "common",
+  posix: "common",
   redis: "redis",
+  session: "common",
+  shmop: "common",
+  simplexml: "xml",
   soap: "soap",
+  sockets: "common",
+  sodium: "common",
   sqlite3: "sqlite3",
+  tokenizer: "common",
+  xml: "xml",
+  xmlreader: "xml",
+  xmlwriter: "xml",
   xsl: "xsl",
-  zip: "zip"
+  zip: "zip",
+  zlib: "common"
 };
 let phpVersionCache: { at: number; versions: string[] } | null = null;
 const phpExtensionCache = new Map<string, { at: number; extensions: string[] }>();
-const DEFAULT_NODE_VERSION = process.env.TPANEL_NODE_VERSION || "24.15.0";
-const DEFAULT_NODE_SELECTOR_VERSIONS = ["24.15.0", "22.11.0", "20.18.1", "18.20.4", "16.20.2", "14.21.3"];
+const DEFAULT_NODE_VERSION = process.env.TPANEL_NODE_VERSION || "24.16.0";
+const DEFAULT_NODE_SELECTOR_VERSIONS = ["26.3.0", "24.16.0", "22.22.3", "20.20.2", "18.20.8", "16.20.2"];
 let nodeVersionCache: { at: number; versions: string[] } | null = null;
 const DATABASE_PRIVILEGES = [
   "ALTER", "ALTER ROUTINE", "CREATE", "CREATE ROUTINE", "CREATE TEMPORARY TABLES",
@@ -1072,6 +1094,18 @@ function sortNodeVersions(versions: string[]) {
     });
 }
 
+function configuredNodeSelectorVersions() {
+  const env = String(process.env.TPANEL_NODE_SELECTOR_VERSIONS || "").trim();
+  const parsed = env
+    ? env.split(/[,\s]+/).map((item) => normalizeNodeVersion(item, "")).filter(Boolean)
+    : DEFAULT_NODE_SELECTOR_VERSIONS;
+  return sortNodeVersions(parsed.length ? parsed : DEFAULT_NODE_SELECTOR_VERSIONS);
+}
+
+function availableNodeVersions() {
+  return sortNodeVersions([...configuredNodeSelectorVersions(), ...installedNodeVersions(), DEFAULT_NODE_VERSION]);
+}
+
 function effectiveNodeVersion(account: any, requested = account?.nodeVersion) {
   const preferred = normalizeNodeVersion(requested || DEFAULT_NODE_VERSION);
   const installed = installedNodeVersions();
@@ -1144,6 +1178,18 @@ function normalizePhpVersion(value: unknown, fallback = DEFAULT_PHP_VERSION) {
 function sortPhpVersions(versions: string[]) {
   return Array.from(new Set(versions.map((item) => normalizePhpVersion(item)).filter(Boolean)))
     .sort((a, b) => Number(b.split(".")[0]) - Number(a.split(".")[0]) || Number(b.split(".")[1]) - Number(a.split(".")[1]));
+}
+
+function configuredPhpSelectorVersions() {
+  const parsed = DEFAULT_PHP_SELECTOR_VERSION_INPUT
+    .split(/[,\s]+/)
+    .map((item) => item.match(/^[0-9]+\.[0-9]+/)?.[0] || "")
+    .filter(Boolean);
+  return sortPhpVersions(parsed.length ? parsed : ["8.4", "8.3", "8.2", "8.1", "8.0", "7.4"]);
+}
+
+function availablePhpVersions() {
+  return sortPhpVersions([...configuredPhpSelectorVersions(), ...installedPhpVersions(), DEFAULT_PHP_VERSION]);
 }
 
 function commandExistsSync(command: string) {
@@ -1479,6 +1525,7 @@ function tailTextFile(filePath: string, maxLines = 80) {
 function phpSettingsPayload(account: any, extra: any = {}) {
   const settings = phpSettingsForAccount(account);
   const installedVersions = installedPhpVersions();
+  const versionOptions = availablePhpVersions();
   const installedExtensions = installedPhpExtensions(settings.effectiveVersion);
   const installedSet = new Set(installedExtensions);
   const selectedSet = new Set(settings.extensions);
@@ -1492,6 +1539,8 @@ function phpSettingsPayload(account: any, extra: any = {}) {
     ...extra,
     settings,
     installedVersions,
+    availableVersions: versionOptions,
+    missingVersions: versionOptions.filter((version) => !installedVersions.includes(version)),
     extensions: catalog,
     domains: accountRuntimeDomains(account),
     runtimeRoutes: runtimeRouteMap(account),
@@ -1511,6 +1560,7 @@ function phpSettingsPayload(account: any, extra: any = {}) {
 function nodeSettingsPayload(account: any, extra: any = {}) {
   const version = normalizeNodeVersion(account?.nodeVersion || DEFAULT_NODE_VERSION);
   const installedVersions = installedNodeVersions();
+  const versionOptions = availableNodeVersions();
   const effectiveVersion = effectiveNodeVersion(account, version);
   return {
     ok: true,
@@ -1522,6 +1572,7 @@ function nodeSettingsPayload(account: any, extra: any = {}) {
       binary: nodeBinaryForVersion(effectiveVersion)
     },
     installedVersions,
+    availableVersions: versionOptions,
     domains: accountRuntimeDomains(account),
     runtimeRoutes: runtimeRouteMap(account),
     missingVersions: installedVersions.includes(version) ? [] : [version],
@@ -2446,10 +2497,10 @@ async function installPhpRuntimePackages(version: string, extensions: string[]) 
   const quoted = packages.map((item) => `'${item.replace(/'/g, "'\\''")}'`).join(" ");
   const aptBootstrap = "export DEBIAN_FRONTEND=noninteractive; apt-get update -y; if [ -r /etc/os-release ] && . /etc/os-release && [ \"\\${ID:-}\" = \"ubuntu\" ]; then apt-get install -y software-properties-common apt-transport-https lsb-release gnupg >/dev/null 2>&1 || true; command -v add-apt-repository >/dev/null 2>&1 && add-apt-repository -y ppa:ondrej/php >/dev/null 2>&1 || true; apt-get update -y || true; fi";
   const command = manager === "apt"
-    ? `${aptBootstrap}; apt-get install -y ${quoted}`
-    : `${manager} install -y ${quoted}`;
+    ? `${aptBootstrap}; for pkg in ${quoted}; do apt-get install -y "$pkg" || true; done`
+    : `for pkg in ${quoted}; do ${manager} install -y "$pkg" || true; done`;
   try {
-    const { stdout, stderr } = await execFileAsync("sh", ["-lc", command], { timeout: 900000, maxBuffer: 4 * 1024 * 1024 });
+    const { stdout, stderr } = await execFileAsync("sh", ["-lc", `${command}; for svc in $(systemctl list-unit-files --type=service 'php*-fpm.service' 2>/dev/null | awk '/php.*-fpm\\.service/ {print $1}'); do systemctl enable --now "$svc" >/dev/null 2>&1 || true; done`], { timeout: 900000, maxBuffer: 4 * 1024 * 1024 });
     phpVersionCache = null;
     phpExtensionCache.clear();
     return `${stdout || ""}${stderr || ""}`.trim();
@@ -2466,7 +2517,7 @@ async function installPhpRuntimePackages(version: string, extensions: string[]) 
 
 async function enablePhpExtensions(version: string, extensions: string[]) {
   if (process.platform === "win32" || !commandExistsSync("phpenmod")) return "";
-  const selected = extensions.map((item) => PHP_EXTENSION_PACKAGES[item] || item).filter(Boolean);
+  const selected = extensions.map((item) => String(item).toLowerCase().trim()).filter(Boolean);
   if (!selected.length) return "";
   const quoted = Array.from(new Set(selected)).map((item) => `'${String(item).replace(/'/g, "'\\''")}'`).join(" ");
   try {
@@ -3107,6 +3158,7 @@ function installedAppsPayload(account: any) {
     domain: item.domain,
     path: item.path || "",
     url: item.url,
+    adminUrl: item.adminUrl || (item.appId === "wordpress" && item.url ? `${String(item.url).replace(/\/?$/, "/")}wp-admin/` : ""),
     documentRoot: item.documentRoot,
     adminUsername: item.adminUsername || "",
     adminEmail: item.adminEmail || "",
@@ -3265,6 +3317,7 @@ async function installOneClickApp(account: any, body: any) {
     const installSecret = {
       app: app.name,
       url: target.url,
+      adminUrl: app.id === "wordpress" ? `${target.url.replace(/\/?$/, "/")}wp-admin/` : "",
       adminUsername,
       adminPassword,
       adminEmail,
@@ -3282,6 +3335,7 @@ async function installOneClickApp(account: any, body: any) {
       domain: target.domain,
       path: target.relativePath,
       url: target.url,
+      adminUrl: app.id === "wordpress" ? `${target.url.replace(/\/?$/, "/")}wp-admin/` : "",
       documentRoot: target.destination,
       adminUsername,
       adminEmail,

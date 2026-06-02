@@ -12,7 +12,7 @@ REPO_URL="${TPANEL_REPO_URL:-https://github.com/alimranniloy/Tiwlo.git}"
 BRANCH="${TPANEL_BRANCH:-main}"
 TOOLS_DIR="$TPANEL_DIR/tools"
 DOWNLOADS_DIR="$TOOLS_DIR/downloads"
-NODE_VERSION="${TPANEL_NODE_VERSION:-24.15.0}"
+NODE_VERSION="${TPANEL_NODE_VERSION:-24.16.0}"
 PHP_SELECTOR_VERSIONS="${TPANEL_PHP_SELECTOR_VERSIONS:-8.4 8.3 8.2 8.1 8.0 7.4}"
 NODE_OS="linux"
 case "$(uname -m)" in
@@ -113,9 +113,10 @@ install_php_selector_versions() {
       "php${version}-fpm" "php${version}-cli" "php${version}-common" "php${version}-mysql" \
       "php${version}-pgsql" "php${version}-sqlite3" "php${version}-curl" "php${version}-zip" \
       "php${version}-mbstring" "php${version}-xml" "php${version}-gd" "php${version}-intl" \
-      "php${version}-bcmath" "php${version}-soap" "php${version}-opcache" "php${version}-imagick" \
-      "php${version}-redis" "php${version}-gmp" "php${version}-ldap" "php${version}-imap" \
-      "php${version}-readline" || true
+      "php${version}-bcmath" "php${version}-soap" "php${version}-opcache" || true
+    for extension in imagick redis gmp ldap imap readline bz2 xsl; do
+      apt-get install -y "php${version}-${extension}" || true
+    done
   done
 }
 
@@ -139,7 +140,7 @@ const majors = new Set();
 for (const row of rows) {
   const version = String(row.version || "").replace(/^v/, "");
   const major = Number(version.split(".")[0]);
-  if (!Number.isFinite(major) || major < 14 || majors.has(major)) continue;
+  if (!Number.isFinite(major) || major < 14 || major % 2 !== 0 || majors.has(major)) continue;
   majors.add(major);
   selected.push(version);
   if (selected.length >= 6) break;
@@ -211,11 +212,11 @@ step "Installing runtime packages"
 if have apt-get; then
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -y
-  apt-get install -y git curl wget ca-certificates openssl xz-utils nginx ufw certbot python3 python3-certbot-nginx build-essential software-properties-common apt-transport-https lsb-release gnupg php-fpm php-cli php-common php-mysql php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache php-imagick php-redis php-gmp php-ldap php-imap php-readline phpmyadmin mariadb-server postgresql postgresql-contrib vsftpd composer pdns-server pdns-backend-mysql dnsutils postfix dovecot-core dovecot-imapd dovecot-pop3d opendkim opendkim-tools rspamd mailutils libsasl2-modules zip unzip tar rsync logrotate cron acl || true
+  apt-get install -y git curl wget ca-certificates openssl xz-utils nginx ufw certbot python3 python3-certbot-nginx build-essential software-properties-common apt-transport-https lsb-release gnupg php-fpm php-cli php-common php-mysql php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache php-imagick php-redis php-gmp php-ldap php-imap php-readline php-bz2 php-xsl phpmyadmin mariadb-server postgresql postgresql-contrib vsftpd composer pdns-server pdns-backend-mysql dnsutils postfix dovecot-core dovecot-imapd dovecot-pop3d opendkim opendkim-tools rspamd mailutils libsasl2-modules zip unzip tar rsync logrotate cron acl || true
 elif have dnf; then
-  dnf install -y git curl wget ca-certificates openssl xz nginx firewalld certbot python3 python3-certbot-nginx gcc gcc-c++ make php-fpm php-cli php-common php-mysqlnd php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache php-pecl-imagick php-pecl-redis php-gmp php-ldap php-imap php-readline phpMyAdmin mariadb-server postgresql postgresql-contrib vsftpd composer pdns pdns-backend-mysql bind-utils postfix dovecot opendkim opendkim-tools rspamd mailx cyrus-sasl cyrus-sasl-plain zip unzip tar rsync logrotate cronie acl || true
+  dnf install -y git curl wget ca-certificates openssl xz nginx firewalld certbot python3 python3-certbot-nginx gcc gcc-c++ make php-fpm php-cli php-common php-mysqlnd php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-bz2 php-xml php-gd php-intl php-bcmath php-soap php-opcache php-pecl-imagick php-pecl-redis php-gmp php-ldap php-imap php-readline phpMyAdmin mariadb-server postgresql postgresql-contrib vsftpd composer pdns pdns-backend-mysql bind-utils postfix dovecot opendkim opendkim-tools rspamd mailx cyrus-sasl cyrus-sasl-plain zip unzip tar rsync logrotate cronie acl || true
 elif have yum; then
-  yum install -y git curl wget ca-certificates openssl xz nginx firewalld certbot python3 python3-certbot-nginx gcc gcc-c++ make php-fpm php-cli php-common php-mysqlnd php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache php-pecl-imagick php-pecl-redis php-gmp php-ldap php-imap php-readline phpMyAdmin mariadb-server postgresql postgresql-contrib vsftpd composer pdns pdns-backend-mysql bind-utils postfix dovecot opendkim opendkim-tools rspamd mailx cyrus-sasl cyrus-sasl-plain zip unzip tar rsync logrotate cronie acl || true
+  yum install -y git curl wget ca-certificates openssl xz nginx firewalld certbot python3 python3-certbot-nginx gcc gcc-c++ make php-fpm php-cli php-common php-mysqlnd php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-bz2 php-xml php-gd php-intl php-bcmath php-soap php-opcache php-pecl-imagick php-pecl-redis php-gmp php-ldap php-imap php-readline phpMyAdmin mariadb-server postgresql postgresql-contrib vsftpd composer pdns pdns-backend-mysql bind-utils postfix dovecot opendkim opendkim-tools rspamd mailx cyrus-sasl cyrus-sasl-plain zip unzip tar rsync logrotate cronie acl || true
 else
   echo "Unsupported Linux package manager. Install git, curl, xz, and nginx, then rerun."
   exit 1
@@ -500,7 +501,7 @@ const majors = new Set();
 for (const row of rows) {
   const version = String(row.version || "").replace(/^v/, "");
   const major = Number(version.split(".")[0]);
-  if (!Number.isFinite(major) || major < 14 || majors.has(major)) continue;
+  if (!Number.isFinite(major) || major < 14 || major % 2 !== 0 || majors.has(major)) continue;
   majors.add(major);
   selected.push(version);
   if (selected.length >= 6) break;
@@ -525,18 +526,21 @@ install_php_selector_versions() {
     apt-get update -y || true
   fi
   for version in $PHP_SELECTOR_VERSIONS; do
-    apt-get install -y "php${version}-fpm" "php${version}-cli" "php${version}-common" "php${version}-mysql" "php${version}-pgsql" "php${version}-sqlite3" "php${version}-curl" "php${version}-zip" "php${version}-mbstring" "php${version}-xml" "php${version}-gd" "php${version}-intl" "php${version}-bcmath" "php${version}-soap" "php${version}-opcache" "php${version}-imagick" "php${version}-redis" "php${version}-gmp" "php${version}-ldap" "php${version}-imap" "php${version}-readline" || true
+    apt-get install -y "php${version}-fpm" "php${version}-cli" "php${version}-common" "php${version}-mysql" "php${version}-pgsql" "php${version}-sqlite3" "php${version}-curl" "php${version}-zip" "php${version}-mbstring" "php${version}-xml" "php${version}-gd" "php${version}-intl" "php${version}-bcmath" "php${version}-soap" "php${version}-opcache" || true
+    for extension in imagick redis gmp ldap imap readline bz2 xsl; do
+      apt-get install -y "php${version}-${extension}" || true
+    done
   done
 }
 install_runtime_packages() {
   if command -v apt-get >/dev/null 2>&1; then
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -y
-    apt-get install -y software-properties-common apt-transport-https lsb-release gnupg php-fpm php-cli php-common php-mysql php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache php-imagick php-redis php-gmp php-ldap php-imap php-readline phpmyadmin mariadb-server postgresql postgresql-contrib vsftpd composer zip unzip || true
+    apt-get install -y software-properties-common apt-transport-https lsb-release gnupg php-fpm php-cli php-common php-mysql php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache php-imagick php-redis php-gmp php-ldap php-imap php-readline php-bz2 php-xsl phpmyadmin mariadb-server postgresql postgresql-contrib vsftpd composer zip unzip || true
   elif command -v dnf >/dev/null 2>&1; then
-    dnf install -y php-fpm php-cli php-common php-mysqlnd php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache php-pecl-imagick php-pecl-redis php-gmp php-ldap php-imap php-readline phpMyAdmin mariadb-server postgresql postgresql-contrib vsftpd composer zip unzip || true
+    dnf install -y php-fpm php-cli php-common php-mysqlnd php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-bz2 php-xml php-gd php-intl php-bcmath php-soap php-opcache php-pecl-imagick php-pecl-redis php-gmp php-ldap php-imap php-readline phpMyAdmin mariadb-server postgresql postgresql-contrib vsftpd composer zip unzip || true
   elif command -v yum >/dev/null 2>&1; then
-    yum install -y php-fpm php-cli php-common php-mysqlnd php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache php-pecl-imagick php-pecl-redis php-gmp php-ldap php-imap php-readline phpMyAdmin mariadb-server postgresql postgresql-contrib vsftpd composer zip unzip || true
+    yum install -y php-fpm php-cli php-common php-mysqlnd php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-bz2 php-xml php-gd php-intl php-bcmath php-soap php-opcache php-pecl-imagick php-pecl-redis php-gmp php-ldap php-imap php-readline phpMyAdmin mariadb-server postgresql postgresql-contrib vsftpd composer zip unzip || true
   fi
   for svc in $(systemctl list-unit-files --type=service 'php*-fpm.service' 2>/dev/null | awk '/php.*-fpm\.service/ {print $1}'); do
     systemctl enable --now "$svc" >/dev/null 2>&1 || true
