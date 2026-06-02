@@ -124,10 +124,7 @@ const DEFAULT_PHP_EXTENSIONS = [
   "redis", "session", "shmop", "simplexml", "soap", "sockets", "sodium", "sqlite3", "tokenizer",
   "xml", "xmlreader", "xmlwriter", "xsl", "zip", "zlib"
 ];
-const DEFAULT_SELECTED_PHP_EXTENSIONS = [
-  "bcmath", "curl", "dom", "fileinfo", "gd", "intl", "mbstring", "mysqli", "mysqlnd",
-  "opcache", "pdo", "pdo_mysql", "simplexml", "soap", "xml", "xmlreader", "xmlwriter", "zip"
-];
+const DEFAULT_SELECTED_PHP_EXTENSIONS = [...DEFAULT_PHP_EXTENSIONS];
 const PHP_EXTENSION_PACKAGES: Record<string, string> = {
   bcmath: "bcmath",
   bz2: "bz2",
@@ -937,9 +934,13 @@ function applyPanelDomainProxy(settings: any) {
   const availablePath = "/etc/nginx/sites-available/tpanel-panel.conf";
   const enabledPath = "/etc/nginx/sites-enabled/tpanel-panel.conf";
   const proxyPort = Number(process.env.PORT || PORT || 2086);
+  const serverIp = settings.detectedServerIp || configuredServerIp();
+  const serverNames = Array.from(new Set([domain, `www.${domain}`, serverIp || "", "_"].filter(Boolean))).join(" ");
   const conf = `server {
-    listen 80;
-    server_name ${domain} www.${domain};
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name ${serverNames};
+    client_max_body_size 512m;
 
     location /.well-known/acme-challenge/ {
         root /var/www/html;
@@ -964,6 +965,192 @@ function applyPanelDomainProxy(settings: any) {
     reloadNginx();
   } catch {
     // domain settings should still save even if nginx is not installed yet
+  }
+}
+
+function ensureDefaultPanelProxy() {
+  if (process.platform === "win32") return;
+  const state = readPanelState();
+  const settings = readDomainSettings();
+  const domain = cleanDomain(settings.primaryDomain || process.env.TPANEL_DOMAIN || "");
+  const serverIp = settings.detectedServerIp || configuredServerIp();
+  const names = Array.from(new Set([
+    serverIp || "",
+    "_",
+    domain && domain !== "tiwlo.com" && !domainInUse(state, domain) ? domain : "",
+    domain && domain !== "tiwlo.com" && !domainInUse(state, domain) ? `www.${domain}` : ""
+  ].filter(Boolean))).join(" ");
+  const availablePath = "/etc/nginx/sites-available/tpanel-panel.conf";
+  const enabledPath = "/etc/nginx/sites-enabled/tpanel-panel.conf";
+  const proxyPort = Number(process.env.PORT || PORT || 2086);
+  const conf = `server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name ${names || "_"};
+    client_max_body_size 512m;
+    access_log /var/log/nginx/tpanel-panel.access.log;
+    error_log /var/log/nginx/tpanel-panel.error.log;
+
+    location / {
+        proxy_pass http://127.0.0.1:${proxyPort};
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 300;
+        proxy_send_timeout 300;
+    }
+}
+`;
+  try {
+    ensureWebIngress();
+    fs.mkdirSync("/etc/nginx/sites-available", { recursive: true });
+    fs.mkdirSync("/etc/nginx/sites-enabled", { recursive: true });
+    fs.mkdirSync("/var/log/nginx", { recursive: true });
+    const current = fs.existsSync(availablePath) ? fs.readFileSync(availablePath, "utf8") : "";
+    const linkExists = fs.existsSync(enabledPath);
+    removeIfExists("/etc/nginx/sites-enabled/default");
+    if (current !== conf) fs.writeFileSync(availablePath, conf);
+    if (!linkExists) fs.symlinkSync(availablePath, enabledPath);
+    if (current !== conf || !linkExists) reloadNginx();
+  } catch {
+    // startup should continue even if the panel proxy cannot be repaired.
+  }
+}
+
+function ensureMaintenanceScripts() {
+  if (process.platform === "win32") return;
+  const updatePath = "/usr/local/sbin/tpanel-update";
+  const script = [
+    "#!/usr/bin/env bash",
+    "set -euo pipefail",
+    "",
+    "if [ \"$(id -u)\" -ne 0 ]; then",
+    "  echo \"Run as root: sudo tpanel-update\"",
+    "  exit 1",
+    "fi",
+    "",
+    "if [ -f /etc/tpanel/agent.env ]; then",
+    "  . /etc/tpanel/agent.env",
+    "fi",
+    "TPANEL_DIR=\"${TPANEL_DIR:-/opt/tpanel}\"",
+    "SOURCE_DIR=\"${SOURCE_DIR:-$TPANEL_DIR/source}\"",
+    "APP_DIR=\"${APP_DIR:-$SOURCE_DIR/src/tPanel}\"",
+    "TPANEL_PORT=\"${TPANEL_PORT:-2086}\"",
+    "PHP_SELECTOR_VERSIONS=\"${TPANEL_PHP_SELECTOR_VERSIONS:-8.4 8.3 8.2 8.1 8.0 7.4}\"",
+    "TOOLS_DIR=\"$TPANEL_DIR/tools\"",
+    "DOWNLOADS_DIR=\"$TOOLS_DIR/downloads\"",
+    "NODE_SELECTOR_DIR=\"$TOOLS_DIR/node-selector\"",
+    "NPM_BIN=\"${NPM_BIN:-$(command -v npm || true)}\"",
+    "",
+    "install_php_selector_versions() {",
+    "  command -v apt-get >/dev/null 2>&1 || return 0",
+    "  export DEBIAN_FRONTEND=noninteractive",
+    "  apt-get update -y || true",
+    "  apt-get install -y software-properties-common apt-transport-https lsb-release gnupg >/dev/null 2>&1 || true",
+    "  if [ -r /etc/os-release ] && . /etc/os-release && [ \"${ID:-}\" = \"ubuntu\" ]; then",
+    "    command -v add-apt-repository >/dev/null 2>&1 && add-apt-repository -y ppa:ondrej/php >/dev/null 2>&1 || true",
+    "    apt-get update -y || true",
+    "  fi",
+    "  for version in $PHP_SELECTOR_VERSIONS; do",
+    "    apt-get install -y \"php${version}-fpm\" \"php${version}-cli\" \"php${version}-common\" \"php${version}-mysql\" \"php${version}-pgsql\" \"php${version}-sqlite3\" \"php${version}-curl\" \"php${version}-zip\" \"php${version}-mbstring\" \"php${version}-xml\" \"php${version}-gd\" \"php${version}-intl\" \"php${version}-bcmath\" \"php${version}-soap\" \"php${version}-opcache\" || true",
+    "    for extension in imagick redis gmp ldap imap readline bz2 xsl; do",
+    "      apt-get install -y \"php${version}-${extension}\" || true",
+    "    done",
+    "  done",
+    "}",
+    "",
+    "install_runtime_packages() {",
+    "  if command -v apt-get >/dev/null 2>&1; then",
+    "    export DEBIAN_FRONTEND=noninteractive",
+    "    apt-get update -y || true",
+    "    apt-get install -y git curl wget ca-certificates openssl xz-utils nginx ufw certbot python3 python3-certbot-nginx build-essential software-properties-common apt-transport-https lsb-release gnupg php-fpm php-cli php-common php-mysql php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache php-imagick php-redis php-gmp php-ldap php-imap php-readline php-bz2 php-xsl phpmyadmin mariadb-server postgresql postgresql-contrib vsftpd composer zip unzip tar rsync logrotate cron acl || true",
+    "  elif command -v dnf >/dev/null 2>&1; then",
+    "    dnf install -y php-fpm php-cli php-common php-mysqlnd php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-bz2 php-xml php-gd php-intl php-bcmath php-soap php-opcache php-pecl-imagick php-pecl-redis php-gmp php-ldap php-imap php-readline phpMyAdmin mariadb-server postgresql postgresql-contrib vsftpd composer zip unzip || true",
+    "  elif command -v yum >/dev/null 2>&1; then",
+    "    yum install -y php-fpm php-cli php-common php-mysqlnd php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-bz2 php-xml php-gd php-intl php-bcmath php-soap php-opcache php-pecl-imagick php-pecl-redis php-gmp php-ldap php-imap php-readline phpMyAdmin mariadb-server postgresql postgresql-contrib vsftpd composer zip unzip || true",
+    "  fi",
+    "  for svc in $(systemctl list-unit-files --type=service 'php*-fpm.service' 2>/dev/null | awk '/php.*-fpm\\.service/ {print $1}'); do",
+    "    systemctl enable --now \"$svc\" >/dev/null 2>&1 || true",
+    "  done",
+    "  systemctl enable --now nginx >/dev/null 2>&1 || true",
+    "  systemctl enable --now mariadb >/dev/null 2>&1 || systemctl enable --now mysql >/dev/null 2>&1 || true",
+    "  systemctl enable --now postgresql >/dev/null 2>&1 || true",
+    "  systemctl enable --now vsftpd >/dev/null 2>&1 || true",
+    "}",
+    "",
+    "install_node_selector_versions() {",
+    "  command -v node >/dev/null 2>&1 || return 0",
+    "  mkdir -p \"$NODE_SELECTOR_DIR\" \"$DOWNLOADS_DIR\"",
+    "  local index_file=\"$DOWNLOADS_DIR/node-index.json\"",
+    "  if command -v curl >/dev/null 2>&1; then",
+    "    curl -fsSL https://nodejs.org/dist/index.json -o \"$index_file\" || return 0",
+    "  elif command -v wget >/dev/null 2>&1; then",
+    "    wget -qO \"$index_file\" https://nodejs.org/dist/index.json || return 0",
+    "  else",
+    "    return 0",
+    "  fi",
+    "  local node_arch",
+    "  case \"$(uname -m)\" in",
+    "    x86_64|amd64) node_arch=\"x64\" ;;",
+    "    arm64|aarch64) node_arch=\"arm64\" ;;",
+    "    *) return 0 ;;",
+    "  esac",
+    "  local versions",
+    "  versions=\"$(node - \"$index_file\" <<'NODE'",
+    "const fs = require('fs');",
+    "const rows = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));",
+    "const selected = [];",
+    "const majors = new Set();",
+    "for (const row of rows) {",
+    "  const version = String(row.version || '').replace(/^v/, '');",
+    "  const major = Number(version.split('.')[0]);",
+    "  if (!Number.isFinite(major) || major < 14 || major % 2 !== 0 || majors.has(major)) continue;",
+    "  majors.add(major);",
+    "  selected.push(version);",
+    "  if (selected.length >= 6) break;",
+    "}",
+    "console.log(selected.join(' '));",
+    "NODE",
+    ")\"",
+    "  for version in $versions; do",
+    "    local folder=\"node-v${version}-linux-${node_arch}\"",
+    "    local tarball=\"${folder}.tar.xz\"",
+    "    [ -x \"$NODE_SELECTOR_DIR/$folder/bin/node\" ] && continue",
+    "    if command -v curl >/dev/null 2>&1; then",
+    "      curl -fL \"https://nodejs.org/dist/v${version}/${tarball}\" -o \"$DOWNLOADS_DIR/$tarball\" || true",
+    "    elif command -v wget >/dev/null 2>&1; then",
+    "      wget -O \"$DOWNLOADS_DIR/$tarball\" \"https://nodejs.org/dist/v${version}/${tarball}\" || true",
+    "    fi",
+    "    [ -f \"$DOWNLOADS_DIR/$tarball\" ] && tar -xJf \"$DOWNLOADS_DIR/$tarball\" -C \"$NODE_SELECTOR_DIR\" || true",
+    "  done",
+    "}",
+    "",
+    "install_runtime_packages",
+    "install_php_selector_versions",
+    "install_node_selector_versions",
+    "cd \"$SOURCE_DIR\"",
+    "git pull --ff-only || { git stash push -u -m \"tpanel-update-autostash-$(date +%Y%m%d%H%M%S)\" || true; git pull --ff-only; }",
+    "cd \"$APP_DIR\"",
+    "if [ -z \"$NPM_BIN\" ]; then NPM_BIN=\"$(command -v npm || true)\"; fi",
+    "if [ -f package-lock.json ]; then \"$NPM_BIN\" ci --include=optional; else \"$NPM_BIN\" install --include=optional; fi",
+    "\"$NPM_BIN\" run build",
+    "systemctl restart tpanel",
+    "echo \"tPanel updated. Runtime versions, extensions, panel route, database and user data were preserved.\"",
+    ""
+  ].join("\n");
+  try {
+    fs.mkdirSync(path.dirname(updatePath), { recursive: true });
+    const current = fs.existsSync(updatePath) ? fs.readFileSync(updatePath, "utf8") : "";
+    if (current !== script) {
+      fs.writeFileSync(updatePath, script);
+      fs.chmodSync(updatePath, 0o700);
+    }
+  } catch {
+    // Not running as root or /usr/local/sbin unavailable; update can still be run from installer.
   }
 }
 
@@ -1275,7 +1462,20 @@ function installedPhpExtensions(version: string) {
   if (process.platform === "win32") return DEFAULT_PHP_EXTENSIONS;
   try {
     const output = execFileSync(phpCliCommand(cleanVersion), ["-m"], { encoding: "utf8", timeout: 15000 });
-    const extensions = Array.from(new Set(output.split(/\r?\n/).map((item) => item.trim().toLowerCase()).filter(Boolean)));
+    const rawExtensions = output.split(/\r?\n/).map((item) => item.trim().toLowerCase()).filter(Boolean);
+    const aliases: Record<string, string[]> = {
+      "zend opcache": ["opcache"],
+      pdo: ["pdo"],
+      mysqlnd: ["mysqlnd"],
+      "pdo_mysql": ["pdo_mysql"],
+      "pdo_pgsql": ["pdo_pgsql"],
+      "pdo_sqlite": ["pdo_sqlite"],
+      "simplexml": ["simplexml", "xml"],
+      "xmlreader": ["xmlreader", "xml"],
+      "xmlwriter": ["xmlwriter", "xml"]
+    };
+    const expanded = rawExtensions.flatMap((item) => [item, ...(aliases[item] || [])]);
+    const extensions = Array.from(new Set(expanded));
     phpExtensionCache.set(cleanVersion, { at: Date.now(), extensions });
     return extensions;
   } catch {
@@ -1614,7 +1814,7 @@ function nginxContentBlock(account: any, documentRoot: string, routeRuntime: any
     }
 
     location / {
-        try_files $uri $uri/index.html $uri/index.htm /index.php?$query_string;
+        try_files $uri $uri/ /index.php?$query_string;
     }
 
     location ~ \\.php$ {
@@ -1793,6 +1993,7 @@ function reconcileWebRouting() {
   if (process.platform === "win32") return;
   const state = readPanelState();
   const accounts = activePanelAccounts(state);
+  ensureDefaultPanelProxy();
   if (accounts.length) ensureWebIngress();
 
   let changed = false;
@@ -3311,8 +3512,15 @@ async function installOneClickApp(account: any, body: any) {
         );
         installOutput = `${installOutput}\n${stdout || ""}${stderr || ""}`.trim();
       } catch (error: any) {
-        installOutput = `${installOutput}\n${error.stdout || ""}${error.stderr || error.message || ""}`.trim();
+        const details = `${error.stdout || ""}${error.stderr || error.message || ""}`.trim();
+        throw new Error(`WordPress admin setup failed. ${details || "Check PHP/MySQL extensions and try again."}`);
       }
+      const { stdout: verifyStdout, stderr: verifyStderr } = await runAccountProvisionCommand(account,
+        `php ${shellSingleQuote(wpCli)} core is-installed --path=${shellSingleQuote(target.destination)}`,
+        target.destination,
+        300000
+      );
+      installOutput = `${installOutput}\n${verifyStdout || ""}${verifyStderr || ""}`.trim();
     }
     const installSecret = {
       app: app.name,
@@ -3641,8 +3849,9 @@ app.post("/api/user/php-settings", requireLicense, async (req, res) => {
     }
     let installOutput = "";
     if (req.body?.autoInstall !== false) {
-      installOutput = await installPhpRuntimePackages(requestedVersion, requestedExtensions);
-      installOutput += `\n${await enablePhpExtensions(requestedVersion, requestedExtensions)}`;
+      const installExtensions = Array.from(new Set([...DEFAULT_PHP_EXTENSIONS, ...requestedExtensions]));
+      installOutput = await installPhpRuntimePackages(requestedVersion, installExtensions);
+      installOutput += `\n${await enablePhpExtensions(requestedVersion, installExtensions)}`;
     }
     const updated = updateStoredAccount(account.username, (current: any) => {
       const provisioning = current.provisioning || buildAccountProvisioning(req, current);
@@ -5272,6 +5481,7 @@ app.post("/api/ai", async (req, res) => {
 
 // Port and server launch
 async function run() {
+  ensureMaintenanceScripts();
   reconcileWebRouting();
 
   if (process.env.NODE_ENV !== "production") {
