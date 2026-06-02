@@ -1,30 +1,30 @@
 import { Fragment, lazy, Suspense, useState, useEffect, type ReactElement, type ReactNode } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
-import { Droplet, Domain, User } from './types';
+import type { Droplet, Domain, User } from './types';
 
 // Pages
-import Dashboard from './pages/Dashboard';
-import ServicesPage from './pages/Services';
-import ProductsPage from './pages/Products';
-import CommercePage from './pages/Commerce';
-import BroadbandPage from './pages/Broadband';
-import TiwloPayCheckout from './pages/TiwloPayCheckout';
-import AdminDashboard from './pages/management/AdminDashboard';
-import LoginPage from './pages/Login';
-import SignupPage from './pages/Signup';
-import ForgotPassword from './pages/ForgotPassword';
-import ResetPassword from './pages/ResetPassword';
-import VerifyEmail from './pages/VerifyEmail';
-import EmailPortal from './pages/EmailPortal';
 import LandingPage from './pages/LandingPage';
-import BannedAccount from './pages/BannedAccount';
-import MaintenancePage from './pages/Maintenance';
-import NotFoundPage from './pages/NotFound';
-import CompleteProfile from './pages/CompleteProfile';
-import StorefrontHost from './themes/StorefrontHost';
-import { AuraPreview } from './themes/aura';
-import { EplazaPreview } from './themes/eplaza';
 
+const Dashboard = lazy(() => import('./pages/Dashboard'));
+const ServicesPage = lazy(() => import('./pages/Services'));
+const ProductsPage = lazy(() => import('./pages/Products'));
+const CommercePage = lazy(() => import('./pages/Commerce'));
+const BroadbandPage = lazy(() => import('./pages/Broadband'));
+const TiwloPayCheckout = lazy(() => import('./pages/TiwloPayCheckout'));
+const AdminDashboard = lazy(() => import('./pages/management/AdminDashboard'));
+const LoginPage = lazy(() => import('./pages/Login'));
+const SignupPage = lazy(() => import('./pages/Signup'));
+const ForgotPassword = lazy(() => import('./pages/ForgotPassword'));
+const ResetPassword = lazy(() => import('./pages/ResetPassword'));
+const VerifyEmail = lazy(() => import('./pages/VerifyEmail'));
+const EmailPortal = lazy(() => import('./pages/EmailPortal'));
+const BannedAccount = lazy(() => import('./pages/BannedAccount'));
+const MaintenancePage = lazy(() => import('./pages/Maintenance'));
+const NotFoundPage = lazy(() => import('./pages/NotFound'));
+const CompleteProfile = lazy(() => import('./pages/CompleteProfile'));
+const StorefrontHost = lazy(() => import('./themes/StorefrontHost'));
+const AuraPreview = lazy(() => import('./themes/aura').then((module) => ({ default: module.AuraPreview })));
+const EplazaPreview = lazy(() => import('./themes/eplaza').then((module) => ({ default: module.EplazaPreview })));
 const DropletsPage = lazy(() => import('./pages/Droplets'));
 const DomainsPage = lazy(() => import('./pages/Domains'));
 const NetworkingPage = lazy(() => import('./pages/Networking'));
@@ -94,7 +94,7 @@ const ISPStorefront = lazy(() => import('./pages/isp/ISPStorefront'));
 const ISPAddRouter = lazy(() => import('./pages/isp/ISPAddRouter'));
 const ISPAdminRoot = lazy(() => import('./pages/isp/admin/ISPAdminRoot'));
 const WhatsAppVerificationRequired = lazy(() => import('./pages/WhatsAppVerificationRequired'));
-import { clearAuthToken, fetchAdminModules, fetchConsoleData, fetchCurrentUserWithApi, fetchPlatformStatusWithApi, getAuthToken } from './lib/tiwloApi';
+import { clearAuthToken, fetchAdminModules, fetchConsoleData, fetchCurrentUserWithApi, fetchPlatformStatusWithApi, getAuthToken } from './lib/api/appBootstrap';
 import { getStorefrontHostContext } from './lib/storefrontHost';
 import { isProfileComplete } from './lib/countries';
 import { SERVICE_MODULE_GROUP, SERVICE_MODULE_KEYS, serviceEnabled } from './lib/serviceModules';
@@ -388,6 +388,8 @@ export default function App() {
 
   useEffect(() => {
     let isMounted = true;
+    let idleId: number | undefined;
+    let timerId: number | undefined;
     const loadStatus = async () => {
       try {
         const status = await fetchPlatformStatusWithApi();
@@ -403,10 +405,26 @@ export default function App() {
       }
     };
 
-    loadStatus();
+    const scheduleInitialStatusLoad = () => {
+      if (user || storefrontHost || isEmailHost) {
+        loadStatus();
+        return;
+      }
+      const requestIdle = (window as any).requestIdleCallback as undefined | ((callback: () => void, options?: { timeout: number }) => number);
+      if (requestIdle) {
+        idleId = requestIdle(loadStatus, { timeout: 1800 });
+        return;
+      }
+      timerId = window.setTimeout(loadStatus, 900);
+    };
+
+    scheduleInitialStatusLoad();
     window.addEventListener('tiwlo:platform-status-refresh', loadStatus);
     return () => {
       isMounted = false;
+      const cancelIdle = (window as any).cancelIdleCallback as undefined | ((id: number) => void);
+      if (idleId !== undefined) cancelIdle?.(idleId);
+      if (timerId !== undefined) window.clearTimeout(timerId);
       window.removeEventListener('tiwlo:platform-status-refresh', loadStatus);
     };
   }, []);
@@ -492,7 +510,7 @@ export default function App() {
     localStorage.removeItem('tiwlo_user');
   };
 
-  if (platformStatus.loading) {
+  if (platformStatus.loading && user) {
     return null;
   }
 

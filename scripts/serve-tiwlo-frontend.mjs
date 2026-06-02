@@ -1,4 +1,5 @@
 import express from 'express';
+import compression from 'compression';
 import http from 'node:http';
 import https from 'node:https';
 import { createReadStream, existsSync } from 'node:fs';
@@ -37,6 +38,9 @@ const proxyPrefixes = [
 const shouldProxy = (url = '') => proxyPrefixes.some((prefix) => url === prefix || url.startsWith(`${prefix}/`) || url.startsWith(`${prefix}?`));
 
 const isInstallerRequest = (url = '') => url === '/tpanel/install.sh' || url.startsWith('/tpanel/install.sh?');
+
+const immutableAssetPattern = /[/\\]assets[/\\].+\.(?:js|css|woff2?|png|jpe?g|webp|gif|svg)$/i;
+const publicAssetPattern = /[/\\](?:brand|media|uploads)[/\\].+\.(?:mp4|webm|png|jpe?g|webp|gif|svg|ico)$/i;
 
 const serveInstallerFallback = (res) => {
   const fallback = join(distDir, 'tpanel', 'install.sh');
@@ -81,17 +85,38 @@ app.use((req, res, next) => {
   next();
 });
 
+app.use(compression({
+  threshold: 1024,
+  filter(req, res) {
+    if (/\.(?:mp4|webm|zip|gz|br)$/i.test(req.path)) return false;
+    return compression.filter(req, res);
+  }
+}));
+
 app.use(express.static(distDir, {
   extensions: ['html'],
   setHeaders(res, filePath) {
     if (filePath.endsWith('.sh')) {
       res.setHeader('Content-Type', 'text/x-shellscript; charset=utf-8');
       res.setHeader('Cache-Control', 'no-store');
+      return;
+    }
+    if (filePath.endsWith('.html')) {
+      res.setHeader('Cache-Control', 'no-store');
+      return;
+    }
+    if (immutableAssetPattern.test(filePath)) {
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      return;
+    }
+    if (publicAssetPattern.test(filePath)) {
+      res.setHeader('Cache-Control', 'public, max-age=2592000');
     }
   }
 }));
 
 app.get('*', (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
   res.sendFile(join(distDir, 'index.html'));
 });
 

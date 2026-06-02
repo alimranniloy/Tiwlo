@@ -1,11 +1,11 @@
 import React from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import 'material-icons/iconfont/filled.css';
 import {
   ArrowLeft,
   ArrowRight,
   Boxes,
   ChevronDown,
+  CloudUpload,
   Network,
   Server,
   ShieldCheck,
@@ -55,9 +55,9 @@ const promoMessages = [
 ];
 
 const showcaseLogos = [
-  '/brand/showcase/tmail-logo-white.png',
-  '/brand/showcase/tfiber.png',
-  '/brand/showcase/tpanel.png'
+  '/brand/showcase/tmail-logo-white-small.png',
+  '/brand/showcase/tfiber-small.png',
+  '/brand/showcase/tpanel-small.png'
 ];
 
 const controlLayers: ControlLayer[] = [
@@ -121,19 +121,19 @@ const workflowCards = [
 const resourceCards = [
   {
     kind: 'Guide',
-    icon: 'cloud_upload',
+    icon: CloudUpload,
     title: 'Deploy a tPanel hosting account with package limits',
     meta: 'Cloud guide - 8 min read'
   },
   {
     kind: 'Tutorial',
-    icon: 'verified_user',
+    icon: ShieldCheck,
     title: 'Connect WhatsApp OTP for signup and recovery',
     meta: 'Security tutorial - 6 min read'
   },
   {
     kind: 'Blog',
-    icon: 'device_hub',
+    icon: Network,
     title: 'How Tiwlo connects cloud, ISP, store, and support workflows',
     meta: 'Product notes - 5 min read'
   }
@@ -263,7 +263,7 @@ function SiteHeader() {
     <header className="sticky top-0 z-50 border-b border-white/10 bg-black text-white">
       <div className="mx-auto flex h-14 max-w-[1320px] items-center justify-between px-3 sm:h-16 sm:px-4 md:px-8">
         <button onClick={() => navigate('/')} className="flex items-center">
-          <img src="/brand/white-logo.png" alt="Tiwlo" className="h-7 w-[100px] object-contain object-left sm:h-8 sm:w-[128px]" />
+          <img src="/brand/white-logo-small.png" alt="Tiwlo" className="h-7 w-[100px] object-contain object-left sm:h-8 sm:w-[128px]" />
         </button>
         <nav className="hidden items-center gap-7 lg:flex">
           {navLinks.map((item) => (
@@ -282,18 +282,70 @@ function SiteHeader() {
   );
 }
 
+function DeferredBackgroundVideo({ className, priority = false }: { className?: string; priority?: boolean }) {
+  const videoRef = React.useRef<HTMLVideoElement | null>(null);
+  const [active, setActive] = React.useState(false);
+
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return undefined;
+
+    if (priority) {
+      const requestIdle = (window as any).requestIdleCallback as undefined | ((callback: () => void, options?: { timeout: number }) => number);
+      const cancelIdle = (window as any).cancelIdleCallback as undefined | ((id: number) => void);
+      if (requestIdle) {
+        const id = requestIdle(() => setActive(true), { timeout: 900 });
+        return () => cancelIdle?.(id);
+      }
+      const timer = window.setTimeout(() => setActive(true), 350);
+      return () => window.clearTimeout(timer);
+    }
+
+    const node = videoRef.current;
+    if (!node || !('IntersectionObserver' in window)) {
+      setActive(true);
+      return undefined;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setActive(true);
+          observer.disconnect();
+        }
+      },
+      { rootMargin: '700px 0px' }
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [priority]);
+
+  React.useEffect(() => {
+    if (!active) return;
+    videoRef.current?.play().catch(() => undefined);
+  }, [active]);
+
+  return (
+    <video
+      ref={videoRef}
+      className={className}
+      src={active ? HERO_VIDEO : undefined}
+      autoPlay={active}
+      muted
+      loop
+      playsInline
+      preload={priority ? 'metadata' : 'none'}
+      aria-label="Tiwlo cloud infrastructure background"
+    />
+  );
+}
+
 function HeroVideo() {
   return (
     <div className="absolute inset-0">
-      <video
+      <DeferredBackgroundVideo
         className="h-full w-full object-cover"
-        src={HERO_VIDEO}
-        autoPlay
-        muted
-        loop
-        playsInline
-        preload="metadata"
-        aria-label="Tiwlo cloud infrastructure background"
+        priority
       />
       <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(0,0,0,0.92),rgba(0,0,0,0.48)_48%,rgba(0,0,0,0.78)),linear-gradient(180deg,rgba(0,0,0,0.4),#020707_92%)]" />
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_72%_25%,rgba(124,244,255,0.22),transparent_34%),radial-gradient(circle_at_18%_90%,rgba(98,77,255,0.2),transparent_36%)]" />
@@ -537,7 +589,7 @@ function ResourcesSection() {
             <article key={card.title} className="flex min-h-[300px] flex-col border border-white/10 bg-[#071918] p-6 sm:p-8">
               <div className="mb-7 flex items-center gap-3">
                 <span className="grid h-14 w-14 place-items-center rounded-xl bg-[linear-gradient(135deg,#7cf4ff,#a78bfa)] text-black shadow-[0_20px_60px_rgba(124,244,255,0.18)]">
-                  <span className="material-icons text-[30px] leading-none">{card.icon}</span>
+                  <card.icon className="h-7 w-7" />
                 </span>
                 <p className="text-[15px] font-black text-white/90">{card.kind}</p>
               </div>
@@ -561,7 +613,7 @@ function CtaSection() {
     <section className="bg-[#020707] pb-14 text-white sm:pb-24">
       <div className="mx-auto max-w-[1220px] px-0 sm:px-5 md:px-8">
         <div className="relative overflow-hidden border-y border-white/10 bg-[#0a1c1b] px-4 py-16 text-center sm:rounded-[24px] sm:border sm:px-10 sm:py-20">
-          <video className="absolute inset-0 h-full w-full object-cover opacity-25" src={HERO_VIDEO} autoPlay muted loop playsInline preload="metadata" />
+          <DeferredBackgroundVideo className="absolute inset-0 h-full w-full object-cover opacity-25" />
           <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(2,7,7,0.62),rgba(2,7,7,0.92)),radial-gradient(circle_at_50%_20%,rgba(124,244,255,0.24),transparent_48%)]" />
           <div className="relative mx-auto max-w-[720px]">
             <h2 className="text-[34px] font-black leading-tight tracking-normal sm:text-[46px]">Start building on Tiwlo today</h2>
@@ -596,7 +648,7 @@ function FooterSection() {
         </div>
         <div className="mt-10 flex flex-col gap-5 border-t border-white/10 pt-7 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-4">
-            <img src="/brand/white-logo.png" alt="Tiwlo" className="h-9 w-[120px] object-contain object-left" />
+            <img src="/brand/white-logo-small.png" alt="Tiwlo" className="h-9 w-[120px] object-contain object-left" />
             <p className="text-[13px] font-semibold text-white/62">(c) 2026 Tiwlo. All rights reserved.</p>
           </div>
           <div className="flex flex-wrap gap-5 text-[13px] font-bold text-white/70">
