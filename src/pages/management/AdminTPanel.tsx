@@ -104,6 +104,47 @@ const permissionsFromPackage = (pkg?: any) => ({
 
 const featureText = (features: unknown) => Array.isArray(features) ? features.join('\n') : String(features || '');
 
+const sizePackageModuleOptions = [
+  { key: 'tpanel', label: 'tPanel' },
+  { key: 'whm', label: 'WHM' },
+  { key: 'cpanel', label: 'cPanel' },
+  { key: 'plesk', label: 'Plesk' },
+  { key: 'directadmin', label: 'DirectAdmin' },
+  { key: 'hosting-panel', label: 'Hosting Panel' },
+  { key: 'droplet', label: 'Droplet' }
+];
+
+const sizePackagePlanFamilies = [
+  { key: 'basic', label: 'Basic' },
+  { key: 'general-purpose', label: 'General Purpose' },
+  { key: 'cpu-optimized', label: 'CPU-Optimized' },
+  { key: 'memory-optimized', label: 'Memory-Optimized' }
+];
+
+const sizePackageCpuCategories = [
+  { key: 'regular', label: 'Regular', diskType: 'SSD' },
+  { key: 'premium-amd', label: 'Premium AMD', diskType: 'NVMe SSD' },
+  { key: 'premium-intel', label: 'Premium Intel', diskType: 'NVMe SSD' }
+];
+
+const slugifyPlanCode = (value: string, fallback = 'package') => {
+  const clean = String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return clean || fallback;
+};
+
+const numberFromLimit = (value: unknown, fallback: string) => {
+  const match = String(value || '').match(/[\d.]+/);
+  return match?.[0] || fallback;
+};
+
+const moduleLabel = (module: string) => sizePackageModuleOptions.find((item) => item.key === module)?.label || module || 'Module';
+const familyLabel = (family: string) => sizePackagePlanFamilies.find((item) => item.key === family)?.label || family || 'Basic';
+const cpuCategoryLabel = (category: string) => sizePackageCpuCategories.find((item) => item.key === category)?.label || category || 'Regular';
+
 export default function AdminTPanel() {
   const { confirmDelete, confirmEdit } = useActionConfirmation();
   const location = useLocation();
@@ -146,12 +187,17 @@ export default function AdminTPanel() {
   const [sizePackageEditing, setSizePackageEditing] = React.useState<any | null>(null);
   const [sizePackageForm, setSizePackageForm] = React.useState({
     code: '',
+    module: 'tpanel',
+    planFamily: 'basic',
+    cpuCategory: 'regular',
     name: '',
     price: '5.00',
-    cpu: '1 vCPU',
-    ram: '1 GB',
-    disk: '25 GB',
-    bandwidth: '1 TB',
+    vcpu: '1',
+    ramGb: '1',
+    diskGb: '25',
+    bandwidthGb: '1000',
+    cpuBrand: 'Intel',
+    extraStoragePricePerGb: '0.10',
     status: 'active',
     features: 'SSD storage\nPassword deployment\nHourly credit billing'
   });
@@ -387,12 +433,17 @@ export default function AdminTPanel() {
     setSizePackageEditing(null);
     setSizePackageForm({
       code: '',
+      module: 'tpanel',
+      planFamily: 'basic',
+      cpuCategory: 'regular',
       name: '',
       price: '5.00',
-      cpu: '1 vCPU',
-      ram: '1 GB',
-      disk: '25 GB',
-      bandwidth: '1 TB',
+      vcpu: '1',
+      ramGb: '1',
+      diskGb: '25',
+      bandwidthGb: '1000',
+      cpuBrand: 'Intel',
+      extraStoragePricePerGb: '0.10',
       status: 'active',
       features: 'SSD storage\nPassword deployment\nHourly credit billing'
     });
@@ -409,12 +460,17 @@ export default function AdminTPanel() {
     setSizePackageEditing(pkg);
     setSizePackageForm({
       code: pkg.code || '',
+      module: String(limits.module || 'tpanel'),
+      planFamily: String(limits.planFamily || 'basic'),
+      cpuCategory: String(limits.cpuCategory || 'regular'),
       name: pkg.name || '',
       price: String(pkg.price || 0),
-      cpu: String(limits.cpu || '1 vCPU'),
-      ram: String(limits.ram || '1 GB'),
-      disk: String(limits.disk || '25 GB'),
-      bandwidth: String(limits.bandwidth || '1 TB'),
+      vcpu: String(limits.vcpu || numberFromLimit(limits.cpu, '1')),
+      ramGb: String(limits.ramGb || numberFromLimit(limits.ram, '1')),
+      diskGb: String(limits.diskGb || numberFromLimit(limits.disk, '25')),
+      bandwidthGb: String(limits.bandwidthGb || numberFromLimit(limits.bandwidth, '1000')),
+      cpuBrand: String(limits.cpuBrand || (String(limits.cpuCategory || '').includes('amd') ? 'Ryzen' : 'Intel')),
+      extraStoragePricePerGb: String(limits.extraStoragePricePerGb ?? limits.storagePricePerGb ?? '0.10'),
       status: pkg.isActive === false ? 'draft' : 'active',
       features: featureText(pkg.features)
     });
@@ -426,19 +482,31 @@ export default function AdminTPanel() {
     setError('');
     setNotice('');
     try {
+      const code = sizePackageForm.code || slugifyPlanCode(`${sizePackageForm.module}-${sizePackageForm.name}-${sizePackageForm.cpuCategory}`);
+      const diskType = sizePackageCpuCategories.find((item) => item.key === sizePackageForm.cpuCategory)?.diskType || 'SSD';
       await upsertPlanWithApi({
         id: sizePackageEditing?.id,
         product: 'cloud',
-        code: sizePackageForm.code,
+        code,
         name: sizePackageForm.name,
         price: Number(sizePackageForm.price || 0),
         interval: 'month',
         features: sizePackageForm.features.split(/\r?\n/).map((item) => item.trim()).filter(Boolean),
         limits: {
-          cpu: sizePackageForm.cpu,
-          ram: sizePackageForm.ram,
-          disk: sizePackageForm.disk,
-          bandwidth: sizePackageForm.bandwidth
+          module: sizePackageForm.module,
+          planFamily: sizePackageForm.planFamily,
+          cpuCategory: sizePackageForm.cpuCategory,
+          cpuBrand: sizePackageForm.cpuBrand,
+          diskType,
+          vcpu: Number(sizePackageForm.vcpu || 0),
+          ramGb: Number(sizePackageForm.ramGb || 0),
+          diskGb: Number(sizePackageForm.diskGb || 0),
+          bandwidthGb: Number(sizePackageForm.bandwidthGb || 0),
+          cpu: `${Number(sizePackageForm.vcpu || 0)} vCPU`,
+          ram: `${Number(sizePackageForm.ramGb || 0)} GB`,
+          disk: `${Number(sizePackageForm.diskGb || 0)} GB`,
+          bandwidth: `${Number(sizePackageForm.bandwidthGb || 0)} GB`,
+          extraStoragePricePerGb: Number(sizePackageForm.extraStoragePricePerGb || 0)
         },
         isActive: sizePackageForm.status === 'active'
       });
@@ -717,11 +785,11 @@ export default function AdminTPanel() {
   const domainSettings = control?.domainSettings || {};
   const systemStatus = control?.systemStatus || {};
   const requiredPorts = Array.isArray(systemStatus.ports) ? systemStatus.ports : [];
+  const isSizePackagePage = currentSection === 'size-packages';
   const navItems = [
     { label: 'Overview', path: '/management/tpanel', icon: Server },
     { label: 'Licenses', path: '/management/tpanel/licenses', icon: KeyRound },
     { label: 'Packages', path: '/management/tpanel/packages', icon: PackagePlus },
-    { label: 'Size Packages', path: '/management/tpanel/size-packages', icon: HardDrive },
     { label: 'Accounts', path: '/management/tpanel/accounts', icon: Users },
     { label: 'DNS', path: '/management/tpanel/dns', icon: Globe },
     { label: 'Domain Settings', path: '/management/tpanel/domain-settings', icon: Globe },
@@ -738,11 +806,11 @@ export default function AdminTPanel() {
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div className="flex items-start gap-3">
           <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded border border-blue-100 bg-blue-50 text-blue-600">
-            <Server className="h-5 w-5" />
+            {isSizePackagePage ? <HardDrive className="h-5 w-5" /> : <Server className="h-5 w-5" />}
           </div>
           <div>
-            <h1 className="text-2xl font-bold text-[#111827]">tPanel Management</h1>
-            <p className="mt-1 text-[13px] text-[#6B7280]">Licenses, revenue, allowlisted server IPs, node heartbeats, renewals, and forced update notices.</p>
+            <h1 className="text-2xl font-bold text-[#111827]">{isSizePackagePage ? 'Size Packages' : 'tPanel Management'}</h1>
+            <p className="mt-1 text-[13px] text-[#6B7280]">{isSizePackagePage ? 'Create module based droplet packages, CPU categories, resource limits, and extra storage pricing.' : 'Licenses, revenue, allowlisted server IPs, node heartbeats, renewals, and forced update notices.'}</p>
           </div>
         </div>
         <button onClick={load} className="flex items-center justify-center gap-2 rounded border border-[#DDE3EA] bg-white px-4 py-2 text-[13px] font-bold text-[#374151] hover:border-blue-400">
@@ -824,17 +892,51 @@ export default function AdminTPanel() {
               {sizePackageEditing && <button type="button" onClick={resetSizePackageForm} className="rounded border border-[#DDE3EA] px-3 py-1.5 text-[11px] font-bold text-[#374151]">New</button>}
             </div>
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+              <label className="space-y-1.5">
+                <span className="text-[11px] font-bold uppercase text-[#6B7280]">Module</span>
+                <select required value={sizePackageForm.module} onChange={(event) => setSizePackageForm((current) => ({ ...current, module: event.target.value }))} className="w-full rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500">
+                  {sizePackageModuleOptions.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}
+                </select>
+              </label>
+              <label className="space-y-1.5">
+                <span className="text-[11px] font-bold uppercase text-[#6B7280]">Plan family</span>
+                <select required value={sizePackageForm.planFamily} onChange={(event) => setSizePackageForm((current) => ({ ...current, planFamily: event.target.value }))} className="w-full rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500">
+                  {sizePackagePlanFamilies.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}
+                </select>
+              </label>
               <input required value={sizePackageForm.name} onChange={(event) => setSizePackageForm((current) => ({ ...current, name: event.target.value }))} className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="Basic Droplet" />
-              <input required value={sizePackageForm.code} onChange={(event) => setSizePackageForm((current) => ({ ...current, code: event.target.value }))} className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="basic-1gb" />
+              <input value={sizePackageForm.code} onChange={(event) => setSizePackageForm((current) => ({ ...current, code: event.target.value }))} className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="Code auto generated if empty" />
+              <label className="space-y-1.5 md:col-span-2">
+                <span className="text-[11px] font-bold uppercase text-[#6B7280]">CPU option category</span>
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                  {sizePackageCpuCategories.map((item) => (
+                    <button
+                      key={item.key}
+                      type="button"
+                      onClick={() => setSizePackageForm((current) => ({ ...current, cpuCategory: item.key, cpuBrand: item.key === 'premium-amd' ? 'Ryzen' : current.cpuBrand || 'Intel' }))}
+                      className={`rounded border px-3 py-3 text-left ${sizePackageForm.cpuCategory === item.key ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-[#DDE3EA] bg-white text-[#374151]'}`}
+                    >
+                      <span className="block text-[13px] font-bold">{item.label}</span>
+                      <span className="mt-1 block text-[11px] font-semibold text-[#6B7280]">Disk Type: {item.diskType}</span>
+                    </button>
+                  ))}
+                </div>
+              </label>
               <input required type="number" min="0" step="0.01" value={sizePackageForm.price} onChange={(event) => setSizePackageForm((current) => ({ ...current, price: event.target.value }))} className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="Monthly price" />
               <select value={sizePackageForm.status} onChange={(event) => setSizePackageForm((current) => ({ ...current, status: event.target.value }))} className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500">
                 <option value="active">Active</option>
                 <option value="draft">Draft</option>
               </select>
-              <input required value={sizePackageForm.cpu} onChange={(event) => setSizePackageForm((current) => ({ ...current, cpu: event.target.value }))} className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="1 vCPU" />
-              <input required value={sizePackageForm.ram} onChange={(event) => setSizePackageForm((current) => ({ ...current, ram: event.target.value }))} className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="1 GB" />
-              <input required value={sizePackageForm.disk} onChange={(event) => setSizePackageForm((current) => ({ ...current, disk: event.target.value }))} className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="25 GB" />
-              <input value={sizePackageForm.bandwidth} onChange={(event) => setSizePackageForm((current) => ({ ...current, bandwidth: event.target.value }))} className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="1 TB" />
+              <input required type="number" min="1" value={sizePackageForm.vcpu} onChange={(event) => setSizePackageForm((current) => ({ ...current, vcpu: event.target.value }))} className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="vCPU count" />
+              <input required type="number" min="1" value={sizePackageForm.ramGb} onChange={(event) => setSizePackageForm((current) => ({ ...current, ramGb: event.target.value }))} className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="RAM GB" />
+              <input required type="number" min="1" value={sizePackageForm.diskGb} onChange={(event) => setSizePackageForm((current) => ({ ...current, diskGb: event.target.value }))} className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="Disk GB" />
+              <input required type="number" min="1" value={sizePackageForm.bandwidthGb} onChange={(event) => setSizePackageForm((current) => ({ ...current, bandwidthGb: event.target.value }))} className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="Bandwidth GB" />
+              <select value={sizePackageForm.cpuBrand} onChange={(event) => setSizePackageForm((current) => ({ ...current, cpuBrand: event.target.value }))} className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500">
+                <option value="Intel">Intel</option>
+                <option value="Ryzen">Ryzen</option>
+                <option value="AMD EPYC">AMD EPYC</option>
+              </select>
+              <input required type="number" min="0" step="0.01" value={sizePackageForm.extraStoragePricePerGb} onChange={(event) => setSizePackageForm((current) => ({ ...current, extraStoragePricePerGb: event.target.value }))} className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="Extra storage price per 1 GB" />
               <textarea value={sizePackageForm.features} onChange={(event) => setSizePackageForm((current) => ({ ...current, features: event.target.value }))} className="min-h-28 rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500 md:col-span-2" placeholder="Features, one per line" />
               <button disabled={saving === 'size-package'} className="flex items-center justify-center gap-2 rounded bg-[#0069ff] px-4 py-3 text-sm font-bold text-white hover:bg-[#0056cc] disabled:opacity-60 md:col-span-2">
                 <Plus className="h-4 w-4" /> Save size package
@@ -848,17 +950,19 @@ export default function AdminTPanel() {
               <span className="text-[11px] font-bold uppercase text-[#6B7280]">{sizePackages.length} active</span>
             </div>
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[920px] text-left">
-                <thead><tr className="border-b border-[#E5E7EB]">{['Package', 'Price', 'CPU', 'RAM', 'Disk', 'Actions'].map((heading) => <th key={heading} className="px-5 py-3 text-[11px] font-bold uppercase text-[#6B7280]">{heading}</th>)}</tr></thead>
+              <table className="w-full min-w-[1180px] text-left">
+                <thead><tr className="border-b border-[#E5E7EB]">{['Package', 'Module', 'Family', 'CPU Option', 'Price', 'Resources', 'Extra Storage', 'Actions'].map((heading) => <th key={heading} className="px-5 py-3 text-[11px] font-bold uppercase text-[#6B7280]">{heading}</th>)}</tr></thead>
                 <tbody className="divide-y divide-[#EEF2F7]">
-                  {sizePackages.length === 0 && <tr><td colSpan={6} className="px-5 py-12 text-center text-[13px] font-bold text-gray-400">No droplet size package yet.</td></tr>}
+                  {sizePackages.length === 0 && <tr><td colSpan={8} className="px-5 py-12 text-center text-[13px] font-bold text-gray-400">No droplet size package yet.</td></tr>}
                   {sizePackages.map((pkg: any) => (
                     <tr key={pkg.id}>
                       <td className="px-5 py-4"><p className="text-[13px] font-bold text-[#111827]">{pkg.name}</p><p className="text-[12px] text-[#6B7280]">{pkg.code}</p></td>
+                      <td className="px-5 py-4 text-[12px] font-bold text-[#111827]">{moduleLabel(pkg.limits?.module || 'tpanel')}</td>
+                      <td className="px-5 py-4 text-[12px] text-[#4B5563]">{familyLabel(pkg.limits?.planFamily || 'basic')}</td>
+                      <td className="px-5 py-4"><p className="text-[12px] font-bold text-[#111827]">{cpuCategoryLabel(pkg.limits?.cpuCategory || 'regular')}</p><p className="text-[11px] text-[#6B7280]">{pkg.limits?.diskType || 'SSD'}</p></td>
                       <td className="px-5 py-4 text-[12px] font-bold text-[#111827]">{money(pkg.price, 'USD')} / {pkg.interval}</td>
-                      <td className="px-5 py-4 text-[12px] text-[#4B5563]">{pkg.limits?.cpu || '-'}</td>
-                      <td className="px-5 py-4 text-[12px] text-[#4B5563]">{pkg.limits?.ram || '-'}</td>
-                      <td className="px-5 py-4 text-[12px] text-[#4B5563]">{pkg.limits?.disk || '-'}</td>
+                      <td className="px-5 py-4 text-[12px] text-[#4B5563]">{pkg.limits?.cpu || '-'} / {pkg.limits?.ram || '-'} RAM / {pkg.limits?.disk || '-'} Disk / {pkg.limits?.bandwidth || '-'} BW</td>
+                      <td className="px-5 py-4 text-[12px] text-[#4B5563]">{money(pkg.limits?.extraStoragePricePerGb || 0, 'USD')} / GB</td>
                       <td className="px-5 py-4">
                         <div className="flex gap-2">
                           <button onClick={() => editSizePackage(pkg)} className="rounded border border-[#DDE3EA] p-2 text-[#374151] hover:border-blue-400" title="Edit"><Edit3 className="h-4 w-4" /></button>

@@ -248,6 +248,7 @@ function AppContent({
                 <Route path="/management/whatsapp-api" element={<AdminWhatsAppApi />} />
                 <Route path="/management/payments" element={<AdminPayments />} />
                 <Route path="/management/tiwlo-pay" element={<AdminTiwloPay />} />
+                <Route path="/management/size-packages" element={<AdminTPanel />} />
                 <Route path="/management/tpanel/*" element={<AdminTPanel />} />
                 <Route path="/management/invoices" element={<InvoicesPage adminMode />} />
                 <Route path="/management/plans" element={<AdminPlans />} />

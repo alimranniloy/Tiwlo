@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import {
   ArrowLeft,
   Database,
+  Globe2,
   KeyRound,
   Lock,
   Minus,
@@ -53,6 +54,19 @@ const fallbackLimits = {
   disk: '25 GB'
 };
 
+const planFamilies = [
+  { key: 'basic', label: 'Basic' },
+  { key: 'general-purpose', label: 'General Purpose' },
+  { key: 'cpu-optimized', label: 'CPU-Optimized' },
+  { key: 'memory-optimized', label: 'Memory-Optimized' }
+];
+
+const cpuCategories = [
+  { key: 'regular', label: 'Regular', diskType: 'SSD' },
+  { key: 'premium-amd', label: 'Premium AMD', diskType: 'NVMe SSD' },
+  { key: 'premium-intel', label: 'Premium Intel', diskType: 'NVMe SSD' }
+];
+
 function hourlyPrice(monthly: number) {
   return Math.max(Math.round((monthly / 730) * 100) / 100, 0.01);
 }
@@ -77,6 +91,36 @@ function moduleLogo(module: string) {
   return module === 'tpanel' ? '/brand/icon.png' : '';
 }
 
+function flagUrl(countryCode?: string | null) {
+  const code = String(countryCode || '').trim().toLowerCase();
+  return /^[a-z]{2}$/.test(code) ? `https://flagcdn.com/w40/${code}.png` : '';
+}
+
+function planModule(plan: CloudPlan) {
+  return String(plan.limits?.module || plan.limits?.serviceModule || 'tpanel').trim().toLowerCase();
+}
+
+function planFamily(plan: CloudPlan) {
+  return String(plan.limits?.planFamily || 'basic').trim().toLowerCase();
+}
+
+function planCpuCategory(plan: CloudPlan) {
+  return String(plan.limits?.cpuCategory || 'regular').trim().toLowerCase();
+}
+
+function cpuCategoryLabel(key: string) {
+  return cpuCategories.find((item) => item.key === key)?.label || key;
+}
+
+function planFamilyLabel(key: string) {
+  return planFamilies.find((item) => item.key === key)?.label || key;
+}
+
+function storagePricePerGb(plan: CloudPlan | null) {
+  const value = plan?.limits?.extraStoragePricePerGb ?? plan?.limits?.storagePricePerGb ?? 0;
+  return Number(value || 0);
+}
+
 function accountDomain(hostname: string) {
   const cleanHost = hostname.trim().toLowerCase();
   return cleanHost;
@@ -91,6 +135,8 @@ export default function CreateDroplet() {
   const navigate = useNavigate();
   const [selectedModule, setSelectedModule] = useState('tpanel');
   const [selectedNodeId, setSelectedNodeId] = useState('');
+  const [selectedPlanFamily, setSelectedPlanFamily] = useState('basic');
+  const [selectedCpuCategory, setSelectedCpuCategory] = useState('regular');
   const [selectedPlan, setSelectedPlan] = useState('');
   const [hostname, setHostname] = useState('');
   const [username, setUsername] = useState('');
@@ -105,6 +151,13 @@ export default function CreateDroplet() {
   const [orderSummary, setOrderSummary] = useState<OrderSummary | null>(null);
   const [usernameCheck, setUsernameCheck] = useState<any | null>(null);
   const [usernameChecking, setUsernameChecking] = useState(false);
+  const [unavailableNotice, setUnavailableNotice] = useState('');
+  const [storageEnabled, setStorageEnabled] = useState(false);
+  const [storageSize, setStorageSize] = useState('10');
+  const [storageMode, setStorageMode] = useState<'create' | 'attach'>('create');
+  const [storageMountMode, setStorageMountMode] = useState<'auto' | 'manual'>('auto');
+  const [storageFilesystem, setStorageFilesystem] = useState('ext4');
+  const [storageName, setStorageName] = useState(() => `volume-${Date.now().toString().slice(-8)}`);
   const [error, setError] = useState('');
 
   React.useEffect(() => {
@@ -161,15 +214,40 @@ export default function CreateDroplet() {
     }
   }, [moduleNodes, selectedNodeId]);
 
-  const selectedPlanRecord = plans.find((plan) => plan.code === selectedPlan) || plans[0] || null;
+  const modulePlans = React.useMemo(() => plans.filter((plan) => planModule(plan) === selectedModule), [plans, selectedModule]);
+  const familyPlans = React.useMemo(() => modulePlans.filter((plan) => planFamily(plan) === selectedPlanFamily), [modulePlans, selectedPlanFamily]);
+  const categoryPlans = React.useMemo(() => familyPlans.filter((plan) => planCpuCategory(plan) === selectedCpuCategory), [familyPlans, selectedCpuCategory]);
+  const selectedPlanRecord = categoryPlans.find((plan) => plan.code === selectedPlan) || categoryPlans[0] || familyPlans[0] || modulePlans[0] || null;
   const selectedNode = moduleNodes.find((node) => node.id === selectedNodeId) || moduleNodes[0] || null;
-  const selectedHourly = hourlyPrice(Number(selectedPlanRecord?.price || 0));
+  const extraStorageMonthly = storageEnabled ? Math.max(Number(storageSize || 0), 0) * storagePricePerGb(selectedPlanRecord) : 0;
+  const selectedMonthly = Number(selectedPlanRecord?.price || 0) + extraStorageMonthly;
+  const selectedHourly = hourlyPrice(selectedMonthly);
   const selectedCpu = limitValue(selectedPlanRecord, 'cpu', fallbackLimits.cpu);
   const selectedRam = limitValue(selectedPlanRecord, 'ram', fallbackLimits.ram);
   const selectedDisk = limitValue(selectedPlanRecord, 'disk', fallbackLimits.disk);
+  const selectedBandwidth = limitValue(selectedPlanRecord, 'bandwidth', '1 TB');
   const selectedFeatures = selectedPlanRecord ? featureList(selectedPlanRecord) : [];
   const creditBalance = Number(billingOverview?.credits || 0);
   const creditEmpty = Boolean(billingOverview) && creditBalance <= 0;
+  const activeFamilyKeys = React.useMemo(() => new Set(modulePlans.map(planFamily)), [modulePlans]);
+  const activeCpuCategoryKeys = React.useMemo(() => new Set(familyPlans.map(planCpuCategory)), [familyPlans]);
+  const selectedFlag = flagUrl(selectedNode?.countryCode);
+
+  React.useEffect(() => {
+    if (modulePlans.length === 0) {
+      setSelectedPlan('');
+      return;
+    }
+    const nextFamily = activeFamilyKeys.has(selectedPlanFamily) ? selectedPlanFamily : planFamily(modulePlans[0]);
+    const nextFamilyPlans = modulePlans.filter((plan) => planFamily(plan) === nextFamily);
+    const nextCategorySet = new Set(nextFamilyPlans.map(planCpuCategory));
+    const nextCategory = nextCategorySet.has(selectedCpuCategory) ? selectedCpuCategory : planCpuCategory(nextFamilyPlans[0]);
+    const nextCategoryPlans = nextFamilyPlans.filter((plan) => planCpuCategory(plan) === nextCategory);
+    const nextPlan = nextCategoryPlans.find((plan) => plan.code === selectedPlan) || nextCategoryPlans[0] || nextFamilyPlans[0] || modulePlans[0];
+    if (selectedPlanFamily !== nextFamily) setSelectedPlanFamily(nextFamily);
+    if (selectedCpuCategory !== nextCategory) setSelectedCpuCategory(nextCategory);
+    if (nextPlan && selectedPlan !== nextPlan.code) setSelectedPlan(nextPlan.code);
+  }, [activeFamilyKeys, modulePlans, selectedCpuCategory, selectedPlan, selectedPlanFamily]);
 
   React.useEffect(() => {
     const clean = username.trim();
@@ -237,6 +315,8 @@ export default function CreateDroplet() {
     const cpu = limitValue(selectedPlanRecord, 'cpu', fallbackLimits.cpu);
     const ram = limitValue(selectedPlanRecord, 'ram', fallbackLimits.ram);
     const disk = limitValue(selectedPlanRecord, 'disk', fallbackLimits.disk);
+    const bandwidth = limitValue(selectedPlanRecord, 'bandwidth', '1 TB');
+    const storageGb = storageEnabled ? Math.max(Number(storageSize || 0), 0) : 0;
 
     try {
       const checkout = await createCloudResourceOrderWithApi({
@@ -248,14 +328,14 @@ export default function CreateDroplet() {
           type: 'droplet',
           name: hostname.trim(),
           region: selectedNode.location || 'Global',
-          specs: `${ram} / ${cpu} / ${disk} Disk`,
+          specs: `${ram} / ${cpu} / ${disk} Disk${storageGb ? ` / ${storageGb} GB Block Storage` : ''}`,
           ip: selectedNode.ip,
           image: 'tPanel managed deployment',
           plan: selectedPlanRecord.code,
           cpu,
           ram,
           disk,
-          monthlyCost: Number(selectedPlanRecord.price || 0),
+          monthlyCost: selectedMonthly,
           metadata: {
             auth: {
               method: 'password',
@@ -265,7 +345,9 @@ export default function CreateDroplet() {
             billing: {
               hourlyRate: selectedHourly,
               initialCharge: selectedHourly,
-              monthlyCost: Number(selectedPlanRecord.price || 0)
+              monthlyCost: selectedMonthly,
+              baseMonthlyCost: Number(selectedPlanRecord.price || 0),
+              extraStorageMonthly
             },
             deploymentNode: {
               id: selectedNode.id,
@@ -285,6 +367,23 @@ export default function CreateDroplet() {
               limits: selectedPlanRecord.limits || {},
               packageCode: selectedPlanRecord.code,
               packageName: selectedPlanRecord.name
+            },
+            planProfile: {
+              module: selectedModule,
+              planFamily: selectedPlanFamily,
+              cpuCategory: selectedCpuCategory,
+              cpuOption: cpuCategoryLabel(selectedCpuCategory),
+              bandwidth
+            },
+            blockStorage: {
+              enabled: storageEnabled,
+              mode: storageMode,
+              mountMode: storageMountMode,
+              filesystem: storageFilesystem,
+              name: storageName,
+              sizeGb: storageGb,
+              pricePerGb: storagePricePerGb(selectedPlanRecord),
+              monthlyCost: extraStorageMonthly
             }
           }
         }
@@ -304,7 +403,7 @@ export default function CreateDroplet() {
         packageName: selectedPlanRecord.name,
         serverIp: checkout.resource?.ip || 'Provisioning',
         hourlyRate: selectedHourly,
-        monthlyCost: Number(selectedPlanRecord.price || 0),
+        monthlyCost: selectedMonthly,
         status: checkout.status === 'paid' ? 'Provisioning queued' : checkout.status
       });
       setOrderPhase('loading');
@@ -339,7 +438,7 @@ export default function CreateDroplet() {
   }
 
   return (
-    <div className="min-h-screen bg-white pb-20 text-[#031b4e]">
+    <div className="-m-3 min-h-[calc(100vh-4rem)] bg-white pb-20 text-[#031b4e] md:-m-8">
       <div className="mx-auto max-w-[980px] px-4 pt-5 md:px-6">
         <button
           onClick={() => navigate('/droplets')}
@@ -368,18 +467,32 @@ export default function CreateDroplet() {
           </div>
         )}
 
+        {unavailableNotice && (
+          <div className="mb-5 flex items-center gap-2 border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] font-semibold text-amber-700">
+            <span className="grid h-5 w-5 place-items-center rounded-full bg-amber-100 text-[11px] font-bold">!</span>
+            {unavailableNotice}
+          </div>
+        )}
+
         <div className="grid grid-cols-1 gap-10 lg:grid-cols-[minmax(0,560px)_360px]">
           <main className="min-w-0">
-            <h1 className="mb-10 text-[40px] font-bold leading-tight tracking-normal text-[#031b4e]">Create Droplet</h1>
+            <h1 className="mb-8 text-[30px] font-bold leading-tight tracking-normal text-[#031b4e] md:mb-10 md:text-[40px]">Create Droplet</h1>
 
             <section className="mb-14">
               <SectionTitle title="Choose a datacenter region" />
-              <div className="border border-[#94a3c7] bg-white">
+              <div className="relative flex min-h-[54px] items-center border border-[#94a3c7] bg-white">
+                <div className="pointer-events-none absolute left-4 top-1/2 flex -translate-y-1/2 items-center gap-3">
+                  {selectedFlag ? (
+                    <img src={selectedFlag} alt={selectedNode?.countryCode || ''} className="h-4 w-6 object-cover" />
+                  ) : (
+                    <Globe2 className="h-5 w-5 text-[#62708f]" />
+                  )}
+                </div>
                 <select
                   value={selectedNodeId}
                   onChange={(event) => setSelectedNodeId(event.target.value)}
                   disabled={nodesLoading || moduleNodes.length === 0}
-                  className="h-[54px] w-full bg-white px-4 text-[15px] font-semibold text-[#031b4e] outline-none disabled:bg-[#f3f5fa]"
+                  className="h-[54px] w-full bg-transparent pl-14 pr-4 text-[15px] font-semibold text-[#031b4e] outline-none disabled:bg-[#f3f5fa]"
                 >
                   {nodesLoading && <option>Loading regions...</option>}
                   {!nodesLoading && moduleNodes.length === 0 && <option>No active region available</option>}
@@ -394,7 +507,12 @@ export default function CreateDroplet() {
 
             <section className="mb-14">
               <SectionTitle title="Choose an image" />
-              <TabBar items={['OS', 'Solutions', 'Custom Images']} active="OS" />
+              <TabBar
+                items={['OS', 'Solutions', 'Custom Images']}
+                active="OS"
+                unavailableItems={['Solutions', 'Custom Images']}
+                onUnavailable={(item) => setUnavailableNotice(`${item} is unavailable for the selected module right now.`)}
+              />
               <div className="space-y-2">
                 {nodesLoading ? (
                   <EmptyRow text="Loading available modules..." />
@@ -434,46 +552,91 @@ export default function CreateDroplet() {
                   })
                 )}
               </div>
-              <button type="button" className="mt-5 text-[14px] font-bold text-[#0069ff]">Show all images</button>
+              <button type="button" onClick={() => setUnavailableNotice('Only administrator connected modules are available on this page.')} className="mt-5 text-[14px] font-bold text-[#0069ff]">Show all images</button>
             </section>
 
             <section className="mb-14">
               <SectionTitle title="Choose a Droplet Plan" />
-              <TabBar items={['Basic', 'General Purpose', 'CPU-Optimized', 'Memory-Optimized']} active="Basic" />
+              <div className="mb-5 flex flex-wrap border-b border-[#94a3c7]">
+                {planFamilies.map((family) => {
+                  const available = activeFamilyKeys.has(family.key);
+                  const selected = selectedPlanFamily === family.key;
+                  return (
+                    <button
+                      key={family.key}
+                      type="button"
+                      onClick={() => {
+                        if (!available) {
+                          setUnavailableNotice(`${family.label} packages are unavailable for ${moduleLabel(selectedModule)}.`);
+                          return;
+                        }
+                        const nextFamilyPlans = modulePlans.filter((plan) => planFamily(plan) === family.key);
+                        const nextCategory = planCpuCategory(nextFamilyPlans[0]);
+                        const nextPlan = nextFamilyPlans.find((plan) => planCpuCategory(plan) === nextCategory) || nextFamilyPlans[0];
+                        setSelectedPlanFamily(family.key);
+                        setSelectedCpuCategory(nextCategory);
+                        setSelectedPlan(nextPlan?.code || '');
+                        setUnavailableNotice('');
+                      }}
+                      className={`h-[42px] border-r border-t border-[#94a3c7] px-5 text-[13px] font-bold md:px-7 ${
+                        selected ? 'border-l bg-white text-[#031b4e]' : available ? 'bg-[#f8f9fc] text-[#566992]' : 'cursor-not-allowed bg-[#f3f5f9] text-[#9aa8c2]'
+                      }`}
+                    >
+                      {family.label}
+                    </button>
+                  );
+                })}
+              </div>
               <p className="mb-3 mt-6 text-[13px] font-bold text-[#031b4e]">CPU Options</p>
               <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
-                {['Regular', 'Premium AMD', 'Premium Intel'].map((item, index) => (
+                {cpuCategories.map((item) => {
+                  const available = activeCpuCategoryKeys.has(item.key);
+                  const selected = selectedCpuCategory === item.key;
+                  return (
                   <button
-                    key={item}
+                    key={item.key}
                     type="button"
+                    onClick={() => {
+                      if (!available) {
+                        setUnavailableNotice(`${item.label} packages are unavailable in ${planFamilyLabel(selectedPlanFamily)}.`);
+                        return;
+                      }
+                      const nextPlans = familyPlans.filter((plan) => planCpuCategory(plan) === item.key);
+                      setSelectedCpuCategory(item.key);
+                      setSelectedPlan(nextPlans[0]?.code || '');
+                      setUnavailableNotice('');
+                    }}
                     className={`flex min-h-[52px] items-center gap-3 border px-3 text-left ${
-                      index === 2 ? 'border-[#0069ff] bg-[#f2f7ff]' : 'border-[#94a3c7] bg-white'
+                      selected ? 'border-[#0069ff] bg-[#f2f7ff]' : available ? 'border-[#94a3c7] bg-white' : 'cursor-not-allowed border-[#d7deed] bg-[#f3f5f9] text-[#9aa8c2]'
                     }`}
                   >
-                    <RadioDot selected={index === 2} />
+                    <RadioDot selected={selected} />
                     <span>
-                      <span className="block text-[14px] font-bold text-[#031b4e]">{item}</span>
-                      <span className="block text-[12px] text-[#4d5f85]">Disk Type: {index === 0 ? 'SSD' : 'NVMe SSD'}</span>
+                      <span className="block text-[14px] font-bold text-[#031b4e]">{item.label}</span>
+                      <span className="block text-[12px] text-[#4d5f85]">Disk Type: {item.diskType}</span>
                     </span>
                   </button>
-                ))}
+                );})}
               </div>
               <div className="mb-8 border border-[#a58cff] bg-[#f7f4ff] px-4 py-4 text-[13px] leading-5 text-[#031b4e]">
-                <span className="font-bold">Basic - Premium plans</span> are available only in administrator connected tPanel regions.
+                <span className="font-bold">{planFamilyLabel(selectedPlanFamily)} - {cpuCategoryLabel(selectedCpuCategory)}</span> packages are loaded from administrator size packages.
               </div>
 
               <p className="mb-3 text-[13px] font-bold text-[#031b4e]">Select a Plan</p>
               <div className="space-y-2">
                 {plansLoading ? (
                   <EmptyRow text="Loading active cloud packages..." />
-                ) : plans.length === 0 ? (
+                ) : modulePlans.length === 0 ? (
                   <EmptyRow text="No active cloud package is configured. Add cloud plans from Administrator Plans first." warning />
+                ) : categoryPlans.length === 0 ? (
+                  <EmptyRow text="No package is active for this plan family and CPU option." warning />
                 ) : (
-                  plans.map((plan) => {
+                  categoryPlans.map((plan) => {
                     const selected = selectedPlan === plan.code;
                     const ram = limitValue(plan, 'ram', fallbackLimits.ram);
                     const cpu = limitValue(plan, 'cpu', fallbackLimits.cpu);
                     const disk = limitValue(plan, 'disk', fallbackLimits.disk);
+                    const bandwidth = limitValue(plan, 'bandwidth', '1 TB');
                     const features = featureList(plan);
                     return (
                       <button
@@ -488,7 +651,7 @@ export default function CreateDroplet() {
                         <span className="min-w-0">
                           <span className="block text-[15px] font-bold text-[#566992]">${Number(plan.price || 0).toFixed(2)}/mo</span>
                           <span className="block truncate text-[13px] text-[#46577c]">
-                            {cpu} - {ram} - {disk} NVMe SSD{features.length > 0 ? ` - ${features.slice(0, 1).join('')}` : ''}
+                            {cpu} - {ram} RAM - {disk} Disk - {bandwidth} Transfer{features.length > 0 ? ` - ${features.slice(0, 1).join('')}` : ''}
                           </span>
                         </span>
                       </button>
@@ -496,17 +659,37 @@ export default function CreateDroplet() {
                   })
                 )}
               </div>
-              <button type="button" className="mt-5 text-[14px] font-bold text-[#0069ff]">Show all plans</button>
+              <button type="button" onClick={() => setUnavailableNotice('All matching packages for the selected module, plan family, and CPU option are already shown.')} className="mt-5 text-[14px] font-bold text-[#0069ff]">Show all plans</button>
             </section>
 
             <section className="mb-14 space-y-8">
-              <OptionalBox title="Add additional storage" description="Volumes are network block storage. You can attach storage after deployment." />
+              <AdditionalStorageBox
+                enabled={storageEnabled}
+                size={storageSize}
+                pricePerGb={storagePricePerGb(selectedPlanRecord)}
+                monthlyCost={extraStorageMonthly}
+                mode={storageMode}
+                mountMode={storageMountMode}
+                filesystem={storageFilesystem}
+                name={storageName}
+                onEnabledChange={setStorageEnabled}
+                onSizeChange={setStorageSize}
+                onModeChange={setStorageMode}
+                onMountModeChange={setStorageMountMode}
+                onFilesystemChange={setStorageFilesystem}
+                onNameChange={setStorageName}
+              />
               <OptionalBox title="Enable automated backups" description="Restore your Droplet if it fails. Configure backup frequency and retention." />
             </section>
 
             <section className="mb-14">
               <SectionTitle title="Authentication" />
-              <TabBar items={['SSH Keys', 'Password']} active="Password" />
+              <TabBar
+                items={['SSH Keys', 'Password']}
+                active="Password"
+                unavailableItems={selectedModule === 'tpanel' ? ['SSH Keys'] : ['SSH Keys']}
+                onUnavailable={(item) => setUnavailableNotice(`${item} is unavailable for ${moduleLabel(selectedModule)} deployments. Use password authentication for this module.`)}
+              />
               <div className="mt-5 border border-[#e4e8f2] bg-white p-5">
                 <div className="mb-5 flex items-start gap-3">
                   <span className="grid h-10 w-10 place-items-center border border-[#cdd8ee] text-[#0069ff]">
@@ -613,16 +796,19 @@ export default function CreateDroplet() {
                   <div className="min-w-0 flex-1">
                     <div className="flex items-start justify-between gap-3">
                       <p className="text-[15px] font-bold text-[#031b4e]">Compute</p>
-                      <p className="whitespace-nowrap text-[14px] font-medium text-[#233b66]">${Number(selectedPlanRecord?.price || 0).toFixed(2)}/mo</p>
+                      <p className="whitespace-nowrap text-[14px] font-medium text-[#233b66]">${selectedMonthly.toFixed(2)}/mo</p>
                     </div>
                     <div className="mt-1 space-y-1 text-[13px] leading-5 text-[#284265]">
-                      <SummaryLine label="Plan Type" value="Basic" />
+                      <SummaryLine label="Plan Type" value={planFamilyLabel(selectedPlanFamily)} />
                       <SummaryLine label="Module" value={moduleLabel(selectedModule)} />
+                      <SummaryLine label="CPU Option" value={cpuCategoryLabel(selectedCpuCategory)} />
                       <SummaryLine label="CPU" value={selectedCpu} />
                       <SummaryLine label="RAM" value={selectedRam} />
                       <SummaryLine label="Disk" value={selectedDisk} />
+                      <SummaryLine label="Bandwidth" value={selectedBandwidth} />
                       <SummaryLine label="Region" value={selectedNode?.location || 'Select region'} />
                       <SummaryLine label="Slug" value={selectedPlanRecord?.code || 'select-plan'} />
+                      {storageEnabled && <SummaryLine label="Block Storage" value={`${storageSize || 0} GB ${storageFilesystem.toUpperCase()}`} />}
                       {hostname && <SummaryLine label="Domain" value={hostname} />}
                       {username && <SummaryLine label="User" value={username} />}
                       {selectedFeatures.length > 0 && <SummaryLine label="Includes" value={selectedFeatures.slice(0, 2).join(', ')} />}
@@ -634,7 +820,7 @@ export default function CreateDroplet() {
                 <div className="flex items-start justify-between gap-3">
                   <p className="text-[14px] font-bold text-[#031b4e]">Total cost</p>
                   <div className="text-right">
-                    <p className="text-[15px] font-bold text-[#031b4e]">${Number(selectedPlanRecord?.price || 0).toFixed(2)}/month</p>
+                    <p className="text-[15px] font-bold text-[#031b4e]">${selectedMonthly.toFixed(2)}/month</p>
                     <p className="text-[13px] text-[#566992]">${selectedHourly.toFixed(2)}/hour</p>
                   </div>
                 </div>
@@ -674,20 +860,36 @@ function SectionTitle({ title }: { title: string }) {
   return <h2 className="mb-3 text-[14px] font-bold text-[#031b4e]">{title}</h2>;
 }
 
-function TabBar({ items, active }: { items: string[]; active: string }) {
+function TabBar({
+  items,
+  active,
+  unavailableItems = [],
+  onUnavailable
+}: {
+  items: string[];
+  active: string;
+  unavailableItems?: string[];
+  onUnavailable?: (item: string) => void;
+}) {
   return (
-    <div className="mb-5 flex overflow-x-auto border-b border-[#94a3c7]">
-      {items.map((item) => (
-        <button
-          key={item}
-          type="button"
-          className={`h-[42px] shrink-0 border-r border-t border-[#94a3c7] px-7 text-[13px] font-bold ${
-            item === active ? 'border-l bg-white text-[#031b4e]' : 'bg-[#f8f9fc] text-[#566992]'
-          }`}
-        >
-          {item}
-        </button>
-      ))}
+    <div className="mb-5 flex flex-wrap border-b border-[#94a3c7]">
+      {items.map((item) => {
+        const unavailable = unavailableItems.includes(item);
+        return (
+          <button
+            key={item}
+            type="button"
+            onClick={() => {
+              if (item !== active && unavailable) onUnavailable?.(item);
+            }}
+            className={`h-[42px] border-r border-t border-[#94a3c7] px-5 text-[13px] font-bold md:px-7 ${
+              item === active ? 'border-l bg-white text-[#031b4e]' : unavailable ? 'cursor-not-allowed bg-[#f3f5f9] text-[#9aa8c2]' : 'bg-[#f8f9fc] text-[#566992]'
+            }`}
+          >
+            {item}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -704,6 +906,141 @@ function EmptyRow({ text, warning = false }: { text: string; warning?: boolean }
   return (
     <div className={`border px-4 py-5 text-[13px] font-semibold ${warning ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-[#d7deed] bg-[#f5f7fb] text-[#4d5f85]'}`}>
       {text}
+    </div>
+  );
+}
+
+function AdditionalStorageBox({
+  enabled,
+  size,
+  pricePerGb,
+  monthlyCost,
+  mode,
+  mountMode,
+  filesystem,
+  name,
+  onEnabledChange,
+  onSizeChange,
+  onModeChange,
+  onMountModeChange,
+  onFilesystemChange,
+  onNameChange
+}: {
+  enabled: boolean;
+  size: string;
+  pricePerGb: number;
+  monthlyCost: number;
+  mode: 'create' | 'attach';
+  mountMode: 'auto' | 'manual';
+  filesystem: string;
+  name: string;
+  onEnabledChange: (value: boolean) => void;
+  onSizeChange: (value: string) => void;
+  onModeChange: (value: 'create' | 'attach') => void;
+  onMountModeChange: (value: 'auto' | 'manual') => void;
+  onFilesystemChange: (value: string) => void;
+  onNameChange: (value: string) => void;
+}) {
+  return (
+    <div className={`border ${enabled ? 'border-[#0069ff] bg-[#f7fbff]' : 'border-[#94a3c7] bg-white'}`}>
+      <label className="flex cursor-pointer items-start gap-3 px-4 py-3">
+        <input
+          type="checkbox"
+          checked={enabled}
+          onChange={(event) => onEnabledChange(event.target.checked)}
+          className="mt-1 h-4 w-4 accent-[#0069ff]"
+        />
+        <span>
+          <span className="block text-[14px] font-bold text-[#0069ff]">Add additional storage</span>
+          <span className="mt-1 block text-[13px] leading-5 text-[#0069ff]">
+            Volumes are NVMe network block storage. You can use them to move between Droplets and deployments by detaching and attaching at any time.
+          </span>
+        </span>
+      </label>
+
+      {enabled && (
+        <div className="border-t border-[#0069ff] bg-white px-5 py-6">
+          <div className="mb-7 flex border-b border-[#94a3c7]">
+            <button
+              type="button"
+              onClick={() => onModeChange('create')}
+              className={`h-[43px] border-l border-r border-t border-[#94a3c7] px-6 text-[13px] font-bold ${mode === 'create' ? 'bg-white text-[#031b4e]' : 'bg-[#f8f9fc] text-[#566992]'}`}
+            >
+              Create new
+            </button>
+            <button
+              type="button"
+              onClick={() => onModeChange('attach')}
+              className={`h-[43px] border-r border-t border-[#94a3c7] px-6 text-[13px] font-bold ${mode === 'attach' ? 'bg-white text-[#031b4e]' : 'bg-[#f8f9fc] text-[#566992]'}`}
+            >
+              Attach Existing
+            </button>
+          </div>
+
+          <div className="mb-6 grid grid-cols-1 gap-5 sm:grid-cols-[130px_1fr]">
+            <label>
+              <span className="mb-2 block text-[12px] font-bold text-[#031b4e]">Storage size (GB)</span>
+              <div className="grid h-[44px] grid-cols-[1fr_34px] border border-[#94a3c7]">
+                <input
+                  type="number"
+                  min="1"
+                  value={size}
+                  onChange={(event) => onSizeChange(event.target.value)}
+                  className="w-full px-3 text-center text-[14px] outline-none"
+                />
+                <div className="grid grid-rows-2 border-l border-[#94a3c7]">
+                  <button type="button" onClick={() => onSizeChange(String(Number(size || 0) + 1))} className="grid place-items-center border-b border-[#94a3c7] text-[#536489]">⌃</button>
+                  <button type="button" onClick={() => onSizeChange(String(Math.max(Number(size || 0) - 1, 1)))} className="grid place-items-center text-[#536489]">⌄</button>
+                </div>
+              </div>
+            </label>
+            <div className="flex flex-col justify-end pb-1">
+              <p className="text-[13px] font-bold text-[#536489]">Monthly cost</p>
+              <p className="text-[14px] text-[#284265]">${monthlyCost.toFixed(2)} (${pricePerGb.toFixed(2)}/GB per month)</p>
+            </div>
+          </div>
+
+          <p className="mb-3 text-[12px] font-bold text-[#031b4e]">Choose Configuration</p>
+          <div className="mb-4 border border-[#0069ff]">
+            <label className="flex cursor-pointer items-start gap-3 bg-[#f7fbff] px-4 py-3">
+              <input type="radio" checked={mountMode === 'auto'} onChange={() => onMountModeChange('auto')} className="mt-1 h-4 w-4 accent-[#0069ff]" />
+              <span>
+                <span className="block text-[14px] font-bold text-[#0069ff]">Automatically Format & Mount</span>
+                <span className="mt-1 block text-[12px] leading-5 text-[#0069ff]">We will choose the appropriate default configurations. These settings can be changed later.</span>
+              </span>
+            </label>
+            <div className="border-t border-[#0069ff] px-4 py-4">
+              <p className="mb-3 text-[12px] font-bold text-[#031b4e]">Choose a filesystem</p>
+              <div className="flex gap-5 text-[13px] font-semibold text-[#031b4e]">
+                {['ext4', 'xfs'].map((item) => (
+                  <label key={item} className="flex items-center gap-2">
+                    <input type="radio" checked={filesystem === item} onChange={() => onFilesystemChange(item)} className="h-4 w-4 accent-[#0069ff]" />
+                    {item === 'ext4' ? 'Ext4' : 'XFS'}
+                  </label>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <label className="mb-6 flex cursor-pointer items-start gap-3 border border-[#94a3c7] px-4 py-3">
+            <input type="radio" checked={mountMode === 'manual'} onChange={() => onMountModeChange('manual')} className="mt-1 h-4 w-4 accent-[#0069ff]" />
+            <span>
+              <span className="block text-[14px] font-bold text-[#031b4e]">Manually Format & Mount</span>
+              <span className="mt-1 block text-[12px] leading-5 text-[#536489]">We will still attach the volume. You can then manually format and mount the volume.</span>
+            </span>
+          </label>
+
+          <label className="block">
+            <span className="mb-1 block text-[12px] font-bold text-[#031b4e]">Enter a name</span>
+            <span className="mb-3 block text-[12px] text-[#536489]">Can only contain alphanumeric characters, dashes, and periods only.</span>
+            <input
+              value={name}
+              onChange={(event) => onNameChange(event.target.value)}
+              className="h-[45px] w-full border border-[#94a3c7] px-3 text-[14px] outline-none focus:border-[#0069ff]"
+            />
+          </label>
+        </div>
+      )}
     </div>
   );
 }

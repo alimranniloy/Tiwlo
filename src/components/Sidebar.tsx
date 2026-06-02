@@ -74,6 +74,7 @@ export default function Sidebar({ user, isOpen, setIsOpen, onLogout }: SidebarPr
         label: 'ADMIN DASHBOARD',
         items: [
           { name: 'System Overview', icon: BarChart3, path: '/' },
+          { name: 'Size Packages', icon: HardDrive, path: '/management/size-packages' },
           { name: 'AI Model', icon: Bot, path: '/management/ai-model' },
           { name: 'Service Statistics', icon: Activity, path: '/management/statistics' },
           { name: 'Live Notifications', icon: Bell, path: '/management/notifications' },
