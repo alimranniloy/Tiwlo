@@ -226,7 +226,7 @@ export const requiredServerPackages = [
   'libsasl2-modules', 'roundcube', 'vsftpd', 'openssh-server', 'ufw', 'firewalld',
   'fail2ban', 'clamav', 'maldet', 'libapache2-mod-security2', 'docker.io',
   'docker-compose-plugin', 'rclone', 'restic', 'borgbackup', 'cron', 'rsync',
-  'git', 'curl', 'wget', 'zip', 'unzip', 'tar', 'nano', 'vim', 'htop',
+  'git', 'curl', 'wget', 'xz-utils', 'zip', 'unzip', 'tar', 'nano', 'vim', 'htop',
   'net-tools', 'iftop', 'iotop', 'nload', 'sysstat', 'p7zip-full',
   'imagemagick', 'ffmpeg', 'supervisor', 'filebrowser', 'phpmyadmin',
   'adminer', 'composer', 'yarn', 'build-essential', 'software-properties-common',
@@ -1938,7 +1938,51 @@ APP_DIR="$SOURCE_DIR/src/tPanel"
 TPANEL_PORT="\${TPANEL_PORT:-2086}"
 TPANEL_DOMAIN="\${TPANEL_DOMAIN:-tiwlo.com}"
 REPO_URL="${repo}"
-NPM_BIN="\$(command -v npm || true)"
+TOOLS_DIR="$TPANEL_DIR/tools"
+DOWNLOADS_DIR="$TOOLS_DIR/downloads"
+BUILD_NODE_VERSION="\${TPANEL_NODE_VERSION:-24.16.0}"
+NODE_ROOT="$TOOLS_DIR/node"
+NODE_BIN=""
+NPM_BIN=""
+
+node_arch() {
+  case "$(uname -m)" in
+    x86_64|amd64) echo "x64" ;;
+    arm64|aarch64) echo "arm64" ;;
+    *) return 1 ;;
+  esac
+}
+
+download_runtime() {
+  local url="$1"
+  local output="$2"
+  mkdir -p "$(dirname "$output")"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "$url" -o "$output"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -qO "$output" "$url"
+  else
+    return 1
+  fi
+}
+
+ensure_build_node() {
+  local arch folder tarball node_bin
+  arch="$(node_arch)" || { echo "Unsupported CPU architecture for bundled Node.js: $(uname -m)" >&2; exit 1; }
+  folder="node-v\${BUILD_NODE_VERSION}-linux-\${arch}"
+  tarball="\${folder}.tar.xz"
+  node_bin="$NODE_ROOT/$folder/bin"
+  mkdir -p "$NODE_ROOT" "$DOWNLOADS_DIR"
+  if [ ! -x "$node_bin/node" ]; then
+    echo "Installing bundled Node.js v\${BUILD_NODE_VERSION}..."
+    download_runtime "https://nodejs.org/dist/v\${BUILD_NODE_VERSION}/\${tarball}" "$DOWNLOADS_DIR/$tarball"
+    tar -xJf "$DOWNLOADS_DIR/$tarball" -C "$NODE_ROOT"
+  fi
+  NODE_BIN="$node_bin/node"
+  NPM_BIN="$node_bin/npm"
+  export PATH="$node_bin:$PATH"
+  "$NODE_BIN" -v | grep -q "^v\${BUILD_NODE_VERSION}$" || { echo "Bundled Node.js v\${BUILD_NODE_VERSION} is not available." >&2; exit 1; }
+}
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "Run this installer as root: curl -fsSL $API_BASE/tpanel/install.sh | sudo env TPANEL_LICENSE_KEY=KEY bash"
@@ -1989,11 +2033,7 @@ else
 fi
 
 echo "Package installation phase complete."
-NPM_BIN="$(command -v npm || true)"
-if [ -z "$NPM_BIN" ]; then
-  echo "npm was not found after package installation. Install Node.js/npm, then rerun."
-  exit 1
-fi
+ensure_build_node
 
 if [ -d "$SOURCE_DIR/.git" ]; then
   git -C "$SOURCE_DIR" pull --ff-only
@@ -2005,12 +2045,30 @@ fi
 echo "Clone done"
 
 cd "$APP_DIR"
-if [ -f package-lock.json ]; then
-  npm ci --include=optional
-else
-  npm install --include=optional
+install_app_dependencies() {
+  export npm_config_include=optional
+  export npm_config_optional=true
+  rm -rf node_modules
+  if [ -f package-lock.json ]; then
+    "$NPM_BIN" ci --include=optional || { rm -rf node_modules package-lock.json; "$NPM_BIN" install --include=optional; }
+  else
+    "$NPM_BIN" install --include=optional
+  fi
+  if ! "$NODE_BIN" -e "require('@tailwindcss/oxide')" >/dev/null 2>&1; then
+    echo "Tailwind native binding missing; retrying clean optional dependency install..."
+    rm -rf node_modules package-lock.json
+    "$NPM_BIN" cache verify || true
+    "$NPM_BIN" install --include=optional
+    "$NODE_BIN" -e "require('@tailwindcss/oxide')"
+  fi
+}
+install_app_dependencies
+if ! "$NPM_BIN" run build; then
+  echo "Build failed. Retrying after a clean dependency install..."
+  rm -rf node_modules package-lock.json
+  install_app_dependencies
+  "$NPM_BIN" run build
 fi
-npm run build
 
 mkdir -p /etc/tpanel /var/lib/tpanel /var/log/tpanel
 ADMIN_PASSWORD="\${TPANEL_ADMIN_PASSWORD:-}"
@@ -2045,6 +2103,10 @@ TPANEL_ADMIN_USER=admin
 TPANEL_ADMIN_PASSWORD=$ADMIN_PASSWORD
 NODE_ENV=production
 PORT=$TPANEL_PORT
+NODE_BIN_DIR=$(dirname "$NODE_BIN")
+NPM_BIN=$NPM_BIN
+TPANEL_TOOLS_DIR=$TOOLS_DIR
+TPANEL_NODE_SELECTOR_DIR=$TOOLS_DIR/node-selector
 ENV
 chmod 600 /etc/tpanel/agent.env
 
@@ -2608,6 +2670,7 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=$APP_DIR
 EnvironmentFile=/etc/tpanel/agent.env
+Environment=PATH=$(dirname "$NODE_BIN"):/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ExecStart=$NPM_BIN run start
 Restart=always
 RestartSec=5
@@ -2629,7 +2692,50 @@ fi
 PHP_SELECTOR_VERSIONS="\${TPANEL_PHP_SELECTOR_VERSIONS:-8.4 8.3 8.2 8.1 8.0 7.4}"
 TOOLS_DIR="\${TPANEL_DIR:-/opt/tpanel}/tools"
 DOWNLOADS_DIR="$TOOLS_DIR/downloads"
+BUILD_NODE_VERSION="\${TPANEL_NODE_VERSION:-24.16.0}"
+NODE_ROOT="$TOOLS_DIR/node"
 NODE_SELECTOR_DIR="$TOOLS_DIR/node-selector"
+NODE_BIN=""
+NPM_BIN=""
+
+node_arch() {
+  case "$(uname -m)" in
+    x86_64|amd64) echo "x64" ;;
+    arm64|aarch64) echo "arm64" ;;
+    *) return 1 ;;
+  esac
+}
+
+download_runtime() {
+  local url="$1"
+  local output="$2"
+  mkdir -p "$(dirname "$output")"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "$url" -o "$output"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -qO "$output" "$url"
+  else
+    return 1
+  fi
+}
+
+ensure_build_node() {
+  local arch folder tarball node_bin
+  arch="$(node_arch)" || { echo "Unsupported CPU architecture for bundled Node.js: $(uname -m)" >&2; exit 1; }
+  folder="node-v\${BUILD_NODE_VERSION}-linux-\${arch}"
+  tarball="\${folder}.tar.xz"
+  node_bin="$NODE_ROOT/$folder/bin"
+  mkdir -p "$NODE_ROOT" "$DOWNLOADS_DIR"
+  if [ ! -x "$node_bin/node" ]; then
+    echo "Installing bundled Node.js v\${BUILD_NODE_VERSION} for tPanel build..."
+    download_runtime "https://nodejs.org/dist/v\${BUILD_NODE_VERSION}/\${tarball}" "$DOWNLOADS_DIR/$tarball"
+    tar -xJf "$DOWNLOADS_DIR/$tarball" -C "$NODE_ROOT"
+  fi
+  NODE_BIN="$node_bin/node"
+  NPM_BIN="$node_bin/npm"
+  export PATH="$node_bin:$PATH"
+  "$NODE_BIN" -v | grep -q "^v\${BUILD_NODE_VERSION}$" || { echo "Bundled Node.js v\${BUILD_NODE_VERSION} is not available." >&2; exit 1; }
+}
 
 install_php_selector_versions() {
   command -v apt-get >/dev/null 2>&1 || return 0
@@ -2648,24 +2754,14 @@ install_php_selector_versions() {
 }
 
 install_node_selector_versions() {
-  command -v node >/dev/null 2>&1 || return 0
+  [ -x "$NODE_BIN" ] || return 0
   local index_file="$DOWNLOADS_DIR/node-index.json"
   mkdir -p "$NODE_SELECTOR_DIR" "$DOWNLOADS_DIR"
-  if command -v curl >/dev/null 2>&1; then
-    curl -fsSL https://nodejs.org/dist/index.json -o "$index_file" || return 0
-  elif command -v wget >/dev/null 2>&1; then
-    wget -qO "$index_file" https://nodejs.org/dist/index.json || return 0
-  else
-    return 0
-  fi
+  download_runtime https://nodejs.org/dist/index.json "$index_file" || return 0
   local node_arch
-  case "$(uname -m)" in
-    x86_64|amd64) node_arch="x64" ;;
-    arm64|aarch64) node_arch="arm64" ;;
-    *) return 0 ;;
-  esac
+  node_arch="$(node_arch)" || return 0
   local versions
-  versions="$(node - "$index_file" <<'NODE'
+  versions="$("$NODE_BIN" - "$index_file" <<'NODE'
 const fs = require("fs");
 const rows = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
 const selected = [];
@@ -2685,11 +2781,7 @@ NODE
     local folder="node-v\${version}-linux-\${node_arch}"
     local tarball="\${folder}.tar.xz"
     [ -x "$NODE_SELECTOR_DIR/$folder/bin/node" ] && continue
-    if command -v curl >/dev/null 2>&1; then
-      curl -fL "https://nodejs.org/dist/v\${version}/\${tarball}" -o "$DOWNLOADS_DIR/$tarball" || true
-    elif command -v wget >/dev/null 2>&1; then
-      wget -O "$DOWNLOADS_DIR/$tarball" "https://nodejs.org/dist/v\${version}/\${tarball}" || true
-    fi
+    download_runtime "https://nodejs.org/dist/v\${version}/\${tarball}" "$DOWNLOADS_DIR/$tarball" || true
     [ -f "$DOWNLOADS_DIR/$tarball" ] && tar -xJf "$DOWNLOADS_DIR/$tarball" -C "$NODE_SELECTOR_DIR" || true
   done
 }
@@ -2697,13 +2789,14 @@ NODE
 if command -v apt-get >/dev/null 2>&1; then
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -y
-  apt-get install -y software-properties-common apt-transport-https lsb-release gnupg php-fpm php-cli php-common php-mysql php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache php-imagick php-redis php-gmp php-ldap php-imap php-readline php-bz2 php-xsl phpmyadmin mariadb-server postgresql postgresql-contrib vsftpd composer zip unzip || true
+  apt-get install -y curl wget ca-certificates xz-utils software-properties-common apt-transport-https lsb-release gnupg php-fpm php-cli php-common php-mysql php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-xml php-gd php-intl php-bcmath php-soap php-opcache php-imagick php-redis php-gmp php-ldap php-imap php-readline php-bz2 php-xsl phpmyadmin mariadb-server postgresql postgresql-contrib vsftpd composer zip unzip || true
 elif command -v dnf >/dev/null 2>&1; then
   dnf install -y php-fpm php-cli php-common php-mysqlnd php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-bz2 php-xml php-gd php-intl php-bcmath php-soap php-opcache php-pecl-imagick php-pecl-redis php-gmp php-ldap php-imap php-readline phpMyAdmin mariadb-server postgresql postgresql-contrib vsftpd composer zip unzip || true
 elif command -v yum >/dev/null 2>&1; then
   yum install -y php-fpm php-cli php-common php-mysqlnd php-pgsql php-sqlite3 php-curl php-zip php-mbstring php-bz2 php-xml php-gd php-intl php-bcmath php-soap php-opcache php-pecl-imagick php-pecl-redis php-gmp php-ldap php-imap php-readline phpMyAdmin mariadb-server postgresql postgresql-contrib vsftpd composer zip unzip || true
 fi
 install_php_selector_versions
+ensure_build_node
 install_node_selector_versions
 for svc in $(systemctl list-unit-files --type=service 'php*-fpm.service' 2>/dev/null | awk '/php.*-fpm\.service/ {print $1}'); do
   systemctl enable --now "$svc" >/dev/null 2>&1 || true
@@ -2714,12 +2807,30 @@ systemctl enable --now vsftpd >/dev/null 2>&1 || true
 cd "$SOURCE_DIR"
 git pull --ff-only
 cd "$APP_DIR"
-if [ -f package-lock.json ]; then
-  npm ci --include=optional
-else
-  npm install --include=optional
+install_app_dependencies() {
+  export npm_config_include=optional
+  export npm_config_optional=true
+  rm -rf node_modules
+  if [ -f package-lock.json ]; then
+    "$NPM_BIN" ci --include=optional || { rm -rf node_modules package-lock.json; "$NPM_BIN" install --include=optional; }
+  else
+    "$NPM_BIN" install --include=optional
+  fi
+  if ! "$NODE_BIN" -e "require('@tailwindcss/oxide')" >/dev/null 2>&1; then
+    echo "Tailwind native binding missing; retrying clean optional dependency install..."
+    rm -rf node_modules package-lock.json
+    "$NPM_BIN" cache verify || true
+    "$NPM_BIN" install --include=optional
+    "$NODE_BIN" -e "require('@tailwindcss/oxide')"
+  fi
+}
+install_app_dependencies
+if ! "$NPM_BIN" run build; then
+  echo "Build failed. Retrying after a clean dependency install..."
+  rm -rf node_modules package-lock.json
+  install_app_dependencies
+  "$NPM_BIN" run build
 fi
-npm run build
 systemctl restart tpanel
 echo "tPanel updated. Database and user data were not removed."
 BASH

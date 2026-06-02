@@ -1043,10 +1043,52 @@ function ensureMaintenanceScripts() {
     "APP_DIR=\"${APP_DIR:-$SOURCE_DIR/src/tPanel}\"",
     "TPANEL_PORT=\"${TPANEL_PORT:-2086}\"",
     "PHP_SELECTOR_VERSIONS=\"${TPANEL_PHP_SELECTOR_VERSIONS:-8.4 8.3 8.2 8.1 8.0 7.4}\"",
+    "BUILD_NODE_VERSION=\"${TPANEL_NODE_VERSION:-24.16.0}\"",
     "TOOLS_DIR=\"$TPANEL_DIR/tools\"",
     "DOWNLOADS_DIR=\"$TOOLS_DIR/downloads\"",
+    "NODE_ROOT=\"$TOOLS_DIR/node\"",
     "NODE_SELECTOR_DIR=\"$TOOLS_DIR/node-selector\"",
-    "NPM_BIN=\"${NPM_BIN:-$(command -v npm || true)}\"",
+    "NODE_BIN=\"\"",
+    "NPM_BIN=\"\"",
+    "",
+    "node_arch() {",
+    "  case \"$(uname -m)\" in",
+    "    x86_64|amd64) echo \"x64\" ;;",
+    "    arm64|aarch64) echo \"arm64\" ;;",
+    "    *) return 1 ;;",
+    "  esac",
+    "}",
+    "",
+    "download_runtime() {",
+    "  local url=\"$1\"",
+    "  local output=\"$2\"",
+    "  mkdir -p \"$(dirname \"$output\")\"",
+    "  if command -v curl >/dev/null 2>&1; then",
+    "    curl -fsSL \"$url\" -o \"$output\"",
+    "  elif command -v wget >/dev/null 2>&1; then",
+    "    wget -qO \"$output\" \"$url\"",
+    "  else",
+    "    return 1",
+    "  fi",
+    "}",
+    "",
+    "ensure_build_node() {",
+    "  local arch folder tarball node_bin",
+    "  arch=\"$(node_arch)\" || { echo \"Unsupported CPU architecture for bundled Node.js: $(uname -m)\" >&2; exit 1; }",
+    "  folder=\"node-v${BUILD_NODE_VERSION}-linux-${arch}\"",
+    "  tarball=\"${folder}.tar.xz\"",
+    "  node_bin=\"$NODE_ROOT/$folder/bin\"",
+    "  mkdir -p \"$NODE_ROOT\" \"$DOWNLOADS_DIR\"",
+    "  if [ ! -x \"$node_bin/node\" ]; then",
+    "    echo \"Installing bundled Node.js v${BUILD_NODE_VERSION} for tPanel build...\"",
+    "    download_runtime \"https://nodejs.org/dist/v${BUILD_NODE_VERSION}/${tarball}\" \"$DOWNLOADS_DIR/$tarball\"",
+    "    tar -xJf \"$DOWNLOADS_DIR/$tarball\" -C \"$NODE_ROOT\"",
+    "  fi",
+    "  NODE_BIN=\"$node_bin/node\"",
+    "  NPM_BIN=\"$node_bin/npm\"",
+    "  export PATH=\"$node_bin:$PATH\"",
+    "  \"$NODE_BIN\" -v | grep -q \"^v${BUILD_NODE_VERSION}$\" || { echo \"Bundled Node.js v${BUILD_NODE_VERSION} is not available.\" >&2; exit 1; }",
+    "}",
     "",
     "install_php_selector_versions() {",
     "  command -v apt-get >/dev/null 2>&1 || return 0",
@@ -1085,24 +1127,14 @@ function ensureMaintenanceScripts() {
     "}",
     "",
     "install_node_selector_versions() {",
-    "  command -v node >/dev/null 2>&1 || return 0",
+    "  [ -x \"$NODE_BIN\" ] || return 0",
     "  mkdir -p \"$NODE_SELECTOR_DIR\" \"$DOWNLOADS_DIR\"",
     "  local index_file=\"$DOWNLOADS_DIR/node-index.json\"",
-    "  if command -v curl >/dev/null 2>&1; then",
-    "    curl -fsSL https://nodejs.org/dist/index.json -o \"$index_file\" || return 0",
-    "  elif command -v wget >/dev/null 2>&1; then",
-    "    wget -qO \"$index_file\" https://nodejs.org/dist/index.json || return 0",
-    "  else",
-    "    return 0",
-    "  fi",
+    "  download_runtime https://nodejs.org/dist/index.json \"$index_file\" || return 0",
     "  local node_arch",
-    "  case \"$(uname -m)\" in",
-    "    x86_64|amd64) node_arch=\"x64\" ;;",
-    "    arm64|aarch64) node_arch=\"arm64\" ;;",
-    "    *) return 0 ;;",
-    "  esac",
+    "  node_arch=\"$(node_arch)\" || return 0",
     "  local versions",
-    "  versions=\"$(node - \"$index_file\" <<'NODE'",
+    "  versions=\"$(\"$NODE_BIN\" - \"$index_file\" <<'NODE'",
     "const fs = require('fs');",
     "const rows = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));",
     "const selected = [];",
@@ -1122,24 +1154,46 @@ function ensureMaintenanceScripts() {
     "    local folder=\"node-v${version}-linux-${node_arch}\"",
     "    local tarball=\"${folder}.tar.xz\"",
     "    [ -x \"$NODE_SELECTOR_DIR/$folder/bin/node\" ] && continue",
-    "    if command -v curl >/dev/null 2>&1; then",
-    "      curl -fL \"https://nodejs.org/dist/v${version}/${tarball}\" -o \"$DOWNLOADS_DIR/$tarball\" || true",
-    "    elif command -v wget >/dev/null 2>&1; then",
-    "      wget -O \"$DOWNLOADS_DIR/$tarball\" \"https://nodejs.org/dist/v${version}/${tarball}\" || true",
-    "    fi",
+    "    download_runtime \"https://nodejs.org/dist/v${version}/${tarball}\" \"$DOWNLOADS_DIR/$tarball\" || true",
     "    [ -f \"$DOWNLOADS_DIR/$tarball\" ] && tar -xJf \"$DOWNLOADS_DIR/$tarball\" -C \"$NODE_SELECTOR_DIR\" || true",
     "  done",
     "}",
     "",
+    "install_app_dependencies() {",
+    "  export npm_config_include=optional",
+    "  export npm_config_optional=true",
+    "  rm -rf node_modules",
+    "  if [ -f package-lock.json ]; then",
+    "    \"$NPM_BIN\" ci --include=optional || { rm -rf node_modules package-lock.json; \"$NPM_BIN\" install --include=optional; }",
+    "  else",
+    "    \"$NPM_BIN\" install --include=optional",
+    "  fi",
+    "  if ! \"$NODE_BIN\" -e \"require('@tailwindcss/oxide')\" >/dev/null 2>&1; then",
+    "    echo \"Tailwind native binding missing; retrying clean optional dependency install...\"",
+    "    rm -rf node_modules package-lock.json",
+    "    \"$NPM_BIN\" cache verify || true",
+    "    \"$NPM_BIN\" install --include=optional",
+    "    \"$NODE_BIN\" -e \"require('@tailwindcss/oxide')\"",
+    "  fi",
+    "}",
+    "",
     "install_runtime_packages",
+    "ensure_build_node",
     "install_php_selector_versions",
     "install_node_selector_versions",
     "cd \"$SOURCE_DIR\"",
     "git pull --ff-only || { git stash push -u -m \"tpanel-update-autostash-$(date +%Y%m%d%H%M%S)\" || true; git pull --ff-only; }",
     "cd \"$APP_DIR\"",
-    "if [ -z \"$NPM_BIN\" ]; then NPM_BIN=\"$(command -v npm || true)\"; fi",
-    "if [ -f package-lock.json ]; then \"$NPM_BIN\" ci --include=optional; else \"$NPM_BIN\" install --include=optional; fi",
-    "\"$NPM_BIN\" run build",
+    "install_app_dependencies",
+    "if ! \"$NPM_BIN\" run build; then",
+    "  echo \"Build failed. Retrying after a clean dependency install...\"",
+    "  rm -rf node_modules package-lock.json",
+    "  install_app_dependencies",
+    "  \"$NPM_BIN\" run build",
+    "fi",
+    "if [ -x /usr/local/sbin/tpanel-repair-nginx ]; then",
+    "  /usr/local/sbin/tpanel-repair-nginx || true",
+    "fi",
     "systemctl restart tpanel",
     "echo \"tPanel updated. Runtime versions, extensions, panel route, database and user data were preserved.\"",
     ""
@@ -2415,6 +2469,24 @@ function activePanelAccounts(state = readPanelState()) {
   return (state.accounts || []).filter((account: any) => !TERMINAL_ACCOUNT_STATUSES.has(String(account.status || "").toLowerCase()));
 }
 
+function repairAccountRuntime(account: any) {
+  if (process.platform === "win32") return true;
+  try {
+    ensureWebReadableAccount(account);
+    const phpRoutes = accountRuntimeDomains(account).filter((entry: any) => entry.runtime.runtime === "php");
+    const versions = Array.from(new Set(phpRoutes.map((entry: any) => entry.runtime.phpVersion)));
+    versions.forEach((version: any) => ensureAccountPhpPool(account, version));
+    phpRoutes.forEach((entry: any) => {
+      writePhpUserIni({ ...account, phpVersion: entry.runtime.phpVersion, phpSettings: entry.runtime.phpSettings }, entry.documentRoot);
+    });
+    return true;
+  } catch (error: any) {
+    appendProvisioningLog(account, `Startup runtime repair failed: ${error.message}`);
+    patchAccountProvisioning(account, { vhost: { status: "runtime_repair_failed", message: error.message } });
+    return false;
+  }
+}
+
 function reconcileWebRouting() {
   if (process.platform === "win32") return;
   const state = readPanelState();
@@ -2425,13 +2497,14 @@ function reconcileWebRouting() {
   let changed = false;
   for (const account of accounts) {
     removePanelProxyForDomain(account.domain);
+    const runtimeReady = repairAccountRuntime(account);
     const siteName = `tpanel-${account.username}`;
     const availablePath = `/etc/nginx/sites-available/${siteName}.conf`;
     const enabledPath = `/etc/nginx/sites-enabled/${siteName}.conf`;
     const sslMissing = account.sslEnabled !== false && !accountSslPaths(account).ready;
     const expectedConfig = accountNginxConfig(account);
     const currentConfig = fs.existsSync(availablePath) ? fs.readFileSync(availablePath, "utf8") : "";
-    if (!fs.existsSync(availablePath) || !fs.existsSync(enabledPath) || currentConfig !== expectedConfig || sslMissing) {
+    if (!runtimeReady || !fs.existsSync(availablePath) || !fs.existsSync(enabledPath) || currentConfig !== expectedConfig || sslMissing) {
       applyAccountProvisioning(account);
       changed = true;
     }
