@@ -271,9 +271,40 @@ export const verifyPassword = async (ctx, actor, password) => {
   return true;
 };
 
-export const requestPasswordReset = async (ctx, emailInput) => {
-  const email = normalizeEmail(emailInput);
-  const user = await ctx.prisma.user.findUnique({ where: { email } });
+const findPasswordResetUser = async (ctx, input = {}) => {
+  const identifier = typeof input === 'string' ? input : (input.identifier || input.email || input.phone || '');
+  const email = String(identifier || '').includes('@') ? normalizeEmail(identifier) : normalizeEmail(input.email || '');
+  if (email) {
+    const user = await ctx.prisma.user.findUnique({ where: { email } }).catch(() => null);
+    if (user) return { user, auditIdentifier: email };
+  }
+
+  const phoneInput = typeof input === 'string' ? identifier : (input.phone || identifier);
+  const target = normalizeWhatsAppPhone({
+    phone: phoneInput,
+    mobileCountryCode: input.mobileCountryCode,
+    country: input.country
+  }).phoneE164;
+  if (!target) return { user: null, auditIdentifier: identifier };
+
+  const users = await ctx.prisma.$queryRawUnsafe(`
+    SELECT "id", "email", "passwordHash", "name", "phone", "mobileCountryCode", "country", "whatsappVerifiedPhone"
+    FROM "User"
+    WHERE "phone" IS NOT NULL OR "whatsappVerifiedPhone" IS NOT NULL
+  `).catch(() => []);
+  const user = toApi(users || []).find((candidate) => {
+    if (candidate.whatsappVerifiedPhone === target) return true;
+    return normalizeWhatsAppPhone({
+      phone: candidate.phone,
+      mobileCountryCode: candidate.mobileCountryCode,
+      country: candidate.country
+    }).phoneE164 === target;
+  }) || null;
+  return { user, auditIdentifier: target };
+};
+
+export const requestPasswordReset = async (ctx, input) => {
+  const { user, auditIdentifier } = await findPasswordResetUser(ctx, input);
   if (!user) return true;
   const token = randomToken();
   await ctx.prisma.user.update({
@@ -296,7 +327,7 @@ export const requestPasswordReset = async (ctx, emailInput) => {
     ].join('')
   });
   await sendForgotPasswordWhatsApp(ctx, user, link);
-  await writeAudit({ ...ctx, user }, 'request_password_reset', 'user', user.id, { email });
+  await writeAudit({ ...ctx, user }, 'request_password_reset', 'user', user.id, { identifier: auditIdentifier });
   return true;
 };
 

@@ -2726,7 +2726,7 @@ type Mutation {
   startWhatsAppVerification(input: WhatsAppPhoneInput): WhatsAppOtpPayload!
   verifyWhatsAppOtp(challengeId: ID!, code: String!): AuthPayload!
   updateProfile(input: UpdateProfileInput!): User!
-  requestPasswordReset(email: String!): Boolean!
+  requestPasswordReset(email: String, identifier: String, phone: String, mobileCountryCode: String, country: String): Boolean!
   resetPassword(token: String!, password: String!): AuthPayload!
   resendEmailVerification: Boolean!
   verifyEmail(token: String!): AuthPayload!

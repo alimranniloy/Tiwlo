@@ -127,7 +127,7 @@ export const normalizeWhatsAppPhone = ({ phone, mobileCountryCode, country } = {
   const rawDigits = digits(phone);
   const countryCode = clean(country, 'BD').toUpperCase().slice(0, 2);
   const dial = digits(mobileCountryCode || COUNTRY_DIAL_CODES[countryCode] || '');
-  const local = dial && rawDigits.startsWith(dial) ? rawDigits.slice(dial.length) : rawDigits.replace(/^0+/, '');
+  const local = (dial && rawDigits.startsWith(dial) ? rawDigits.slice(dial.length) : rawDigits).replace(/^0+/, '');
   if (!dial || !local) return { phoneE164: '', localPhone: local, dialCode: dial ? `+${dial}` : '', country: countryCode };
   return {
     phoneE164: `+${dial}${local}`,

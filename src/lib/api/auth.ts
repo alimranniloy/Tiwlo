@@ -217,12 +217,13 @@ export async function verifyCurrentPasswordWithApi(password: string) {
   return data.verifyPassword;
 }
 
-export async function requestPasswordResetWithApi(email: string) {
+export async function requestPasswordResetWithApi(input: string | { email?: string; identifier?: string; phone?: string; mobileCountryCode?: string; country?: string }) {
+  const variables = typeof input === 'string' ? { email: input } : input;
   const data = await graphQL<{ requestPasswordReset: boolean }>(
-    `mutation RequestPasswordReset($email: String!) {
-      requestPasswordReset(email: $email)
+    `mutation RequestPasswordReset($email: String, $identifier: String, $phone: String, $mobileCountryCode: String, $country: String) {
+      requestPasswordReset(email: $email, identifier: $identifier, phone: $phone, mobileCountryCode: $mobileCountryCode, country: $country)
     }`,
-    { email }
+    variables
   );
 
   return data.requestPasswordReset;

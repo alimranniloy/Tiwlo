@@ -169,11 +169,21 @@ export function normalizePhoneDigits(phone: string) {
   return String(phone || '').replace(/\D/g, '');
 }
 
+export function normalizePhoneForCountry(countryCode: string, phone: string) {
+  const country = countryByCode(countryCode);
+  const dialDigits = country.dialCode.replace(/\D/g, '');
+  const digits = normalizePhoneDigits(phone);
+  const localDigits = (dialDigits && digits.startsWith(dialDigits) ? digits.slice(dialDigits.length) : digits).replace(/^0+/, '');
+  return {
+    country,
+    localDigits,
+    e164: dialDigits && localDigits ? `+${dialDigits}${localDigits}` : localDigits
+  };
+}
+
 export function phoneValidationMessage(countryCode: string, phone: string) {
   const country = countryByCode(countryCode);
-  const digits = normalizePhoneDigits(phone);
-  const dialDigits = country.dialCode.replace(/\D/g, '');
-  const localDigits = dialDigits && digits.startsWith(dialDigits) ? digits.slice(dialDigits.length) : digits;
+  const { localDigits } = normalizePhoneForCountry(countryCode, phone);
 
   if (!localDigits) return 'Mobile number is required.';
   if (country.code === 'BD' && !/^1[3-9]\d{8}$/.test(localDigits)) {
