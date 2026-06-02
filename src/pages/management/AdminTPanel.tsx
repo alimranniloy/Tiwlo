@@ -198,6 +198,9 @@ export default function AdminTPanel() {
     bandwidthGb: '1000',
     cpuBrand: 'Intel',
     extraStoragePricePerGb: '0.10',
+    sshKeyAvailable: false,
+    passwordAvailable: true,
+    domainRequired: true,
     status: 'active',
     features: 'SSD storage\nPassword deployment\nHourly credit billing'
   });
@@ -444,6 +447,9 @@ export default function AdminTPanel() {
       bandwidthGb: '1000',
       cpuBrand: 'Intel',
       extraStoragePricePerGb: '0.10',
+      sshKeyAvailable: false,
+      passwordAvailable: true,
+      domainRequired: true,
       status: 'active',
       features: 'SSD storage\nPassword deployment\nHourly credit billing'
     });
@@ -471,6 +477,9 @@ export default function AdminTPanel() {
       bandwidthGb: String(limits.bandwidthGb || numberFromLimit(limits.bandwidth, '1000')),
       cpuBrand: String(limits.cpuBrand || (String(limits.cpuCategory || '').includes('amd') ? 'Ryzen' : 'Intel')),
       extraStoragePricePerGb: String(limits.extraStoragePricePerGb ?? limits.storagePricePerGb ?? '0.10'),
+      sshKeyAvailable: Boolean(limits.sshKeyAvailable ?? false),
+      passwordAvailable: limits.passwordAvailable !== false,
+      domainRequired: limits.domainRequired !== false,
       status: pkg.isActive === false ? 'draft' : 'active',
       features: featureText(pkg.features)
     });
@@ -506,7 +515,10 @@ export default function AdminTPanel() {
           ram: `${Number(sizePackageForm.ramGb || 0)} GB`,
           disk: `${Number(sizePackageForm.diskGb || 0)} GB`,
           bandwidth: `${Number(sizePackageForm.bandwidthGb || 0)} GB`,
-          extraStoragePricePerGb: Number(sizePackageForm.extraStoragePricePerGb || 0)
+          extraStoragePricePerGb: Number(sizePackageForm.extraStoragePricePerGb || 0),
+          sshKeyAvailable: Boolean(sizePackageForm.sshKeyAvailable),
+          passwordAvailable: Boolean(sizePackageForm.passwordAvailable),
+          domainRequired: sizePackageForm.module === 'tpanel' ? true : Boolean(sizePackageForm.domainRequired)
         },
         isActive: sizePackageForm.status === 'active'
       });
@@ -898,11 +910,21 @@ export default function AdminTPanel() {
                   {sizePackageModuleOptions.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}
                 </select>
               </label>
-              <label className="space-y-1.5">
-                <span className="text-[11px] font-bold uppercase text-[#6B7280]">Plan family</span>
-                <select required value={sizePackageForm.planFamily} onChange={(event) => setSizePackageForm((current) => ({ ...current, planFamily: event.target.value }))} className="w-full rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500">
-                  {sizePackagePlanFamilies.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}
-                </select>
+              <label className="space-y-1.5 md:col-span-2">
+                <span className="text-[11px] font-bold uppercase text-[#6B7280]">Choose Droplet Plan category</span>
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+                  {sizePackagePlanFamilies.map((item) => (
+                    <button
+                      key={item.key}
+                      type="button"
+                      onClick={() => setSizePackageForm((current) => ({ ...current, planFamily: item.key }))}
+                      className={`rounded border px-3 py-3 text-left ${sizePackageForm.planFamily === item.key ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-[#DDE3EA] bg-white text-[#374151]'}`}
+                    >
+                      <span className="block text-[13px] font-bold">{item.label}</span>
+                      <span className="mt-1 block text-[11px] font-semibold text-[#6B7280]">Shows under {item.label}</span>
+                    </button>
+                  ))}
+                </div>
               </label>
               <label className="space-y-1.5">
                 <span className="text-[11px] font-bold uppercase text-[#6B7280]">Package name</span>
@@ -928,6 +950,23 @@ export default function AdminTPanel() {
                   ))}
                 </div>
               </label>
+              <div className="rounded border border-[#DDE3EA] bg-[#F9FAFB] p-4 md:col-span-2">
+                <p className="text-[11px] font-bold uppercase text-[#6B7280]">Create Droplet rules</p>
+                <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
+                  <label className="flex items-start gap-2 rounded border border-[#E5E7EB] bg-white px-3 py-3 text-[12px] font-bold text-[#374151]">
+                    <input type="checkbox" checked={sizePackageForm.sshKeyAvailable} onChange={(event) => setSizePackageForm((current) => ({ ...current, sshKeyAvailable: event.target.checked }))} className="mt-0.5" />
+                    <span><span className="block">SSH key available</span><span className="mt-1 block text-[11px] font-medium text-[#6B7280]">User can select SSH Keys.</span></span>
+                  </label>
+                  <label className="flex items-start gap-2 rounded border border-[#E5E7EB] bg-white px-3 py-3 text-[12px] font-bold text-[#374151]">
+                    <input type="checkbox" checked={sizePackageForm.passwordAvailable} onChange={(event) => setSizePackageForm((current) => ({ ...current, passwordAvailable: event.target.checked }))} className="mt-0.5" />
+                    <span><span className="block">Password available</span><span className="mt-1 block text-[11px] font-medium text-[#6B7280]">User can set account password.</span></span>
+                  </label>
+                  <label className="flex items-start gap-2 rounded border border-[#E5E7EB] bg-white px-3 py-3 text-[12px] font-bold text-[#374151]">
+                    <input type="checkbox" checked={sizePackageForm.module === 'tpanel' || sizePackageForm.domainRequired} disabled={sizePackageForm.module === 'tpanel'} onChange={(event) => setSizePackageForm((current) => ({ ...current, domainRequired: event.target.checked }))} className="mt-0.5 disabled:opacity-60" />
+                    <span><span className="block">Domain required</span><span className="mt-1 block text-[11px] font-medium text-[#6B7280]">tPanel should keep this on.</span></span>
+                  </label>
+                </div>
+              </div>
               <label className="space-y-1.5">
                 <span className="text-[11px] font-bold uppercase text-[#6B7280]">Monthly price</span>
                 <input required type="number" min="0" step="0.01" value={sizePackageForm.price} onChange={(event) => setSizePackageForm((current) => ({ ...current, price: event.target.value }))} className="w-full rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="5.00" />
@@ -983,10 +1022,10 @@ export default function AdminTPanel() {
               <span className="text-[11px] font-bold uppercase text-[#6B7280]">{sizePackages.length} active</span>
             </div>
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[1180px] text-left">
-                <thead><tr className="border-b border-[#E5E7EB]">{['Package', 'Module', 'Family', 'CPU Option', 'Price', 'Resources', 'Extra Storage', 'Actions'].map((heading) => <th key={heading} className="px-5 py-3 text-[11px] font-bold uppercase text-[#6B7280]">{heading}</th>)}</tr></thead>
+              <table className="w-full min-w-[1280px] text-left">
+                <thead><tr className="border-b border-[#E5E7EB]">{['Package', 'Module', 'Family', 'CPU Option', 'Price', 'Resources', 'Extra Storage', 'Rules', 'Actions'].map((heading) => <th key={heading} className="px-5 py-3 text-[11px] font-bold uppercase text-[#6B7280]">{heading}</th>)}</tr></thead>
                 <tbody className="divide-y divide-[#EEF2F7]">
-                  {sizePackages.length === 0 && <tr><td colSpan={8} className="px-5 py-12 text-center text-[13px] font-bold text-gray-400">No droplet size package yet.</td></tr>}
+                  {sizePackages.length === 0 && <tr><td colSpan={9} className="px-5 py-12 text-center text-[13px] font-bold text-gray-400">No droplet size package yet.</td></tr>}
                   {sizePackages.map((pkg: any) => (
                     <tr key={pkg.id}>
                       <td className="px-5 py-4"><p className="text-[13px] font-bold text-[#111827]">{pkg.name}</p><p className="text-[12px] text-[#6B7280]">{pkg.code}</p></td>
@@ -996,6 +1035,11 @@ export default function AdminTPanel() {
                       <td className="px-5 py-4 text-[12px] font-bold text-[#111827]">{money(pkg.price, 'USD')} / {pkg.interval}</td>
                       <td className="px-5 py-4 text-[12px] text-[#4B5563]">{pkg.limits?.cpu || '-'} / {pkg.limits?.ram || '-'} RAM / {pkg.limits?.disk || '-'} Disk / {pkg.limits?.bandwidth || '-'} BW</td>
                       <td className="px-5 py-4 text-[12px] text-[#4B5563]">{money(pkg.limits?.extraStoragePricePerGb || 0, 'USD')} / GB</td>
+                      <td className="px-5 py-4 text-[11px] font-bold text-[#4B5563]">
+                        <p>{pkg.limits?.domainRequired === false ? 'Domain optional' : 'Domain required'}</p>
+                        <p>{pkg.limits?.passwordAvailable === false ? 'No password' : 'Password'}</p>
+                        <p>{pkg.limits?.sshKeyAvailable ? 'SSH key' : 'No SSH key'}</p>
+                      </td>
                       <td className="px-5 py-4">
                         <div className="flex gap-2">
                           <button onClick={() => editSizePackage(pkg)} className="rounded border border-[#DDE3EA] p-2 text-[#374151] hover:border-blue-400" title="Edit"><Edit3 className="h-4 w-4" /></button>

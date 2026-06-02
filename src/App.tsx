@@ -117,6 +117,12 @@ function ResettableRouter({ routerKey, children }: { routerKey: string; children
   );
 }
 
+function FloatingAIWidgetMount() {
+  const location = useLocation();
+  if (location.pathname === '/droplets/create') return null;
+  return <FloatingAIWidget />;
+}
+
 function isRestrictedUser(user?: User | null) {
   return restrictedStatuses.has(String(user?.status || '').toLowerCase());
 }
@@ -612,7 +618,7 @@ export default function App() {
         handleLogout={handleLogout} 
       />
       <Suspense fallback={null}>
-        <FloatingAIWidget />
+        <FloatingAIWidgetMount />
       </Suspense>
     </ResettableRouter>
   );

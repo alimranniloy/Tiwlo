@@ -5,8 +5,6 @@ import {
   Globe2,
   KeyRound,
   Lock,
-  Minus,
-  Plus,
   Server,
   TerminalSquare,
   User,
@@ -121,6 +119,13 @@ function storagePricePerGb(plan: CloudPlan | null) {
   return Number(value || 0);
 }
 
+function boolLimit(plan: CloudPlan | null, key: string, fallback: boolean) {
+  const value = plan?.limits?.[key];
+  if (value === undefined || value === null || value === '') return fallback;
+  if (typeof value === 'boolean') return value;
+  return ['true', '1', 'yes', 'enabled'].includes(String(value).toLowerCase());
+}
+
 function accountDomain(hostname: string) {
   const cleanHost = hostname.trim().toLowerCase();
   return cleanHost;
@@ -141,6 +146,7 @@ export default function CreateDroplet() {
   const [hostname, setHostname] = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [sshPublicKey, setSshPublicKey] = useState('');
   const [plans, setPlans] = useState<CloudPlan[]>([]);
   const [nodes, setNodes] = useState<CloudDeploymentNode[]>([]);
   const [plansLoading, setPlansLoading] = useState(true);
@@ -232,6 +238,9 @@ export default function CreateDroplet() {
   const selectedDisk = limitValue(selectedPlanRecord, 'disk', fallbackLimits.disk);
   const selectedBandwidth = limitValue(selectedPlanRecord, 'bandwidth', '1 TB');
   const selectedFeatures = selectedPlanRecord ? featureList(selectedPlanRecord) : [];
+  const domainRequired = selectedModule === 'tpanel' || boolLimit(selectedPlanRecord, 'domainRequired', false);
+  const passwordAvailable = boolLimit(selectedPlanRecord, 'passwordAvailable', true);
+  const sshKeyAvailable = boolLimit(selectedPlanRecord, 'sshKeyAvailable', selectedModule !== 'tpanel');
   const creditBalance = Number(billingOverview?.credits || 0);
   const creditEmpty = Boolean(billingOverview) && creditBalance <= 0;
   const activeFamilyKeys = React.useMemo(() => new Set(modulePlans.map(planFamily)), [modulePlans]);
@@ -260,6 +269,15 @@ export default function CreateDroplet() {
       setSelectedPlan('');
     }
   }, [categoryPlans, modulePlans, selectedModule, selectedPlan]);
+
+  React.useEffect(() => {
+    if (selectedAuthTab === 'Password' && !passwordAvailable && sshKeyAvailable) {
+      setSelectedAuthTab('SSH Keys');
+    }
+    if (selectedAuthTab === 'SSH Keys' && !sshKeyAvailable && passwordAvailable) {
+      setSelectedAuthTab('Password');
+    }
+  }, [passwordAvailable, selectedAuthTab, sshKeyAvailable]);
 
   React.useEffect(() => {
     const clean = username.trim();
@@ -296,11 +314,11 @@ export default function CreateDroplet() {
       setError('No active deployment server is configured. Ask administrator to connect a tPanel server first.');
       return;
     }
-    if (!hostname.trim()) {
+    if (domainRequired && !hostname.trim()) {
       setError('Domain name is required before creating a droplet.');
       return;
     }
-    if (!isValidDomainName(hostname)) {
+    if (hostname.trim() && !isValidDomainName(hostname)) {
       setError('Domain must be a real domain name like example.com. Auto tpanel.local subdomains are disabled.');
       return;
     }
@@ -312,8 +330,20 @@ export default function CreateDroplet() {
       setError(usernameCheck.message || 'Choose another tPanel username.');
       return;
     }
-    if (password.length < 8) {
+    if (selectedAuthTab === 'Password' && !passwordAvailable) {
+      setError('Password authentication is not available for this package.');
+      return;
+    }
+    if (selectedAuthTab === 'SSH Keys' && !sshKeyAvailable) {
+      setError('SSH key authentication is not available for this package.');
+      return;
+    }
+    if (selectedAuthTab === 'Password' && password.length < 8) {
       setError('Password must be at least 8 characters before creating a droplet.');
+      return;
+    }
+    if (selectedAuthTab === 'SSH Keys' && !sshPublicKey.trim().startsWith('ssh-')) {
+      setError('Add a valid SSH public key before creating this droplet.');
       return;
     }
     if (creditEmpty || creditBalance < selectedHourly) {
@@ -338,7 +368,7 @@ export default function CreateDroplet() {
         hourlyRate: selectedHourly,
         resource: {
           type: 'droplet',
-          name: hostname.trim(),
+          name: hostname.trim() || `${username.trim().toLowerCase()}-${selectedModule}`,
           region: selectedNode.location || 'Global',
           specs: `${ram} / ${cpu} / ${disk} Disk${storageGb ? ` / ${storageGb} GB Block Storage` : ''}`,
           ip: selectedNode.ip,
@@ -350,9 +380,11 @@ export default function CreateDroplet() {
           monthlyCost: selectedMonthly,
           metadata: {
             auth: {
-              method: 'password',
+              method: selectedAuthTab === 'SSH Keys' ? 'ssh_key' : 'password',
               username: username.trim(),
-              passwordConfigured: true
+              passwordConfigured: selectedAuthTab === 'Password',
+              sshKeyConfigured: selectedAuthTab === 'SSH Keys',
+              sshPublicKey: selectedAuthTab === 'SSH Keys' ? sshPublicKey.trim() : undefined
             },
             billing: {
               hourlyRate: selectedHourly,
@@ -385,7 +417,10 @@ export default function CreateDroplet() {
               planFamily: selectedPlanFamily,
               cpuCategory: selectedCpuCategory,
               cpuOption: cpuCategoryLabel(selectedCpuCategory),
-              bandwidth
+              bandwidth,
+              domainRequired,
+              passwordAvailable,
+              sshKeyAvailable
             },
             blockStorage: {
               enabled: storageEnabled,
@@ -694,11 +729,34 @@ export default function CreateDroplet() {
               <TabBar
                 items={['SSH Keys', 'Password']}
                 active={selectedAuthTab}
-                unavailableItems={selectedModule === 'tpanel' ? ['SSH Keys'] : ['SSH Keys']}
+                unavailableItems={[...(!sshKeyAvailable ? ['SSH Keys'] : []), ...(!passwordAvailable ? ['Password'] : [])]}
                 onSelect={setSelectedAuthTab}
               />
-              {selectedAuthTab !== 'Password' ? (
-                <UnavailableBox title="SSH Keys unavailable" text={`${moduleLabel(selectedModule)} deployments use password authentication only.`} />
+              {selectedAuthTab === 'SSH Keys' && !sshKeyAvailable ? (
+                <UnavailableBox title="SSH Keys unavailable" text={`${moduleLabel(selectedModule)} deployments use password authentication for this package.`} />
+              ) : selectedAuthTab === 'Password' && !passwordAvailable ? (
+                <UnavailableBox title="Password unavailable" text="Password authentication is disabled for this package." />
+              ) : selectedAuthTab === 'SSH Keys' ? (
+                <div className="mt-5 border border-[#e4e8f2] bg-white p-5">
+                  <div className="mb-4 flex items-start gap-3">
+                    <span className="grid h-10 w-10 place-items-center border border-[#cdd8ee] text-[#0069ff]">
+                      <KeyRound className="h-5 w-5" />
+                    </span>
+                    <div>
+                      <p className="text-[14px] font-bold text-[#031b4e]">Add SSH public key</p>
+                      <p className="mt-1 text-[13px] leading-5 text-[#536489]">This package allows SSH key authentication.</p>
+                    </div>
+                  </div>
+                  <label className="block space-y-2">
+                    <span className="block text-[13px] font-bold text-[#031b4e]">SSH public key</span>
+                    <textarea
+                      value={sshPublicKey}
+                      onChange={(event) => setSshPublicKey(event.target.value)}
+                      placeholder="ssh-ed25519 AAAA..."
+                      className="min-h-28 w-full border border-[#94a3c7] bg-white px-3 py-2 text-[13px] outline-none focus:border-[#0069ff]"
+                    />
+                  </label>
+                </div>
               ) : <div className="mt-5 border border-[#e4e8f2] bg-white p-5">
                 <div className="mb-5 flex items-start gap-3">
                   <span className="grid h-10 w-10 place-items-center border border-[#cdd8ee] text-[#0069ff]">
@@ -767,8 +825,8 @@ export default function CreateDroplet() {
             <section className="mb-14">
               <SectionTitle title="Finalize" />
               <label className="block">
-                <span className="mb-2 block text-[13px] font-bold text-[#031b4e]">Give your Droplet a domain name</span>
-                <span className="mb-3 block text-[12px] text-[#536489]">Must be a real domain such as example.com. Auto local subdomains are disabled.</span>
+                <span className="mb-2 block text-[13px] font-bold text-[#031b4e]">Give your Droplet a domain name{domainRequired ? '' : ' (optional)'}</span>
+                <span className="mb-3 block text-[12px] text-[#536489]">{domainRequired ? 'This package requires a real domain such as example.com.' : 'You can add a real domain now or later.'} Auto local subdomains are disabled.</span>
                 <input
                   value={hostname}
                   onChange={(event) => setHostname(event.target.value)}
@@ -776,19 +834,6 @@ export default function CreateDroplet() {
                   className="h-[46px] w-full border border-[#94a3c7] bg-white px-3 text-[14px] outline-none focus:border-[#0069ff]"
                 />
               </label>
-              <div className="mt-7">
-                <span className="mb-2 block text-[13px] font-bold text-[#031b4e]">Quantity</span>
-                <p className="mb-3 text-[12px] text-[#536489]">Deploy one managed tPanel account with this configuration.</p>
-                <div className="inline-flex h-[42px] border border-[#94a3c7]">
-                  <button type="button" className="grid w-44 place-items-center border-r border-[#94a3c7] text-[#9aa8c2]">
-                    <Minus className="h-4 w-4" />
-                  </button>
-                  <span className="grid w-[70px] place-items-center text-[14px] font-semibold">1</span>
-                  <button type="button" className="grid w-11 place-items-center border-l border-[#94a3c7] text-[#355180]">
-                    <Plus className="h-4 w-4" />
-                  </button>
-                </div>
-              </div>
             </section>
           </main>
 
@@ -815,6 +860,8 @@ export default function CreateDroplet() {
                       <SummaryLine label="RAM" value={selectedRam} />
                       <SummaryLine label="Disk" value={selectedDisk} />
                       <SummaryLine label="Bandwidth" value={selectedBandwidth} />
+                      <SummaryLine label="Domain" value={domainRequired ? 'Required' : 'Optional'} />
+                      <SummaryLine label="Auth" value={[sshKeyAvailable ? 'SSH key' : '', passwordAvailable ? 'Password' : ''].filter(Boolean).join(' / ') || 'None'} />
                       <SummaryLine label="Region" value={selectedNode?.location || 'Select region'} />
                       <SummaryLine label="Slug" value={selectedPlanRecord?.code || 'select-plan'} />
                       {storageEnabled && <SummaryLine label="Block Storage" value={`${storageSize || 0} GB ${storageFilesystem.toUpperCase()}`} />}
