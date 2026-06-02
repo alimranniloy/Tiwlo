@@ -922,6 +922,46 @@ function removePanelProxyForDomain(domain: string) {
   if (changed) reloadNginx();
 }
 
+function panelPhpMyAdminPath() {
+  if (process.platform === "win32") return "";
+  return ["/usr/share/phpmyadmin", "/usr/share/phpMyAdmin"].find((candidate) => fs.existsSync(candidate) && fs.statSync(candidate).isDirectory()) || "";
+}
+
+function panelPhpFpmSocket() {
+  if (process.platform === "win32") return "";
+  for (const version of installedPhpVersions()) {
+    const socket = globalPhpFpmSocket(version);
+    if (fs.existsSync(socket)) return socket;
+  }
+  const detected = runLocalShell("find /run/php -maxdepth 1 -type s -name 'php*-fpm.sock' 2>/dev/null | sort -V | tail -n 1", 10000);
+  return detected && fs.existsSync(detected) ? detected : "";
+}
+
+function panelPhpMyAdminNginxBlock() {
+  const phpMyAdminPath = panelPhpMyAdminPath();
+  const phpSocket = panelPhpFpmSocket();
+  if (!phpMyAdminPath || !phpSocket) return "";
+  const aliasPath = toUnixPath(phpMyAdminPath).replace(/\/+$/, "");
+  return `
+    location = /phpmyadmin {
+        return 302 /phpmyadmin/;
+    }
+
+    location /phpmyadmin/ {
+        alias ${aliasPath}/;
+        index index.php index.html;
+    }
+
+    location ~ ^/phpmyadmin/(.+\\.php)$ {
+        alias ${aliasPath}/$1;
+        include snippets/fastcgi-php.conf;
+        fastcgi_param SCRIPT_FILENAME $request_filename;
+        fastcgi_param DOCUMENT_ROOT ${aliasPath};
+        fastcgi_pass unix:${phpSocket};
+    }
+`;
+}
+
 function applyPanelDomainProxy(settings: any) {
   if (process.platform === "win32") return;
   const domain = cleanDomain(settings.primaryDomain);
@@ -947,6 +987,7 @@ function applyPanelDomainProxy(settings: any) {
     location /.well-known/acme-challenge/ {
         root /var/www/html;
     }
+${panelPhpMyAdminNginxBlock()}
 
     location / {
         proxy_pass http://127.0.0.1:${proxyPort};
@@ -992,6 +1033,7 @@ function ensureDefaultPanelProxy() {
     client_max_body_size 512m;
     access_log /var/log/nginx/tpanel-panel.access.log;
     error_log /var/log/nginx/tpanel-panel.error.log;
+${panelPhpMyAdminNginxBlock()}
 
     location / {
         proxy_pass http://127.0.0.1:${proxyPort};
@@ -3944,7 +3986,9 @@ async function createAppDatabase(account: any, app: any, target: any) {
   if (maxDatabases > 0 && current.databases.length >= maxDatabases) {
     throw new Error("Database limit reached. Upgrade the package before installing database apps.");
   }
-  const suffixBase = `${app.id}_${target.domain.replace(/[^a-z0-9]/gi, "_")}_${target.relativePath || "root"}`.toLowerCase().slice(0, 24);
+  const domainPart = dbSuffix(target.domain.replace(/[^a-z0-9]/gi, "_"), "site").slice(0, 12);
+  const pathPart = dbSuffix(target.relativePath || "root", "root").slice(0, 8);
+  const suffixBase = `${app.id}_${domainPart}_${pathPart}_${randomBytes(3).toString("hex")}`.toLowerCase();
   const dbSuffixName = dbSuffix(suffixBase, app.id);
   const userSuffixName = dbSuffix(`${app.id}_${randomBytes(3).toString("hex")}`, app.id).slice(0, 24);
   const password = randomBytes(18).toString("base64url");
@@ -3952,6 +3996,22 @@ async function createAppDatabase(account: any, app: any, target: any) {
   const username = await createDatabaseUser(account, "mysql", userSuffixName, password);
   await grantDatabaseAccess(account, "mysql", userSuffixName, dbSuffixName, DATABASE_PRIVILEGES);
   return { engine: "mysql", database, username, password, host: "localhost" };
+}
+
+async function ensureWordPressAdminCredentials(account: any, wpCli: string, destination: string, username: string, password: string, email: string) {
+  const pathArg = `--path=${shellSingleQuote(destination)}`;
+  const wp = `php ${shellSingleQuote(wpCli)}`;
+  const command = [
+    `if ${wp} user get ${shellSingleQuote(username)} ${pathArg} >/dev/null 2>&1; then`,
+    `  ${wp} user update ${shellSingleQuote(username)} ${pathArg} --user_pass=${shellSingleQuote(password)} --user_email=${shellSingleQuote(email)} --role=administrator;`,
+    "else",
+    `  ${wp} user create ${shellSingleQuote(username)} ${shellSingleQuote(email)} ${pathArg} --user_pass=${shellSingleQuote(password)} --role=administrator;`,
+    "fi",
+    `${wp} user set-role ${shellSingleQuote(username)} administrator ${pathArg}`,
+    `${wp} user get ${shellSingleQuote(username)} ${pathArg} --field=ID`
+  ].join("\n");
+  const { stdout, stderr } = await runAccountProvisionCommand(account, command, destination, 600000);
+  return `${stdout || ""}${stderr || ""}`.trim();
 }
 
 function writeWordPressConfig(destination: string, db: any) {
@@ -4020,8 +4080,14 @@ async function installOneClickApp(account: any, body: any) {
         installOutput = `${installOutput}\n${stdout || ""}${stderr || ""}`.trim();
       } catch (error: any) {
         const details = `${error.stdout || ""}${error.stderr || error.message || ""}`.trim();
-        throw new Error(`WordPress admin setup failed. ${details || "Check PHP/MySQL extensions and try again."}`);
+        if (/already installed/i.test(details)) {
+          installOutput = `${installOutput}\n${details}`.trim();
+        } else {
+          throw new Error(`WordPress admin setup failed. ${details || "Check PHP/MySQL extensions and try again."}`);
+        }
       }
+      const adminOutput = await ensureWordPressAdminCredentials(account, wpCli, target.destination, adminUsername, adminPassword, adminEmail);
+      installOutput = `${installOutput}\n${adminOutput}`.trim();
       const { stdout: verifyStdout, stderr: verifyStderr } = await runAccountProvisionCommand(account,
         `php ${shellSingleQuote(wpCli)} core is-installed --path=${shellSingleQuote(target.destination)}`,
         target.destination,
@@ -4435,6 +4501,14 @@ app.get("/api/user/phpmyadmin-url", requireLicense, async (req, res) => {
     return;
   }
   const configured = String(process.env.TPANEL_PHPMYADMIN_URL || "").trim();
+  if (!configured && (!panelPhpMyAdminPath() || !panelPhpFpmSocket())) {
+    res.status(503).json({ ok: false, message: "phpMyAdmin is not ready. Run sudo tpanel-update, then restart tPanel." });
+    return;
+  }
+  if (!configured) {
+    ensureDefaultPanelProxy();
+    applyPanelDomainProxy(readDomainSettings());
+  }
   res.json({
     ok: true,
     url: configured || "/phpmyadmin/",
