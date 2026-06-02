@@ -6,10 +6,6 @@ import {
   ArrowRight,
   Boxes,
   ChevronDown,
-  CreditCard,
-  Database,
-  Globe2,
-  Layers3,
   Network,
   Server,
   ShieldCheck,
@@ -52,12 +48,16 @@ const navLinks = [
   { label: 'Pricing', to: '/pricing' }
 ];
 
-const platformMarks = ['tPanel', 'Tiwlo Pay', 'Cloud Store', 'ISP Billing', 'Edge DNS'];
+const promoMessages = [
+  'Get $100 free credit for 1 month on Tiwlo',
+  'Student founders can request extra trial credits',
+  'Deploy hosting, stores, payments, and ISP billing from one console'
+];
 
-const metricCards = [
-  { value: '1', label: 'control plane', detail: 'Cloud, hosting, store, payment, support, and ISP tools connected in one console.' },
-  { value: 'Real', label: 'server provisioning', detail: 'Admin-connected regions deploy live tPanel accounts with package limits and SSO.' },
-  { value: '24/7', label: 'operations layer', detail: 'Live chat, tickets, WhatsApp OTP, identity review, and security controls stay ready.' }
+const showcaseLogos = [
+  '/brand/showcase/tmail-logo-white.png',
+  '/brand/showcase/tfiber.png',
+  '/brand/showcase/tpanel.png'
 ];
 
 const controlLayers: ControlLayer[] = [
@@ -231,11 +231,20 @@ function CookieConsentBanner() {
 }
 
 function PromoBar() {
+  const [active, setActive] = React.useState(0);
+
+  React.useEffect(() => {
+    const timer = window.setInterval(() => {
+      setActive((current) => (current + 1) % promoMessages.length);
+    }, 4200);
+    return () => window.clearInterval(timer);
+  }, []);
+
   return (
     <div className="bg-[#0b4c53] text-white">
-      <div className="mx-auto flex h-9 max-w-[1320px] items-center justify-between px-4 text-[13px] font-bold md:px-8">
-        <Link to="/documentation" className="inline-flex min-w-0 items-center gap-2 truncate hover:text-[#7cf4ff]">
-          <span className="truncate">Now shipping: Tiwlo unified cloud control plane</span>
+      <div className="mx-auto flex h-7 max-w-[1320px] items-center justify-between px-3 text-[11px] font-bold sm:h-8 sm:px-4 sm:text-[12px] md:px-8">
+        <Link to="/signup" className="inline-flex min-w-0 items-center gap-2 truncate hover:text-[#7cf4ff]">
+          <span className="truncate">{promoMessages[active]}</span>
           <ArrowRight className="h-4 w-4 shrink-0" />
         </Link>
         <div className="hidden items-center gap-6 lg:flex">
@@ -252,21 +261,21 @@ function SiteHeader() {
   const navigate = useNavigate();
   return (
     <header className="sticky top-0 z-50 border-b border-white/10 bg-black text-white">
-      <div className="mx-auto flex h-[70px] max-w-[1320px] items-center justify-between px-4 md:px-8">
+      <div className="mx-auto flex h-14 max-w-[1320px] items-center justify-between px-3 sm:h-16 sm:px-4 md:px-8">
         <button onClick={() => navigate('/')} className="flex items-center">
-          <img src="/brand/white-logo.png" alt="Tiwlo" className="h-9 w-[144px] object-contain object-left" />
+          <img src="/brand/white-logo.png" alt="Tiwlo" className="h-7 w-[100px] object-contain object-left sm:h-8 sm:w-[128px]" />
         </button>
-        <nav className="hidden items-center gap-8 lg:flex">
+        <nav className="hidden items-center gap-7 lg:flex">
           {navLinks.map((item) => (
-            <Link key={item.label} to={item.to} className="inline-flex items-center gap-1 text-[15px] font-bold text-white/88 hover:text-[#7cf4ff]">
+            <Link key={item.label} to={item.to} className="inline-flex items-center gap-1 text-[14px] font-bold text-white/88 hover:text-[#7cf4ff]">
               {item.label}
               {item.menu && <ChevronDown className="h-4 w-4" />}
             </Link>
           ))}
         </nav>
         <div className="flex items-center gap-3">
-          <button onClick={() => navigate('/login')} className="hidden px-3 py-2 text-[15px] font-bold text-white hover:text-[#7cf4ff] sm:block">Log in</button>
-          <button onClick={() => navigate('/signup')} className="rounded-full bg-[#7cf4ff] px-5 py-3 text-[15px] font-bold text-black transition hover:bg-white">Sign up</button>
+          <button onClick={() => navigate('/login')} className="hidden px-3 py-2 text-[14px] font-bold text-white hover:text-[#7cf4ff] sm:block">Log in</button>
+          <button onClick={() => navigate('/signup')} className="rounded-full bg-[#7cf4ff] px-3.5 py-2 text-[12px] font-bold text-black transition hover:bg-white sm:px-5 sm:py-2.5 sm:text-[14px]">Sign up</button>
         </div>
       </div>
     </header>
@@ -296,52 +305,71 @@ function HeroSection() {
   const navigate = useNavigate();
 
   return (
-    <section className="relative overflow-hidden bg-[#020707] text-white">
+    <section className="relative grid min-h-[560px] overflow-hidden bg-[#020707] text-white sm:min-h-[640px] lg:min-h-[720px]">
       <HeroVideo />
-      <div className="relative z-10 mx-auto max-w-[1220px] px-4 pb-12 pt-16 sm:pb-16 sm:pt-24 md:px-8 lg:pb-20 lg:pt-28">
-        <div className="max-w-[720px]">
-          <p className="mb-5 inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/8 px-4 py-2 text-[12px] font-black uppercase tracking-[0.18em] text-[#7cf4ff] backdrop-blur">
-            <span className="h-2 w-2 rounded-full bg-[#7cf4ff]" />
-            Tiwlo operations cloud
-          </p>
-          <h1 className="text-[40px] font-black leading-[0.98] tracking-normal text-white sm:text-[54px] lg:text-[72px]">
-            Run hosting, stores, ISP billing, and support from one live control plane.
+      <div className="relative z-10 mx-auto grid w-full max-w-[1220px] place-items-center px-3 py-10 text-center sm:px-5 md:px-8">
+        <div className="mx-auto max-w-[860px]">
+          <h1 className="text-[34px] font-black leading-[1.03] tracking-normal text-white sm:text-[52px] lg:text-[66px]">
+            Tiwlo Cloud
           </h1>
-          <p className="mt-6 max-w-[650px] text-[16px] font-semibold leading-7 text-white/84 sm:text-[18px]">
-            Connect real servers, create tPanel accounts, launch storefronts, verify payments, manage subscribers, and route support without stitching tools together.
+          <p className="mx-auto mt-4 max-w-[660px] text-[14px] font-semibold leading-6 text-white/84 sm:mt-5 sm:text-[17px] sm:leading-7">
+            One workspace for hosting, payments, stores, ISP billing, DNS, and support teams that run live customer operations.
           </p>
-          <div className="mt-9 flex flex-col gap-3 sm:flex-row">
-            <button onClick={() => navigate('/signup')} className="rounded-full bg-[#7cf4ff] px-8 py-3.5 text-[15px] font-black text-black transition hover:bg-white">
+          <div className="mt-7 flex flex-row justify-center gap-2 sm:mt-8 sm:gap-3">
+            <button onClick={() => navigate('/signup')} className="rounded-full bg-[#7cf4ff] px-5 py-3 text-[13px] font-black text-black transition hover:bg-white sm:px-8 sm:py-3.5 sm:text-[15px]">
               Get started
             </button>
-            <button onClick={() => navigate('/products')} className="rounded-full border border-white/70 bg-black/20 px-8 py-3.5 text-[15px] font-black text-white backdrop-blur transition hover:border-[#7cf4ff] hover:text-[#7cf4ff]">
+            <button onClick={() => navigate('/products')} className="rounded-full border border-white/70 bg-black/20 px-5 py-3 text-[13px] font-black text-white backdrop-blur transition hover:border-[#7cf4ff] hover:text-[#7cf4ff] sm:px-8 sm:py-3.5 sm:text-[15px]">
               Explore platform
             </button>
           </div>
+          <LogoShowcaseRow />
         </div>
 
-        <div className="mt-14 max-w-[980px] rounded-[18px] border border-white/12 bg-black/45 p-4 backdrop-blur-md sm:p-5">
-          <p className="text-[14px] font-bold text-white/82">Operators build and manage on Tiwlo across these product lines.</p>
-          <div className="mt-4 flex flex-wrap gap-2">
-            {platformMarks.map((mark) => (
-              <span key={mark} className="rounded-full border border-white/12 bg-white/8 px-4 py-2 text-[13px] font-black text-white/88">
-                {mark}
-              </span>
-            ))}
-          </div>
-        </div>
+      </div>
+    </section>
+  );
+}
 
-        <div className="mt-6 grid max-w-[1120px] gap-3 md:grid-cols-3">
-          {metricCards.map((card) => (
-            <article key={card.label} className="border border-white/12 bg-[#061818]/88 p-5 backdrop-blur">
-              <p className="text-[34px] font-black text-white">{card.value}</p>
-              <h2 className="mt-1 text-[16px] font-black text-[#7cf4ff]">{card.label}</h2>
-              <p className="mt-3 text-[14px] font-semibold leading-6 text-white/78">{card.detail}</p>
-            </article>
+function LogoShowcaseRow() {
+  return (
+    <div className="mx-auto mt-9 flex w-full max-w-[760px] items-center justify-center gap-2 sm:mt-12 sm:gap-8">
+      {showcaseLogos.map((src) => (
+        <div key={src} className="min-w-0 flex-1">
+          <img
+            src={src}
+            alt=""
+            className="mx-auto max-h-7 w-full object-contain opacity-88 sm:max-h-11"
+            loading="eager"
+            draggable={false}
+          />
+        </div>
+        ))}
+    </div>
+  );
+}
+
+function ArchitectureVisual() {
+  return (
+    <div className="relative min-h-[420px] overflow-hidden border border-white/10 bg-[#071918] p-5 shadow-[0_30px_110px_rgba(0,0,0,0.4)]">
+      <div className="absolute inset-0 bg-[linear-gradient(135deg,rgba(124,244,255,0.16),transparent_42%),radial-gradient(circle_at_70%_20%,rgba(167,139,250,0.2),transparent_34%)]" />
+      <div className="absolute inset-0 opacity-50 [background-image:linear-gradient(rgba(255,255,255,0.08)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.08)_1px,transparent_1px)] [background-size:42px_42px]" />
+      <div className="relative min-h-[380px]">
+        <div className="absolute left-6 top-8 h-24 w-24 border border-[#7cf4ff]/60 bg-black/35" />
+        <div className="absolute left-20 top-20 h-32 w-32 border border-white/20 bg-white/[0.03]" />
+        <div className="absolute right-8 top-14 h-36 w-44 border border-[#7cf4ff]/40 bg-black/30" />
+        <div className="absolute bottom-10 left-10 h-28 w-48 border border-white/20 bg-black/35" />
+        <div className="absolute bottom-16 right-12 h-32 w-32 rounded-full border border-[#7cf4ff]/60 bg-[#7cf4ff]/10" />
+        <div className="absolute left-[46%] top-[42%] h-28 w-28 -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/40 bg-black/45 shadow-[0_0_80px_rgba(124,244,255,0.24)]" />
+        <div className="absolute left-14 right-14 top-1/2 h-px bg-[#7cf4ff]/40" />
+        <div className="absolute bottom-24 left-1/2 top-20 w-px bg-white/18" />
+        <div className="absolute bottom-6 left-6 right-6 flex justify-between">
+          {Array.from({ length: 9 }).map((_, index) => (
+            <span key={index} className="h-2 w-2 rounded-full bg-[#7cf4ff]/70" />
           ))}
         </div>
       </div>
-    </section>
+    </div>
   );
 }
 
@@ -454,7 +482,7 @@ function PlatformSection() {
                 ))}
               </div>
             </article>
-            <ControlPlaneMockup />
+            <ArchitectureVisual />
           </div>
         </div>
       </div>
