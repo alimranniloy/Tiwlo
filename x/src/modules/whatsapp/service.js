@@ -203,16 +203,17 @@ const sendTemplate = async (ctx, kind, toPhoneE164, { bodyParams = [], buttonPar
   if (!template.name) {
     throw new AppError(`WhatsApp ${kind} template name is missing.`, 'WHATSAPP_CONFIGURATION_REQUIRED');
   }
+  const buttonType = clean(template.buttonType || (kind === 'otp' ? 'copy_code' : 'url')).toLowerCase();
+  const effectiveBodyParams = kind === 'otp' && buttonType === 'copy_code' ? [] : bodyParams;
 
   const components = [];
-  if (bodyParams.length) {
+  if (effectiveBodyParams.length) {
     components.push({
       type: 'body',
-      parameters: bodyParams.map((item) => ({ type: 'text', text: String(item ?? '') }))
+      parameters: effectiveBodyParams.map((item) => ({ type: 'text', text: String(item ?? '') }))
     });
   }
   if (template.button !== false && buttonParams.length) {
-    const buttonType = clean(template.buttonType || 'url').toLowerCase();
     components.push({
       type: 'button',
       sub_type: buttonType === 'copy_code' ? 'copy_code' : 'url',

@@ -263,7 +263,7 @@ export default function AdminWhatsAppApi() {
             {templateRows.map((row) => {
               const template = config.templates[row.key];
               return (
-                <div key={row.key} className="grid gap-4 p-5 lg:grid-cols-[220px_1fr_135px_150px_120px] lg:items-center">
+                <div key={row.key} className="grid gap-4 p-5 lg:grid-cols-[220px_1fr_135px_150px_145px] lg:items-center">
                   <div>
                     <p className="text-sm font-black text-[#111827]">{row.label}</p>
                     <p className="mt-1 text-[11px] leading-4 text-[#6B7280]">{row.description}</p>
@@ -295,7 +295,7 @@ export default function AdminWhatsAppApi() {
                       onChange={(event) => setTemplateValue(row.key, 'button', event.target.checked)}
                       className="h-4 w-4 accent-[#128c7e]"
                     />
-                    URL Button
+                    Send Button Param
                   </label>
                 </div>
               );
