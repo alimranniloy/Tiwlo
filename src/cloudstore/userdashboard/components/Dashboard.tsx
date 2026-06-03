@@ -32,6 +32,7 @@ import {
   updateStoreCustomerProfileWithApi,
   type StoreCustomerDashboard
 } from '../../../lib/tiwloApi';
+import { useCurrency } from '../../../lib/useCurrency';
 
 type DashboardProps = {
   dashboard: StoreCustomerDashboard;
@@ -47,8 +48,14 @@ const statusLabels: Record<string, string[]> = {
   returns: ['returned', 'return_requested', 'refunded', 'refund_pending']
 };
 
-function money(value: number, currency = 'USD') {
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(Number(value || 0));
+type StoreMoneyFormatter = (value: number, sourceCurrency?: string) => string;
+
+const StoreMoneyContext = React.createContext<StoreMoneyFormatter>((value, currency = 'USD') => (
+  new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(Number(value || 0))
+));
+
+function useStoreMoney() {
+  return React.useContext(StoreMoneyContext);
 }
 
 function dateLabel(value?: string) {
@@ -129,12 +136,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ dashboard, params, onReloa
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<any | null>(null);
   const location = useLocation();
+  const { money: storeMoney } = useCurrency({ scope: 'storefront', scopeId: dashboard.store?.id || dashboard.store?.slug || 'customer' });
   const b = brand(dashboard);
   const customerName = dashboard.customer.name || dashboard.customer.email;
   const unreadMessages = collectRecords(dashboard, ['messages', 'customer-messages', 'support-messages'])
     .filter((record) => String(record.status || record?.data?.status || '').toLowerCase() === 'unread').length;
 
   return (
+    <StoreMoneyContext.Provider value={storeMoney}>
     <div className="min-h-screen bg-[#F4F4F4] flex flex-col md:flex-row" style={{ ['--store-accent' as string]: b.accent, ['--store-accent-soft' as string]: withAlpha(b.accent, '12') }}>
       <header className="md:hidden h-[64px] bg-white border-b border-[#E6E6E6] px-4 flex items-center justify-between sticky top-0 z-50 shadow-none">
         <div className="flex items-center gap-2">
@@ -222,6 +231,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ dashboard, params, onReloa
         </nav>
       </main>
     </div>
+    </StoreMoneyContext.Provider>
   );
 };
 
@@ -250,6 +260,7 @@ function Badge({ value }: { value: string }) {
 }
 
 function Overview({ dashboard, params, onOpenOrder }: { dashboard: StoreCustomerDashboard; params: URLSearchParams; onOpenOrder: (order: any) => void }) {
+  const money = useStoreMoney();
   const b = brand(dashboard);
   const customerName = dashboard.customer.name || dashboard.customer.email;
   const currency = dashboard.store.currency || 'USD';
@@ -411,6 +422,7 @@ function FunctionCenter({ dashboard, params }: { dashboard: StoreCustomerDashboa
 }
 
 function OrderRow({ order, dashboard, onOpen }: { key?: React.Key; order: any; dashboard: StoreCustomerDashboard; onOpen?: () => void }) {
+  const money = useStoreMoney();
   const product = firstOrderProduct(order);
   return (
     <div className="p-4 flex flex-col sm:flex-row sm:items-center gap-4 hover:bg-[#F9FCFF] transition-colors group">
@@ -438,6 +450,7 @@ function OrderRow({ order, dashboard, onOpen }: { key?: React.Key; order: any; d
 }
 
 function ProductRail({ dashboard, products, title }: { dashboard: StoreCustomerDashboard; products: any[]; title: string }) {
+  const money = useStoreMoney();
   const b = brand(dashboard);
   return (
     <div className="space-y-4">
@@ -498,6 +511,7 @@ function OrdersPage({ dashboard, onOpenOrder }: { dashboard: StoreCustomerDashbo
 }
 
 function RecordGridPage({ dashboard, title, recordKeys, emptyLabel }: { dashboard: StoreCustomerDashboard; title: string; recordKeys: string[]; emptyLabel: string }) {
+  const money = useStoreMoney();
   const records = collectRecords(dashboard, recordKeys);
   return (
     <div className="p-4 md:p-8 space-y-6">
@@ -522,6 +536,7 @@ function RecordGridPage({ dashboard, title, recordKeys, emptyLabel }: { dashboar
 }
 
 function RecentPage({ dashboard }: { dashboard: StoreCustomerDashboard }) {
+  const money = useStoreMoney();
   const records = collectRecords(dashboard, ['recent', 'recent-products', 'recently-viewed']);
   return (
     <div className="p-4 md:p-8 space-y-6">
@@ -623,6 +638,7 @@ function AddressPage({ dashboard, onReload }: { dashboard: StoreCustomerDashboar
 }
 
 function PaymentPage({ dashboard, onOpenOrder }: { dashboard: StoreCustomerDashboard; onOpenOrder: (order: any) => void }) {
+  const money = useStoreMoney();
   const payments = dashboard.orders.map((order) => ({
     id: order.id,
     number: order.number,
@@ -735,6 +751,7 @@ function RewardsPage({ dashboard }: { dashboard: StoreCustomerDashboard }) {
 }
 
 function ReturnsPage({ dashboard }: { dashboard: StoreCustomerDashboard }) {
+  const money = useStoreMoney();
   const returnOrders = dashboard.orders.filter((order) => statusLabels.returns.includes(orderStatus(order)));
   const returnRecords = collectRecords(dashboard, ['returns', 'return-requests', 'refunds']);
   const rows = [
@@ -818,6 +835,7 @@ function RecordList({ records, emptyLabel }: { records: any[]; emptyLabel: strin
 }
 
 function OrderDetailModal({ order, dashboard, onClose }: { order: any; dashboard: StoreCustomerDashboard; onClose: () => void }) {
+  const money = useStoreMoney();
   const items = Array.isArray(order.items) ? order.items : [];
   const shipping = order.shipping || {};
   const payment = order.payment || {};

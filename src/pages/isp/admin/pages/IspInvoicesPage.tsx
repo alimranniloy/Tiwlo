@@ -1,8 +1,10 @@
 import React from 'react';
 import { AlertCircle, Download, RefreshCw, Search } from 'lucide-react';
 import { fetchIspInvoicesWithApi } from '../../../../lib/tiwloApi';
+import { useCurrency } from '../../../../lib/useCurrency';
 
 export default function IspInvoicesPage({ site }: { site: any }) {
+  const { money } = useCurrency({ scope: 'platform', scopeId: 'isp-admin' });
   const [invoices, setInvoices] = React.useState<any[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState('');
@@ -88,7 +90,7 @@ export default function IspInvoicesPage({ site }: { site: any }) {
                 <tr key={invoice.id} className="hover:bg-gray-50">
                   <td className="px-4 py-3 font-bold text-blue-600">{invoice.number}</td>
                   <td className="px-4 py-3 text-gray-700">{invoice.clientName}</td>
-                  <td className="px-4 py-3 font-bold text-gray-900">${Number(invoice.amount || 0).toFixed(2)}</td>
+                  <td className="px-4 py-3 font-bold text-gray-900">{money(invoice.amount || 0, invoice.currency || 'USD')}</td>
                   <td className="px-4 py-3"><span className="border border-gray-200 bg-gray-50 px-2 py-0.5 text-[10px] font-bold uppercase text-gray-600">{invoice.status}</span></td>
                   <td className="px-4 py-3 text-gray-500">{invoice.dueDate ? new Date(invoice.dueDate).toLocaleDateString() : '-'}</td>
                 </tr>

@@ -11,6 +11,13 @@ export type PlatformStatus = {
   };
 };
 
+export type PlatformCurrencyStatus = {
+  policy: unknown;
+  detectedCountry?: string | null;
+  detectedCurrency?: string | null;
+  fallbackCurrency?: string;
+};
+
 export async function fetchPlatformStatusWithApi(): Promise<PlatformStatus> {
   const apiBase = GRAPHQL_URL.replace(/\/graphql\/?$/, '');
   const response = await fetch(`${apiBase}/api/platform/status`, {
@@ -19,6 +26,18 @@ export async function fetchPlatformStatusWithApi(): Promise<PlatformStatus> {
   });
   if (!response.ok) {
     throw new Error(`Platform status request failed: ${response.status}`);
+  }
+  return response.json();
+}
+
+export async function fetchPlatformCurrencyWithApi(): Promise<PlatformCurrencyStatus> {
+  const apiBase = GRAPHQL_URL.replace(/\/graphql\/?$/, '');
+  const response = await fetch(`${apiBase}/api/platform/currency`, {
+    headers: { Accept: 'application/json' },
+    cache: 'no-store'
+  });
+  if (!response.ok) {
+    throw new Error(`Platform currency request failed: ${response.status}`);
   }
   return response.json();
 }

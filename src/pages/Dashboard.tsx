@@ -24,15 +24,12 @@ import {
   settleUsageBillingWithApi,
   fetchSupportTicketsWithApi
 } from '../lib/tiwloApi';
+import { useCurrency } from '../lib/useCurrency';
 
 interface DashboardProps {
   user: User;
   droplets: Droplet[];
   domains: Domain[];
-}
-
-function money(value: number) {
-  return `USD ${Number(value || 0).toFixed(2)}`;
 }
 
 function dateLabel(value?: string) {
@@ -53,6 +50,7 @@ const sectionHeader = 'border-b border-[#e1e9f5] bg-[#f8fbff]';
 const blueFocus = 'transition-colors hover:border-[#0069ff] hover:bg-[#f8fbff]';
 
 export default function Dashboard({ user, droplets, domains }: DashboardProps) {
+  const { money } = useCurrency({ scope: 'platform', scopeId: 'console', actorId: user.id });
   const [resources, setResources] = React.useState<any[]>([]);
   const [invoices, setInvoices] = React.useState<any[]>([]);
   const [billingOverview, setBillingOverview] = React.useState<any | null>(null);

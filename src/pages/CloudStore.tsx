@@ -23,10 +23,7 @@ import {
   fetchStoreProductsForAdmin,
   fetchStoresWithApi
 } from '../lib/tiwloApi';
-
-function money(value: number, currency = 'USD') {
-  return `${currency} ${Number(value || 0).toFixed(2)}`;
-}
+import { useCurrency } from '../lib/useCurrency';
 
 function dateLabel(value?: string) {
   if (!value) return 'New';
@@ -49,6 +46,7 @@ function statusTone(status?: string) {
 export default function CloudStore() {
   const navigate = useNavigate();
   const location = useLocation();
+  const { money } = useCurrency({ scope: 'platform', scopeId: 'console' });
   const [stores, setStores] = React.useState<any[]>([]);
   const [store, setStore] = React.useState<any>(null);
   const [products, setProducts] = React.useState<any[]>([]);

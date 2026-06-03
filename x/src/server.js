@@ -28,6 +28,7 @@ import { registerTPanelRoutes } from './modules/tpanel/service.js';
 import { startPowerDnsAutomation } from './modules/powerdns/service.js';
 import { registerDiscordRoutes } from './modules/discord/service.js';
 import { ensureWhatsAppAuthSchema, publicWhatsAppStatus } from './modules/whatsapp/service.js';
+import { publicCurrencyContext } from './core/currency.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -162,6 +163,21 @@ app.get('/api/platform/status', async (_req, res) => {
     });
   } catch (error) {
     res.status(500).json({ maintenance: { enabled: false }, error: error.message || 'Unable to read platform status' });
+  }
+});
+
+app.get('/api/platform/currency', async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store, private, max-age=0');
+  try {
+    res.json(await publicCurrencyContext(prisma, requestIp(req)));
+  } catch (error) {
+    res.status(500).json({
+      policy: null,
+      detectedCountry: null,
+      detectedCurrency: 'USD',
+      fallbackCurrency: 'USD',
+      error: error.message || 'Unable to read platform currency'
+    });
   }
 });
 

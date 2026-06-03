@@ -23,8 +23,8 @@ import {
   updateTPanelLicenseWithApi
 } from '../lib/tiwloApi';
 import { useActionConfirmation } from '../components/ActionConfirmation';
+import { useCurrency } from '../lib/useCurrency';
 
-const money = (value: number, currency = 'USD') => `${currency} ${Number(value || 0).toFixed(2)}`;
 const limitLabel = (value: number) => Number(value || 0) <= 0 ? 'Unlimited' : Number(value || 0).toLocaleString();
 
 const dateLabel = (value?: string) => {
@@ -57,6 +57,7 @@ const canRenewLicense = (license: any) => {
 
 export default function TPanel() {
   const { confirmAction, confirmDelete, confirmEdit } = useActionConfirmation();
+  const { money } = useCurrency({ scope: 'platform', scopeId: 'console' });
   const [packages, setPackages] = React.useState<any[]>([]);
   const [licenses, setLicenses] = React.useState<any[]>([]);
   const [selectedPackage, setSelectedPackage] = React.useState('');

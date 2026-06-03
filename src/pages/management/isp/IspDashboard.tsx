@@ -2,11 +2,12 @@ import React from 'react';
 import { AlertCircle, Database, Globe, Plus, RefreshCw, Server, Users, Zap } from 'lucide-react';
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { fetchIspDashboardSummary, fetchIspSitesWithApi } from '../../../lib/tiwloApi';
+import { useCurrency } from '../../../lib/useCurrency';
 
 const numberValue = (value?: number) => (typeof value === 'number' ? value.toLocaleString() : '0');
-const moneyValue = (value?: number) => `$${Number(value || 0).toLocaleString()}`;
 
 export default function IspDashboard() {
+  const { money } = useCurrency({ scope: 'platform', scopeId: 'admin' });
   const [summary, setSummary] = React.useState<any>(null);
   const [sites, setSites] = React.useState<any[]>([]);
   const [loading, setLoading] = React.useState(true);
@@ -38,7 +39,7 @@ export default function IspDashboard() {
   const stats = [
     { label: 'Active Sites', value: numberValue(summary?.sites), icon: Users },
     { label: 'Total Clients', value: numberValue(summary?.clients), icon: Zap },
-    { label: 'Revenue', value: moneyValue(summary?.revenue), icon: Database },
+    { label: 'Revenue', value: money(summary?.revenue || 0, 'USD'), icon: Database },
     { label: 'Routers', value: numberValue(summary?.routers), icon: Server }
   ];
 

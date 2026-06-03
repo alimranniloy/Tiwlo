@@ -41,13 +41,13 @@ import {
   upsertAdminModuleWithApi
 } from '../../lib/tiwloApi';
 import { SERVICE_MODULE_GROUP, SERVICE_MODULE_KEYS, SERVICE_MODULES, serviceEnabled } from '../../lib/serviceModules';
+import { useCurrency } from '../../lib/useCurrency';
 
 interface AdminDashboardProps {
   user: User;
 }
 
 const numberValue = (value?: number) => (typeof value === 'number' ? value.toLocaleString() : '0');
-const moneyValue = (value?: number) => `$${Number(value || 0).toLocaleString()}`;
 
 const serviceDescriptions: Record<string, string> = {
   [SERVICE_MODULE_KEYS.ecommerce]: 'Storefronts, themes, merchant dashboards, and customer store links.',
@@ -85,6 +85,7 @@ const relativeDate = (value?: string) => {
 
 export default function AdminDashboard({ user }: AdminDashboardProps) {
   const navigate = useNavigate();
+  const { money } = useCurrency({ scope: 'platform', scopeId: 'admin' });
   const [summary, setSummary] = React.useState<any>(null);
   const [commerce, setCommerce] = React.useState<any>(null);
   const [isp, setIsp] = React.useState<any>(null);
@@ -137,7 +138,7 @@ export default function AdminDashboard({ user }: AdminDashboardProps) {
     { label: 'Total Users', value: numberValue(summary?.users), icon: Users, color: 'text-blue-600', bg: 'bg-blue-50' },
     { label: 'Active Droplets', value: numberValue(summary?.droplets), icon: Server, color: 'text-green-600', bg: 'bg-green-50' },
     { label: 'Domains', value: numberValue(summary?.domains), icon: Globe, color: 'text-amber-600', bg: 'bg-amber-50' },
-    { label: 'Revenue', value: moneyValue(summary?.revenue), icon: BarChart3, color: 'text-purple-600', bg: 'bg-purple-50' }
+    { label: 'Revenue', value: money(summary?.revenue || 0, 'USD'), icon: BarChart3, color: 'text-purple-600', bg: 'bg-purple-50' }
   ];
 
   const aggregateData = summary ? [
@@ -243,7 +244,7 @@ export default function AdminDashboard({ user }: AdminDashboardProps) {
               </div>
               <div>
                 <span className="block text-[11px] font-medium text-gray-400 uppercase tracking-wider mb-1">Revenue</span>
-                <span className="text-xl font-bold text-green-600 tabular-nums">{moneyValue(commerce?.revenue)}</span>
+                <span className="text-xl font-bold text-green-600 tabular-nums">{money(commerce?.revenue || 0, 'USD')}</span>
               </div>
             </div>
           </div>
@@ -281,7 +282,7 @@ export default function AdminDashboard({ user }: AdminDashboardProps) {
               </div>
               <div>
                 <span className="block text-[11px] font-medium text-gray-400 uppercase tracking-wider mb-1">Revenue</span>
-                <span className="text-xl font-bold text-blue-600 tabular-nums">{moneyValue(isp?.revenue)}</span>
+                <span className="text-xl font-bold text-blue-600 tabular-nums">{money(isp?.revenue || 0, 'USD')}</span>
               </div>
             </div>
           </div>
@@ -315,11 +316,11 @@ export default function AdminDashboard({ user }: AdminDashboardProps) {
               </div>
               <div>
                 <span className="block text-[11px] font-medium text-gray-400 uppercase tracking-wider mb-1">Paid</span>
-                <span className="text-xl font-bold text-[#2e3d49] tabular-nums">{moneyValue(tiwloPay?.paidVolume)}</span>
+                <span className="text-xl font-bold text-[#2e3d49] tabular-nums">{money(tiwloPay?.paidVolume || 0, 'USD')}</span>
               </div>
               <div>
                 <span className="block text-[11px] font-medium text-gray-400 uppercase tracking-wider mb-1">Pending</span>
-                <span className="text-xl font-bold text-emerald-600 tabular-nums">{moneyValue(tiwloPay?.pendingWithdrawal)}</span>
+                <span className="text-xl font-bold text-emerald-600 tabular-nums">{money(tiwloPay?.pendingWithdrawal || 0, 'USD')}</span>
               </div>
             </div>
           </div>
@@ -357,7 +358,7 @@ export default function AdminDashboard({ user }: AdminDashboardProps) {
               </div>
               <div>
                 <span className="block text-[11px] font-medium text-gray-400 uppercase tracking-wider mb-1">Revenue</span>
-                <span className="text-xl font-bold text-sky-600 tabular-nums">{moneyValue(tpanel?.monthlyRevenue)}</span>
+                <span className="text-xl font-bold text-sky-600 tabular-nums">{money(tpanel?.monthlyRevenue || 0, 'USD')}</span>
               </div>
             </div>
           </div>

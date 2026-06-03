@@ -1,16 +1,14 @@
 import React from 'react';
 import { Activity, AlertCircle, Database, Globe, RefreshCw, Server, ShoppingBag, Users } from 'lucide-react';
 import { fetchDashboardSummary, fetchEcommerceAdminSummary, fetchIspDashboardSummary, fetchPlansWithApi } from '../../lib/tiwloApi';
+import { useCurrency } from '../../lib/useCurrency';
 
 function numberValue(value?: number) {
   return Number(value || 0).toLocaleString();
 }
 
-function money(value?: number) {
-  return `$${Number(value || 0).toLocaleString()}`;
-}
-
 export default function AdminServiceStatistics() {
+  const { money } = useCurrency({ scope: 'platform', scopeId: 'admin' });
   const [summary, setSummary] = React.useState<any>(null);
   const [commerce, setCommerce] = React.useState<any>(null);
   const [isp, setIsp] = React.useState<any>(null);

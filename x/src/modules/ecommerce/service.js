@@ -596,7 +596,7 @@ export const createStore = async (ctx, actor, input) => {
   const monthlyCost = Number(plan?.price || 0);
   const hourlyRate = monthlyCost > 0 ? firstHourCharge(monthlyCost) : 0;
   if (!isAdmin(actor) && hourlyRate > 0) {
-    await requireProvisioningCredit(ctx, actor.id, hourlyRate, `Add at least USD ${hourlyRate.toFixed(2)} credit before opening this ecommerce store.`);
+    await requireProvisioningCredit(ctx, actor.id, hourlyRate, 'Add enough Tiwlo credit before opening this ecommerce store.');
   }
   const store = await ctx.prisma.store.create({
     data: {

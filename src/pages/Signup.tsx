@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { AlertCircle, ArrowLeft } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { User as UserType } from '../types';
 import {
   changeSignupWhatsAppPhoneWithApi,
@@ -53,11 +53,12 @@ const initialForm: SignupForm = {
 const validEmail = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
 
 export default function SignupPage({ onSignup }: SignupProps) {
+  const navigate = useNavigate();
   const [step, setStep] = useState<'email' | 'details'>('email');
   const [form, setForm] = useState<SignupForm>(() => ({ ...initialForm, country: detectBrowserCountryCode(initialForm.country) }));
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
-  const [availability, setAvailability] = useState<{ emailAvailable?: boolean; phoneAvailable?: boolean; message?: string; normalizedPhone?: string }>({});
+  const [availability, setAvailability] = useState<{ emailAvailable?: boolean; phoneAvailable?: boolean; message?: string; normalizedPhone?: string; existingAccountName?: string; existingAccountEmail?: string; existingAccountAvatar?: string }>({});
   const [availabilityLoading, setAvailabilityLoading] = useState(false);
   const [pendingOtp, setPendingOtp] = useState<any>(null);
   const [otp, setOtp] = useState('');
@@ -134,7 +135,13 @@ export default function SignupPage({ onSignup }: SignupProps) {
       const result = await checkSignupAvailabilityWithApi({ email: normalizedEmail });
       setAvailability((current) => ({ ...current, ...result }));
       if (result.emailAvailable === false) {
-        setError('This email address is already in use.');
+        const params = new URLSearchParams({
+          email: normalizedEmail,
+          existing: '1'
+        });
+        if (result.existingAccountName) params.set('name', result.existingAccountName);
+        if (result.existingAccountAvatar) params.set('avatar', result.existingAccountAvatar);
+        navigate(`/login?${params.toString()}`);
         return;
       }
       setStep('details');
@@ -315,10 +322,16 @@ export default function SignupPage({ onSignup }: SignupProps) {
                 autoFocus
                 onChange={(event) => setValue('email', event.target.value)}
               />
-              {availability.emailAvailable === false && <AuthError message="This email address is already in use." />}
+              {availability.emailAvailable === false && (
+                <DuplicateEmailCard
+                  email={availability.existingAccountEmail || normalizedEmail}
+                  name={availability.existingAccountName}
+                  avatar={availability.existingAccountAvatar}
+                />
+              )}
               {error && availability.emailAvailable !== false && <AuthError message={error} />}
-              <TiwloAuthButton disabled={!validEmail(normalizedEmail) || availabilityLoading || availability.emailAvailable === false}>
-                {availabilityLoading ? 'Checking...' : 'Continue'}
+              <TiwloAuthButton disabled={!validEmail(normalizedEmail) || availabilityLoading}>
+                {availabilityLoading ? 'Checking...' : availability.emailAvailable === false ? 'Login instead' : 'Continue'}
               </TiwloAuthButton>
             </form>
 
@@ -384,6 +397,31 @@ function AuthError({ message }: { message: string }) {
     <div className="flex items-start gap-2 rounded-[14px] border border-red-100 bg-red-50 px-3 py-2 text-[12px] font-semibold leading-5 text-red-600">
       <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
       <span>{message}</span>
+    </div>
+  );
+}
+
+function DuplicateEmailCard({ email, name, avatar }: { email: string; name?: string; avatar?: string }) {
+  const label = name || email.split('@')[0] || 'Existing account';
+  const initial = label.charAt(0).toUpperCase();
+  return (
+    <div className="rounded-[18px] border border-[#dfe6f2] bg-[#fbfdff] px-3 py-3">
+      <div className="flex items-center gap-3">
+        {avatar ? (
+          <img src={avatar} alt={label} className="h-10 w-10 rounded-full object-cover" />
+        ) : (
+          <div className="grid h-10 w-10 rounded-full bg-[#e9f1ff] text-[15px] font-bold text-[#2563ff] place-items-center">
+            {initial}
+          </div>
+        )}
+        <div className="min-w-0">
+          <p className="truncate text-[13px] font-semibold text-black">{label}</p>
+          <p className="truncate text-[12px] text-[#666]">{email}</p>
+        </div>
+      </div>
+      <p className="mt-2 text-[12px] font-medium leading-5 text-[#555]">
+        This email already has a Tiwlo account. Continue to login and enter your password.
+      </p>
     </div>
   );
 }

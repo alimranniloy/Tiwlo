@@ -19,6 +19,7 @@ import {
   notifyDataRefresh
 } from '../lib/tiwloApi';
 import { OrderCompleteSummary, TowerOrderLoader, type OrderSummary } from '../components/SetupLoader';
+import { useCurrency } from '../lib/useCurrency';
 
 type CloudPlan = {
   id: string;
@@ -138,6 +139,7 @@ function isValidDomainName(value: string) {
 
 export default function CreateDroplet() {
   const navigate = useNavigate();
+  const { money } = useCurrency({ scope: 'platform', scopeId: 'console' });
   const [selectedModule, setSelectedModule] = useState('tpanel');
   const [selectedNodeId, setSelectedNodeId] = useState('');
   const [selectedPlanFamily, setSelectedPlanFamily] = useState('basic');
@@ -379,7 +381,7 @@ export default function CreateDroplet() {
       return;
     }
     if (creditEmpty || creditBalance < selectedHourly) {
-      setError(`Add credit now. This package needs at least USD ${selectedHourly.toFixed(2)} for the first hour.`);
+      setError(`Add credit now. This package needs at least ${money(selectedHourly, 'USD')} for the first hour.`);
       return;
     }
 
@@ -723,7 +725,7 @@ export default function CreateDroplet() {
                       >
                         <RadioDot selected={selected} />
                         <span className="min-w-0">
-                          <span className="block text-[15px] font-bold text-[#566992]">${Number(plan.price || 0).toFixed(2)}/mo</span>
+                          <span className="block text-[15px] font-bold text-[#566992]">{money(Number(plan.price || 0), 'USD')}/mo</span>
                           <span className="block truncate text-[13px] text-[#46577c]">
                             {cpu} - {ram} RAM - {disk} Disk - {bandwidth} Transfer{features.length > 0 ? ` - ${features.slice(0, 1).join('')}` : ''}
                           </span>
@@ -742,6 +744,7 @@ export default function CreateDroplet() {
                 size={storageSize}
                 pricePerGb={storagePricePerGb(selectedPlanRecord)}
                 monthlyCost={extraStorageMonthly}
+                formatMoney={(value) => money(value, 'USD')}
                 mode={storageMode}
                 mountMode={storageMountMode}
                 filesystem={storageFilesystem}
@@ -849,7 +852,7 @@ export default function CreateDroplet() {
               <OptionalBox
                 title="Add a worry-free Managed Database"
                 description="Add a separate database service with backups, SSL, and restore controls."
-                price="$15.00 / month"
+                price={`${money(15, 'USD')} / month`}
                 icon={Database}
               />
             </section>
@@ -882,7 +885,7 @@ export default function CreateDroplet() {
                   <div className="min-w-0 flex-1">
                     <div className="flex items-start justify-between gap-3">
                       <p className="text-[15px] font-bold text-[#031b4e]">Compute</p>
-                      <p className="whitespace-nowrap text-[14px] font-medium text-[#233b66]">${selectedMonthly.toFixed(2)}/mo</p>
+                      <p className="whitespace-nowrap text-[14px] font-medium text-[#233b66]">{money(selectedMonthly, 'USD')}/mo</p>
                     </div>
                     <div className="mt-1 space-y-1 text-[13px] leading-5 text-[#284265]">
                       <SummaryLine label="Plan Type" value={planFamilyLabel(selectedPlanFamily)} />
@@ -908,8 +911,8 @@ export default function CreateDroplet() {
                 <div className="flex items-start justify-between gap-3">
                   <p className="text-[14px] font-bold text-[#031b4e]">Total cost</p>
                   <div className="text-right">
-                    <p className="text-[15px] font-bold text-[#031b4e]">${selectedMonthly.toFixed(2)}/month</p>
-                    <p className="text-[13px] text-[#566992]">${selectedHourly.toFixed(2)}/hour</p>
+                    <p className="text-[15px] font-bold text-[#031b4e]">{money(selectedMonthly, 'USD')}/month</p>
+                    <p className="text-[13px] text-[#566992]">{money(selectedHourly, 'USD')}/hour</p>
                   </div>
                 </div>
                 <button
@@ -944,8 +947,8 @@ export default function CreateDroplet() {
         <div className="mx-auto flex max-w-[980px] items-center justify-between gap-4">
           <div className="min-w-0">
             <p className="text-[11px] font-bold uppercase text-[#6B7280]">Total cost</p>
-            <p className="truncate text-[16px] font-bold text-[#031b4e]">${selectedMonthly.toFixed(2)}/mo</p>
-            <p className="text-[11px] text-[#566992]">${selectedHourly.toFixed(2)}/hour</p>
+            <p className="truncate text-[16px] font-bold text-[#031b4e]">{money(selectedMonthly, 'USD')}/mo</p>
+            <p className="text-[11px] text-[#566992]">{money(selectedHourly, 'USD')}/hour</p>
           </div>
           <button
             onClick={handleCreate}
@@ -1026,6 +1029,7 @@ function AdditionalStorageBox({
   size,
   pricePerGb,
   monthlyCost,
+  formatMoney,
   mode,
   mountMode,
   filesystem,
@@ -1041,6 +1045,7 @@ function AdditionalStorageBox({
   size: string;
   pricePerGb: number;
   monthlyCost: number;
+  formatMoney: (value: number) => string;
   mode: 'create' | 'attach';
   mountMode: 'auto' | 'manual';
   filesystem: string;
@@ -1107,7 +1112,7 @@ function AdditionalStorageBox({
             </label>
             <div className="flex flex-col justify-end pb-1">
               <p className="text-[13px] font-bold text-[#536489]">Monthly cost</p>
-              <p className="text-[14px] text-[#284265]">${monthlyCost.toFixed(2)} (${pricePerGb.toFixed(2)}/GB per month)</p>
+              <p className="text-[14px] text-[#284265]">{formatMoney(monthlyCost)} ({formatMoney(pricePerGb)}/GB per month)</p>
             </div>
           </div>
 

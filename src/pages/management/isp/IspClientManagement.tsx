@@ -1,8 +1,10 @@
 import React from 'react';
 import { AlertCircle, Filter, MoreVertical, Plus, RefreshCw, Search } from 'lucide-react';
 import { fetchIspClientsWithApi } from '../../../lib/tiwloApi';
+import { useCurrency } from '../../../lib/useCurrency';
 
 export default function IspClientManagement() {
+  const { money } = useCurrency({ scope: 'platform', scopeId: 'admin' });
   const [search, setSearch] = React.useState('');
   const [clients, setClients] = React.useState<any[]>([]);
   const [loading, setLoading] = React.useState(true);
@@ -107,7 +109,7 @@ export default function IspClientManagement() {
                     {client.email || client.phone || '-'}
                   </td>
                   <td className="px-6 py-4">
-                    <div className="text-[13px] font-bold text-gray-800">${Number(client.balance || 0).toFixed(2)}</div>
+                    <div className="text-[13px] font-bold text-gray-800">{money(client.balance || 0, 'USD')}</div>
                   </td>
                   <td className="px-6 py-4 text-center">
                     <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-sm text-[10px] font-bold ${

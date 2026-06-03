@@ -16,8 +16,7 @@ import {
   adminUpdateTiwloPayWithdrawalStatusWithApi,
   fetchAdminTiwloPayOverviewWithApi
 } from '../../lib/tiwloApi';
-
-const money = (value: number, currency = 'USD') => `${currency} ${Number(value || 0).toFixed(2)}`;
+import { useCurrency } from '../../lib/useCurrency';
 
 const dateLabel = (value?: string) => {
   if (!value) return 'Never';
@@ -35,6 +34,7 @@ const statusClass = (status: string) => {
 };
 
 export default function AdminTiwloPay() {
+  const { money } = useCurrency({ scope: 'platform', scopeId: 'admin' });
   const [overview, setOverview] = React.useState<any | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [savingId, setSavingId] = React.useState('');

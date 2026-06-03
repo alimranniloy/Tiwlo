@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Activity, Server, Users, Globe, Terminal, Plus, CheckCircle2, ShoppingBag, ShieldCheck, Database, FileText, Settings, Key, BarChart3, CreditCard, Cpu, HardDrive, Lock } from 'lucide-react';
 import BrandLogo from '../BrandLogo';
+import { useCurrency } from '../../lib/useCurrency';
 
 // Sub-components for various states
 const IdleState = () => (
@@ -151,7 +152,13 @@ const MetricsState = () => (
   </motion.div>
 );
 
-const InvoicingState = () => (
+const InvoicingState = () => {
+  const { money } = useCurrency({ scope: 'platform', scopeId: 'marketing' });
+  const invoiceLines = [
+    { item: 'sgp-1 Instance (2h)', price: money(0.42, 'USD') },
+    { item: 'Managed Database', price: money(120, 'USD') }
+  ];
+  return (
   <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0 }} className="space-y-3">
     <div className="flex items-center gap-2 mb-2">
         <CreditCard className="h-4 w-4 text-emerald-500" />
@@ -160,13 +167,10 @@ const InvoicingState = () => (
     <div className="p-3 bg-white border border-gray-100 rounded-lg">
       <div className="flex justify-between items-center mb-3">
          <span className="text-[9px] font-bold text-gray-400">ID: INV-2024-061</span>
-         <span className="text-[11px] font-black text-gray-900">$142.00</span>
+         <span className="text-[11px] font-black text-gray-900">{money(142, 'USD')}</span>
       </div>
       <div className="space-y-2">
-         {[
-           { item: 'sgp-1 Instance (2h)', price: '$0.42' },
-           { item: 'Managed Database', price: '$120.00' }
-         ].map((li, i) => (
+         {invoiceLines.map((li, i) => (
            <div key={i} className="flex justify-between text-[8px] font-medium text-gray-500">
              <span>{li.item}</span>
              <span>{li.price}</span>
@@ -178,7 +182,8 @@ const InvoicingState = () => (
       </div>
     </div>
   </motion.div>
-);
+  );
+};
 
 const DomainState = () => (
   <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="space-y-4">

@@ -109,13 +109,16 @@ export async function signupWithApi(input: {
 }
 
 export async function checkSignupAvailabilityWithApi(input: { email?: string; phone?: string; mobileCountryCode?: string; country?: string }) {
-  const data = await graphQL<{ signupAvailability: { ok: boolean; emailAvailable: boolean; phoneAvailable: boolean; normalizedPhone?: string; message: string } }>(
+  const data = await graphQL<{ signupAvailability: { ok: boolean; emailAvailable: boolean; phoneAvailable: boolean; normalizedPhone?: string; existingAccountName?: string; existingAccountEmail?: string; existingAccountAvatar?: string; message: string } }>(
     `query SignupAvailability($email: String, $phone: String, $mobileCountryCode: String, $country: String) {
       signupAvailability(email: $email, phone: $phone, mobileCountryCode: $mobileCountryCode, country: $country) {
         ok
         emailAvailable
         phoneAvailable
         normalizedPhone
+        existingAccountName
+        existingAccountEmail
+        existingAccountAvatar
         message
       }
     }`,

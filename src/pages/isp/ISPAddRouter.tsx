@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { createIspRouterWithApi, createIspSiteWithApi, notifyDataRefresh } from '../../lib/tiwloApi';
+import { useCurrency } from '../../lib/useCurrency';
 import { 
   ArrowLeft, 
   Server, 
@@ -23,6 +24,7 @@ import {
 
 export default function ISPAddRouter() {
   const navigate = useNavigate();
+  const { money } = useCurrency({ scope: 'platform', scopeId: 'console' });
   const [step, setStep] = useState(1);
   const [selectedPlan, setSelectedPlan] = useState('enterprise');
   const [copied, setCopied] = useState(false);
@@ -214,7 +216,7 @@ export default function ISPAddRouter() {
                            {selectedPlan === plan.id && <CheckCircle2 className="w-4 h-4 text-[#0069ff]" />}
                         </div>
                         <div className="mb-4">
-                           <span className="text-2xl font-black text-gray-900">${plan.price}</span>
+                           <span className="text-2xl font-black text-gray-900">{money(Number(plan.price || 0), 'USD')}</span>
                            <span className="text-xs text-gray-400 ml-1">/mo</span>
                         </div>
                         <ul className="space-y-2.5 mb-6">
@@ -476,7 +478,7 @@ export default function ISPAddRouter() {
                     </div>
                     <div className="flex justify-between pt-3 border-t border-gray-200">
                        <span className="text-sm font-bold text-gray-900">Total Monthly Renewal</span>
-                       <span className="text-lg font-black text-gray-900">${plans.find(p => p.id === selectedPlan)?.price}.00</span>
+                       <span className="text-lg font-black text-gray-900">{money(Number(plans.find(p => p.id === selectedPlan)?.price || 0), 'USD')}</span>
                     </div>
                  </div>
 

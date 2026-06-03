@@ -1,22 +1,24 @@
 import React from 'react';
 import { Check } from 'lucide-react';
+import { useCurrency } from '../../lib/useCurrency';
 
 export default function PricingSection() {
+  const { money } = useCurrency({ scope: 'platform', scopeId: 'marketing' });
   const plans = [
     {
       name: 'Starter',
-      price: '$19',
+      price: 19,
       features: ['100 ISP Subscribers', '2 Cloud Servers', 'Shared cPanel', 'Email Support']
     },
     {
       name: 'Professional',
-      price: '$49',
+      price: 49,
       features: ['1000 ISP Subscribers', '5 Cloud Servers', 'Dedicated hosting panel', 'Priority 24/7 Support'],
       popular: true
     },
     {
       name: 'Business',
-      price: '$99',
+      price: 99,
       features: ['Unlimited Subscribers', '15 Cloud Servers', 'CloudLinux Included', 'Dedicated Architect']
     }
   ];
@@ -35,7 +37,7 @@ export default function PricingSection() {
               )}
               <h3 className="text-sm font-bold text-gray-900 mb-1">{plan.name}</h3>
               <div className="flex items-baseline gap-1 mb-6">
-                <span className="text-2xl font-bold text-gray-900">{plan.price}</span>
+                <span className="text-2xl font-bold text-gray-900">{money(plan.price, 'USD')}</span>
                 <span className="text-xs text-gray-400 font-medium">/mo</span>
               </div>
               <ul className="space-y-3 mb-8">

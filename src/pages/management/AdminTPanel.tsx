@@ -47,8 +47,8 @@ import {
   upsertTPanelServiceStateWithApi
 } from '../../lib/tiwloApi';
 import { useActionConfirmation } from '../../components/ActionConfirmation';
+import { useCurrency } from '../../lib/useCurrency';
 
-const money = (value: number, currency = 'USD') => `${currency} ${Number(value || 0).toFixed(2)}`;
 const limitLabel = (value: number) => Number(value || 0) <= 0 ? 'Unlimited' : Number(value || 0).toLocaleString();
 
 const dateLabel = (value?: string) => {
@@ -165,6 +165,7 @@ const cpuCategoryLabel = (category: string) => sizePackageCpuCategories.find((it
 export default function AdminTPanel() {
   const { confirmDelete, confirmEdit } = useActionConfirmation();
   const location = useLocation();
+  const { money } = useCurrency({ scope: 'platform', scopeId: 'admin' });
   const [overview, setOverview] = React.useState<any | null>(null);
   const [control, setControl] = React.useState<any | null>(null);
   const [selectedLicenseId, setSelectedLicenseId] = React.useState('');

@@ -4,6 +4,11 @@ import { writeAudit } from '../../core/audit.js';
 import { AppError } from '../../core/errors.js';
 import { pagination } from '../../core/validation.js';
 import { paragraph, sendTiwloEmail } from '../../core/email.js';
+import {
+  convertCurrencyAmount as convertByPolicy,
+  exchangeRatesForPolicy,
+  readPlatformCurrencyPolicy
+} from '../../core/currency.js';
 import { ensureOwnerHasCredit, runCreditAutomationForOwner, runCreditAutomationJob } from './creditAutomation.js';
 import { notifyDiscordInvoiceEvent } from '../discord/service.js';
 import { sendInvoiceWhatsApp } from '../whatsapp/service.js';
@@ -85,6 +90,29 @@ const convertMoney = (amount, fromCurrency, toCurrency = CREDIT_CURRENCY) => (
 );
 
 export const invoiceCreditAmount = (invoice) => convertMoney(invoice.amount, invoice.currency || CREDIT_CURRENCY, CREDIT_CURRENCY);
+
+const convertMoneyForCtx = async (ctx, amount, fromCurrency, toCurrency = CREDIT_CURRENCY) => {
+  const policy = await readPlatformCurrencyPolicy(ctx.prisma);
+  return roundMoney(convertByPolicy(amount, policy, toCurrency, fromCurrency));
+};
+
+export const invoiceCreditAmountForCtx = async (ctx, invoice) => (
+  convertMoneyForCtx(ctx, invoice.amount, invoice.currency || CREDIT_CURRENCY, CREDIT_CURRENCY)
+);
+
+const gatewayWithPlatformRates = async (ctx, gateway) => {
+  const policy = await readPlatformCurrencyPolicy(ctx.prisma);
+  return {
+    ...gateway,
+    settings: {
+      ...(gateway.settings || {}),
+      exchangeRates: {
+        ...exchangeRatesForPolicy(policy),
+        ...(gateway.settings?.exchangeRates || {})
+      }
+    }
+  };
+};
 
 const sanitizeSecretValue = (value) => {
   if (typeof value !== 'string') return value;
@@ -171,7 +199,7 @@ const findGateway = async (ctx, provider, { allowDisabled = false } = {}) => {
   if (!allowDisabled && !paymentEnabledStatuses.has(String(gateway.status || '').toLowerCase())) {
     throw new AppError(`${gateway.name} is disabled`, 'PAYMENT_CONFIGURATION_REQUIRED');
   }
-  return gateway;
+  return gatewayWithPlatformRates(ctx, gateway);
 };
 
 const canUseInvoice = async (ctx, invoice) => {
@@ -399,7 +427,7 @@ const fulfillPaidInvoice = async (tx, invoice, paidAt = new Date()) => {
   let items = invoice.items || {};
 
   if (invoice.scope === 'credit_topup') {
-    const creditAmount = invoiceCreditAmount(invoice);
+    const creditAmount = Number(invoice.items?.creditAmount ?? invoiceCreditAmount(invoice));
     await tx.user.update({
       where: { id: invoice.ownerId },
       data: { credits: { increment: creditAmount } }
@@ -1068,7 +1096,7 @@ export const startInvoicePayment = async (ctx, { invoiceId, provider }) => {
       throw new AppError('Credit top-up invoices must be paid with an external gateway', 'BAD_USER_INPUT');
     }
     const owner = await ctx.prisma.user.findUnique({ where: { id: invoice.ownerId } });
-    const creditCharge = invoiceCreditAmount(invoice);
+    const creditCharge = await invoiceCreditAmountForCtx(ctx, invoice);
     if (Number(owner?.credits || 0) < creditCharge) {
       return checkoutResponse(ctx, {
         status: 'requires_payment',
@@ -1125,7 +1153,7 @@ export const startCreditTopUp = async (ctx, input) => {
   const amount = roundMoney(input.amount);
   if (amount <= 0) throw new AppError('Top-up amount must be greater than zero', 'BAD_USER_INPUT');
   const currency = String(input.currency || CREDIT_CURRENCY).toUpperCase();
-  const creditAmount = convertMoney(amount, currency, CREDIT_CURRENCY);
+  const creditAmount = await convertMoneyForCtx(ctx, amount, currency, CREDIT_CURRENCY);
 
   const invoice = await ctx.prisma.invoice.create({
     data: {

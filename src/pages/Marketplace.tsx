@@ -14,6 +14,7 @@ import {
   Zap
 } from 'lucide-react';
 import { createCloudResourceWithApi, fetchPlansWithApi } from '../lib/tiwloApi';
+import { useCurrency } from '../lib/useCurrency';
 
 const productIcons: Record<string, any> = {
   cloud: Server,
@@ -32,6 +33,7 @@ function featureList(features: unknown) {
 }
 
 export default function Marketplace() {
+  const { money } = useCurrency({ scope: 'platform', scopeId: 'console' });
   const [plans, setPlans] = React.useState<any[]>([]);
   const [selectedProduct, setSelectedProduct] = React.useState('all');
   const [search, setSearch] = React.useState('');
@@ -182,7 +184,7 @@ export default function Marketplace() {
                         <Icon className="h-8 w-8" />
                       </div>
                       <div className="text-right">
-                        <p className="text-3xl font-bold tracking-tight text-[#2e3d49]">${Number(plan.price || 0).toFixed(2)}</p>
+                        <p className="text-3xl font-bold tracking-tight text-[#2e3d49]">{money(Number(plan.price || 0), 'USD')}</p>
                         <p className="text-[11px] font-bold uppercase text-gray-400">/ {plan.interval}</p>
                       </div>
                     </div>

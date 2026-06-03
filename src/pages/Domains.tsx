@@ -21,6 +21,7 @@ import {
 import { Domain } from '../types';
 import { addDnsRecordWithApi, deleteDnsRecordWithApi, deleteDomainWithApi, fetchDnsRecordsWithApi, registerDomainWithApi, updateDnsRecordWithApi } from '../lib/tiwloApi';
 import { useActionConfirmation } from '../components/ActionConfirmation';
+import { useCurrency } from '../lib/useCurrency';
 
 interface DomainsProps {
   domains: Domain[];
@@ -28,6 +29,7 @@ interface DomainsProps {
 }
 
 export default function DomainsPage({ domains, setDomains }: DomainsProps) {
+  const { money } = useCurrency({ scope: 'platform', scopeId: 'console' });
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
@@ -330,7 +332,7 @@ export default function DomainsPage({ domains, setDomains }: DomainsProps) {
                     </div>
                     {searchResult.available && (
                       <div className="text-right">
-                        <div className="text-xl font-bold text-[#111827]">${searchResult.price}</div>
+                        <div className="text-xl font-bold text-[#111827]">{money(searchResult.price, 'USD')}</div>
                         <div className="text-[11px] text-gray-400 uppercase font-bold">/ year</div>
                       </div>
                     )}
@@ -357,7 +359,7 @@ export default function DomainsPage({ domains, setDomains }: DomainsProps) {
                                 <span className="text-[14px] font-bold text-[#111827]">{searchResult.name.split('.')[0]}<span className="text-blue-600">{rec.ext}</span></span>
                              </div>
                              <div className="flex items-center gap-3">
-                                <span className="text-[13px] font-bold text-[#111827]">${rec.price}</span>
+                                <span className="text-[13px] font-bold text-[#111827]">{money(rec.price, 'USD')}</span>
                                 <button className="text-[11px] font-bold text-blue-600 uppercase group-hover:underline">Add</button>
                              </div>
                           </div>
@@ -427,7 +429,7 @@ export default function DomainsPage({ domains, setDomains }: DomainsProps) {
                  <div className="flex items-center justify-between mb-2">
                     <div className="flex flex-col">
                        <span className="text-[11px] font-bold text-gray-400 uppercase tracking-widest">Total Price</span>
-                       <span className="text-2xl font-bold text-[#111827]">${(searchResult.price * selectedYears).toFixed(2)}</span>
+                       <span className="text-2xl font-bold text-[#111827]">{money(searchResult.price * selectedYears, 'USD')}</span>
                     </div>
                     <div className="text-right">
                        <span className="text-[12px] text-gray-500">{selectedYears} Year{selectedYears > 1 ? 's' : ''} Registration</span>

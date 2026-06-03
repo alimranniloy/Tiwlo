@@ -1,5 +1,6 @@
 import React from 'react';
 import { CheckCircle2, Headphones, ReceiptText } from 'lucide-react';
+import { useCurrency } from '../lib/useCurrency';
 
 const accountMessages = [
   'Preparing your workspace',
@@ -104,12 +105,13 @@ export function TowerOrderLoader({ messages = orderMessages }: { messages?: stri
 }
 
 export function OrderCompleteSummary({ summary, onPrimary }: { summary: OrderSummary; onPrimary: () => void }) {
+  const { money } = useCurrency({ scope: 'platform', scopeId: 'console' });
   const rows = [
     ['Invoice', summary.invoiceNumber || 'Processing'],
     ['Package', summary.packageName || 'Selected package'],
     ['Server IP', summary.serverIp || 'Auto selected'],
-    ['Per hour', summary.hourlyRate !== undefined ? `USD ${Number(summary.hourlyRate).toFixed(4)}` : 'Included'],
-    ['Monthly cap', summary.monthlyCost !== undefined ? `USD ${Number(summary.monthlyCost).toFixed(2)}` : 'Included'],
+    ['Per hour', summary.hourlyRate !== undefined ? money(summary.hourlyRate, 'USD') : 'Included'],
+    ['Monthly cap', summary.monthlyCost !== undefined ? money(summary.monthlyCost, 'USD') : 'Included'],
     ['Status', summary.status || 'Completed']
   ];
 

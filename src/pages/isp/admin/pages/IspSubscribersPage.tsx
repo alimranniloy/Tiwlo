@@ -8,6 +8,7 @@ import {
   updateIspClientWithApi
 } from '../../../../lib/tiwloApi';
 import { useActionConfirmation } from '../../../../components/ActionConfirmation';
+import { useCurrency } from '../../../../lib/useCurrency';
 
 const clientDefaults = {
   name: '',
@@ -23,6 +24,7 @@ const clientDefaults = {
 };
 
 export default function IspSubscribersPage({ site, mode = 'subscribers' }: { site: any; mode?: 'subscribers' | 'sessions' }) {
+  const { money } = useCurrency({ scope: 'platform', scopeId: 'isp-admin' });
   const [clients, setClients] = React.useState<any[]>([]);
   const [packages, setPackages] = React.useState<any[]>([]);
   const [loading, setLoading] = React.useState(true);
@@ -240,7 +242,7 @@ export default function IspSubscribersPage({ site, mode = 'subscribers' }: { sit
                   <td className="px-4 py-3"><p className="font-bold text-gray-900">{client.name}</p><p className="text-xs text-gray-400">{client.phone || client.email || '-'}</p></td>
                   <td className="px-4 py-3 font-mono text-xs text-gray-600">{client.username}</td>
                   <td className="px-4 py-3 text-gray-600">{client.metadata?.staticIp || '-'}</td>
-                  <td className="px-4 py-3 font-bold text-gray-900">${Number(client.balance || 0).toFixed(2)}</td>
+                  <td className="px-4 py-3 font-bold text-gray-900">{money(client.balance || 0, 'USD')}</td>
                   <td className="px-4 py-3"><span className="border border-gray-200 bg-gray-50 px-2 py-0.5 text-[10px] font-bold uppercase text-gray-600">{client.status}</span></td>
                   <td className="px-4 py-3 text-right">
                     <div className="inline-flex gap-1">

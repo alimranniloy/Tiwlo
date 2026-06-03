@@ -107,6 +107,9 @@ type SignupAvailability {
   emailAvailable: Boolean!
   phoneAvailable: Boolean!
   normalizedPhone: String
+  existingAccountName: String
+  existingAccountEmail: String
+  existingAccountAvatar: String
   message: String!
 }
 

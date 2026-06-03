@@ -169,7 +169,7 @@ export const createResource = async (ctx, actor, input) => {
   const monthlyCost = Number(input.monthlyCost || 0);
   const hourlyRate = monthlyCost > 0 ? firstHourCharge(monthlyCost) : 0;
   if (!isAdmin(actor) && hourlyRate > 0) {
-    await requireProvisioningCredit(ctx, actor.id, hourlyRate, `Add at least USD ${hourlyRate.toFixed(2)} credit before creating this resource.`);
+    await requireProvisioningCredit(ctx, actor.id, hourlyRate, 'Add enough Tiwlo credit before creating this resource.');
   }
   const provisionedAt = new Date().toISOString();
   const metadata = {

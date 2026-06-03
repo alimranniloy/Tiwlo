@@ -107,7 +107,7 @@ export const createSite = async (ctx, actor, input) => {
   const monthlyCost = Number(plan?.price || 0);
   const hourlyRate = monthlyCost > 0 ? firstHourCharge(monthlyCost) : 0;
   if (!isAdmin(actor) && hourlyRate > 0) {
-    await requireProvisioningCredit(ctx, actor.id, hourlyRate, `Add at least USD ${hourlyRate.toFixed(2)} credit before opening this ISP deployment.`);
+    await requireProvisioningCredit(ctx, actor.id, hourlyRate, 'Add enough Tiwlo credit before opening this ISP deployment.');
   }
   const site = await ctx.prisma.ispSite.create({
     data: {

@@ -1,6 +1,7 @@
 import React from 'react';
 import { AlertCircle, CheckCircle2, CreditCard, FileText, RefreshCw, Save, Shield, X } from 'lucide-react';
 import { fetchInvoicesWithApi, fetchPaymentGatewaysWithApi, testPaymentGatewayWithApi, upsertPaymentGatewayWithApi } from '../../lib/tiwloApi';
+import { useCurrency } from '../../lib/useCurrency';
 
 const gatewayColor = (key: string) => {
   const colors: Record<string, string> = {
@@ -32,6 +33,7 @@ const credentialFields: Record<string, Array<{ key: string; label: string; type?
 };
 
 export default function AdminPayments() {
+  const { money } = useCurrency({ scope: 'platform', scopeId: 'admin' });
   const [gateways, setGateways] = React.useState<any[]>([]);
   const [invoices, setInvoices] = React.useState<any[]>([]);
   const [loading, setLoading] = React.useState(true);
@@ -166,11 +168,11 @@ export default function AdminPayments() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className="bg-white border border-[#e5e8ed] rounded-lg p-6">
           <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">Paid Revenue</p>
-          <p className="text-2xl font-bold text-[#24ad5f] mt-2">${totalPaid.toLocaleString()}</p>
+          <p className="text-2xl font-bold text-[#24ad5f] mt-2">{money(totalPaid, 'USD')}</p>
         </div>
         <div className="bg-white border border-[#e5e8ed] rounded-lg p-6">
           <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">Open Balance</p>
-          <p className="text-2xl font-bold text-[#2e3d49] mt-2">${totalOpen.toLocaleString()}</p>
+          <p className="text-2xl font-bold text-[#2e3d49] mt-2">{money(totalOpen, 'USD')}</p>
         </div>
         <div className="bg-white border border-[#e5e8ed] rounded-lg p-6">
           <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">Gateways</p>
@@ -252,7 +254,7 @@ export default function AdminPayments() {
                   <tr key={invoice.id} className="hover:bg-[#f8f9fa]">
                     <td className="px-6 py-4 text-[13px] font-bold text-[#2e3d49]">{invoice.number}</td>
                     <td className="px-6 py-4 text-[13px] text-[#4a4a4a]">{invoice.scope}</td>
-                    <td className="px-6 py-4 text-[13px] font-bold text-[#2e3d49]">{invoice.currency || 'USD'} {Number(invoice.amount || 0).toFixed(2)}</td>
+                    <td className="px-6 py-4 text-[13px] font-bold text-[#2e3d49]">{money(invoice.amount, invoice.currency || 'USD')}</td>
                     <td className="px-6 py-4">
                       <span className={`rounded px-2 py-0.5 text-[10px] font-bold uppercase ${invoice.status === 'paid' ? 'bg-green-50 text-green-600' : 'bg-amber-50 text-amber-600'}`}>{invoice.status}</span>
                     </td>

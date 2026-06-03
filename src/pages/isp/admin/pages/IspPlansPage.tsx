@@ -1,8 +1,10 @@
 import React from 'react';
 import { AlertCircle, RefreshCw } from 'lucide-react';
 import { fetchIspPackagesWithApi } from '../../../../lib/tiwloApi';
+import { useCurrency } from '../../../../lib/useCurrency';
 
 export default function IspPlansPage({ site }: { site: any }) {
+  const { money } = useCurrency({ scope: 'platform', scopeId: 'isp-admin' });
   const [plans, setPlans] = React.useState<any[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState('');
@@ -58,7 +60,7 @@ export default function IspPlansPage({ site }: { site: any }) {
                 <tr key={plan.id} className="hover:bg-gray-50">
                   <td className="px-4 py-3 font-bold text-gray-900">{plan.name}</td>
                   <td className="px-4 py-3 text-gray-600">{plan.speed}</td>
-                  <td className="px-4 py-3 font-bold text-gray-900">${Number(plan.price || 0).toFixed(2)}</td>
+                  <td className="px-4 py-3 font-bold text-gray-900">{money(plan.price || 0, 'USD')}</td>
                   <td className="px-4 py-3 text-gray-600">{plan.billingCycle || 'month'}</td>
                   <td className="px-4 py-3"><span className="border border-gray-200 bg-gray-50 px-2 py-0.5 text-[10px] font-bold uppercase text-gray-600">{plan.status}</span></td>
                 </tr>

@@ -178,7 +178,7 @@ export const signupAvailability = async (ctx, input = {}) => {
   const email = normalizeEmail(input.email);
   const phone = normalizeWhatsAppPhone(input);
   const [emailOwner, phoneOwner] = await Promise.all([
-    email ? ctx.prisma.user.findUnique({ where: { email }, select: { id: true } }).catch(() => null) : null,
+    email ? ctx.prisma.user.findUnique({ where: { email }, select: { id: true, email: true, name: true, avatar: true } }).catch(() => null) : null,
     phone.phoneE164 ? phoneUsedForSignup(ctx.prisma, phone.phoneE164) : null
   ]);
   return {
@@ -186,6 +186,9 @@ export const signupAvailability = async (ctx, input = {}) => {
     emailAvailable: !emailOwner,
     phoneAvailable: !phoneOwner,
     normalizedPhone: phone.phoneE164,
+    existingAccountName: emailOwner?.name || null,
+    existingAccountEmail: emailOwner?.email || null,
+    existingAccountAvatar: emailOwner?.avatar || null,
     message: emailOwner
       ? 'This email address is already in use.'
       : phoneOwner

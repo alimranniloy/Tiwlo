@@ -19,6 +19,7 @@ import { useNavigate } from 'react-router-dom';
 import { User } from '../types';
 import { fetchBillingOverviewWithApi, updateProfileWithApi } from '../lib/tiwloApi';
 import { COUNTRIES, countryByCode, phoneValidationMessage } from '../lib/countries';
+import { useCurrency } from '../lib/useCurrency';
 
 interface SettingsProps {
   user: User;
@@ -26,6 +27,7 @@ interface SettingsProps {
 }
 
 export default function SettingsPage({ user, setUser }: SettingsProps) {
+  const { money } = useCurrency({ scope: 'platform', scopeId: 'console', actorId: user.id });
   const [name, setName] = React.useState(user.name);
   const [phone, setPhone] = React.useState(user.phone || '');
   const [country, setCountry] = React.useState(user.country || 'BD');
@@ -304,7 +306,7 @@ export default function SettingsPage({ user, setUser }: SettingsProps) {
                 <span className="text-[11px] font-bold uppercase tracking-widest text-[#6B7280]">Account Credits</span>
               </div>
               <div className="mb-2 font-mono text-4xl font-black tracking-tight text-[#111827]">
-                ${Number(creditBalance ?? user.credits ?? 0).toFixed(2)}
+                {money(creditBalance ?? user.credits ?? 0, 'USD')}
               </div>
               <p className="mb-6 text-[12px] leading-relaxed text-[#6B7280]">Credit balance comes from the billing API.</p>
               <button onClick={() => navigate('/billing')} className="flex w-full items-center justify-center gap-2 rounded-md bg-[#111827] py-3 text-[13px] font-bold text-white hover:bg-black">

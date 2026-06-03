@@ -2,19 +2,17 @@ import React from 'react';
 import { AlertCircle, Edit3, Plus, RefreshCw, Save, Search, Trash2, X } from 'lucide-react';
 import { deletePlanWithApi, fetchPlansWithApi, upsertPlanWithApi } from '../../lib/tiwloApi';
 import { useActionConfirmation } from '../../components/ActionConfirmation';
+import { useCurrency } from '../../lib/useCurrency';
 
 const products = ['cloud', 'ecommerce', 'isp', 'domain', 'support'];
 const intervals = ['month', 'year', 'one_time'];
-
-function money(value: number) {
-  return `$${Number(value || 0).toFixed(2)}`;
-}
 
 function safeJson(value: unknown) {
   return JSON.stringify(value ?? {}, null, 2);
 }
 
 export default function AdminPlans() {
+  const { money } = useCurrency({ scope: 'platform', scopeId: 'admin' });
   const [plans, setPlans] = React.useState<any[]>([]);
   const [search, setSearch] = React.useState('');
   const [loading, setLoading] = React.useState(true);

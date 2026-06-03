@@ -2,15 +2,16 @@ import React, { useState } from 'react';
 import { AlertCircle, Filter, MoreVertical, Plus, Search, ShoppingBag, Store, TrendingUp, Users } from 'lucide-react';
 import { fetchEcommerceAdminSummary, fetchStoresWithApi } from '../../lib/tiwloApi';
 import type { User } from '../../types';
+import { useCurrency } from '../../lib/useCurrency';
 
 interface EcommerceAdminProps {
   user: User;
 }
 
 const numberValue = (value?: number) => (typeof value === 'number' ? value.toLocaleString() : '0');
-const moneyValue = (value?: number) => `$${Number(value || 0).toLocaleString()}`;
 
 export default function EcommerceAdmin({ user }: EcommerceAdminProps) {
+  const { money } = useCurrency({ scope: 'platform', scopeId: 'admin' });
   const [search, setSearch] = useState('');
   const [summary, setSummary] = React.useState<any>(null);
   const [stores, setStores] = React.useState<any[]>([]);
@@ -43,7 +44,7 @@ export default function EcommerceAdmin({ user }: EcommerceAdminProps) {
 
   const stats = [
     { label: 'Total Merchants', value: numberValue(summary?.merchants), icon: Users },
-    { label: 'Platform Revenue', value: moneyValue(summary?.revenue), icon: TrendingUp },
+    { label: 'Platform Revenue', value: money(summary?.revenue || 0, 'USD'), icon: TrendingUp },
     { label: 'Deployed Stores', value: numberValue(summary?.stores), icon: Store },
     { label: 'Total Orders', value: numberValue(summary?.orders), icon: ShoppingBag }
   ];

@@ -1,8 +1,10 @@
 import React from 'react';
 import { AlertCircle, CreditCard, FileText, RefreshCw, Users } from 'lucide-react';
 import { fetchIspClientsWithApi, fetchIspInvoicesWithApi } from '../../../../lib/tiwloApi';
+import { useCurrency } from '../../../../lib/useCurrency';
 
 export default function IspReportsPage({ site }: { site: any }) {
+  const { money } = useCurrency({ scope: 'platform', scopeId: 'isp-admin' });
   const [clients, setClients] = React.useState<any[]>([]);
   const [invoices, setInvoices] = React.useState<any[]>([]);
   const [loading, setLoading] = React.useState(true);
@@ -52,8 +54,8 @@ export default function IspReportsPage({ site }: { site: any }) {
         {[
           { label: 'Subscribers', value: clients.length, icon: Users },
           { label: 'Invoices', value: invoices.length, icon: FileText },
-          { label: 'Paid Amount', value: `$${paidAmount.toFixed(2)}`, icon: CreditCard },
-          { label: 'Open Amount', value: `$${openAmount.toFixed(2)}`, icon: AlertCircle }
+          { label: 'Paid Amount', value: money(paidAmount, 'USD'), icon: CreditCard },
+          { label: 'Open Amount', value: money(openAmount, 'USD'), icon: AlertCircle }
         ].map((stat) => (
           <div key={stat.label} className="border border-gray-200 bg-white p-4">
             <div className="mb-3 flex items-center justify-between">

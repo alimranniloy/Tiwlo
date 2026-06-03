@@ -17,8 +17,7 @@ import {
   Wallet
 } from 'lucide-react';
 import { fetchPublicTiwloPayLinkWithApi, payTiwloPayLinkWithApi } from '../lib/tiwloApi';
-
-const money = (value: number, currency = 'USD') => `${currency} ${Number(value || 0).toFixed(2)}`;
+import { useCurrency } from '../lib/useCurrency';
 
 const dateLabel = (value?: string) => {
   if (!value) return 'No expiry';
@@ -54,6 +53,7 @@ function SummaryLine({ label, value }: { label: string; value: React.ReactNode }
 export default function TiwloPayCheckout() {
   const { slug = '' } = useParams();
   const [searchParams] = useSearchParams();
+  const { money } = useCurrency({ scope: 'platform', scopeId: 'checkout' });
   const [checkout, setCheckout] = React.useState<any | null>(null);
   const [selectedProvider, setSelectedProvider] = React.useState('');
   const [customerName, setCustomerName] = React.useState('');

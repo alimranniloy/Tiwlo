@@ -44,8 +44,7 @@ import {
   rotateTiwloPayKeysWithApi,
   upsertTiwloPayProfileWithApi
 } from '../lib/tiwloApi';
-
-const money = (value: number, currency = 'USD') => `${currency} ${Number(value || 0).toFixed(2)}`;
+import { useCurrency } from '../lib/useCurrency';
 
 const dateLabel = (value?: string) => {
   if (!value) return 'No expiry';
@@ -170,6 +169,7 @@ function VerificationNotice({ isLive, status, verificationStatus }: { isLive: bo
 
 export default function TiwloPay() {
   const navigate = useNavigate();
+  const { money, currency: selectedCurrency } = useCurrency({ scope: 'platform', scopeId: 'console' });
   const [overview, setOverview] = React.useState<any | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
@@ -283,6 +283,12 @@ export default function TiwloPay() {
   React.useEffect(() => {
     loadOverview();
   }, [loadOverview]);
+
+  React.useEffect(() => {
+    if (!['USD', 'BDT'].includes(selectedCurrency)) return;
+    setLinkForm((current) => ({ ...current, currency: selectedCurrency }));
+    setWithdrawalForm((current) => ({ ...current, currency: selectedCurrency }));
+  }, [selectedCurrency]);
 
   const profile = overview?.profile || {};
   const verification = profile.settings?.verification || {};

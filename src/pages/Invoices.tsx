@@ -1,6 +1,7 @@
 import React from 'react';
 import { AlertCircle, CheckCircle2, CreditCard, Download, Eye, FileText, Filter, Search, X } from 'lucide-react';
 import { fetchInvoicesWithApi, markInvoicePaidWithApi, startInvoicePaymentWithApi } from '../lib/tiwloApi';
+import { useCurrency } from '../lib/useCurrency';
 
 interface InvoicesProps {
   adminMode?: boolean;
@@ -108,6 +109,7 @@ function downloadInvoice(invoice: any) {
 }
 
 export default function Invoices({ adminMode = false }: InvoicesProps) {
+  const { money: displayMoney } = useCurrency({ scope: 'platform', scopeId: adminMode ? 'admin' : 'console' });
   const [invoices, setInvoices] = React.useState<any[]>([]);
   const [search, setSearch] = React.useState('');
   const [loading, setLoading] = React.useState(true);
@@ -232,14 +234,14 @@ export default function Invoices({ adminMode = false }: InvoicesProps) {
             <AlertCircle className="h-4 w-4 text-red-500" />
             <span className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Outstanding</span>
           </div>
-          <p className="text-3xl font-bold tracking-tight text-[#2e3d49]">USD {outstanding.toFixed(2)}</p>
+          <p className="text-3xl font-bold tracking-tight text-[#2e3d49]">{displayMoney(outstanding, 'USD')}</p>
         </div>
         <div className="rounded-md border border-[#d9e1ec] bg-white p-6 shadow-[0_1px_2px_rgba(3,27,78,0.04)]">
           <div className="mb-4 flex items-center justify-between">
             <CheckCircle2 className="h-4 w-4 text-[#24ad5f]" />
             <span className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Paid Total</span>
           </div>
-          <p className="text-3xl font-bold tracking-tight text-[#2e3d49]">USD {paid.toFixed(2)}</p>
+          <p className="text-3xl font-bold tracking-tight text-[#2e3d49]">{displayMoney(paid, 'USD')}</p>
         </div>
         <div className="rounded-md bg-[#031b4e] p-6 text-white shadow-[0_12px_28px_rgba(3,27,78,0.15)]">
           <p className="mb-4 text-[10px] font-bold uppercase tracking-widest text-blue-200/60">Invoice Records</p>
@@ -297,7 +299,7 @@ export default function Invoices({ adminMode = false }: InvoicesProps) {
                     </div>
                   </td>
                   <td className="px-6 py-5">
-                    <p className="text-[15px] font-bold tracking-tight text-[#2e3d49]">{money(invoice)}</p>
+                    <p className="text-[15px] font-bold tracking-tight text-[#2e3d49]">{displayMoney(invoice.amount, invoice.currency)}</p>
                   </td>
                   <td className="px-6 py-5">
                     <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase ${statusClass(invoice.status)}`}>{invoice.status}</span>
@@ -359,7 +361,7 @@ export default function Invoices({ adminMode = false }: InvoicesProps) {
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
                 <div className="rounded border border-[#e5e8ed] bg-white p-4">
                   <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Amount</p>
-                  <p className="mt-2 text-sm font-bold text-[#2e3d49]">{money(previewInvoice)}</p>
+                  <p className="mt-2 text-sm font-bold text-[#2e3d49]">{displayMoney(previewInvoice.amount, previewInvoice.currency)}</p>
                 </div>
                 <div className="rounded border border-[#e5e8ed] bg-white p-4">
                   <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Created</p>
@@ -399,15 +401,15 @@ export default function Invoices({ adminMode = false }: InvoicesProps) {
                       <tr key={`${line.label || line.name || 'line'}-${index}`}>
                         <td className="px-4 py-3 text-sm font-bold text-[#2e3d49]">{line.label || line.name || 'Invoice item'}</td>
                         <td className="px-4 py-3 text-sm text-gray-500">{line.hours ? `${Number(line.hours).toFixed(2)} hrs` : '-'}</td>
-                        <td className="px-4 py-3 text-sm text-gray-500">{line.hourlyRate ? moneyValue(line.hourlyRate, previewInvoice.currency) : '-'}</td>
-                        <td className="px-4 py-3 text-right text-sm font-bold text-[#2e3d49]">{moneyValue(line.amount || 0, previewInvoice.currency)}</td>
+                        <td className="px-4 py-3 text-sm text-gray-500">{line.hourlyRate ? displayMoney(line.hourlyRate, previewInvoice.currency) : '-'}</td>
+                        <td className="px-4 py-3 text-right text-sm font-bold text-[#2e3d49]">{displayMoney(line.amount || 0, previewInvoice.currency)}</td>
                       </tr>
                     ))}
                   </tbody>
                   <tfoot className="bg-[#f8f9fa]">
                     <tr>
                       <td colSpan={3} className="px-4 py-3 text-sm font-bold text-[#2e3d49]">Total</td>
-                      <td className="px-4 py-3 text-right text-sm font-bold text-[#2e3d49]">{money(previewInvoice)}</td>
+                      <td className="px-4 py-3 text-right text-sm font-bold text-[#2e3d49]">{displayMoney(previewInvoice.amount, previewInvoice.currency)}</td>
                     </tr>
                   </tfoot>
                 </table>

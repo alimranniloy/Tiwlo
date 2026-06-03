@@ -35,6 +35,7 @@ import {
   upsertHostingProductWithApi
 } from '../../../lib/tiwloApi';
 import { useActionConfirmation } from '../../../components/ActionConfirmation';
+import { useCurrency } from '../../../lib/useCurrency';
 
 const panels = ['tpanel', 'hosting-panel', 'cpanel', 'plesk', 'virtualizor', 'directadmin', 'droplet'];
 const modules = ['tpanel', 'hosting-panel', 'cpanel', 'droplet', 'plesk', 'directadmin'];
@@ -121,10 +122,6 @@ const blankOrder = {
   amount: '',
   currency: 'USD'
 };
-
-function money(value: number | string) {
-  return `USD ${Number(value || 0).toFixed(2)}`;
-}
 
 function splitNameservers(value: string) {
   return value.split(',').map((item) => item.trim()).filter(Boolean);
@@ -241,6 +238,7 @@ function FormSelect({
 }
 
 export default function WhmHostingModule() {
+  const { money } = useCurrency({ scope: 'platform', scopeId: 'admin' });
   const [activeTab, setActiveTab] = React.useState<'nodes' | 'products' | 'orders'>('nodes');
   const [nodes, setNodes] = React.useState<any[]>([]);
   const [groups, setGroups] = React.useState<any[]>([]);

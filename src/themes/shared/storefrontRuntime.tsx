@@ -3,6 +3,7 @@ import {
   createStoreOrderWithApi,
   fetchStoreOrdersForAdmin
 } from '../../lib/tiwloApi';
+import { fetchPlatformCurrencyWithApi } from '../../lib/api/settings';
 import type { StoreThemeRuntime } from '../../lib/tiwloApi';
 import {
   chooseCurrencyForStorage,
@@ -371,15 +372,27 @@ export function StorefrontRuntimeProvider({
   ), [baseStore.currency, runtime?.store?.settings?.currencyPolicy, settings.currencyPolicy]);
   const currencyStorageKey = currencySelectionStorageKey('storefront', baseStore.id || baseStore.slug || themeKey);
   const [selectedCurrency, setSelectedCurrencyState] = React.useState(() => chooseCurrencyForStorage(currencyPolicy, currencyStorageKey));
+  const [detectedCountry, setDetectedCountry] = React.useState<string | null>(null);
 
   React.useEffect(() => {
-    const next = chooseCurrencyForStorage(currencyPolicy, currencyStorageKey);
+    let active = true;
+    fetchPlatformCurrencyWithApi()
+      .then((result) => {
+        if (active) setDetectedCountry(result.detectedCountry || null);
+      })
+      .catch(() => {
+        if (active) setDetectedCountry(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  React.useEffect(() => {
+    const next = chooseCurrencyForStorage(currencyPolicy, currencyStorageKey, detectedCountry);
     const saved = readStoredCurrencySelection(currencyStorageKey, currencyPolicy);
     setSelectedCurrencyState((current) => saved && isCurrencySelectable(currencyPolicy, current) ? current : next);
-    if (!saved) {
-      persistCurrencySelection(currencyStorageKey, next, { scope: 'storefront', scopeId: baseStore.id || baseStore.slug || themeKey });
-    }
-  }, [baseStore.id, baseStore.slug, currencyPolicy, currencyStorageKey, themeKey]);
+  }, [currencyPolicy, currencyStorageKey, detectedCountry]);
 
   const setSelectedCurrency = React.useCallback((currency: string) => {
     const next = normalizeCurrencyCode(currency, currencyPolicy.defaultCurrency);

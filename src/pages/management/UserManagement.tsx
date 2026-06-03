@@ -28,6 +28,7 @@ import {
 } from '../../lib/tiwloApi';
 import { useActionConfirmation } from '../../components/ActionConfirmation';
 import { COUNTRIES, countryByCode } from '../../lib/countries';
+import { useCurrency } from '../../lib/useCurrency';
 
 const roles = ['super_admin', 'admin', 'manager', 'staff', 'user', 'store_owner', 'store_customer', 'isp_admin'];
 const statuses = ['active', 'pending', 'suspended', 'banned', 'blocked', 'disabled'];
@@ -61,6 +62,7 @@ const statusTone = (status?: string) => {
 };
 
 export default function UserManagement() {
+  const { money } = useCurrency({ scope: 'platform', scopeId: 'admin' });
   const [directoryTab, setDirectoryTab] = useState<'platform' | 'ecommerce' | 'isp'>('platform');
   const [searchTerm, setSearchTerm] = useState('');
   const [users, setUsers] = useState<any[]>([]);
@@ -86,8 +88,8 @@ export default function UserManagement() {
       plan: planFromRole(item.role),
       statusLabel: String(item.status || 'active').replace(/^\w/, (char) => char.toUpperCase()),
       joined: formatDate(item.createdAt),
-      spend: `$${Number(item.credits || 0).toFixed(2)}`
-    })), [countryFilter, users]);
+      spend: money(item.credits || 0, 'USD')
+    })), [countryFilter, money, users]);
 
   const loadUsers = async () => {
     setLoading(true);
@@ -507,7 +509,7 @@ export default function UserManagement() {
                     <td className="px-5 py-4 font-bold text-gray-600">{client.username}</td>
                     <td className="px-5 py-4 text-gray-500">{client.email || client.phone || '-'}</td>
                     <td className="px-5 py-4 text-gray-500">{client.package?.name || client.packageId || '-'}</td>
-                    <td className="px-5 py-4 font-black text-[#2e3d49]">${Number(client.balance || 0).toFixed(2)}</td>
+                    <td className="px-5 py-4 font-black text-[#2e3d49]">{money(client.balance || 0, 'USD')}</td>
                     <td className="px-5 py-4"><span className={`rounded-full border px-2 py-1 text-[10px] font-black uppercase ${statusTone(client.status)}`}>{client.status}</span></td>
                   </tr>
                 ))}

@@ -4,7 +4,7 @@ import { getActor, isAdmin } from '../../core/auth.js';
 import { AppError } from '../../core/errors.js';
 import { toApi } from '../../core/format.js';
 import { writeAudit } from '../../core/audit.js';
-import { invoiceCreditAmount, startInvoicePayment } from '../billing/service.js';
+import { invoiceCreditAmountForCtx, startInvoicePayment } from '../billing/service.js';
 
 const json = (value, fallback) => JSON.stringify(value ?? fallback);
 const text = (value, fallback = '') => String(value ?? fallback).trim();
@@ -1155,7 +1155,7 @@ export const renewTPanelLicenseOrder = async (ctx, input) => {
   const amount = number(pkg.price, 0) * months;
   const currency = input.currency || pkg.currency || 'USD';
   const owner = await ctx.prisma.user.findUnique({ where: { id: license.ownerId } });
-  const creditCharge = invoiceCreditAmount({ amount, currency });
+  const creditCharge = await invoiceCreditAmountForCtx(ctx, { amount, currency });
   if (Number(owner?.credits || 0) < creditCharge) {
     throw new AppError(`Insufficient credit balance. Add credit before renewing this ${pkg.name} license.`, 'CREDIT_REQUIRED');
   }

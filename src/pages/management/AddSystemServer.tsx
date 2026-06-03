@@ -22,6 +22,7 @@ import {
   notifyDataRefresh
 } from '../../lib/tiwloApi';
 import { OrderCompleteSummary, TowerOrderLoader, type OrderSummary } from '../../components/SetupLoader';
+import { useCurrency } from '../../lib/useCurrency';
 
 type SizeOption = {
   id: string;
@@ -37,10 +38,6 @@ type SizeOption = {
 };
 
 const hoursPerMonth = 730;
-
-function money(value: number) {
-  return `USD ${Number(value || 0).toFixed(2)}`;
-}
 
 function hourlyRate(monthlyCost: number) {
   return Number((Number(monthlyCost || 0) / hoursPerMonth).toFixed(4));
@@ -80,6 +77,7 @@ function limitText(limits: Record<string, number>) {
 
 export default function AddSystemServer() {
   const navigate = useNavigate();
+  const { money } = useCurrency({ scope: 'platform', scopeId: 'admin' });
   const [nodes, setNodes] = useState<any[]>([]);
   const [products, setProducts] = useState<any[]>([]);
   const [packages, setPackages] = useState<any[]>([]);

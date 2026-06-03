@@ -29,8 +29,10 @@ import {
   Smartphone,
   Cpu as CpuIcon
 } from 'lucide-react';
+import { useCurrency } from '../lib/useCurrency';
 
 export default function Documentation() {
+  const { money } = useCurrency({ scope: 'platform', scopeId: 'docs' });
   const [activeSection, setActiveSection] = useState('Introduction');
   const [searchQuery, setSearchQuery] = useState('');
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -119,17 +121,17 @@ export default function Documentation() {
                   <tr>
                     <td className="px-4 py-4 font-bold text-[#0069ff]">General Purpose</td>
                     <td className="px-4 py-4 text-sm text-[#4a4a4a]">Web servers, small DBs</td>
-                    <td className="px-4 py-4 text-sm font-mono">$5 - $80/mo</td>
+                    <td className="px-4 py-4 text-sm font-mono">{money(5, 'USD')} - {money(80, 'USD')}/mo</td>
                   </tr>
                   <tr>
                     <td className="px-4 py-4 font-bold text-indigo-600">CPU Optimized</td>
                     <td className="px-4 py-4 text-sm text-[#4a4a4a]">High traffic, ML training</td>
-                    <td className="px-4 py-4 text-sm font-mono">$40 - $480/mo</td>
+                    <td className="px-4 py-4 text-sm font-mono">{money(40, 'USD')} - {money(480, 'USD')}/mo</td>
                   </tr>
                   <tr>
                     <td className="px-4 py-4 font-bold text-amber-600">Memory Optimized</td>
                     <td className="px-4 py-4 text-sm text-[#4a4a4a]">In-memory DBs, Caching</td>
-                    <td className="px-4 py-4 text-sm font-mono">$80 - $960/mo</td>
+                    <td className="px-4 py-4 text-sm font-mono">{money(80, 'USD')} - {money(960, 'USD')}/mo</td>
                   </tr>
                 </tbody>
               </table>

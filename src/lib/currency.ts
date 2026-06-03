@@ -80,10 +80,46 @@ export const DEFAULT_CURRENCY_POLICY: CurrencyPolicy = {
   enabledCurrencies: ['USD', 'BDT'],
   allowedCurrencies: ['USD', 'BDT'],
   rates: defaultRates,
-  autoSwitch: false,
+  autoSwitch: true,
   rateApiEnabled: false,
   rateApiUrl: DEFAULT_RATE_API_URL,
   rateCacheMinutes: 1440
+};
+
+export const COUNTRY_CURRENCY_MAP: Record<string, string> = {
+  BD: 'BDT',
+  US: 'USD',
+  GB: 'GBP',
+  EU: 'EUR',
+  CA: 'CAD',
+  AU: 'AUD',
+  IN: 'INR',
+  SG: 'SGD',
+  MY: 'MYR',
+  AE: 'AED',
+  SA: 'SAR',
+  JP: 'JPY',
+  CN: 'CNY',
+  TH: 'THB',
+  PK: 'PKR',
+  NP: 'NPR',
+  LK: 'LKR',
+  ID: 'IDR',
+  PH: 'PHP',
+  VN: 'VND',
+  KR: 'KRW',
+  TR: 'TRY',
+  CH: 'CHF',
+  ZA: 'ZAR',
+  EG: 'EGP',
+  NG: 'NGN',
+  KE: 'KES',
+  QA: 'QAR',
+  KW: 'KWD',
+  BH: 'BHD',
+  OM: 'OMR',
+  BR: 'BRL',
+  MX: 'MXN'
 };
 
 function uniqueCodes(codes: unknown[], fallback: string[] = ['USD']) {
@@ -191,7 +227,7 @@ export function normalizeCurrencyPolicy(value?: unknown, baseFallback = 'USD'): 
     enabledCurrencies,
     allowedCurrencies: allowedCurrencies.length ? allowedCurrencies : [baseCurrency],
     rates,
-    autoSwitch: Boolean(source.autoSwitch),
+    autoSwitch: source.autoSwitch === undefined ? DEFAULT_CURRENCY_POLICY.autoSwitch : Boolean(source.autoSwitch),
     rateApiEnabled: Boolean(source.rateApiEnabled),
     rateApiUrl: String(source.rateApiUrl || DEFAULT_RATE_API_URL),
     rateCacheMinutes: Math.max(15, Number(source.rateCacheMinutes || DEFAULT_CURRENCY_POLICY.rateCacheMinutes)),
@@ -209,10 +245,22 @@ export function isCurrencySelectable(policy: CurrencyPolicy, code: string) {
   return selectableCurrencyCodes(policy).includes(normalizeCurrencyCode(code, ''));
 }
 
-export function convertCurrencyAmount(amount: number, policy: CurrencyPolicy, targetCurrency: string) {
+export function currencyForCountry(countryCode?: string | null) {
+  const code = String(countryCode || '').trim().toUpperCase();
+  return COUNTRY_CURRENCY_MAP[code] || null;
+}
+
+export function convertCurrencyAmount(amount: number, policy: CurrencyPolicy, targetCurrency: string, sourceCurrency?: string) {
   const normalized = normalizeCurrencyPolicy(policy);
-  const rate = Number(normalized.rates[normalizeCurrencyCode(targetCurrency)] || 1);
-  return Number(amount || 0) * (Number.isFinite(rate) && rate > 0 ? rate : 1);
+  const source = normalizeCurrencyCode(sourceCurrency || normalized.baseCurrency, normalized.baseCurrency);
+  const target = normalizeCurrencyCode(targetCurrency, normalized.defaultCurrency);
+  if (source === target) return Number(amount || 0);
+  const sourceRate = Number(normalized.rates[source] || (source === normalized.baseCurrency ? 1 : 0));
+  const targetRate = Number(normalized.rates[target] || (target === normalized.baseCurrency ? 1 : 0));
+  if (!Number.isFinite(sourceRate) || sourceRate <= 0 || !Number.isFinite(targetRate) || targetRate <= 0) {
+    return Number(amount || 0);
+  }
+  return (Number(amount || 0) / sourceRate) * targetRate;
 }
 
 export function formatCurrencyAmount(amount: number, currency = 'USD') {
@@ -247,45 +295,18 @@ export function readStoredCurrencySelection(storageKey: string, policy: Currency
 function detectCurrencyFromLocale(policy: CurrencyPolicy) {
   const locale = typeof navigator !== 'undefined' ? navigator.language || '' : '';
   const country = locale.split('-')[1]?.toUpperCase();
-  const countryCurrency: Record<string, string> = {
-    BD: 'BDT',
-    US: 'USD',
-    GB: 'GBP',
-    EU: 'EUR',
-    CA: 'CAD',
-    AU: 'AUD',
-    IN: 'INR',
-    SG: 'SGD',
-    MY: 'MYR',
-    AE: 'AED',
-    SA: 'SAR',
-    JP: 'JPY',
-    CN: 'CNY',
-    TH: 'THB',
-    PK: 'PKR',
-    NP: 'NPR',
-    LK: 'LKR',
-    ID: 'IDR',
-    PH: 'PHP',
-    VN: 'VND',
-    KR: 'KRW',
-    TR: 'TRY',
-    CH: 'CHF',
-    ZA: 'ZAR',
-    EG: 'EGP',
-    NG: 'NGN'
-  };
-  const detected = countryCurrency[country || ''];
+  const detected = currencyForCountry(country);
   return detected && isCurrencySelectable(policy, detected) ? detected : null;
 }
 
-export function chooseCurrencyForStorage(policy: CurrencyPolicy, storageKey: string) {
+export function chooseCurrencyForStorage(policy: CurrencyPolicy, storageKey: string, detectedCountry?: string | null) {
   const normalized = normalizeCurrencyPolicy(policy);
   const saved = readStoredCurrencySelection(storageKey, normalized);
   if (saved) return saved;
   if (normalized.autoSwitch) {
-    const detected = detectCurrencyFromLocale(normalized);
-    if (detected) return detected;
+    const detected = currencyForCountry(detectedCountry) || detectCurrencyFromLocale(normalized);
+    if (detected && isCurrencySelectable(normalized, detected)) return detected;
+    if (isCurrencySelectable(normalized, 'USD')) return 'USD';
   }
   return normalized.defaultCurrency;
 }

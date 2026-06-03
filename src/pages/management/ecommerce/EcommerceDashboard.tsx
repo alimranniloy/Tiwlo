@@ -2,11 +2,12 @@ import React from 'react';
 import { AlertCircle, Globe, Plus, RefreshCw, ShoppingBag, Store, TrendingUp, Users } from 'lucide-react';
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { fetchEcommerceAdminSummary, fetchStoresWithApi } from '../../../lib/tiwloApi';
+import { useCurrency } from '../../../lib/useCurrency';
 
 const numberValue = (value?: number) => (typeof value === 'number' ? value.toLocaleString() : '0');
-const moneyValue = (value?: number) => `$${Number(value || 0).toLocaleString()}`;
 
 export default function EcommerceDashboard() {
+  const { money } = useCurrency({ scope: 'platform', scopeId: 'admin' });
   const [summary, setSummary] = React.useState<any>(null);
   const [stores, setStores] = React.useState<any[]>([]);
   const [loading, setLoading] = React.useState(true);
@@ -38,7 +39,7 @@ export default function EcommerceDashboard() {
   const stats = [
     { label: 'Active Merchants', value: numberValue(summary?.merchants), icon: Users },
     { label: 'Deployed Stores', value: numberValue(summary?.stores), icon: Store },
-    { label: 'Revenue', value: moneyValue(summary?.revenue), icon: TrendingUp },
+    { label: 'Revenue', value: money(summary?.revenue || 0, 'USD'), icon: TrendingUp },
     { label: 'Orders', value: numberValue(summary?.orders), icon: ShoppingBag }
   ];
 

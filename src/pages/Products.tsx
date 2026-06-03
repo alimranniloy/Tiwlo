@@ -2,6 +2,7 @@ import React from 'react';
 import Navbar from '../components/landing/Navbar';
 import Footer from '../components/landing/Footer';
 import { motion } from 'framer-motion';
+import { useCurrency } from '../lib/useCurrency';
 import { 
   Server, 
   Database, 
@@ -86,6 +87,7 @@ const capabilities = [
 ];
 
 export default function ProductsPage() {
+  const { money } = useCurrency({ scope: 'platform', scopeId: 'marketing' });
   return (
     <div className="min-h-screen bg-white text-gray-900 font-sans selection:bg-blue-100">
       <Navbar />
@@ -238,7 +240,7 @@ export default function ProductsPage() {
               </p>
               <div className="p-10 bg-white rounded-3xl border border-gray-200 shadow-sm inline-block">
                  <div className="text-sm font-black text-blue-600 uppercase tracking-widest mb-2">Starting at</div>
-                 <div className="text-6xl font-black text-gray-900 mb-6">$4<span className="text-2xl text-gray-400">/mo</span></div>
+                 <div className="text-6xl font-black text-gray-900 mb-6">{money(4, 'USD')}<span className="text-2xl text-gray-400">/mo</span></div>
                  <button className="w-full py-4 px-8 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition-all">
                     Start Building Now
                  </button>

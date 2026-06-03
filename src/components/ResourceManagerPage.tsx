@@ -18,6 +18,7 @@ import {
   updateCloudResourceStatusWithApi
 } from '../lib/tiwloApi';
 import { useActionConfirmation } from './ActionConfirmation';
+import { useCurrency } from '../lib/useCurrency';
 
 type ResourceDefaults = Partial<Pick<CloudResourceRecord, 'region' | 'specs' | 'plan' | 'cpu' | 'ram' | 'disk' | 'monthlyCost'>> & {
   metadata?: Record<string, unknown>;
@@ -44,10 +45,6 @@ function dateLabel(value?: string) {
   return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-function formatMoney(value?: number) {
-  return `$${Number(value || 0).toFixed(2)}`;
-}
-
 function metadataText(metadata?: Record<string, unknown> | null) {
   if (!metadata || typeof metadata !== 'object') return 'No metadata';
   const entries = Object.entries(metadata).filter(([, value]) => value !== undefined && value !== null && value !== '');
@@ -66,6 +63,7 @@ export default function ResourceManagerPage({
   accentClass = 'bg-blue-600',
   defaults
 }: ResourceManagerPageProps) {
+  const { money } = useCurrency({ scope: 'platform', scopeId: 'console' });
   const [resources, setResources] = React.useState<CloudResourceRecord[]>([]);
   const [search, setSearch] = React.useState('');
   const [loading, setLoading] = React.useState(true);
@@ -217,7 +215,7 @@ export default function ResourceManagerPage({
           { label: 'Total Records', value: resources.length },
           { label: 'Active', value: activeCount },
           { label: 'Regions', value: regionCount },
-          { label: 'Monthly Cost', value: formatMoney(monthlyTotal) }
+          { label: 'Monthly Cost', value: money(monthlyTotal, 'USD') }
         ].map((stat) => (
           <div key={stat.label} className="rounded-md border border-[#d9e1ec] bg-white p-5 shadow-[0_1px_2px_rgba(3,27,78,0.04)]">
             <p className="mb-1 text-[10px] font-bold uppercase tracking-widest text-[#6B7280]">{stat.label}</p>
@@ -279,7 +277,7 @@ export default function ResourceManagerPage({
                       <p className="text-sm font-medium text-[#374151]">{resource.specs}</p>
                       <p className="mt-0.5 text-[11px] text-gray-400">{metadataText(resource.metadata)}</p>
                     </td>
-                    <td className="px-6 py-4 text-sm font-bold text-[#111827]">{formatMoney(resource.monthlyCost)}</td>
+                    <td className="px-6 py-4 text-sm font-bold text-[#111827]">{money(resource.monthlyCost, 'USD')}</td>
                     <td className="px-6 py-4 text-sm text-[#6B7280]">{dateLabel(resource.updatedAt || resource.createdAt)}</td>
                     <td className="px-6 py-4 text-right">
                       <div className="flex items-center justify-end gap-1">

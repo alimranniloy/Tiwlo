@@ -15,22 +15,11 @@ import { Link, useNavigate } from 'react-router-dom';
 import {
   fetchBillingOverviewWithApi,
   fetchNotificationsWithApi,
-  fetchSettingsWithApi,
   markNotificationReadWithApi
 } from '../lib/tiwloApi';
 import CurrencySwitcher from './CurrencySwitcher';
 import BrandLogo from './BrandLogo';
-import {
-  CURRENCY_POLICY_KEY,
-  chooseCurrencyForStorage,
-  convertCurrencyAmount,
-  currencySelectionStorageKey,
-  DEFAULT_CURRENCY_POLICY,
-  formatCurrencyAmount,
-  normalizeCurrencyPolicy,
-  persistCurrencySelection,
-  readStoredCurrencySelection
-} from '../lib/currency';
+import { useCurrency } from '../lib/useCurrency';
 
 interface HeaderProps {
   user: User;
@@ -45,9 +34,11 @@ export default function Header({ user, onLogout, isSidebarOpen, setIsSidebarOpen
   const [isNotificationOpen, setIsNotificationOpen] = useState(false);
   const [notifications, setNotifications] = useState<any[]>([]);
   const [creditBalance, setCreditBalance] = useState<number | null>(typeof user.credits === 'number' ? user.credits : null);
-  const [currencyPolicy, setCurrencyPolicy] = useState(() => normalizeCurrencyPolicy(DEFAULT_CURRENCY_POLICY));
-  const currencyStorageKey = currencySelectionStorageKey('platform', 'console', user.id);
-  const [selectedCurrency, setSelectedCurrency] = useState(() => chooseCurrencyForStorage(currencyPolicy, currencyStorageKey));
+  const { policy: currencyPolicy, currency: selectedCurrency, storageKey: currencyStorageKey, setCurrency, money } = useCurrency({
+    scope: 'platform',
+    scopeId: 'console',
+    actorId: user.id
+  });
 
   useEffect(() => {
     let isMounted = true;
@@ -92,33 +83,9 @@ export default function Header({ user, onLogout, isSidebarOpen, setIsSidebarOpen
     };
   }, [user.id]);
 
-  useEffect(() => {
-    let isMounted = true;
-    fetchSettingsWithApi('platform')
-      .then((settings) => {
-        if (!isMounted) return;
-        const saved = settings.find((setting) => setting.key === CURRENCY_POLICY_KEY)?.value;
-        setCurrencyPolicy(normalizeCurrencyPolicy(saved || DEFAULT_CURRENCY_POLICY));
-      })
-      .catch(() => {
-        if (isMounted) setCurrencyPolicy(normalizeCurrencyPolicy(DEFAULT_CURRENCY_POLICY));
-      });
-    return () => {
-      isMounted = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    const next = chooseCurrencyForStorage(currencyPolicy, currencyStorageKey);
-    setSelectedCurrency(next);
-    if (!readStoredCurrencySelection(currencyStorageKey, currencyPolicy)) {
-      persistCurrencySelection(currencyStorageKey, next, { scope: 'platform', scopeId: 'console', actorId: user.id });
-    }
-  }, [currencyPolicy, currencyStorageKey, user.id]);
-
   const creditText = creditBalance === null
     ? '...'
-    : formatCurrencyAmount(convertCurrencyAmount(creditBalance, currencyPolicy, selectedCurrency), selectedCurrency);
+    : money(creditBalance, 'USD');
   const isCreditEmpty = creditBalance !== null && creditBalance <= 0;
   const roleLabel = ['admin', 'super_admin'].includes(user.role)
     ? 'Administrator'
@@ -181,7 +148,7 @@ export default function Header({ user, onLogout, isSidebarOpen, setIsSidebarOpen
           policy={currencyPolicy}
           storageKey={currencyStorageKey}
           value={selectedCurrency}
-          onChange={setSelectedCurrency}
+          onChange={setCurrency}
           scope="platform"
           scopeId="console"
           actorId={user.id}

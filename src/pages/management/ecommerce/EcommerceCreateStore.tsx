@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { checkStoreSubdomainAvailability, createStoreWithApi, notifyDataRefresh } from '../../../lib/tiwloApi';
 import { OrderCompleteSummary, TowerOrderLoader, type OrderSummary } from '../../../components/SetupLoader';
+import { useCurrency } from '../../../lib/useCurrency';
 import { 
   ArrowLeft, 
   ShoppingBag, 
@@ -31,6 +32,7 @@ const normalizeSubdomain = (value: string) => value
 
 export default function EcommerceCreateStore() {
   const navigate = useNavigate();
+  const { money } = useCurrency({ scope: 'platform', scopeId: 'console' });
   const [step, setStep] = useState(1);
   const [selectedPlan, setSelectedPlan] = useState('pro');
   const [copied, setCopied] = useState(false);
@@ -327,7 +329,7 @@ export default function EcommerceCreateStore() {
                       <p className="text-[10px] text-gray-400 font-bold uppercase tracking-[0.1em] mb-4">{plan.description}</p>
                       
                       <div className="flex items-baseline mb-6">
-                        <span className="text-4xl font-black text-gray-900 tracking-tighter">${plan.price}</span>
+                        <span className="text-4xl font-black text-gray-900 tracking-tighter">{money(Number(plan.price || 0), 'USD')}</span>
                         <span className="text-xs font-bold text-gray-400 ml-1.5 uppercase">/ mo</span>
                       </div>
 
@@ -622,7 +624,7 @@ export default function EcommerceCreateStore() {
                   </div>
                   <div className="flex justify-between border-t border-gray-200 pt-3">
                     <span className="text-sm text-gray-900 font-bold">Total Bill</span>
-                    <span className="text-lg font-black text-gray-900">${plans.find(p => p.id === selectedPlan)?.price}.00</span>
+                    <span className="text-lg font-black text-gray-900">{money(Number(plans.find(p => p.id === selectedPlan)?.price || 0), 'USD')}</span>
                   </div>
                </div>
 

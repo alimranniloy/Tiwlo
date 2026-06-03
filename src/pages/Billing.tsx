@@ -6,10 +6,7 @@ import {
   settleUsageBillingWithApi,
   startCreditTopUpWithApi
 } from '../lib/tiwloApi';
-
-function money(value: number, currency = 'USD') {
-  return `${currency} ${Number(value || 0).toFixed(2)}`;
-}
+import { useCurrency } from '../lib/useCurrency';
 
 function dateLabel(value?: string) {
   if (!value) return 'Not scheduled';
@@ -19,6 +16,7 @@ function dateLabel(value?: string) {
 }
 
 export default function BillingPage() {
+  const { currency, money } = useCurrency({ scope: 'platform', scopeId: 'console' });
   const [invoices, setInvoices] = React.useState<any[]>([]);
   const [overview, setOverview] = React.useState<any | null>(null);
   const [topUpAmount, setTopUpAmount] = React.useState('10');
@@ -49,6 +47,10 @@ export default function BillingPage() {
   React.useEffect(() => {
     loadBilling();
   }, [loadBilling]);
+
+  React.useEffect(() => {
+    if (['USD', 'BDT'].includes(currency)) setTopUpCurrency(currency);
+  }, [currency]);
 
   const addCredit = async () => {
     setProcessing(true);

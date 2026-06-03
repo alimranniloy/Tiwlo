@@ -7,8 +7,10 @@ import {
   fetchNetworkDevicesWithApi,
   fetchRadiusServersWithApi
 } from '../../../../lib/tiwloApi';
+import { useCurrency } from '../../../../lib/useCurrency';
 
 export default function IspDashboardOverview({ site }: { site: any }) {
+  const { money } = useCurrency({ scope: 'platform', scopeId: 'isp-admin' });
   const [clients, setClients] = React.useState<any[]>([]);
   const [routers, setRouters] = React.useState<any[]>([]);
   const [radius, setRadius] = React.useState<any[]>([]);
@@ -57,7 +59,7 @@ export default function IspDashboardOverview({ site }: { site: any }) {
 
   const stats = [
     { label: 'Active Subscribers', value: activeClients, icon: Users },
-    { label: 'Paid Revenue', value: `$${revenue.toFixed(2)}`, icon: CreditCard },
+    { label: 'Paid Revenue', value: money(revenue, 'USD'), icon: CreditCard },
     { label: 'Online Routers', value: `${onlineRouters}/${routers.length}`, icon: Router },
     { label: 'Network Devices', value: `${onlineDevices}/${devices.length}`, icon: Wifi }
   ];
@@ -132,7 +134,7 @@ export default function IspDashboardOverview({ site }: { site: any }) {
                   <p className="text-xs text-gray-400">{invoice.clientName}</p>
                 </div>
                 <div className="text-right">
-                  <p className="text-sm font-bold text-gray-900">${Number(invoice.amount || 0).toFixed(2)}</p>
+                  <p className="text-sm font-bold text-gray-900">{money(invoice.amount || 0, invoice.currency || 'USD')}</p>
                   <p className="text-[10px] font-bold uppercase text-gray-400">{invoice.status}</p>
                 </div>
               </div>

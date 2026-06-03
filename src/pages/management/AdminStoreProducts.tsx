@@ -8,6 +8,7 @@ import {
   updateStoreProductWithApi
 } from '../../lib/tiwloApi';
 import { useActionConfirmation } from '../../components/ActionConfirmation';
+import { useCurrency } from '../../lib/useCurrency';
 
 type ProductRow = {
   id: string;
@@ -23,11 +24,8 @@ type ProductRow = {
   updatedAt?: string;
 };
 
-function money(value: number) {
-  return `$${Number(value || 0).toFixed(2)}`;
-}
-
 export default function AdminStoreProducts() {
+  const { money } = useCurrency({ scope: 'platform', scopeId: 'admin' });
   const [stores, setStores] = React.useState<any[]>([]);
   const [products, setProducts] = React.useState<ProductRow[]>([]);
   const [search, setSearch] = React.useState('');
