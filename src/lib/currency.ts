@@ -10,6 +10,8 @@ export type CurrencySelectionHistoryItem = {
   scope?: string;
   scopeId?: string;
   actorId?: string;
+  source?: 'manual' | 'auto' | 'system';
+  detectedCountry?: string | null;
 };
 
 export type CurrencyPolicy = {
@@ -283,10 +285,29 @@ export function currencyHistoryStorageKey(storageKey: string) {
   return `${storageKey}:history`;
 }
 
-export function readStoredCurrencySelection(storageKey: string, policy: CurrencyPolicy) {
+export function currencySelectionMetaKey(storageKey: string) {
+  return `${storageKey}:meta`;
+}
+
+export function readStoredCurrencySelection(
+  storageKey: string,
+  policy: CurrencyPolicy,
+  options: { detectedCountry?: string | null; manualOnly?: boolean } = {}
+) {
   try {
     const saved = normalizeCurrencyCode(localStorage.getItem(storageKey), '');
-    return saved && isCurrencySelectable(policy, saved) ? saved : null;
+    if (!saved || !isCurrencySelectable(policy, saved)) return null;
+    const meta = JSON.parse(localStorage.getItem(currencySelectionMetaKey(storageKey)) || 'null');
+    const source = String(meta?.source || '').toLowerCase();
+    if (options.manualOnly && source !== 'manual') return null;
+    const normalized = normalizeCurrencyPolicy(policy);
+    const detected = normalized.autoSwitch && options.detectedCountry
+      ? currencyForCountry(options.detectedCountry)
+      : null;
+    if (detected && detected !== saved && isCurrencySelectable(normalized, detected) && source !== 'manual') {
+      return null;
+    }
+    return saved;
   } catch {
     return null;
   }
@@ -301,7 +322,7 @@ function detectCurrencyFromLocale(policy: CurrencyPolicy) {
 
 export function chooseCurrencyForStorage(policy: CurrencyPolicy, storageKey: string, detectedCountry?: string | null) {
   const normalized = normalizeCurrencyPolicy(policy);
-  const saved = readStoredCurrencySelection(storageKey, normalized);
+  const saved = readStoredCurrencySelection(storageKey, normalized, { detectedCountry });
   if (saved) return saved;
   if (normalized.autoSwitch) {
     const detected = currencyForCountry(detectedCountry) || detectCurrencyFromLocale(normalized);
@@ -320,6 +341,12 @@ export function persistCurrencySelection(
   try {
     const previous = localStorage.getItem(storageKey);
     localStorage.setItem(storageKey, code);
+    localStorage.setItem(currencySelectionMetaKey(storageKey), JSON.stringify({
+      ...context,
+      source: context.source || 'manual',
+      currency: code,
+      updatedAt: new Date().toISOString()
+    }));
     if (previous === code) return;
     const historyKey = currencyHistoryStorageKey(storageKey);
     const parsed = JSON.parse(localStorage.getItem(historyKey) || '[]');

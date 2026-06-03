@@ -7,7 +7,6 @@ import {
   currencySelectionStorageKey,
   DEFAULT_CURRENCY_POLICY,
   normalizeCurrencyPolicy,
-  persistCurrencySelection,
   readStoredCurrencySelection
 } from '../../../lib/currency';
 
@@ -36,10 +35,7 @@ export default function Header({ store }: { store?: any }) {
 
   React.useEffect(() => {
     const next = chooseCurrencyForStorage(currencyPolicy, currencyStorageKey);
-    setSelectedCurrency(next);
-    if (!readStoredCurrencySelection(currencyStorageKey, currencyPolicy)) {
-      persistCurrencySelection(currencyStorageKey, next, { scope: 'store-admin', scopeId: store?.id });
-    }
+    setSelectedCurrency(readStoredCurrencySelection(currencyStorageKey, currencyPolicy) || next);
   }, [currencyPolicy, currencyStorageKey, store?.id]);
 
   return (

@@ -390,7 +390,7 @@ export function StorefrontRuntimeProvider({
 
   React.useEffect(() => {
     const next = chooseCurrencyForStorage(currencyPolicy, currencyStorageKey, detectedCountry);
-    const saved = readStoredCurrencySelection(currencyStorageKey, currencyPolicy);
+    const saved = readStoredCurrencySelection(currencyStorageKey, currencyPolicy, { detectedCountry });
     setSelectedCurrencyState((current) => saved && isCurrencySelectable(currencyPolicy, current) ? current : next);
   }, [currencyPolicy, currencyStorageKey, detectedCountry]);
 

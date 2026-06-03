@@ -33,8 +33,8 @@ export function useCurrency(options: UseCurrencyOptions = {}) {
     [scope, scopeId]
   );
   const chooseCurrency = React.useCallback((nextPolicy: CurrencyPolicy, country?: string | null) => (
-    readStoredCurrencySelection(storageKey, nextPolicy) ||
-    readStoredCurrencySelection(sharedStorageKey, nextPolicy) ||
+    readStoredCurrencySelection(storageKey, nextPolicy, { detectedCountry: country }) ||
+    readStoredCurrencySelection(sharedStorageKey, nextPolicy, { detectedCountry: country }) ||
     chooseCurrencyForStorage(nextPolicy, storageKey, country)
   ), [sharedStorageKey, storageKey]);
   const [policy, setPolicy] = React.useState<CurrencyPolicy>(() => normalizeCurrencyPolicy(DEFAULT_CURRENCY_POLICY));
@@ -68,12 +68,14 @@ export function useCurrency(options: UseCurrencyOptions = {}) {
   React.useEffect(() => {
     const onChange = (event: Event) => {
       const detail = (event as CustomEvent).detail || {};
+      if (detail.scope && detail.scope !== scope) return;
+      if (scope !== 'platform' && detail.scopeId && detail.scopeId !== scopeId) return;
       const next = normalizeCurrencyCode(detail.currency, '');
       if (next && isCurrencySelectable(policy, next)) setCurrencyState(next);
     };
     window.addEventListener('tiwlo:currency-change', onChange);
     return () => window.removeEventListener('tiwlo:currency-change', onChange);
-  }, [policy]);
+  }, [policy, scope, scopeId]);
 
   const setCurrency = React.useCallback((nextCurrency: string) => {
     const next = normalizeCurrencyCode(nextCurrency);
