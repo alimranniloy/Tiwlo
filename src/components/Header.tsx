@@ -198,7 +198,7 @@ export default function Header({ user, onLogout, isSidebarOpen, setIsSidebarOpen
               : 'border-[#d9d2ff] bg-[#ede9ff] text-[#5b45ff] hover:border-[#c7bcff] hover:bg-[#e4ddff]'
           }`}
         >
-          {isCreditEmpty ? <AlertTriangle className="h-3.5 w-3.5" /> : <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>}
+          {isCreditEmpty && <AlertTriangle className="h-3.5 w-3.5" />}
           <span className="hidden max-w-[160px] truncate text-[11px] font-bold tracking-tight sm:inline sm:max-w-[240px]">
             {isCreditEmpty ? 'Add credit now: all servers will stay off' : `Credits: ${creditText}`}
           </span>

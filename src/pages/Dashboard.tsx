@@ -48,9 +48,9 @@ function paidSafe(invoices: any[]) {
     .reduce((sum, invoice) => sum + Number(invoice.amount || 0), 0);
 }
 
-const cardShell = 'rounded-[6px] border border-[#b7d5ff] bg-white shadow-[0_14px_34px_rgba(0,105,255,0.08)]';
-const sectionHeader = 'border-b border-[#c8ddff] bg-gradient-to-r from-[#f7fbff] via-white to-[#eef6ff]';
-const blueFocus = 'transition-all hover:border-[#0069ff] hover:bg-[#f8fbff] hover:shadow-[0_16px_34px_rgba(0,105,255,0.12)]';
+const cardShell = 'rounded-[6px] border border-[#d6e4f5] bg-white';
+const sectionHeader = 'border-b border-[#e1e9f5] bg-[#f8fbff]';
+const blueFocus = 'transition-colors hover:border-[#0069ff] hover:bg-[#f8fbff]';
 
 export default function Dashboard({ user, droplets, domains }: DashboardProps) {
   const [resources, setResources] = React.useState<any[]>([]);
@@ -114,7 +114,6 @@ export default function Dashboard({ user, droplets, domains }: DashboardProps) {
     { label: 'Volumes', value: countByType('volume'), color: '#8661c5' },
     { label: 'Networks', value: countByType('network') + countByType('firewall'), color: '#d83b01' }
   ];
-  const activeServices = resources.filter((resource) => String(resource.status || '').toLowerCase() === 'active').length;
 
   const quickActions = [
     { label: 'Create Droplet', icon: Server, link: '/droplets/create', color: 'text-blue-500', bg: 'bg-blue-50' },
@@ -134,9 +133,8 @@ export default function Dashboard({ user, droplets, domains }: DashboardProps) {
 
   return (
     <div className="mx-auto max-w-[1220px] space-y-7 pb-12 md:space-y-8">
-      <div className="relative overflow-hidden rounded-[6px] border border-[#a8cbff] bg-white px-5 py-5 shadow-[0_18px_42px_rgba(0,105,255,0.10)] md:px-6">
-        <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-[#08d7ff] via-[#0069ff] to-[#7aa8ff]" />
-        <div className="pointer-events-none absolute -right-24 -top-28 h-56 w-56 rounded-full bg-[#0069ff]/10 blur-3xl" />
+      <div className="relative overflow-hidden rounded-[6px] border border-[#d6e4f5] bg-white px-5 py-5 md:px-6">
+        <div className="absolute inset-x-0 top-0 h-1 bg-[#0069ff]" />
         <div className="relative flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
             <h1 className="text-2xl font-bold tracking-tight text-[#031b4e] md:text-3xl">
@@ -145,20 +143,20 @@ export default function Dashboard({ user, droplets, domains }: DashboardProps) {
             <p className="mt-1 text-[14px] font-medium text-[#52637a]">Monitor services, billing, support, and recent account activity.</p>
           </div>
           <div className="flex items-center gap-2">
-            <Link to="/documentation" className="rounded-[5px] border border-[#9fc6ff] bg-white px-4 py-2 text-center text-[13px] font-bold text-[#0069ff] shadow-sm transition-all hover:border-[#0069ff] hover:bg-[#f2f7ff]">
+            <Link to="/documentation" className="rounded-[5px] border border-[#9fc6ff] bg-white px-4 py-2 text-center text-[13px] font-bold text-[#0069ff] transition-colors hover:border-[#0069ff] hover:bg-[#f2f7ff]">
               Documentation
             </Link>
-            <Link to="/droplets/create" className="flex items-center gap-2 rounded-[5px] bg-[#0069ff] px-5 py-2 text-[13px] font-bold text-white shadow-[0_10px_22px_rgba(0,105,255,0.25)] transition-all hover:bg-[#0057d8]">
+            <Link to="/droplets/create" className="flex items-center gap-2 rounded-[5px] bg-[#0069ff] px-5 py-2 text-[13px] font-bold text-white transition-colors hover:bg-[#0057d8]">
               <Plus className="h-4 w-4" /> Create Resource
             </Link>
           </div>
         </div>
       </div>
 
-      {error && <div className="rounded-md border border-red-100 bg-red-50 px-4 py-3 text-[13px] font-bold text-red-600 shadow-sm">{error}</div>}
+      {error && <div className="rounded-md border border-red-100 bg-red-50 px-4 py-3 text-[13px] font-bold text-red-600">{error}</div>}
 
       {(dueAmount > 0 || creditEmpty) && (
-        <div className={`flex flex-col gap-3 rounded-md border px-4 py-3 shadow-sm md:flex-row md:items-center md:justify-between ${
+        <div className={`flex flex-col gap-3 rounded-md border px-4 py-3 md:flex-row md:items-center md:justify-between ${
           creditEmpty ? 'border-red-100 bg-red-50 text-red-900' : 'border-amber-100 bg-amber-50 text-amber-900'
         }`}>
           <div>
@@ -174,34 +172,13 @@ export default function Dashboard({ user, droplets, domains }: DashboardProps) {
       )}
 
       <section className={`overflow-hidden ${cardShell}`}>
-        <div className={`${sectionHeader} px-4 py-4 md:px-5`}>
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <p className="text-[11px] font-black uppercase tracking-widest text-[#0069ff]">Live account overview</p>
-              <h2 className="mt-1 text-lg font-bold text-[#031b4e] md:text-xl">Operations summary</h2>
-            </div>
-            <div className="grid grid-cols-2 gap-2 text-[12px] sm:grid-cols-4">
-              {[
-                ['Active services', activeServices],
-                ['Open tickets', openTickets],
-                ['Monthly spend', money(monthlySpend)],
-                ['Credit', money(creditBalance)]
-              ].map(([label, value]) => (
-                <div key={label} className="rounded-[5px] border border-[#bed8ff] bg-white px-3 py-2 shadow-[0_8px_18px_rgba(0,105,255,0.06)]">
-                  <p className="text-[10px] font-bold uppercase tracking-wide text-[#52637a]">{label}</p>
-                  <p className="mt-0.5 font-black text-[#031b4e]">{value}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
         <div className="grid grid-cols-1 gap-4 p-4 md:grid-cols-[260px_1fr] md:p-5">
-          <div className="rounded-[5px] border border-[#c8ddff] bg-gradient-to-b from-white to-[#f8fbff] p-4">
+          <div className="rounded-[5px] border border-[#d6e4f5] bg-[#fbfdff] p-4">
             <div
               className="mx-auto grid h-28 w-28 place-items-center rounded-full"
               style={{ background: `conic-gradient(#0069ff ${creditRatio}%, #dce9ff ${creditRatio}% 100%)` }}
             >
-              <div className="grid h-20 w-20 place-items-center rounded-full bg-white text-center shadow-inner">
+              <div className="grid h-20 w-20 place-items-center rounded-full border border-[#e1e9f5] bg-white text-center">
                 <span className="text-xl font-black text-[#031b4e]">{creditRatio}%</span>
               </div>
             </div>
@@ -216,7 +193,7 @@ export default function Dashboard({ user, droplets, domains }: DashboardProps) {
             </Link>
           </div>
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-            <div className="rounded-[5px] border border-[#c8ddff] bg-white p-4">
+            <div className="rounded-[5px] border border-[#d6e4f5] bg-white p-4">
               <div className="flex items-center justify-between">
                 <p className="text-[11px] font-black uppercase tracking-widest text-[#52637a]">Invoice coverage</p>
                 <span className="text-sm font-black text-[#0069ff]">{paidRatio}% paid</span>
@@ -235,7 +212,7 @@ export default function Dashboard({ user, droplets, domains }: DashboardProps) {
                 </div>
               </div>
             </div>
-            <div className="rounded-[5px] border border-[#c8ddff] bg-white p-4">
+            <div className="rounded-[5px] border border-[#d6e4f5] bg-white p-4">
               <p className="text-[11px] font-black uppercase tracking-widest text-[#52637a]">Resource mix</p>
               <div className="mt-4 space-y-3">
                 {resourceMix.map((item) => {
@@ -260,22 +237,24 @@ export default function Dashboard({ user, droplets, domains }: DashboardProps) {
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         {quickActions.map((action) => (
-          <Link key={action.label} to={action.link} className={`group rounded-[6px] border border-[#b7d5ff] bg-white p-4 shadow-[0_10px_24px_rgba(0,105,255,0.06)] ${blueFocus}`}>
-            <div className={`mb-3 flex h-10 w-10 items-center justify-center rounded-[5px] ring-1 ring-[#dce9ff] ${action.bg}`}>
+          <Link key={action.label} to={action.link} className={`group rounded-[6px] border border-[#d6e4f5] bg-white p-4 ${blueFocus}`}>
+            <div className={`mb-3 flex h-10 w-10 items-center justify-center rounded-[5px] border border-[#dce9ff] ${action.bg}`}>
               <action.icon className={`h-5 w-5 ${action.color}`} />
             </div>
-            <p className="text-[12px] font-bold text-[#031b4e]">{action.label}</p>
-            <p className="mt-1 text-[10px] font-bold uppercase tracking-wide text-[#8aa2c6]">Open</p>
+            <div className="flex items-end justify-between gap-2">
+              <p className="text-[12px] font-bold text-[#031b4e]">{action.label}</p>
+              <p className="text-[10px] font-bold uppercase tracking-wide text-[#0069ff]">Open</p>
+            </div>
           </Link>
         ))}
       </div>
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3 xl:grid-cols-6">
         {stats.map((stat) => (
-          <Link key={stat.label} to={stat.link} className={`relative overflow-hidden rounded-[6px] border border-[#b7d5ff] bg-white p-5 shadow-[0_10px_24px_rgba(0,105,255,0.06)] ${blueFocus}`}>
-            <div className="absolute inset-x-0 top-0 h-0.5 bg-gradient-to-r from-[#08d7ff] to-[#0069ff]" />
+          <Link key={stat.label} to={stat.link} className={`relative overflow-hidden rounded-[6px] border border-[#d6e4f5] bg-white p-5 ${blueFocus}`}>
+            <div className="absolute inset-x-0 top-0 h-0.5 bg-[#0069ff]" />
             <div className="mb-2 flex items-center justify-between">
-              <div className="rounded-[5px] bg-[#eef6ff] p-2 ring-1 ring-[#dce9ff]">
+              <div className="rounded-[5px] border border-[#dce9ff] bg-[#eef6ff] p-2">
                 <stat.icon className="h-4 w-4 text-blue-600" />
               </div>
               <ChevronRight className="h-4 w-4 text-gray-300" />
@@ -343,7 +322,7 @@ export default function Dashboard({ user, droplets, domains }: DashboardProps) {
                   <p className="mt-1 text-xl font-bold text-[#031b4e]">{money(outstanding)}</p>
                 </div>
               </div>
-              <div className="mt-4 rounded-[5px] border border-[#b7d5ff] bg-gradient-to-r from-[#eef6ff] to-white p-4">
+              <div className="mt-4 rounded-[5px] border border-[#d6e4f5] bg-[#fbfdff] p-4">
                 <p className="text-[10px] font-bold uppercase text-[#0069ff]">Credit Balance</p>
                 <p className="mt-1 text-xl font-bold text-[#031b4e]">{money(creditBalance)}</p>
               </div>
@@ -418,7 +397,7 @@ export default function Dashboard({ user, droplets, domains }: DashboardProps) {
             </div>
           </div>
 
-          <Link to="/kubernetes" className="block rounded-[6px] border border-[#1f8bff] bg-gradient-to-br from-[#031b4e] via-[#0057d8] to-[#031b4e] p-6 text-white shadow-[0_18px_38px_rgba(0,105,255,0.22)]">
+          <Link to="/kubernetes" className="block rounded-[6px] border border-[#1f8bff] bg-gradient-to-br from-[#031b4e] via-[#0057d8] to-[#031b4e] p-6 text-white">
             <h3 className="mb-2 flex items-center gap-2 text-[16px] font-bold uppercase tracking-wide">
               <Layers className="h-4 w-4 text-[#8eefff]" /> Kubernetes
             </h3>
