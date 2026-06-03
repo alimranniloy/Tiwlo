@@ -698,7 +698,7 @@ export default function App() {
   }
 
   return (
-    <div className="flex flex-col lg:flex-row min-h-screen bg-slate-950 text-slate-300 antialiased selection:bg-indigo-500/20 selection:text-indigo-300 transition-colors duration-250">
+    <div className="tpanel-shell flex flex-col lg:flex-row min-h-screen bg-slate-950 text-slate-300 antialiased selection:bg-indigo-500/20 selection:text-indigo-300 transition-colors duration-250">
       
       {/* Sidebar navigation - Hidden when File Manager is maximized to full-screen */}
       {activeTab !== "files" && (
@@ -718,9 +718,9 @@ export default function App() {
         
         {/* Top Header - Hidden when File Manager is maximized to full-screen */}
         {activeTab !== "files" && (
-          <header className="h-20 border-b border-slate-700 bg-slate-900 flex items-center justify-between px-6 lg:px-10 shrink-0 transition-colors duration-250">
-            <div>
-              <h1 className="text-xl font-semibold text-slate-100 tracking-tight">{getTabHeadingInfo(activeTab).title}</h1>
+          <header className="min-h-16 lg:h-20 border-b border-slate-700 bg-slate-900 flex flex-wrap items-center justify-between gap-3 px-4 py-3 lg:px-10 lg:py-0 shrink-0 transition-colors duration-250">
+            <div className="min-w-0">
+              <h1 className="truncate text-lg lg:text-xl font-semibold text-slate-100 tracking-tight">{getTabHeadingInfo(activeTab).title}</h1>
               <p className="text-xs text-slate-500 font-mono mt-0.5">{getTabHeadingInfo(activeTab).subtitle}</p>
             </div>
             <div className="flex items-center gap-4 sm:gap-6">

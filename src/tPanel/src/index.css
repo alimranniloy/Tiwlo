@@ -161,3 +161,102 @@ html.dark .card-premium {
   border: 1px solid var(--theme-slate-700) !important;
   box-shadow: none !important;
 }
+
+html:not(.dark) .tpanel-shell {
+  background: #f8fafc !important;
+  color: #1e293b !important;
+}
+
+html:not(.dark) .tpanel-shell .bg-slate-950,
+html:not(.dark) .tpanel-shell .bg-slate-950\/50 {
+  background-color: #f8fafc !important;
+}
+
+html:not(.dark) .tpanel-shell .bg-slate-900,
+html:not(.dark) .tpanel-shell .bg-slate-900\/50,
+html:not(.dark) .tpanel-shell .bg-slate-900\/60,
+html:not(.dark) .tpanel-shell .bg-slate-900\/80 {
+  background-color: #ffffff !important;
+}
+
+html:not(.dark) .tpanel-shell .bg-slate-850,
+html:not(.dark) .tpanel-shell .bg-white\/5 {
+  background-color: #eef2f7 !important;
+}
+
+html:not(.dark) .tpanel-shell .border-slate-900\/40,
+html:not(.dark) .tpanel-shell .border-slate-850,
+html:not(.dark) .tpanel-shell .border-slate-800,
+html:not(.dark) .tpanel-shell .border-slate-700 {
+  border-color: #cbd5e1 !important;
+}
+
+html:not(.dark) .tpanel-shell .placeholder-slate-600::placeholder {
+  color: #64748b !important;
+}
+
+html:not(.dark) .tpanel-shell input,
+html:not(.dark) .tpanel-shell select,
+html:not(.dark) .tpanel-shell textarea {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+  border-color: #cbd5e1 !important;
+}
+
+html:not(.dark) .tpanel-shell code,
+html:not(.dark) .tpanel-shell pre {
+  color: #1e293b;
+}
+
+html:not(.dark) .tpanel-shell .bg-indigo-600,
+html:not(.dark) .tpanel-shell .bg-indigo-500,
+html:not(.dark) .tpanel-shell .bg-emerald-600,
+html:not(.dark) .tpanel-shell .bg-rose-600,
+html:not(.dark) .tpanel-shell .bg-\[\#0069ff\] {
+  color: #ffffff !important;
+}
+
+@media (max-width: 768px) {
+  html,
+  body,
+  #root {
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+
+  .tpanel-shell main {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .tpanel-shell main > div {
+    padding: 12px !important;
+  }
+
+  .tpanel-shell header {
+    position: relative;
+  }
+
+  .tpanel-shell header > div:first-child {
+    max-width: calc(100vw - 32px);
+  }
+
+  .tpanel-shell .max-w-7xl {
+    width: 100%;
+  }
+
+  .tpanel-shell table {
+    min-width: 720px;
+  }
+
+  .tpanel-shell .overflow-x-auto {
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .tpanel-shell input,
+  .tpanel-shell select,
+  .tpanel-shell textarea {
+    min-height: 42px;
+    font-size: 16px;
+  }
+}

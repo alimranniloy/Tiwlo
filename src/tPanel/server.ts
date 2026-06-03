@@ -983,6 +983,34 @@ function panelPhpMyAdminNginxBlock() {
 `;
 }
 
+function requestHostWithoutPort(req: express.Request) {
+  const forwardedHost = String(req.headers["x-forwarded-host"] || "").split(",")[0].trim();
+  const hostHeader = forwardedHost || String(req.headers.host || "").trim();
+  if (!hostHeader) return "";
+  if (hostHeader.startsWith("[") && hostHeader.includes("]")) return hostHeader.slice(1, hostHeader.indexOf("]"));
+  return hostHeader.split(":")[0];
+}
+
+function requestPort(req: express.Request) {
+  const forwardedHost = String(req.headers["x-forwarded-host"] || "").split(",")[0].trim();
+  const hostHeader = forwardedHost || String(req.headers.host || "").trim();
+  const match = hostHeader.match(/:(\d+)$/);
+  return match ? Number(match[1]) : null;
+}
+
+function panelPhpMyAdminUrl(req: express.Request, configured = "") {
+  const explicit = String(configured || "").trim();
+  if (explicit) return explicit;
+  const host = requestHostWithoutPort(req);
+  const port = requestPort(req);
+  if (host && port && ![80, 443].includes(port)) {
+    const forwardedProto = String(req.headers["x-forwarded-proto"] || "").split(",")[0].trim();
+    const protocol = forwardedProto || req.protocol || "http";
+    return `${protocol}://${host}/phpmyadmin/`;
+  }
+  return "/phpmyadmin/";
+}
+
 function applyPanelDomainProxy(settings: any) {
   if (process.platform === "win32") return;
   const domain = cleanDomain(settings.primaryDomain);
@@ -3988,6 +4016,49 @@ function installTargetForDomain(account: any, domainInput: unknown, installPathI
   };
 }
 
+function ensurePhpRuntimeForAppInstall(account: any, domainInput: unknown) {
+  const domain = cleanDomain(domainInput || account.domain);
+  if (!domain) return account;
+  const phpVersion = normalizePhpVersion(account?.phpSettings?.version || account?.phpVersion || DEFAULT_PHP_VERSION);
+  const now = new Date().toISOString();
+  return updateStoredAccount(account.username, (current: any) => {
+    const provisioning = current.provisioning || buildAccountProvisioning(undefined, current);
+    const currentSettings = phpSettingsForAccount({ ...current, phpVersion });
+    const runtimeRoutes = {
+      ...(provisioning.vhost?.runtimeRoutes || {}),
+      [domain]: {
+        ...(provisioning.vhost?.runtimeRoutes?.[domain] || {}),
+        runtime: "php",
+        phpVersion,
+        phpSettings: currentSettings,
+        updatedAt: now,
+        source: "one_click_installer"
+      }
+    };
+    const isPrimary = cleanDomain(current.domain) === domain;
+    return {
+      ...current,
+      runtime: isPrimary ? "php" : current.runtime,
+      phpVersion: isPrimary ? phpVersion : (current.phpVersion || phpVersion),
+      phpSettings: isPrimary ? currentSettings : (current.phpSettings || currentSettings),
+      provisioning: {
+        ...provisioning,
+        vhost: {
+          ...(provisioning.vhost || {}),
+          runtime: isPrimary ? "php" : provisioning.vhost?.runtime,
+          phpVersion: isPrimary ? phpVersion : provisioning.vhost?.phpVersion,
+          phpSettings: isPrimary ? currentSettings : provisioning.vhost?.phpSettings,
+          runtimeRoutes,
+          status: "queued",
+          message: "PHP runtime queued by one-click installer.",
+          lastRunAt: now
+        }
+      },
+      updatedAt: now
+    };
+  }) || account;
+}
+
 function prepareAppInstallDirectory(destination: string) {
   fs.mkdirSync(destination, { recursive: true });
   const allowedStarter = new Set(["index.html", "index.htm", "default.html", ".user.ini"]);
@@ -4094,7 +4165,9 @@ async function installOneClickApp(account: any, body: any) {
   const app = (APP_INSTALL_CATALOG as any[]).find((item: any) => item.id === String(body.appId || body.id || "").toLowerCase());
   if (!app) throw new Error("Select a valid app package.");
   await ensureAccountStorageAvailable(account, 0, `${app.name} install`);
-  const target = installTargetForDomain(account, body.domain, body.path || body.installPath);
+  let target = installTargetForDomain(account, body.domain, body.path || body.installPath);
+  account = ensurePhpRuntimeForAppInstall(account, target.domain);
+  target = installTargetForDomain(account, target.domain, body.path || body.installPath);
   prepareAppInstallDirectory(target.destination);
   let database = null;
   let installOutput = "";
@@ -4182,6 +4255,7 @@ async function installOneClickApp(account: any, body: any) {
       appInstallations: [entry, ...appInstallations(current).filter((item: any) => !(item.domain === entry.domain && item.path === entry.path && item.appId === entry.appId))],
       updatedAt: new Date().toISOString()
     })) || account;
+    applyAccountProvisioning(updated);
     return { account: updated, installation: { ...entry, adminPassword } };
   } finally {
     removeIfExists(tempDir);
@@ -4563,7 +4637,7 @@ app.get("/api/user/phpmyadmin-url", requireLicense, async (req, res) => {
   }
   res.json({
     ok: true,
-    url: configured || "/phpmyadmin/",
+    url: panelPhpMyAdminUrl(req, configured),
     target: "system_phpmyadmin"
   });
 });

@@ -7,6 +7,7 @@ import { paragraph, sendTiwloEmail } from '../../core/email.js';
 import {
   convertCurrencyAmount as convertByPolicy,
   exchangeRatesForPolicy,
+  normalizeCurrencyCode,
   readPlatformCurrencyPolicy
 } from '../../core/currency.js';
 import { ensureOwnerHasCredit, runCreditAutomationForOwner, runCreditAutomationJob } from './creditAutomation.js';
@@ -91,7 +92,7 @@ const convertMoney = (amount, fromCurrency, toCurrency = CREDIT_CURRENCY) => (
 
 export const invoiceCreditAmount = (invoice) => convertMoney(invoice.amount, invoice.currency || CREDIT_CURRENCY, CREDIT_CURRENCY);
 
-const convertMoneyForCtx = async (ctx, amount, fromCurrency, toCurrency = CREDIT_CURRENCY) => {
+export const convertMoneyForCtx = async (ctx, amount, fromCurrency, toCurrency = CREDIT_CURRENCY) => {
   const policy = await readPlatformCurrencyPolicy(ctx.prisma);
   return roundMoney(convertByPolicy(amount, policy, toCurrency, fromCurrency));
 };
@@ -523,6 +524,9 @@ export const requireProvisioningCredit = async (ctx, ownerId, amount, message) =
 export const chargeProvisioningCredit = async (ctx, {
   ownerId,
   amount,
+  currency = CREDIT_CURRENCY,
+  displayCurrency,
+  creditAmount,
   scope,
   scopeId,
   label,
@@ -530,35 +534,57 @@ export const chargeProvisioningCredit = async (ctx, {
   hourlyRate,
   metadata = {}
 }) => {
-  const charge = roundMoney(amount);
-  if (charge <= 0) return null;
+  const sourceCurrency = normalizeCurrencyCode(currency || CREDIT_CURRENCY, CREDIT_CURRENCY);
+  const invoiceCurrency = normalizeCurrencyCode(displayCurrency || sourceCurrency, sourceCurrency);
+  const invoiceAmount = roundMoney(sourceCurrency === invoiceCurrency
+    ? amount
+    : await convertMoneyForCtx(ctx, amount, sourceCurrency, invoiceCurrency));
+  const charge = roundMoney(creditAmount ?? await convertMoneyForCtx(ctx, invoiceAmount, invoiceCurrency, CREDIT_CURRENCY));
+  if (charge <= 0 || invoiceAmount <= 0) return null;
   await requireProvisioningCredit(ctx, ownerId, charge);
   const paidAt = new Date();
-  const rate = roundMoney(hourlyRate || hourlyRateFor(monthlyCost));
+  const baseHourlyRate = roundMoney(hourlyRate || hourlyRateFor(monthlyCost));
+  const displayHourlyRate = roundMoney(sourceCurrency === invoiceCurrency
+    ? baseHourlyRate
+    : await convertMoneyForCtx(ctx, baseHourlyRate, sourceCurrency, invoiceCurrency));
+  const displayMonthlyCost = roundMoney(sourceCurrency === invoiceCurrency
+    ? monthlyCost
+    : await convertMoneyForCtx(ctx, monthlyCost, sourceCurrency, invoiceCurrency));
   const invoice = await ctx.prisma.$transaction(async (tx) => {
     await tx.user.update({ where: { id: ownerId }, data: { credits: { decrement: charge } } });
     const createdInvoice = await tx.invoice.create({
       data: {
         ownerId,
         number: invoiceNumber('PRV'),
-        amount: charge,
-        currency: CREDIT_CURRENCY,
+        amount: invoiceAmount,
+        currency: invoiceCurrency,
         status: 'paid',
         scope,
         scopeId,
         paidAt,
         items: {
+          creditAmount: charge,
+          creditCurrency: CREDIT_CURRENCY,
+          sourceAmount: roundMoney(amount),
+          sourceCurrency,
           lineItems: [{
             label,
-            amount: charge,
-            monthlyCost: roundMoney(monthlyCost),
-            hourlyRate: rate
+            amount: invoiceAmount,
+            monthlyCost: displayMonthlyCost,
+            hourlyRate: displayHourlyRate,
+            creditAmount: charge,
+            creditCurrency: CREDIT_CURRENCY
           }],
           billing: {
             type: 'provisioning_first_hour',
-            monthlyCost: roundMoney(monthlyCost),
-            hourlyRate: rate,
-            initialCharge: charge,
+            monthlyCost: displayMonthlyCost,
+            hourlyRate: displayHourlyRate,
+            initialCharge: invoiceAmount,
+            baseCurrency: sourceCurrency,
+            baseMonthlyCost: roundMoney(monthlyCost),
+            baseHourlyRate,
+            creditAmount: charge,
+            creditCurrency: CREDIT_CURRENCY,
             chargedAt: paidAt.toISOString()
           },
           ...metadata
@@ -568,7 +594,7 @@ export const chargeProvisioningCredit = async (ctx, {
     await tx.payment.create({
       data: {
         invoiceId: createdInvoice.id,
-        amount: charge,
+        amount: invoiceAmount,
         provider: 'credits',
         reference: `provision_${paidAt.getTime()}`,
         status: 'succeeded'
@@ -577,7 +603,13 @@ export const chargeProvisioningCredit = async (ctx, {
     return createdInvoice;
   });
   await runCreditAutomationForOwner(ctx, ownerId);
-  await writeAudit(ctx, 'charge_provisioning_credit', scope || 'billing', scopeId || invoice.id, { amount: charge, ownerId });
+  await writeAudit(ctx, 'charge_provisioning_credit', scope || 'billing', scopeId || invoice.id, {
+    amount: invoiceAmount,
+    currency: invoiceCurrency,
+    creditAmount: charge,
+    creditCurrency: CREDIT_CURRENCY,
+    ownerId
+  });
   return toApi(invoice);
 };
 
@@ -1179,34 +1211,51 @@ export const startCreditTopUp = async (ctx, input) => {
 
 const createCloudOrderInvoice = async (ctx, actor, resourceInput, billing) => {
   const amount = roundMoney(billing.initialCharge);
+  const currency = normalizeCurrencyCode(billing.currency || CREDIT_CURRENCY, CREDIT_CURRENCY);
+  const creditAmount = roundMoney(billing.creditAmount ?? await convertMoneyForCtx(ctx, amount, currency, CREDIT_CURRENCY));
+  const displayMonthlyCost = roundMoney(billing.displayMonthlyCost ?? billing.monthlyCost);
+  const displayHourlyRate = roundMoney(billing.displayHourlyRate ?? billing.hourlyRate);
   const invoice = await ctx.prisma.invoice.create({
     data: {
       ownerId: actor.id,
       number: invoiceNumber('CLD'),
       amount,
-      currency: billing.currency || 'USD',
+      currency,
       status: 'open',
       scope: 'cloud_order',
       dueDate: new Date(),
       items: {
+        creditAmount,
+        creditCurrency: CREDIT_CURRENCY,
         lineItems: [{
           label: `${resourceInput.name} first usage charge`,
           amount,
-          monthlyCost: billing.monthlyCost,
-          hourlyRate: billing.hourlyRate
+          monthlyCost: displayMonthlyCost,
+          hourlyRate: displayHourlyRate,
+          creditAmount,
+          creditCurrency: CREDIT_CURRENCY
         }],
         billing: {
           type: 'hourly_monthly_cap',
-          monthlyCost: billing.monthlyCost,
-          hourlyRate: billing.hourlyRate,
-          initialCharge: amount
+          monthlyCost: displayMonthlyCost,
+          hourlyRate: displayHourlyRate,
+          initialCharge: amount,
+          baseCurrency: CREDIT_CURRENCY,
+          baseMonthlyCost: billing.monthlyCost,
+          baseHourlyRate: billing.hourlyRate,
+          creditAmount,
+          creditCurrency: CREDIT_CURRENCY
         },
         pendingResource: {
           ...resourceInput,
           billing: {
             monthlyCost: billing.monthlyCost,
             hourlyRate: billing.hourlyRate,
-            initialCharge: amount
+            initialCharge: creditAmount,
+            displayCurrency: currency,
+            displayInitialCharge: amount,
+            displayMonthlyCost,
+            displayHourlyRate
           }
         }
       }
@@ -1222,14 +1271,32 @@ export const createCloudResourceOrder = async (ctx, input) => {
   await ensureOwnerHasCredit(ctx, actor.id, 'Credit balance is empty. Add credit now before placing cloud resource orders.');
   const resourceInput = input.resource;
   const provider = String(input.provider || 'credit').toLowerCase();
+  const currency = normalizeCurrencyCode(input.currency || 'USD', 'USD');
   const monthlyCost = roundMoney(resourceInput.monthlyCost || 0);
-  const hourlyRate = roundMoney(input.hourlyRate || resourceInput.metadata?.billing?.hourlyRate || hourlyRateFor(monthlyCost));
-  const initialCharge = roundMoney(input.initialCharge || resourceInput.metadata?.billing?.initialCharge || Math.max(hourlyRate, 0.01));
+  const hourlyRate = roundMoney(
+    currency === CREDIT_CURRENCY && input.hourlyRate
+      ? input.hourlyRate
+      : resourceInput.metadata?.billing?.baseHourlyRate || resourceInput.metadata?.billing?.hourlyRate || hourlyRateFor(monthlyCost)
+  );
+  const displayHourlyRate = roundMoney(
+    currency === CREDIT_CURRENCY
+      ? hourlyRate
+      : input.hourlyRate || await convertMoneyForCtx(ctx, hourlyRate, CREDIT_CURRENCY, currency)
+  );
+  const displayMonthlyCost = roundMoney(
+    currency === CREDIT_CURRENCY
+      ? monthlyCost
+      : await convertMoneyForCtx(ctx, monthlyCost, CREDIT_CURRENCY, currency)
+  );
+  const initialCharge = roundMoney(
+    input.initialCharge || resourceInput.metadata?.billing?.displayInitialCharge || Math.max(displayHourlyRate, currency === CREDIT_CURRENCY ? 0.01 : await convertMoneyForCtx(ctx, 0.01, CREDIT_CURRENCY, currency))
+  );
+  const creditCharge = roundMoney(await convertMoneyForCtx(ctx, initialCharge, currency, CREDIT_CURRENCY));
 
-  if (monthlyCost <= 0 || initialCharge <= 0) {
+  if (monthlyCost <= 0 || creditCharge <= 0) {
     const resource = await ctx.prisma.$transaction((tx) => createBillingResource(tx, actor.id, {
       ...resourceInput,
-      billing: { monthlyCost, hourlyRate, initialCharge }
+      billing: { monthlyCost, hourlyRate, initialCharge: creditCharge }
     }, { id: null, amount: 0 }, new Date()));
     await writeAudit(ctx, 'create_free_cloud_order', 'cloudResource', resource.id);
     return checkoutResponse(ctx, {
@@ -1246,14 +1313,17 @@ export const createCloudResourceOrder = async (ctx, input) => {
   const invoice = await createCloudOrderInvoice(ctx, actor, resourceInput, {
     monthlyCost,
     hourlyRate,
+    displayMonthlyCost,
+    displayHourlyRate,
     initialCharge,
-    currency: input.currency || 'USD'
+    creditAmount: creditCharge,
+    currency
   });
 
   if (provider === 'credit' || provider === 'credits') {
     const owner = await ctx.prisma.user.findUnique({ where: { id: actor.id } });
-    if (Number(owner?.credits || 0) < initialCharge) {
-      await writeAudit(ctx, 'cloud_order_requires_credit', 'invoice', invoice.id, { monthlyCost, hourlyRate });
+    if (Number(owner?.credits || 0) < creditCharge) {
+      await writeAudit(ctx, 'cloud_order_requires_credit', 'invoice', invoice.id, { monthlyCost, hourlyRate, creditCharge, currency });
       return checkoutResponse(ctx, {
         status: 'requires_payment',
         provider: 'credit',

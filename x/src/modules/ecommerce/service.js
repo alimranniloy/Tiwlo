@@ -730,6 +730,8 @@ export const createStore = async (ctx, actor, input) => {
     await chargeProvisioningCredit(ctx, {
       ownerId: actor.id,
       amount: hourlyRate,
+      currency: 'USD',
+      displayCurrency: input.currency || 'USD',
       scope: 'store',
       scopeId: store.id,
       label: `${store.name} ecommerce first hour`,

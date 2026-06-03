@@ -139,7 +139,7 @@ function isValidDomainName(value: string) {
 
 export default function CreateDroplet() {
   const navigate = useNavigate();
-  const { money } = useCurrency({ scope: 'platform', scopeId: 'console' });
+  const { currency, money, convert } = useCurrency({ scope: 'platform', scopeId: 'console' });
   const [selectedModule, setSelectedModule] = useState('tpanel');
   const [selectedNodeId, setSelectedNodeId] = useState('');
   const [selectedPlanFamily, setSelectedPlanFamily] = useState('basic');
@@ -393,13 +393,15 @@ export default function CreateDroplet() {
     const disk = limitValue(selectedPlanRecord, 'disk', fallbackLimits.disk);
     const bandwidth = limitValue(selectedPlanRecord, 'bandwidth', '1 TB');
     const storageGb = storageEnabled ? Math.max(Number(storageSize || 0), 0) : 0;
+    const displayHourlyRate = convert(selectedHourly, 'USD');
+    const displayInitialCharge = displayHourlyRate;
 
     try {
       const checkout = await createCloudResourceOrderWithApi({
         provider: 'credit',
-        currency: 'USD',
-        initialCharge: selectedHourly,
-        hourlyRate: selectedHourly,
+        currency,
+        initialCharge: displayInitialCharge,
+        hourlyRate: displayHourlyRate,
         resource: {
           type: 'droplet',
           name: hostname.trim() || `${username.trim().toLowerCase()}-${selectedModule}`,
@@ -424,6 +426,9 @@ export default function CreateDroplet() {
               hourlyRate: selectedHourly,
               initialCharge: selectedHourly,
               monthlyCost: selectedMonthly,
+              displayCurrency: currency,
+              displayHourlyRate,
+              displayInitialCharge,
               baseMonthlyCost: Number(selectedPlanRecord.price || 0),
               extraStorageMonthly
             },

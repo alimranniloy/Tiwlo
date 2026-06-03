@@ -189,6 +189,8 @@ export const createSite = async (ctx, actor, input) => {
     await chargeProvisioningCredit(ctx, {
       ownerId: actor.id,
       amount: hourlyRate,
+      currency: 'USD',
+      displayCurrency: input.currency || 'USD',
       scope: 'isp',
       scopeId: site.id,
       label: `${site.name} ISP first hour`,

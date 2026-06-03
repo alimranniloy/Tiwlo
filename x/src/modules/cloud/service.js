@@ -210,6 +210,8 @@ export const createResource = async (ctx, actor, input) => {
     const invoice = await chargeProvisioningCredit(ctx, {
       ownerId: actor.id,
       amount: hourlyRate,
+      currency: 'USD',
+      displayCurrency: input.currency || 'USD',
       scope: 'cloud_resource',
       scopeId: resource.id,
       label: `${resource.name} first hour`,
