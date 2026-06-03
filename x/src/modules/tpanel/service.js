@@ -2352,6 +2352,12 @@ def local_tpanel_post(path, data):
     with urllib.request.urlopen(req, timeout=60) as response:
         return json.loads(response.read().decode("utf-8") or "{}")
 
+def limit_value(limits, keys, default=None):
+    for key in keys:
+        if key in limits and limits.get(key) is not None and str(limits.get(key)) != "":
+            return limits.get(key)
+    return default
+
 def handle_create_account(task):
     task_payload = task.get("payload") or {}
     account = task_payload.get("account") or {}
@@ -2359,6 +2365,7 @@ def handle_create_account(task):
     password = task_payload.get("password")
     try:
         if password:
+            limits = account.get("limits") or {}
             result = local_tpanel_post("/api/panel/accounts", {
                 "username": username,
                 "domain": domain,
@@ -2366,8 +2373,12 @@ def handle_create_account(task):
                 "displayName": account.get("ownerName") or domain,
                 "ownerEmail": account.get("contactEmail") or "",
                 "contactEmail": account.get("contactEmail") or "",
-                "quotaMb": (account.get("limits") or {}).get("diskMB") or (account.get("limits") or {}).get("disk") or 1024,
-                "bandwidthGb": (account.get("limits") or {}).get("bandwidthGB") or 100,
+                "quotaMb": limit_value(limits, ["quotaMb", "diskMB", "diskMb", "disk"], 1024),
+                "bandwidthGb": limit_value(limits, ["bandwidthGb", "bandwidthGB", "transferGb", "transferGB"], 100),
+                "ramMb": limit_value(limits, ["ramMb", "memoryMb"], None),
+                "memoryMb": limit_value(limits, ["ramMb", "memoryMb"], None),
+                "cpuCores": limit_value(limits, ["cpuCores", "cpuCount", "vcpu"], None),
+                "resourceLimits": limits,
                 "shellAccess": True
             })
             if result.get("ok"):

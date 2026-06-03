@@ -103,6 +103,20 @@ const parseCount = (value) => {
   return Number.isFinite(amount) && amount > 0 ? amount : 0;
 };
 
+const hasLimitValue = (value) => value !== undefined && value !== null && value !== '';
+
+const numericLimit = (value) => (
+  hasLimitValue(value) && Number.isFinite(Number(value)) ? Number(value) : null
+);
+
+const firstNumericLimit = (...values) => {
+  for (const value of values) {
+    const next = numericLimit(value);
+    if (next !== null) return next;
+  }
+  return null;
+};
+
 export const checkTPanelNodeUsername = async (node, username, domain = '') => {
   const clean = cleanUsername(username);
   const requestedDomain = text(domain).toLowerCase();
@@ -127,25 +141,29 @@ export const createTPanelNodeAccount = async (node, input = {}) => {
   }
 
   const limits = input.limits || {};
-  const quotaMb = Number(limits.quotaMb || limits.diskMB || limits.diskMb || 0)
-    || (Number(limits.diskGb || limits.diskGB || 0) > 0 ? Math.round(Number(limits.diskGb || limits.diskGB) * 1024) : 0)
-    || parseSize(limits.disk, 'mb');
-  const bandwidthGb = Number(limits.bandwidthGb || limits.bandwidthGB || 0)
-    || Number(limits.transferGb || limits.transferGB || 0)
-    || parseSize(limits.bandwidth || limits.transfer, 'gb');
-  const ramMb = Number(limits.ramMb || limits.memoryMb || 0)
-    || (Number(limits.ramGb || limits.memoryGb || 0) > 0 ? Math.round(Number(limits.ramGb || limits.memoryGb) * 1024) : 0)
-    || parseSize(limits.ram || limits.memory, 'mb');
-  const cpuCores = parseCount(limits.cpuCores || limits.cpuCount || limits.vcpu || limits.cpu);
+  const explicitQuotaMb = firstNumericLimit(limits.quotaMb, limits.diskMB, limits.diskMb);
+  const diskGb = firstNumericLimit(limits.diskGb, limits.diskGB);
+  const quotaMb = explicitQuotaMb ?? (diskGb !== null ? Math.round(diskGb * 1024) : (hasLimitValue(limits.disk) ? parseSize(limits.disk, 'mb') : 0));
+  const explicitBandwidthGb = firstNumericLimit(limits.bandwidthGb, limits.bandwidthGB, limits.transferGb, limits.transferGB);
+  const bandwidthGb = explicitBandwidthGb ?? (hasLimitValue(limits.bandwidth) || hasLimitValue(limits.transfer) ? parseSize(limits.bandwidth || limits.transfer, 'gb') : 0);
+  const explicitRamMb = firstNumericLimit(limits.ramMb, limits.memoryMb);
+  const ramGb = firstNumericLimit(limits.ramGb, limits.memoryGb);
+  const ramMb = explicitRamMb ?? (ramGb !== null ? Math.round(ramGb * 1024) : (hasLimitValue(limits.ram) || hasLimitValue(limits.memory) ? parseSize(limits.ram || limits.memory, 'mb') : 0));
+  const explicitCpuCores = firstNumericLimit(limits.cpuCores, limits.cpuCount, limits.vcpu);
+  const cpuCores = explicitCpuCores ?? (hasLimitValue(limits.cpu) ? parseCount(limits.cpu) : 0);
   const resourceLimits = {
     ...limits,
-    quotaMb: quotaMb || undefined,
-    diskMB: quotaMb || undefined,
-    bandwidthGb: bandwidthGb || undefined,
-    ramMb: ramMb || undefined,
-    memoryMb: ramMb || undefined,
-    cpuCores: cpuCores || undefined
+    quotaMb,
+    diskMB: quotaMb,
+    bandwidthGb,
+    ramMb,
+    memoryMb: ramMb,
+    cpuCores
   };
+  const maxDomains = firstNumericLimit(limits.domains, limits.maxDomains);
+  const maxDatabases = firstNumericLimit(limits.databases, limits.maxDatabases);
+  const maxEmailAccounts = firstNumericLimit(limits.emailAccounts, limits.maxEmailAccounts);
+  const maxNodeApps = firstNumericLimit(limits.nodeApps, limits.maxNodeApps);
   const result = await callTPanelNodeApi(node, '/api/panel/accounts', {
     method: 'POST',
     body: {
@@ -160,16 +178,16 @@ export const createTPanelNodeAccount = async (node, input = {}) => {
       runtime: text(input.runtime || 'php'),
       permissionProfile: text(input.permissionProfile || 'developer'),
       shellAccess: input.shellAccess !== false,
-      quotaMb: quotaMb || undefined,
-      bandwidthGb: bandwidthGb || undefined,
-      ramMb: ramMb || undefined,
-      memoryMb: ramMb || undefined,
-      cpuCores: cpuCores || undefined,
+      quotaMb,
+      bandwidthGb,
+      ramMb,
+      memoryMb: ramMb,
+      cpuCores,
       resourceLimits,
-      maxDomains: Number(limits.domains || limits.maxDomains || 0) || undefined,
-      maxDatabases: Number(limits.databases || limits.maxDatabases || 0) || undefined,
-      maxEmailAccounts: Number(limits.emailAccounts || limits.maxEmailAccounts || 0) || undefined,
-      maxNodeApps: Number(limits.nodeApps || limits.maxNodeApps || 0) || undefined,
+      maxDomains: maxDomains ?? undefined,
+      maxDatabases: maxDatabases ?? undefined,
+      maxEmailAccounts: maxEmailAccounts ?? undefined,
+      maxNodeApps: maxNodeApps ?? undefined,
       cloudPlan: {
         code: text(input.packageCode || input.planCode || input.packageId),
         name: text(input.packageName || input.planName),

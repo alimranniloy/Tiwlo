@@ -141,6 +141,23 @@ const numberFromLimit = (value: unknown, fallback: string) => {
   return match?.[0] || fallback;
 };
 
+const formLimitValue = (value: unknown, fallback: string) => (
+  value === undefined || value === null || value === '' ? fallback : String(value)
+);
+
+const resourceLimitText = (value: number, unit: string, label?: string) => (
+  Number(value || 0) <= 0
+    ? `Unlimited${label ? ` ${label}` : ''}`
+    : `${Number(value || 0).toLocaleString()} ${unit}`
+);
+
+const accountLimitText = (value: unknown, suffix = '') => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return '-';
+  if (numeric <= 0) return 'Unlimited';
+  return `${numeric.toLocaleString()}${suffix}`;
+};
+
 const moduleLabel = (module: string) => sizePackageModuleOptions.find((item) => item.key === module)?.label || module || 'Module';
 const familyLabel = (family: string) => sizePackagePlanFamilies.find((item) => item.key === family)?.label || family || 'Basic';
 const cpuCategoryLabel = (category: string) => sizePackageCpuCategories.find((item) => item.key === category)?.label || category || 'Regular';
@@ -471,10 +488,10 @@ export default function AdminTPanel() {
       cpuCategory: String(limits.cpuCategory || 'regular'),
       name: pkg.name || '',
       price: String(pkg.price || 0),
-      vcpu: String(limits.vcpu || numberFromLimit(limits.cpu, '1')),
-      ramGb: String(limits.ramGb || numberFromLimit(limits.ram, '1')),
-      diskGb: String(limits.diskGb || numberFromLimit(limits.disk, '25')),
-      bandwidthGb: String(limits.bandwidthGb || numberFromLimit(limits.bandwidth, '1000')),
+      vcpu: formLimitValue(limits.vcpu, numberFromLimit(limits.cpu, '1')),
+      ramGb: formLimitValue(limits.ramGb, numberFromLimit(limits.ram, '1')),
+      diskGb: formLimitValue(limits.diskGb, numberFromLimit(limits.disk, '25')),
+      bandwidthGb: formLimitValue(limits.bandwidthGb, numberFromLimit(limits.bandwidth, '1000')),
       cpuBrand: String(limits.cpuBrand || (String(limits.cpuCategory || '').includes('amd') ? 'Ryzen' : 'Intel')),
       extraStoragePricePerGb: String(limits.extraStoragePricePerGb ?? limits.storagePricePerGb ?? '0.10'),
       sshKeyAvailable: Boolean(limits.sshKeyAvailable ?? false),
@@ -493,12 +510,16 @@ export default function AdminTPanel() {
     try {
       const code = sizePackageForm.code || slugifyPlanCode(`${sizePackageForm.module}-${sizePackageForm.name}-${sizePackageForm.cpuCategory}`);
       const diskType = sizePackageCpuCategories.find((item) => item.key === sizePackageForm.cpuCategory)?.diskType || 'SSD';
-      const vcpu = Number(sizePackageForm.vcpu || 0);
-      const ramGb = Number(sizePackageForm.ramGb || 0);
-      const diskGb = Number(sizePackageForm.diskGb || 0);
-      const bandwidthGb = Number(sizePackageForm.bandwidthGb || 0);
+      const vcpu = Math.max(0, Number(sizePackageForm.vcpu || 0));
+      const ramGb = Math.max(0, Number(sizePackageForm.ramGb || 0));
+      const diskGb = Math.max(0, Number(sizePackageForm.diskGb || 0));
+      const bandwidthGb = Math.max(0, Number(sizePackageForm.bandwidthGb || 0));
       const ramMb = Math.max(0, Math.round(ramGb * 1024));
       const quotaMb = Math.max(0, Math.round(diskGb * 1024));
+      const cpuLabel = resourceLimitText(vcpu, 'vCPU', 'vCPU');
+      const ramLabel = resourceLimitText(ramGb, 'GB');
+      const diskLabel = resourceLimitText(diskGb, 'GB');
+      const bandwidthLabel = resourceLimitText(bandwidthGb, 'GB');
       await upsertPlanWithApi({
         id: sizePackageEditing?.id,
         product: 'cloud',
@@ -525,10 +546,14 @@ export default function AdminTPanel() {
           diskMB: quotaMb,
           bandwidthGb,
           bandwidthGB: bandwidthGb,
-          cpu: `${vcpu} vCPU`,
-          ram: `${ramGb} GB`,
-          disk: `${diskGb} GB`,
-          bandwidth: `${bandwidthGb} GB`,
+          unlimitedVcpu: vcpu <= 0,
+          unlimitedRam: ramGb <= 0,
+          unlimitedDisk: diskGb <= 0,
+          unlimitedBandwidth: bandwidthGb <= 0,
+          cpu: cpuLabel,
+          ram: ramLabel,
+          disk: diskLabel,
+          bandwidth: bandwidthLabel,
           extraStoragePricePerGb: Number(sizePackageForm.extraStoragePricePerGb || 0),
           sshKeyAvailable: Boolean(sizePackageForm.sshKeyAvailable),
           passwordAvailable: Boolean(sizePackageForm.passwordAvailable),
@@ -994,19 +1019,23 @@ export default function AdminTPanel() {
               </label>
               <label className="space-y-1.5">
                 <span className="text-[11px] font-bold uppercase text-[#6B7280]">vCPU count</span>
-                <input required type="number" min="1" value={sizePackageForm.vcpu} onChange={(event) => setSizePackageForm((current) => ({ ...current, vcpu: event.target.value }))} className="w-full rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="1" />
+                <input required type="number" min="0" value={sizePackageForm.vcpu} onChange={(event) => setSizePackageForm((current) => ({ ...current, vcpu: event.target.value }))} className="w-full rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="1" />
+                <span className="block text-[11px] font-medium text-[#6B7280]">0 means unlimited CPU.</span>
               </label>
               <label className="space-y-1.5">
                 <span className="text-[11px] font-bold uppercase text-[#6B7280]">RAM limit (GB)</span>
-                <input required type="number" min="1" value={sizePackageForm.ramGb} onChange={(event) => setSizePackageForm((current) => ({ ...current, ramGb: event.target.value }))} className="w-full rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="1" />
+                <input required type="number" min="0" value={sizePackageForm.ramGb} onChange={(event) => setSizePackageForm((current) => ({ ...current, ramGb: event.target.value }))} className="w-full rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="1" />
+                <span className="block text-[11px] font-medium text-[#6B7280]">0 means unlimited RAM.</span>
               </label>
               <label className="space-y-1.5">
                 <span className="text-[11px] font-bold uppercase text-[#6B7280]">Disk limit (GB)</span>
-                <input required type="number" min="1" value={sizePackageForm.diskGb} onChange={(event) => setSizePackageForm((current) => ({ ...current, diskGb: event.target.value }))} className="w-full rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="25" />
+                <input required type="number" min="0" value={sizePackageForm.diskGb} onChange={(event) => setSizePackageForm((current) => ({ ...current, diskGb: event.target.value }))} className="w-full rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="25" />
+                <span className="block text-[11px] font-medium text-[#6B7280]">0 means unlimited disk.</span>
               </label>
               <label className="space-y-1.5">
                 <span className="text-[11px] font-bold uppercase text-[#6B7280]">Bandwidth limit (GB)</span>
-                <input required type="number" min="1" value={sizePackageForm.bandwidthGb} onChange={(event) => setSizePackageForm((current) => ({ ...current, bandwidthGb: event.target.value }))} className="w-full rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="1000" />
+                <input required type="number" min="0" value={sizePackageForm.bandwidthGb} onChange={(event) => setSizePackageForm((current) => ({ ...current, bandwidthGb: event.target.value }))} className="w-full rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="1000" />
+                <span className="block text-[11px] font-medium text-[#6B7280]">0 means unlimited bandwidth.</span>
               </label>
               <label className="space-y-1.5">
                 <span className="text-[11px] font-bold uppercase text-[#6B7280]">CPU brand</span>
@@ -1234,7 +1263,7 @@ export default function AdminTPanel() {
                     <tr key={account.id}>
                       <td className="px-5 py-4"><p className="text-[13px] font-bold text-[#111827]">{account.username}</p><p className="text-[12px] text-[#6B7280]">{account.domain}</p></td>
                       <td className="px-5 py-4 text-[12px] text-[#4B5563]">{controlPackages.find((pkg: any) => pkg.id === account.packageId)?.name || 'Custom'}</td>
-                      <td className="px-5 py-4 text-[12px] text-[#4B5563]">{account.limits?.diskMB || '-'} MB / {account.limits?.domains || '-'} domains</td>
+                      <td className="px-5 py-4 text-[12px] text-[#4B5563]">{accountLimitText(account.limits?.diskMB, ' MB')} / {accountLimitText(account.limits?.domains)} domains</td>
                       <td className="px-5 py-4"><StatusPill status={account.status} /></td>
                       <td className="px-5 py-4"><div className="flex flex-wrap gap-2">{['active', 'suspended', 'terminated'].map((status) => <button key={status} onClick={() => changeAccountStatus(account.id, status)} disabled={saving === account.id || account.status === status} className="rounded border border-[#DDE3EA] px-2.5 py-1.5 text-[11px] font-bold uppercase text-[#374151] hover:border-blue-400 disabled:opacity-40">{status}</button>)}</div></td>
                     </tr>

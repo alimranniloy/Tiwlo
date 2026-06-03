@@ -469,7 +469,7 @@ function normalizeAccountPermissions(input: any = {}, account: any = {}) {
   permissions.phpmyadmin = Boolean(permissions.phpmyadmin && permissions.databases);
   permissions.ssl = Boolean(permissions.ssl && account.sslEnabled !== false);
   permissions.terminal = Boolean(permissions.terminal && account.shellAccess === true);
-  permissions.node = Boolean(permissions.node && Number(account.maxNodeApps ?? account.nodeApps ?? 1) !== 0);
+  permissions.node = Boolean(permissions.node);
   return Object.fromEntries(Object.entries(permissions).map(([key, value]) => [key, Boolean(value)]));
 }
 
@@ -719,8 +719,8 @@ function buildAccountProvisioning(req: express.Request | undefined, account: any
       quotaMb: account.quotaMb,
       bandwidthGb: account.bandwidthGb,
       cpuCores: account.cpuCores,
-      ramMb: account.ramMb || account.memoryMb,
-      memoryMb: account.memoryMb || account.ramMb,
+      ramMb: account.ramMb ?? account.memoryMb,
+      memoryMb: account.memoryMb ?? account.ramMb,
       resourceLimits
     },
     dnsRecords: domainDnsRecords(account.domain, serverIp, true).map((record) => ({
@@ -769,8 +769,8 @@ function writeAccountProvisioningPlan(account: any) {
       quotaMb: account.quotaMb,
       bandwidthGb: account.bandwidthGb,
       cpuCores: account.cpuCores,
-      ramMb: account.ramMb || account.memoryMb,
-      memoryMb: account.memoryMb || account.ramMb,
+      ramMb: account.ramMb ?? account.memoryMb,
+      memoryMb: account.memoryMb ?? account.ramMb,
       resourceLimits: account.resourceLimits || account.limits || {}
     },
     provisioning: account.provisioning,
@@ -1705,10 +1705,31 @@ function safePhpIniValue(value: unknown, fallback: string) {
   return clean || fallback;
 }
 
+function finiteNumberOrNull(value: unknown) {
+  if (value === undefined || value === null || value === "") return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function firstFiniteNumber(...values: unknown[]) {
+  for (const value of values) {
+    const numeric = finiteNumberOrNull(value);
+    if (numeric !== null) return numeric;
+  }
+  return null;
+}
+
+function phpMemoryLimitFallback(account: any) {
+  const memoryMb = firstFiniteNumber(account.phpMemoryMb, account.ramMb, account.memoryMb);
+  if (memoryMb !== null && memoryMb <= 0) return "-1";
+  const safeMb = Math.max(128, Math.min(4096, memoryMb ?? 256));
+  return `${safeMb}M`;
+}
+
 function normalizePhpIni(input: any = {}, account: any = {}) {
   const upload = safePhpIniValue(input.upload_max_filesize || account.phpSettings?.ini?.upload_max_filesize, `${account.uploadLimitMb || 128}M`);
   return {
-    memory_limit: safePhpIniValue(input.memory_limit || account.phpSettings?.ini?.memory_limit, `${account.phpMemoryMb || 256}M`),
+    memory_limit: safePhpIniValue(input.memory_limit || account.phpSettings?.ini?.memory_limit, phpMemoryLimitFallback(account)),
     upload_max_filesize: upload,
     post_max_size: safePhpIniValue(input.post_max_size || account.phpSettings?.ini?.post_max_size, upload),
     max_execution_time: safePhpIniValue(input.max_execution_time || account.phpSettings?.ini?.max_execution_time, "120"),
@@ -1798,7 +1819,10 @@ function ensureAccountPhpPool(account: any, versionOverride?: string) {
   fs.mkdirSync(sessionDir, { recursive: true });
   const runtimeUser = webRuntimeUser();
   const settings = phpSettingsForAccount({ ...account, phpVersion: version });
-  const poolMemoryMb = Math.max(128, Math.min(8192, Number(account.ramMb || account.memoryMb || account.phpMemoryMb || 512)));
+  const rawPoolMemoryMb = firstFiniteNumber(account.ramMb, account.memoryMb, account.phpMemoryMb);
+  const poolMemoryMb = rawPoolMemoryMb !== null && rawPoolMemoryMb <= 0
+    ? 8192
+    : Math.max(128, Math.min(8192, rawPoolMemoryMb ?? 512));
   const maxChildren = Math.max(1, Math.min(50, Math.floor(poolMemoryMb / 128)));
   const poolName = accountPhpPoolName(account, version);
   const socket = accountPhpFpmSocket(account, version);
@@ -1978,7 +2002,10 @@ function normalizeNodeAppInput(account: any, body: any, existing: any = {}) {
   const domain = cleanDomain(body?.domain || existing.domain || account.domain);
   const route = accountRuntimeDomains(account).find((entry: any) => cleanDomain(entry.domain) === domain);
   if (!route) throw new Error("Select a domain that belongs to this hosting account.");
-  const maxMemoryMB = Math.max(128, Math.min(4096, Number(body?.maxMemoryMB || existing.maxMemoryMB || account.memoryMb || 512)));
+  const requestedMaxMemoryMb = firstFiniteNumber(body?.maxMemoryMB, existing.maxMemoryMB);
+  const inheritedMemoryMb = firstFiniteNumber(account.memoryMb, account.ramMb);
+  const defaultMaxMemoryMb = inheritedMemoryMb !== null && inheritedMemoryMb <= 0 ? 4096 : inheritedMemoryMb ?? 512;
+  const maxMemoryMB = Math.max(128, Math.min(4096, requestedMaxMemoryMb ?? defaultMaxMemoryMb));
   const instances = Math.max(1, Math.min(8, Number(body?.instances || existing.instances || 1)));
   return {
     name,
@@ -2816,12 +2843,14 @@ function formatBytes(bytes: number) {
 }
 
 function accountQuotaBytes(account: any) {
-  const quotaMb = Number(account.quotaMb || account.limits?.diskMB || account.limits?.disk || 0);
+  const quotaMb = Number(account.quotaMb ?? account.limits?.diskMB ?? account.limits?.disk ?? 0);
   return Number.isFinite(quotaMb) && quotaMb > 0 ? quotaMb * 1024 * 1024 : Number.POSITIVE_INFINITY;
 }
 
 function maxExtractEntries(account: any) {
-  const quotaMb = Number(account.quotaMb || account.limits?.diskMB || 1024);
+  const quotaBytes = accountQuotaBytes(account);
+  if (!Number.isFinite(quotaBytes)) return 500000;
+  const quotaMb = Math.max(0, Math.ceil(quotaBytes / (1024 * 1024)));
   const scaled = Number.isFinite(quotaMb) ? Math.ceil(quotaMb * 100) : 500000;
   return Math.min(500000, Math.max(25000, scaled));
 }
@@ -3623,9 +3652,6 @@ function ensureShellAllowed(account: any) {
   if (!permissions.terminal || account.shellAccess !== true) {
     throw new Error("Shell access is not enabled for this hosting account. Upgrade the tPanel package or ask the administrator to enable Shell.");
   }
-  if (!Number.isFinite(accountQuotaBytes(account))) {
-    throw new Error("No terminal disk limit is assigned to this account. Upgrade the tPanel package before using Shell.");
-  }
 }
 
 async function runAccountShellCommand(account: any, commandInput: unknown) {
@@ -3637,9 +3663,12 @@ async function runAccountShellCommand(account: any, commandInput: unknown) {
   if (!command) throw new Error("Enter a command to run.");
   if (command.length > 2000) throw new Error("Command is too long for the web terminal.");
   await ensureAccountStorageAvailable(account, 0, "Terminal");
-  const memoryMb = Math.max(128, Math.min(4096, Number(account.phpMemoryMb || account.memoryMb || 512)));
+  const memoryMb = Number(account.ramMb ?? account.memoryMb ?? 0);
+  const memoryLimit = Number.isFinite(memoryMb) && memoryMb > 0
+    ? `ulimit -v ${Math.max(128, Math.min(4096, memoryMb)) * 1024} || true; `
+    : "";
   const timeoutSeconds = Math.max(30, Math.min(300, Number(account.terminalTimeoutSeconds || 120)));
-  const runner = `cd ${shellSingleQuote(home)} && export HOME=${shellSingleQuote(home)} USER=${shellSingleQuote(username)} LOGNAME=${shellSingleQuote(username)} PATH=/usr/local/bin:/usr/bin:/bin:${shellSingleQuote(path.join(home, "node_modules", ".bin"))} && ulimit -v ${memoryMb * 1024} || true; timeout ${timeoutSeconds}s bash -lc ${shellSingleQuote(command)}`;
+  const runner = `cd ${shellSingleQuote(home)} && export HOME=${shellSingleQuote(home)} USER=${shellSingleQuote(username)} LOGNAME=${shellSingleQuote(username)} PATH=/usr/local/bin:/usr/bin:/bin:${shellSingleQuote(path.join(home, "node_modules", ".bin"))} && ${memoryLimit}timeout ${timeoutSeconds}s bash -lc ${shellSingleQuote(command)}`;
   const wrapped = `if command -v runuser >/dev/null 2>&1; then runuser -u ${shellSingleQuote(username)} -- bash -lc ${shellSingleQuote(runner)}; else su -s /bin/bash ${shellSingleQuote(username)} -c ${shellSingleQuote(runner)}; fi`;
   try {
     const { stdout, stderr } = await execFileAsync("sh", ["-lc", wrapped], { timeout: (timeoutSeconds + 15) * 1000, maxBuffer: 2 * 1024 * 1024 });
@@ -3858,7 +3887,7 @@ async function createFtpAccount(account: any, input: any) {
   }
   await execFileAsync("sh", ["-lc", `printf '%s:%s\\n' ${shellSingleQuote(username)} ${shellSingleQuote(password)} | chpasswd`], { timeout: 60000 });
   await grantFtpFilesystemAccess(account, username, homeDirectory);
-  const quotaMb = parseQuotaMb(input.quotaMb || input.quota);
+  const quotaMb = parseQuotaMb(input.quotaMb ?? input.quota);
   if (quotaMb > 0) {
     await execFileAsync("sh", ["-lc", `if command -v setquota >/dev/null 2>&1; then setquota -u ${shellSingleQuote(username)} 0 $(( ${quotaMb} * 1024 )) 0 0 -a >/dev/null 2>&1 || true; fi`], { timeout: 60000 }).catch(() => undefined);
   }
@@ -4409,7 +4438,7 @@ app.get("/api/user/summary", requireLicense, async (req, res) => {
       emailAccounts: account.maxEmailAccounts,
       databases: account.maxDatabases,
       ftpAccounts: account.maxFtpAccounts || account.ftpAccounts || 0,
-      nodeApps: account.maxNodeApps || account.nodeApps || 1
+      nodeApps: account.maxNodeApps ?? account.nodeApps ?? 1
     },
     provisioning: account.provisioning || null,
     provisioningLog: readProvisioningLog(account.username),
@@ -5748,9 +5777,8 @@ app.get("/api/panel/audit-events", (_req, res) => {
   res.json({ ok: true, auditEvents: state.auditEvents || [] });
 });
 
-function positiveNumber(value: any, fallback = 0) {
-  const next = Number(value);
-  return Number.isFinite(next) && next > 0 ? next : fallback;
+function hasLimitValue(value: any) {
+  return value !== undefined && value !== null && value !== "";
 }
 
 function parseLimitNumber(value: any) {
@@ -5779,31 +5807,48 @@ function parseLimitGb(value: any) {
   return Math.round(amount);
 }
 
-function firstPositive(...values: any[]) {
+function firstLimitAmount(parser: (value: any) => number, ...values: any[]) {
   for (const value of values) {
-    const next = positiveNumber(value);
-    if (next > 0) return next;
+    if (!hasLimitValue(value)) continue;
+    const next = parser(value);
+    return Number.isFinite(next) ? next : 0;
   }
-  return 0;
+  return null;
+}
+
+const firstLimitNumber = (...values: any[]) => firstLimitAmount((value) => parseLimitNumber(value).amount, ...values);
+const firstLimitMb = (...values: any[]) => firstLimitAmount(parseLimitMb, ...values);
+const firstLimitGb = (...values: any[]) => firstLimitAmount(parseLimitGb, ...values);
+
+function numberOr(value: any, fallback: number) {
+  if (!hasLimitValue(value)) return fallback;
+  const next = Number(value);
+  return Number.isFinite(next) ? next : fallback;
 }
 
 app.post("/api/panel/packages", requireCapability("packages"), (req, res) => {
   const state = readPanelState();
   const limits = req.body?.resourceLimits || req.body?.limits || req.body?.cloudPlan?.limits || {};
-  const diskGbMb = firstPositive(limits.diskGb, limits.diskGB, parseLimitGb(limits.diskGb || limits.diskGB)) * 1024;
-  const ramGbMb = firstPositive(limits.ramGb, limits.memoryGb, parseLimitGb(limits.ramGb || limits.memoryGb)) * 1024;
-  const quotaMb = firstPositive(req.body?.quotaMb, limits.quotaMb, limits.diskMB, limits.diskMb, diskGbMb, parseLimitMb(limits.disk));
-  const bandwidthGb = firstPositive(req.body?.bandwidthGb, limits.bandwidthGb, limits.bandwidthGB, limits.transferGb, limits.transferGB, parseLimitGb(limits.bandwidth || limits.transfer));
-  const ramMb = firstPositive(req.body?.ramMb, req.body?.memoryMb, limits.ramMb, limits.memoryMb, ramGbMb, parseLimitMb(limits.ram || limits.memory));
-  const cpuCores = firstPositive(req.body?.cpuCores, req.body?.cpuCount, limits.cpuCores, limits.cpuCount, limits.vcpu, parseLimitNumber(limits.cpu).amount);
+  const diskGbMb = firstLimitGb(limits.diskGb, limits.diskGB);
+  const ramGbMb = firstLimitGb(limits.ramGb, limits.memoryGb);
+  const quotaMb = firstLimitNumber(req.body?.quotaMb, limits.quotaMb, limits.diskMB, limits.diskMb)
+    ?? (diskGbMb !== null ? diskGbMb * 1024 : firstLimitMb(limits.disk))
+    ?? 1024;
+  const bandwidthGb = firstLimitNumber(req.body?.bandwidthGb, limits.bandwidthGb, limits.bandwidthGB, limits.transferGb, limits.transferGB)
+    ?? firstLimitGb(limits.bandwidth, limits.transfer)
+    ?? 100;
+  const ramMb = firstLimitNumber(req.body?.ramMb, req.body?.memoryMb, limits.ramMb, limits.memoryMb)
+    ?? (ramGbMb !== null ? ramGbMb * 1024 : firstLimitMb(limits.ram, limits.memory))
+    ?? 1024;
+  const cpuCores = firstLimitNumber(req.body?.cpuCores, req.body?.cpuCount, limits.cpuCores, limits.cpuCount, limits.vcpu, limits.cpu) ?? 1;
   const id = sanitizeSlug(req.body?.id || req.body?.name || `pkg-${Date.now()}`, "package");
   const pkg = {
     id,
     name: String(req.body?.name || "Custom Package").trim(),
-    quotaMb: quotaMb || 1024,
-    bandwidthGb: bandwidthGb || 100,
-    cpuCores: cpuCores || 1,
-    ramMb: ramMb || 1024,
+    quotaMb,
+    bandwidthGb,
+    cpuCores,
+    ramMb,
     domains: Number(req.body?.domains || 1),
     emailAccounts: Number(req.body?.emailAccounts || 10),
     databases: Number(req.body?.databases || 5),
@@ -5811,12 +5856,12 @@ app.post("/api/panel/packages", requireCapability("packages"), (req, res) => {
     nodeApps: Number(req.body?.nodeApps || 1),
     resourceLimits: {
       ...limits,
-      quotaMb: quotaMb || 1024,
-      diskMB: quotaMb || 1024,
-      bandwidthGb: bandwidthGb || 100,
-      ramMb: ramMb || 1024,
-      memoryMb: ramMb || 1024,
-      cpuCores: cpuCores || 1
+      quotaMb,
+      diskMB: quotaMb,
+      bandwidthGb,
+      ramMb,
+      memoryMb: ramMb,
+      cpuCores
     }
   };
   const packages = [...state.packages.filter((item: any) => item.id !== id), pkg];
@@ -5861,39 +5906,39 @@ app.post("/api/panel/accounts", requireCapability("accounts"), async (req, res) 
     || state.packages.find((pkg: any) => packageName && String(pkg.name || "").toLowerCase() === packageName.toLowerCase());
   const basePackage = existingPackage || state.packages[0] || DEFAULT_PACKAGES[0];
   const incomingLimits = req.body?.resourceLimits || req.body?.limits || req.body?.cloudPlan?.limits || {};
-  const diskGbMb = firstPositive(incomingLimits.diskGb, incomingLimits.diskGB, parseLimitGb(incomingLimits.diskGb || incomingLimits.diskGB)) * 1024;
-  const ramGbMb = firstPositive(incomingLimits.ramGb, incomingLimits.memoryGb, parseLimitGb(incomingLimits.ramGb || incomingLimits.memoryGb)) * 1024;
-  const requestedQuotaMb = firstPositive(req.body?.quotaMb, incomingLimits.quotaMb, incomingLimits.diskMB, incomingLimits.diskMb, diskGbMb, parseLimitMb(incomingLimits.disk));
-  const requestedBandwidthGb = firstPositive(req.body?.bandwidthGb, incomingLimits.bandwidthGb, incomingLimits.bandwidthGB, incomingLimits.transferGb, incomingLimits.transferGB, parseLimitGb(incomingLimits.bandwidth || incomingLimits.transfer));
-  const requestedRamMb = firstPositive(req.body?.ramMb, req.body?.memoryMb, incomingLimits.ramMb, incomingLimits.memoryMb, ramGbMb, parseLimitMb(incomingLimits.ram || incomingLimits.memory));
-  const requestedCpuCores = firstPositive(req.body?.cpuCores, req.body?.cpuCount, incomingLimits.cpuCores, incomingLimits.cpuCount, incomingLimits.vcpu, parseLimitNumber(incomingLimits.cpu).amount);
-  const numberOr = (value: any, fallback: number) => {
-    const next = Number(value);
-    return Number.isFinite(next) && next > 0 ? next : fallback;
-  };
-  const selectedPackage = packageId || packageName || requestedQuotaMb || requestedBandwidthGb || requestedRamMb || requestedCpuCores
+  const diskGbMb = firstLimitGb(incomingLimits.diskGb, incomingLimits.diskGB);
+  const ramGbMb = firstLimitGb(incomingLimits.ramGb, incomingLimits.memoryGb);
+  const requestedQuotaMb = firstLimitNumber(req.body?.quotaMb, incomingLimits.quotaMb, incomingLimits.diskMB, incomingLimits.diskMb)
+    ?? (diskGbMb !== null ? diskGbMb * 1024 : firstLimitMb(incomingLimits.disk));
+  const requestedBandwidthGb = firstLimitNumber(req.body?.bandwidthGb, incomingLimits.bandwidthGb, incomingLimits.bandwidthGB, incomingLimits.transferGb, incomingLimits.transferGB)
+    ?? firstLimitGb(incomingLimits.bandwidth, incomingLimits.transfer);
+  const requestedRamMb = firstLimitNumber(req.body?.ramMb, req.body?.memoryMb, incomingLimits.ramMb, incomingLimits.memoryMb)
+    ?? (ramGbMb !== null ? ramGbMb * 1024 : firstLimitMb(incomingLimits.ram, incomingLimits.memory));
+  const requestedCpuCores = firstLimitNumber(req.body?.cpuCores, req.body?.cpuCount, incomingLimits.cpuCores, incomingLimits.cpuCount, incomingLimits.vcpu, incomingLimits.cpu);
+  const hasRequestedPackageLimits = requestedQuotaMb !== null || requestedBandwidthGb !== null || requestedRamMb !== null || requestedCpuCores !== null;
+  const selectedPackage = packageId || packageName || hasRequestedPackageLimits
     ? {
       ...basePackage,
       id: packageId || basePackage.id || sanitizeSlug(packageName || `pkg-${Date.now()}`, "package"),
       name: packageName || basePackage.name,
-      quotaMb: numberOr(requestedQuotaMb, basePackage.quotaMb || 1024),
-      bandwidthGb: numberOr(requestedBandwidthGb, basePackage.bandwidthGb || 100),
-      cpuCores: numberOr(requestedCpuCores, basePackage.cpuCores || 1),
-      ramMb: numberOr(requestedRamMb, basePackage.ramMb || basePackage.memoryMb || 1024),
-      domains: numberOr(req.body?.maxDomains, basePackage.domains || 1),
-      emailAccounts: numberOr(req.body?.maxEmailAccounts, basePackage.emailAccounts || 10),
-      databases: numberOr(req.body?.maxDatabases, basePackage.databases || 5),
-      ftpAccounts: numberOr(req.body?.ftpAccounts, basePackage.ftpAccounts || 5),
-      nodeApps: numberOr(req.body?.maxNodeApps, basePackage.nodeApps || 1),
+      quotaMb: numberOr(requestedQuotaMb, numberOr(basePackage.quotaMb, 1024)),
+      bandwidthGb: numberOr(requestedBandwidthGb, numberOr(basePackage.bandwidthGb, 100)),
+      cpuCores: numberOr(requestedCpuCores, numberOr(basePackage.cpuCores, 1)),
+      ramMb: numberOr(requestedRamMb, numberOr(basePackage.ramMb, numberOr(basePackage.memoryMb, 1024))),
+      domains: numberOr(req.body?.maxDomains, numberOr(basePackage.domains, 1)),
+      emailAccounts: numberOr(req.body?.maxEmailAccounts, numberOr(basePackage.emailAccounts, 10)),
+      databases: numberOr(req.body?.maxDatabases, numberOr(basePackage.databases, 5)),
+      ftpAccounts: numberOr(req.body?.ftpAccounts, numberOr(basePackage.ftpAccounts, 5)),
+      nodeApps: numberOr(req.body?.maxNodeApps, numberOr(basePackage.nodeApps, 1)),
       resourceLimits: {
         ...(basePackage.resourceLimits || {}),
         ...incomingLimits,
-        quotaMb: numberOr(requestedQuotaMb, basePackage.quotaMb || 1024),
-        diskMB: numberOr(requestedQuotaMb, basePackage.quotaMb || 1024),
-        bandwidthGb: numberOr(requestedBandwidthGb, basePackage.bandwidthGb || 100),
-        ramMb: numberOr(requestedRamMb, basePackage.ramMb || basePackage.memoryMb || 1024),
-        memoryMb: numberOr(requestedRamMb, basePackage.ramMb || basePackage.memoryMb || 1024),
-        cpuCores: numberOr(requestedCpuCores, basePackage.cpuCores || 1)
+        quotaMb: numberOr(requestedQuotaMb, numberOr(basePackage.quotaMb, 1024)),
+        diskMB: numberOr(requestedQuotaMb, numberOr(basePackage.quotaMb, 1024)),
+        bandwidthGb: numberOr(requestedBandwidthGb, numberOr(basePackage.bandwidthGb, 100)),
+        ramMb: numberOr(requestedRamMb, numberOr(basePackage.ramMb, numberOr(basePackage.memoryMb, 1024))),
+        memoryMb: numberOr(requestedRamMb, numberOr(basePackage.ramMb, numberOr(basePackage.memoryMb, 1024))),
+        cpuCores: numberOr(requestedCpuCores, numberOr(basePackage.cpuCores, 1))
       }
     }
     : basePackage;
@@ -5916,11 +5961,11 @@ app.post("/api/panel/accounts", requireCapability("accounts"), async (req, res) 
     }
   }
   const homeDirectory = path.join(ACCOUNT_BASE_DIR, username);
-  const accountQuotaMb = numberOr(requestedQuotaMb, selectedPackage.quotaMb || 1024);
-  const accountBandwidthGb = numberOr(requestedBandwidthGb, selectedPackage.bandwidthGb || 100);
-  const accountRamMb = numberOr(requestedRamMb, selectedPackage.ramMb || selectedPackage.memoryMb || 1024);
-  const accountCpuCores = numberOr(requestedCpuCores, selectedPackage.cpuCores || selectedPackage.cpuCount || 1);
-  const accountPhpMemoryMb = numberOr(req.body?.phpMemoryMb, Math.max(128, Math.min(4096, accountRamMb)));
+  const accountQuotaMb = numberOr(requestedQuotaMb, numberOr(selectedPackage.quotaMb, 1024));
+  const accountBandwidthGb = numberOr(requestedBandwidthGb, numberOr(selectedPackage.bandwidthGb, 100));
+  const accountRamMb = numberOr(requestedRamMb, numberOr(selectedPackage.ramMb, numberOr(selectedPackage.memoryMb, 1024)));
+  const accountCpuCores = numberOr(requestedCpuCores, numberOr(selectedPackage.cpuCores, numberOr(selectedPackage.cpuCount, 1)));
+  const accountPhpMemoryMb = numberOr(req.body?.phpMemoryMb, accountRamMb <= 0 ? 0 : Math.max(128, Math.min(4096, accountRamMb)));
   const accountResourceLimits = {
     ...(selectedPackage.resourceLimits || {}),
     ...incomingLimits,
@@ -5965,11 +6010,11 @@ app.post("/api/panel/accounts", requireCapability("accounts"), async (req, res) 
     phpMemoryMb: accountPhpMemoryMb,
     resourceLimits: accountResourceLimits,
     limits: accountResourceLimits,
-    maxDomains: Number(req.body?.maxDomains || selectedPackage.domains),
-    maxEmailAccounts: Number(req.body?.maxEmailAccounts || selectedPackage.emailAccounts),
-    maxDatabases: Number(req.body?.maxDatabases || selectedPackage.databases),
-    maxFtpAccounts: Number(req.body?.maxFtpAccounts || req.body?.ftpAccounts || selectedPackage.ftpAccounts),
-    maxNodeApps: Number(req.body?.maxNodeApps || selectedPackage.nodeApps),
+    maxDomains: numberOr(req.body?.maxDomains, numberOr(selectedPackage.domains, 1)),
+    maxEmailAccounts: numberOr(req.body?.maxEmailAccounts, numberOr(selectedPackage.emailAccounts, 10)),
+    maxDatabases: numberOr(req.body?.maxDatabases, numberOr(selectedPackage.databases, 5)),
+    maxFtpAccounts: numberOr(req.body?.maxFtpAccounts, numberOr(req.body?.ftpAccounts, numberOr(selectedPackage.ftpAccounts, 5))),
+    maxNodeApps: numberOr(req.body?.maxNodeApps, numberOr(selectedPackage.nodeApps, 1)),
     permissionProfile: normalizePermissionProfile(req.body?.permissionProfile),
     ftpEnabled: req.body?.ftpEnabled !== false,
     shellAccess: Boolean(req.body?.shellAccess),
