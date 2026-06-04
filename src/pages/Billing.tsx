@@ -392,13 +392,13 @@ export default function BillingPage() {
         </div>
 
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1fr_390px]">
-          <section id="add-credit" className={`${card} grid grid-cols-1 overflow-hidden lg:grid-cols-[300px_1fr]`}>
-            <div className="border-b border-[#edf1f7] p-5 lg:border-b-0 lg:border-r">
+          <section id="add-credit" className={`${card} grid grid-cols-1 overflow-hidden lg:grid-cols-[285px_1fr]`}>
+            <div className="border-b border-[#edf1f7] p-5 lg:border-b-0 lg:border-r lg:border-[#edf1f7]">
               <p className={`text-[10px] font-extrabold uppercase tracking-wide ${textMuted}`}>Balance Due</p>
               <p className={`mt-2 font-display text-[31px] font-extrabold leading-none ${textInk}`}>{loading ? '...' : money(dueNow)}</p>
               <p className="mt-2 text-[12px] font-extrabold text-amber-600">{nextDue ? `Due on ${dateLabel(nextDue)}` : 'No due date scheduled'}</p>
 
-              <div className="mt-8 grid grid-cols-2 divide-x divide-[#edf1f7]">
+              <div className="mt-7 grid grid-cols-2 divide-x divide-[#edf1f7]">
                 <div>
                   <p className={`text-[10px] font-extrabold uppercase tracking-wide ${textMuted}`}>Available Credit</p>
                   <p className="mt-2 font-display text-[17px] font-extrabold text-emerald-600">{loading ? '...' : money(creditBalance)}</p>
@@ -409,7 +409,7 @@ export default function BillingPage() {
                 </div>
               </div>
 
-              <p className={`mt-6 max-w-[250px] text-[12px] font-medium leading-5 ${textMuted}`}>
+              <p className={`mt-6 max-w-[240px] text-[12px] font-medium leading-5 ${textMuted}`}>
                 Credit is used for cloud, hosting, ecommerce, ISP, and hourly resource billing.
               </p>
             </div>
@@ -434,7 +434,7 @@ export default function BillingPage() {
                 </label>
               </div>
 
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
                 {[
                   { key: 'USD', title: 'USD Credit', detail: 'Add exact cloud credit balance', icon: Wallet },
                   { key: 'BDT', title: 'BDT Payment', detail: 'Pay local amount, convert to credit', icon: Banknote }
@@ -443,7 +443,7 @@ export default function BillingPage() {
                     key={option.key}
                     type="button"
                     onClick={() => setTopUpCurrency(option.key)}
-                    className={`flex items-start gap-3 rounded-[8px] border px-4 py-4 text-left ${
+                    className={`flex min-h-[76px] items-center gap-3 rounded-[8px] border px-3.5 py-3 text-left ${
                       topUpCurrency === option.key ? 'border-blue-500 bg-[#f8fbff]' : 'border-[#edf1f7] bg-white'
                     }`}
                   >
@@ -458,21 +458,21 @@ export default function BillingPage() {
                 ))}
               </div>
 
-              <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-[1fr_142px_110px]">
+              <div className="mt-4 grid grid-cols-1 gap-2.5 md:grid-cols-[1fr_136px_102px]">
                 <input
                   value={topUpAmount}
                   onChange={(event) => setTopUpAmount(event.target.value)}
                   type="number"
                   min="1"
                   step="0.01"
-                  className="h-10 rounded-[8px] border border-[#e8edf7] bg-white px-4 text-[13px] font-semibold text-[#071437] outline-none focus:border-blue-300"
+                  className="h-9 rounded-[8px] border border-[#e8edf7] bg-white px-4 text-[13px] font-semibold text-[#071437] outline-none focus:border-blue-300"
                   placeholder={topUpCurrency === 'BDT' ? 'Amount in BDT' : 'Amount in USD'}
                 />
                 <label className="relative">
                   <select
                     value={topUpProvider}
                     onChange={(event) => setTopUpProvider(event.target.value)}
-                    className="h-10 w-full appearance-none rounded-[8px] border border-[#e8edf7] bg-white px-4 pr-8 text-[13px] font-extrabold text-[#071437] outline-none focus:border-blue-300"
+                    className="h-9 w-full appearance-none rounded-[8px] border border-[#e8edf7] bg-white px-4 pr-8 text-[13px] font-extrabold text-[#071437] outline-none focus:border-blue-300"
                   >
                     <option value="bkash">bKash</option>
                     <option value="stripe">Stripe</option>
@@ -480,7 +480,7 @@ export default function BillingPage() {
                   </select>
                   <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#65738a]" />
                 </label>
-                <button onClick={addCredit} disabled={processing} className="h-10 rounded-[8px] bg-blue-600 px-5 text-[13px] font-extrabold text-white hover:bg-blue-700 disabled:opacity-60">
+                <button onClick={addCredit} disabled={processing} className="h-9 rounded-[8px] bg-blue-600 px-4 text-[12px] font-extrabold text-white hover:bg-blue-700 disabled:opacity-60">
                   {processing ? 'Starting...' : 'Top Up'}
                 </button>
               </div>
@@ -488,14 +488,14 @@ export default function BillingPage() {
           </section>
 
           <div className="space-y-4">
-            <section className="rounded-[8px] border border-amber-100 bg-amber-50 p-5">
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between xl:flex-col xl:items-stretch 2xl:flex-row 2xl:items-center">
-                <div className="flex items-start gap-3">
-                  <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
-                  <div>
-                    <h2 className="font-display text-[14px] font-extrabold text-amber-700">Payment Pending</h2>
-                    <p className="mt-1 max-w-[260px] text-[12px] font-medium leading-5 text-amber-800">
-                      You have unpaid invoices or usage due totaling <span className="font-extrabold">{money(dueNow)}</span>.
+            <section className="rounded-[8px] border border-amber-100 bg-amber-50 px-4 py-3">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex min-w-0 items-center gap-3">
+                  <AlertCircle className="h-[18px] w-[18px] shrink-0 text-amber-600" />
+                  <div className="min-w-0">
+                    <h2 className="font-display text-[13px] font-extrabold text-amber-700">Payment Pending</h2>
+                    <p className="mt-0.5 text-[11px] font-medium leading-4 text-amber-800">
+                      Unpaid invoices or usage due: <span className="font-extrabold">{money(dueNow)}</span>.
                     </p>
                   </div>
                 </div>
@@ -503,7 +503,7 @@ export default function BillingPage() {
                   type="button"
                   disabled={!unpaidInvoices[0] || Boolean(payingInvoice)}
                   onClick={() => payInvoice(unpaidInvoices[0])}
-                  className="h-10 rounded-[8px] border border-amber-200 bg-white px-5 text-[13px] font-extrabold text-amber-700 disabled:opacity-50"
+                  className="h-9 shrink-0 whitespace-nowrap rounded-[7px] border border-amber-200 bg-white px-4 text-[12px] font-extrabold text-amber-700 disabled:opacity-50"
                 >
                   {payingInvoice ? 'Starting...' : 'Pay Now'}
                 </button>

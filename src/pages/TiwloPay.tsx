@@ -3,15 +3,14 @@ import { Link as RouterLink, Navigate, NavLink, Route, Routes, useNavigate } fro
 import {
   Activity,
   AlertCircle,
-  ArrowUpRight,
   BadgeCheck,
-  Banknote,
   Building2,
+  ChevronRight,
   CheckCircle2,
   Clock3,
-  Code2,
   Copy,
   CreditCard,
+  DollarSign,
   ExternalLink,
   FileDown,
   FileText,
@@ -19,9 +18,7 @@ import {
   KeyRound,
   Landmark,
   Link2,
-  ListChecks,
   LockKeyhole,
-  Mail,
   Plus,
   Receipt,
   RefreshCw,
@@ -33,8 +30,7 @@ import {
   SlidersHorizontal,
   Terminal,
   UserCheck,
-  Wallet,
-  Zap
+  Wallet
 } from 'lucide-react';
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import {
@@ -45,6 +41,10 @@ import {
   upsertTiwloPayProfileWithApi
 } from '../lib/tiwloApi';
 import { useCurrency } from '../lib/useCurrency';
+
+const pageCard = 'rounded-[8px] border border-[#e8edf7] bg-white';
+const inkText = 'text-[#071437]';
+const mutedText = 'text-[#65738a]';
 
 const dateLabel = (value?: string) => {
   if (!value) return 'No expiry';
@@ -62,7 +62,7 @@ const timeLabel = (value?: string) => {
 
 const statusClass = (status: string) => {
   const normalized = String(status || '').toLowerCase();
-  if (['active', 'approved', 'paid', 'succeeded', 'completed'].includes(normalized)) return 'border-emerald-200 bg-emerald-50 text-emerald-700';
+  if (['active', 'approved', 'paid', 'succeeded', 'completed', 'enabled', 'live', 'ready'].includes(normalized)) return 'border-emerald-200 bg-emerald-50 text-emerald-700';
   if (['submitted', 'pending', 'processing', 'unpaid', 'needs_review'].includes(normalized)) return 'border-amber-200 bg-amber-50 text-amber-700';
   if (['expired', 'inactive', 'rejected', 'suspended', 'cancelled'].includes(normalized)) return 'border-rose-200 bg-rose-50 text-rose-700';
   return 'border-gray-200 bg-gray-50 text-gray-600';
@@ -118,15 +118,17 @@ function StatCard({ label, value, detail, icon: Icon, tone }: {
   tone: string;
 }) {
   return (
-    <div className="rounded-md border border-[#d9e1ec] bg-white p-4 shadow-[0_1px_2px_rgba(3,27,78,0.04)]">
-      <div className="flex items-start justify-between gap-3">
+    <div className={`${pageCard} relative min-h-[96px] overflow-hidden p-4`}>
+      <div className={`pointer-events-none absolute -bottom-6 right-0 h-16 w-36 rounded-[50%] border-t ${tone} opacity-[0.12]`} />
+      <div className={`pointer-events-none absolute -bottom-8 right-8 h-16 w-36 rounded-[50%] border-t ${tone} opacity-[0.08]`} />
+      <div className="relative flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-[11px] font-bold uppercase text-[#6B7280]">{label}</p>
-          <p className="mt-2 truncate text-xl font-bold text-[#111827]">{value}</p>
-          <p className="mt-1 text-[12px] font-medium text-[#6B7280]">{detail}</p>
+          <p className={`text-[10px] font-extrabold uppercase tracking-wide ${mutedText}`}>{label}</p>
+          <p className={`mt-2 truncate font-display text-[22px] font-extrabold leading-none ${inkText}`}>{value}</p>
+          <p className={`mt-2 text-[12px] font-medium ${mutedText}`}>{detail}</p>
         </div>
-        <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded border ${tone}`}>
-          <Icon className="h-5 w-5" />
+        <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-[8px] border ${tone}`}>
+          <Icon className="h-[18px] w-[18px]" />
         </div>
       </div>
     </div>
@@ -150,20 +152,149 @@ function EmptyState({ icon: Icon, title, detail }: { icon: React.ElementType; ti
 function VerificationNotice({ isLive, status, verificationStatus }: { isLive: boolean; status: string; verificationStatus: string }) {
   if (isLive) return null;
   return (
-    <div className="rounded-md border border-amber-200 bg-amber-50 p-4 text-amber-900 shadow-sm">
-      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-        <div className="flex items-start gap-3">
-          <LockKeyhole className="mt-0.5 h-5 w-5 shrink-0" />
-          <div>
-            <p className="text-sm font-bold">Tiwlo Pay is inactive until ID verification is approved.</p>
-            <p className="mt-1 text-[13px] font-medium">Merchant status: {status}. Verification: {verificationStatus}. Payment link, API key, and payout actions are locked.</p>
+    <div className="rounded-[8px] border border-amber-100 bg-[#fff9e8] px-4 py-3 text-amber-900">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex min-w-0 items-center gap-3">
+          <LockKeyhole className="h-[18px] w-[18px] shrink-0 text-amber-500" />
+          <div className="min-w-0">
+            <p className="text-[13px] font-extrabold">Tiwlo Pay is inactive until ID verification is approved.</p>
+            <p className="mt-0.5 text-[11px] font-medium leading-4">
+              Merchant status: {status}. Verification: {verificationStatus}. Payment link, API key, and payout actions are locked.
+            </p>
           </div>
         </div>
-        <NavLink to="/tiwlo-pay/verify" className="flex shrink-0 items-center justify-center gap-2 rounded border border-amber-300 bg-white px-3 py-2 text-[12px] font-bold text-amber-900 hover:border-amber-500">
-          <UserCheck className="h-4 w-4" /> Verify ID
+        <NavLink to="/tiwlo-pay/verify" className="flex h-9 shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-[7px] border border-amber-200 bg-white px-4 text-[12px] font-extrabold text-amber-800 hover:border-amber-400">
+          View Verification Status <ChevronRight className="h-4 w-4" />
         </NavLink>
       </div>
     </div>
+  );
+}
+
+function HeroCardGraphic() {
+  return (
+    <div className="pointer-events-none absolute inset-y-0 right-0 hidden w-[48%] items-center justify-center overflow-hidden lg:flex">
+      <div className="absolute right-6 top-8 h-48 w-72 rounded-full bg-[#6d5dfc]/15 blur-3xl" />
+      <div className="absolute bottom-8 right-28 h-32 w-52 rounded-full bg-[#2563eb]/10 blur-2xl" />
+      <div className="relative h-[190px] w-[390px]">
+        <div className="absolute left-10 top-8 h-[132px] w-[235px] -rotate-[8deg] rounded-[18px] border border-white/30 bg-gradient-to-br from-[#8b7cff] via-[#6d4df5] to-[#4730cf] p-6 text-white">
+          <div className="h-8 w-10 rounded-[8px] border border-amber-100/50 bg-gradient-to-br from-amber-200 to-amber-400" />
+          <div className="mt-8 font-mono text-[15px] tracking-[0.22em] text-white/80">4180 9845 2154 7854</div>
+          <div className="mt-3 flex items-center justify-between text-[11px] font-bold uppercase text-white/70">
+            <span>08/28</span>
+            <span>VISA</span>
+          </div>
+        </div>
+        <div className="absolute bottom-6 right-12 grid h-[100px] w-[100px] place-items-center rounded-[28px] border border-white/60 bg-white/70 backdrop-blur-sm">
+          <div className="grid h-[78px] w-[78px] place-items-center rounded-[24px] bg-[#eef0ff] text-[#5b35f5]">
+            <ShieldCheck className="h-11 w-11" />
+          </div>
+        </div>
+        <div className="absolute right-12 top-8 grid h-14 w-14 place-items-center rounded-full border border-white/70 bg-white/70 text-[#5b35f5] backdrop-blur-sm">
+          <DollarSign className="h-6 w-6" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function QuickActionPanel() {
+  const actions = [
+    { label: 'Create Payment Link', detail: 'Start collecting payments', icon: Link2, to: '/tiwlo-pay/links', tone: 'bg-[#f1ecff] text-[#5b35f5]' },
+    { label: 'View Invoices', detail: 'Manage and track invoices', icon: Receipt, to: '/tiwlo-pay/invoices', tone: 'bg-blue-50 text-blue-600' },
+    { label: 'Track Payouts', detail: 'Monitor your payouts', icon: Landmark, to: '/tiwlo-pay/payouts', tone: 'bg-emerald-50 text-emerald-600' },
+    { label: 'API Settings', detail: 'Manage API & webhooks', icon: Settings, to: '/tiwlo-pay/settings', tone: 'bg-indigo-50 text-indigo-600' }
+  ];
+
+  return (
+    <section className={`${pageCard} p-5`}>
+      <h2 className={`font-display text-[16px] font-extrabold ${inkText}`}>Quick Actions</h2>
+      <div className="mt-3 divide-y divide-[#edf1f7]">
+        {actions.map((action) => {
+          const Icon = action.icon;
+          return (
+            <RouterLink key={action.label} to={action.to} className="flex items-center justify-between gap-3 py-3">
+              <div className="flex min-w-0 items-center gap-3">
+                <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-[8px] ${action.tone}`}>
+                  <Icon className="h-4 w-4" />
+                </span>
+                <span className="min-w-0">
+                  <span className={`block truncate text-[13px] font-extrabold ${inkText}`}>{action.label}</span>
+                  <span className={`mt-0.5 block truncate text-[11px] font-medium ${mutedText}`}>{action.detail}</span>
+                </span>
+              </div>
+              <ChevronRight className="h-4 w-4 shrink-0 text-[#94a3b8]" />
+            </RouterLink>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function SecurityCard() {
+  return (
+    <section className="relative min-h-[260px] overflow-hidden rounded-[8px] border border-[#2e2369] bg-gradient-to-br from-[#2b0d5f] via-[#15094b] to-[#070d3d] p-5 text-white">
+      <div className="absolute right-5 top-5 h-28 w-28 rounded-full bg-[#6d5dfc]/25 blur-2xl" />
+      <div className="absolute -bottom-10 -left-10 h-32 w-32 rounded-full bg-blue-500/20 blur-2xl" />
+      <div className="relative">
+        <div className="mx-auto grid h-[92px] w-[92px] place-items-center rounded-[28px] border border-white/10 bg-white/10 text-[#c8bcff]">
+          <LockKeyhole className="h-12 w-12" />
+        </div>
+        <h2 className="mt-5 font-display text-[20px] font-extrabold">Enterprise-Grade Security</h2>
+        <p className="mt-2 max-w-[300px] text-[12px] font-medium leading-5 text-white/80">
+          Your payments and data are protected with bank-level encryption and fraud prevention.
+        </p>
+        <div className="mt-4 space-y-2 text-[12px] font-semibold text-white/90">
+          {['Secure transactions', 'Fraud protection', 'Global payout support'].map((item) => (
+            <div key={item} className="flex items-center gap-2">
+              <CheckCircle2 className="h-4 w-4 text-[#9ee7c5]" />
+              <span>{item}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function ReadinessRow({ icon: Icon, label, detail, status }: {
+  icon: React.ElementType;
+  label: string;
+  detail: string;
+  status: 'ok' | 'warn' | 'locked';
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-[7px] border border-[#edf1f7] px-3 py-2.5">
+      <div className="flex min-w-0 items-center gap-3">
+        <span className="grid h-8 w-8 shrink-0 place-items-center rounded-[7px] border border-[#edf1f7] bg-white text-[#475569]">
+          <Icon className="h-4 w-4" />
+        </span>
+        <span className="min-w-0">
+          <span className={`block truncate text-[12px] font-extrabold ${inkText}`}>{label}</span>
+          <span className={`block truncate text-[11px] font-medium ${mutedText}`}>{detail}</span>
+        </span>
+      </div>
+      {status === 'ok' && <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" />}
+      {status === 'warn' && <span className="shrink-0 rounded-full bg-rose-50 px-2 py-1 text-[9px] font-extrabold uppercase text-rose-500">Inactive</span>}
+      {status === 'locked' && <LockKeyhole className="h-4 w-4 shrink-0 text-[#94a3b8]" />}
+    </div>
+  );
+}
+
+function GatewayIcon({ provider }: { provider?: string }) {
+  const normalized = String(provider || '').toLowerCase();
+  const tone = normalized.includes('bkash')
+    ? 'bg-pink-50 text-pink-600'
+    : normalized.includes('stripe')
+      ? 'bg-[#f1ecff] text-[#5b35f5]'
+      : 'bg-blue-50 text-blue-600';
+  const Icon = normalized.includes('bkash') ? Send : normalized.includes('stripe') ? DollarSign : CreditCard;
+
+  return (
+    <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-[8px] ${tone}`}>
+      <Icon className="h-4 w-4" />
+    </span>
   );
 }
 
@@ -474,113 +605,165 @@ export default function TiwloPay() {
     ));
   };
 
-  const navItems = [
-    { label: 'Overview', path: '/tiwlo-pay/overview', icon: Activity },
-    { label: 'Payment Links', path: '/tiwlo-pay/links', icon: Link2 },
-    { label: 'Invoices', path: '/tiwlo-pay/invoices', icon: Receipt },
-    { label: 'Payouts', path: '/tiwlo-pay/payouts', icon: Landmark },
-    { label: 'Settings/API', path: '/tiwlo-pay/settings', icon: Settings },
-    { label: 'Verify ID', path: '/tiwlo-pay/verify', icon: UserCheck }
-  ];
+  const payChart = Array.isArray(overview?.chartData) && overview.chartData.length
+    ? overview.chartData
+    : ['May 28', 'May 29', 'May 30', 'May 31', 'Jun 1', 'Jun 2', 'Jun 3', 'Jun 4'].map((name) => ({ name, volume: 0, fees: 0 }));
 
   const OverviewPage = () => (
-    <div className="space-y-5">
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="Available" value={money(summary.availableForWithdrawal, currency)} detail="Ready for payout" icon={Wallet} tone="border-blue-200 bg-blue-50 text-blue-700" />
-        <StatCard label="Paid volume" value={money(summary.paidVolume, currency)} detail={`${transactions.length} successful payments`} icon={Banknote} tone="border-emerald-200 bg-emerald-50 text-emerald-700" />
-        <StatCard label="Conversion" value={`${conversionRate}%`} detail={`${paidLinks}/${totalLinks || 0} links paid`} icon={BadgeCheck} tone="border-amber-200 bg-amber-50 text-amber-700" />
-        <StatCard label="Avg ticket" value={money(averageTicket, currency)} detail={`${money(summary.fees, currency)} platform fees`} icon={Activity} tone="border-rose-200 bg-rose-50 text-rose-700" />
+    <div className="space-y-4">
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1fr_360px]">
+        <section className={`${pageCard} relative min-h-[250px] overflow-hidden bg-[#fbfaff] p-6 sm:p-7`}>
+          <HeroCardGraphic />
+          <div className="relative z-10 max-w-[520px]">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="rounded-full bg-[#111827] px-2 py-0.5 text-[8px] font-extrabold uppercase tracking-wide text-white">{profile.status || 'inactive'}</span>
+              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[9px] font-extrabold uppercase tracking-wide text-emerald-600">
+                <BadgeCheck className="h-3 w-3" /> {verificationStatus}
+              </span>
+            </div>
+            <h1 className={`mt-5 font-display text-[40px] font-extrabold leading-none tracking-normal sm:text-[48px] ${inkText}`}>
+              Tiwlo <span className="text-[#4f32f5]">Pay</span>
+            </h1>
+            <p className={`mt-4 font-display text-[17px] font-extrabold ${inkText}`}>Secure Payments. Limitless Possibilities.</p>
+            <p className={`mt-3 max-w-[460px] text-[13px] font-medium leading-6 ${mutedText}`}>
+              Create hosted payment links, manage invoices, and receive payouts seamlessly with enterprise-grade security.
+            </p>
+            <div className="mt-7 flex flex-col gap-3 sm:flex-row">
+              <NavLink to="/tiwlo-pay/links" className="inline-flex h-10 items-center justify-center gap-2 rounded-[7px] bg-[#4f32f5] px-5 text-[12px] font-extrabold text-white hover:bg-[#4328df]">
+                Create Payment Link <ChevronRight className="h-4 w-4" />
+              </NavLink>
+              <RouterLink to="/documentation" className="inline-flex h-10 items-center justify-center gap-2 rounded-[7px] border border-[#dbe3ef] bg-white px-5 text-[12px] font-extrabold text-[#334155] hover:border-[#b9c7d9]">
+                View Documentation <ExternalLink className="h-4 w-4" />
+              </RouterLink>
+            </div>
+          </div>
+        </section>
+
+        <QuickActionPanel />
       </div>
 
-      <div className="grid grid-cols-1 gap-5 xl:grid-cols-[1.25fr_0.75fr]">
-        <section className="rounded border border-[#DDE3EA] bg-white p-5">
-          <SectionTitle title="Payment volume" detail="Paid volume and platform fees over time." icon={Activity} />
-          <div className="h-[320px]">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <StatCard label="Available for Payout" value={money(summary.availableForWithdrawal, currency)} detail="Ready for payout" icon={Wallet} tone="border-[#eee7ff] bg-[#f5f0ff] text-[#5b35f5]" />
+        <StatCard label="Paid Volume" value={money(summary.paidVolume, currency)} detail={`${transactions.length} successful payments`} icon={Activity} tone="border-emerald-100 bg-emerald-50 text-emerald-600" />
+        <StatCard label="Conversion Rate" value={`${conversionRate}%`} detail={`${paidLinks}/${totalLinks || 0} links paid`} icon={BadgeCheck} tone="border-amber-100 bg-amber-50 text-amber-600" />
+        <StatCard label="Avg Ticket" value={money(averageTicket, currency)} detail={`${money(summary.fees, currency)} platform fees`} icon={Receipt} tone="border-rose-100 bg-rose-50 text-rose-600" />
+      </div>
+
+      <VerificationNotice isLive={isLive} status={profile.status || 'inactive'} verificationStatus={verificationStatus} />
+
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.25fr_0.82fr_0.78fr]">
+        <section className={`${pageCard} p-5`}>
+          <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h2 className={`font-display text-[14px] font-extrabold ${inkText}`}>Payment Volume</h2>
+              <p className={`mt-1 text-[11px] font-medium ${mutedText}`}>Paid volume and platform fees over time.</p>
+              <p className={`mt-5 font-display text-[22px] font-extrabold leading-none ${inkText}`}>{money(summary.paidVolume || 0, currency)}</p>
+              <p className={`mt-1 text-[11px] font-medium ${mutedText}`}>Total Paid Volume</p>
+            </div>
+            <button type="button" className="h-8 rounded-[7px] border border-[#e8edf7] bg-white px-3 text-[11px] font-extrabold text-[#334155]">Last 7 Days</button>
+          </div>
+          <div className="h-[250px]">
             {loading ? (
               <div className="flex h-full items-center justify-center text-[13px] font-bold text-gray-400">Loading chart</div>
             ) : (
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={overview?.chartData || []} margin={{ left: -18, right: 8, top: 8, bottom: 0 }}>
+                <AreaChart data={payChart} margin={{ left: -24, right: 8, top: 8, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="tiwloPayVolumeFill" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#4f32f5" stopOpacity={0.14} />
+                      <stop offset="100%" stopColor="#4f32f5" stopOpacity={0} />
+                    </linearGradient>
+                    <linearGradient id="tiwloPayFeesFill" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#7c3aed" stopOpacity={0.08} />
+                      <stop offset="100%" stopColor="#7c3aed" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
                   <CartesianGrid stroke="#EEF2F7" vertical={false} />
                   <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#64748B' }} />
-                  <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#64748B' }} />
-                  <Tooltip contentStyle={{ border: '1px solid #E5E7EB', borderRadius: 6, fontSize: 12 }} />
-                  <Area type="monotone" dataKey="volume" stroke="#2563EB" fill="#DBEAFE" strokeWidth={2} />
-                  <Area type="monotone" dataKey="fees" stroke="#059669" fill="#D1FAE5" strokeWidth={2} />
+                  <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#64748B' }} width={34} />
+                  <Tooltip contentStyle={{ border: '1px solid #e8edf7', borderRadius: 8, fontSize: 12 }} />
+                  <Area type="monotone" dataKey="volume" stroke="#4f32f5" fill="url(#tiwloPayVolumeFill)" strokeWidth={2} dot={{ r: 2, fill: '#4f32f5' }} activeDot={{ r: 4 }} />
+                  <Area type="monotone" dataKey="fees" stroke="#7c3aed" fill="url(#tiwloPayFeesFill)" strokeWidth={1.5} strokeDasharray="4 4" dot={false} />
                 </AreaChart>
               </ResponsiveContainer>
             )}
           </div>
         </section>
 
-        <section className="rounded border border-[#DDE3EA] bg-white p-5">
-          <SectionTitle title="Readiness" detail="What is enabled for this merchant." icon={ShieldCheck} />
-          <div className="space-y-3">
-            {[
-              { label: 'Merchant account', value: profile.status || 'inactive', icon: Building2 },
-              { label: 'ID verification', value: verificationStatus, icon: UserCheck },
-              { label: 'Payment methods', value: `${gateways.length} enabled`, icon: CreditCard },
-              { label: 'Default expiry', value: `${profileForm.paymentLinkExpiryDays || 14} days`, icon: Clock3 },
-              { label: 'API capability', value: isLive ? 'enabled' : 'locked', icon: KeyRound }
-            ].map((item) => {
-              const Icon = item.icon;
-              return (
-                <div key={item.label} className="flex items-center justify-between gap-3 rounded border border-[#E5E7EB] p-3">
-                  <div className="flex min-w-0 items-center gap-3">
-                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded border border-[#DDE3EA] bg-[#F9FAFB] text-[#4B5563]">
-                      <Icon className="h-4 w-4" />
-                    </div>
-                    <div className="min-w-0">
-                      <p className="text-[12px] font-bold text-[#111827]">{item.label}</p>
-                      <p className="truncate text-[12px] text-[#6B7280]">{item.value}</p>
-                    </div>
-                  </div>
-                  <StatusPill status={String(item.value).split(' ')[0]} />
-                </div>
-              );
-            })}
+        <section className={`${pageCard} p-5`}>
+          <div className="mb-4 flex items-start gap-3">
+            <span className="grid h-8 w-8 shrink-0 place-items-center rounded-[7px] bg-[#f1ecff] text-[#5b35f5]">
+              <ShieldCheck className="h-4 w-4" />
+            </span>
+            <div>
+              <h2 className={`font-display text-[14px] font-extrabold ${inkText}`}>Merchant Readiness</h2>
+              <p className={`mt-1 text-[11px] font-medium ${mutedText}`}>Complete the steps to start receiving payments.</p>
+            </div>
+          </div>
+          <div className="space-y-2.5">
+            <ReadinessRow icon={Building2} label="Merchant account" detail={profile.status || 'Inactive'} status={isLive ? 'ok' : 'warn'} />
+            <ReadinessRow icon={CreditCard} label="Payment methods" detail={`${gateways.length} enabled`} status={gateways.length ? 'ok' : 'locked'} />
+            <ReadinessRow icon={Clock3} label="Default expiry" detail={`${profileForm.paymentLinkExpiryDays || 14} days`} status="ok" />
+            <ReadinessRow icon={KeyRound} label="API capability" detail={isLive ? 'Enabled' : 'Locked'} status={isLive ? 'ok' : 'locked'} />
           </div>
         </section>
+
+        <SecurityCard />
       </div>
 
-      <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
-        <section className="overflow-hidden rounded border border-[#DDE3EA] bg-white">
-          <div className="border-b border-[#E5E7EB] p-5">
-            <SectionTitle title="Recent payments" detail="Latest successful or attempted customer payments." icon={ListChecks} />
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1fr_1.05fr]">
+        <section className={`${pageCard} overflow-hidden`}>
+          <div className="border-b border-[#edf1f7] p-5">
+            <SectionTitle title="Recent Payments" detail="Latest successful or attempted customer payments." icon={FileText} />
           </div>
-          <div className="divide-y divide-[#EEF2F7]">
-            {transactions.length === 0 && <EmptyState icon={CreditCard} title="No payments yet" detail="Payments will appear here after customers pay an active link." />}
+          <div className="divide-y divide-[#edf1f7]">
+            {transactions.length === 0 && (
+              <div className="flex min-h-[190px] flex-col items-center justify-center px-6 py-8 text-center">
+                <div className="grid h-11 w-11 place-items-center rounded-[8px] border border-[#edf1f7] bg-white text-[#94a3b8]">
+                  <FileText className="h-5 w-5" />
+                </div>
+                <p className={`mt-4 text-[13px] font-extrabold ${inkText}`}>No payments yet</p>
+                <p className={`mt-1 max-w-[360px] text-[11px] font-medium ${mutedText}`}>Payments will appear here after customers pay an active link.</p>
+                <NavLink to="/tiwlo-pay/invoices" className="mt-4 text-[12px] font-extrabold text-[#4f32f5]">View all payments</NavLink>
+              </div>
+            )}
             {transactions.slice(0, 7).map((transaction: any) => (
-              <div key={transaction.id} className="grid grid-cols-1 gap-2 px-5 py-4 md:grid-cols-[1fr_auto_auto] md:items-center">
-                <div className="min-w-0">
-                  <p className="truncate text-[13px] font-bold text-[#111827]">{transaction.reference}</p>
-                  <p className="truncate text-[12px] text-[#6B7280]">{transaction.customerName || transaction.customerEmail || transaction.provider}</p>
+              <div key={transaction.id} className="grid grid-cols-1 gap-2 px-5 py-3.5 md:grid-cols-[1fr_auto_auto] md:items-center">
+                <div className="flex min-w-0 items-center gap-3">
+                  <span className="grid h-9 w-9 shrink-0 place-items-center rounded-[8px] bg-[#f1ecff] text-[#5b35f5]">
+                    <Receipt className="h-4 w-4" />
+                  </span>
+                  <div className="min-w-0">
+                    <p className={`truncate text-[13px] font-extrabold ${inkText}`}>{transaction.reference}</p>
+                    <p className={`truncate text-[11px] font-medium ${mutedText}`}>{transaction.customerName || transaction.customerEmail || transaction.provider}</p>
+                  </div>
                 </div>
                 <StatusPill status={transaction.status} />
-                <p className="text-[13px] font-bold text-[#111827]">{money(transaction.amount, transaction.currency)}</p>
+                <p className={`text-[13px] font-extrabold ${inkText}`}>{money(transaction.amount, transaction.currency)}</p>
               </div>
             ))}
           </div>
         </section>
 
-        <section className="overflow-hidden rounded border border-[#DDE3EA] bg-white">
-          <div className="border-b border-[#E5E7EB] p-5">
-            <SectionTitle title="Gateway routing" detail="Main server payment methods available to Tiwlo Pay checkout." icon={CreditCard} />
+        <section className={`${pageCard} overflow-hidden`}>
+          <div className="border-b border-[#edf1f7] p-5">
+            <SectionTitle title="Gateway Routing" detail="Main server payment methods available to Tiwlo Pay checkout." icon={Link2} />
           </div>
-          <div className="divide-y divide-[#EEF2F7]">
+          <div className="divide-y divide-[#edf1f7]">
             {gateways.length === 0 && <EmptyState icon={CreditCard} title="No gateway enabled" detail="Enable Stripe, PayPal, bKash, or another provider from admin payment settings." />}
             {gateways.map((gateway: any) => (
-              <div key={gateway.id} className="flex items-center justify-between gap-3 px-5 py-4">
+              <div key={gateway.id} className="flex items-center justify-between gap-3 px-5 py-3.5">
                 <div className="flex min-w-0 items-center gap-3">
-                  <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded border ${providerClass(gateway.provider)}`}>
-                    <CreditCard className="h-4 w-4" />
-                  </div>
+                  <GatewayIcon provider={gateway.provider} />
                   <div className="min-w-0">
-                    <p className="truncate text-[13px] font-bold text-[#111827]">{gateway.name}</p>
-                    <p className="truncate text-[12px] text-[#6B7280]">{gateway.provider} / {gateway.mode}</p>
+                    <p className={`truncate text-[13px] font-extrabold ${inkText}`}>{gateway.name}</p>
+                    <p className={`truncate text-[11px] font-medium ${mutedText}`}>{gateway.provider} / {gateway.mode}</p>
                   </div>
                 </div>
-                <StatusPill status={gateway.status} />
+                <div className="flex items-center gap-3">
+                  <StatusPill status={gateway.status} />
+                  <ChevronRight className="h-4 w-4 text-[#94a3b8]" />
+                </div>
               </div>
             ))}
           </div>
@@ -924,61 +1107,14 @@ export default function TiwloPay() {
 
   if (loading && !overview) {
     return (
-      <div className="mx-auto flex min-h-[520px] max-w-[1220px] items-center justify-center rounded-md border border-[#d9e1ec] bg-white text-[13px] font-bold text-gray-500 shadow-[0_1px_2px_rgba(3,27,78,0.04)]">
+      <div className="mx-auto flex min-h-[520px] max-w-[1220px] items-center justify-center rounded-[8px] border border-[#e8edf7] bg-white text-[13px] font-bold text-gray-500">
         <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> Loading Tiwlo Pay
       </div>
     );
   }
 
   return (
-    <div className="mx-auto max-w-[1220px] space-y-5 pb-12">
-      <section className="rounded-md border border-[#d9e1ec] bg-white shadow-[0_1px_2px_rgba(3,27,78,0.04)]">
-        <div className="flex flex-col gap-5 border-b border-[#E5E7EB] p-5 xl:flex-row xl:items-start xl:justify-between">
-          <div className="flex items-start gap-3">
-            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded border border-blue-100 bg-blue-50 text-blue-600">
-              <Wallet className="h-6 w-6" />
-            </div>
-            <div>
-              <div className="flex flex-wrap items-center gap-2">
-                <h1 className="text-2xl font-bold text-[#111827]">Tiwlo Pay</h1>
-                <StatusPill status={isLive ? 'active' : profile.status || 'inactive'} />
-                <StatusPill status={verificationStatus} />
-              </div>
-              <p className="mt-2 max-w-3xl text-sm leading-6 text-[#4B5563]">
-                {profile.companyName || profile.displayName || 'Merchant account'} can create hosted payment links, invoice customers, route checkout through enabled gateways, and request payouts after admin-approved ID verification.
-              </p>
-            </div>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <button type="button" onClick={loadOverview} className="flex items-center gap-2 rounded border border-[#DDE3EA] bg-white px-3 py-2 text-[12px] font-bold text-[#374151] hover:border-blue-400">
-              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> Refresh
-            </button>
-            <RouterLink to="/billing" className="flex items-center gap-2 rounded border border-[#DDE3EA] bg-white px-3 py-2 text-[12px] font-bold text-[#374151] hover:border-blue-400">
-              <Receipt className="h-4 w-4" /> Billing
-            </RouterLink>
-            <NavLink to="/tiwlo-pay/links" className="flex items-center gap-2 rounded bg-[#0069ff] px-3 py-2 text-[12px] font-bold text-white hover:bg-[#0056cc]">
-              <Plus className="h-4 w-4" /> New link
-            </NavLink>
-          </div>
-        </div>
-        <div className="flex gap-2 overflow-x-auto p-3">
-          {navItems.map((item) => {
-            const Icon = item.icon;
-            return (
-              <NavLink
-                key={item.path}
-                to={item.path}
-                className={({ isActive: active }) => `flex shrink-0 items-center gap-2 rounded border px-3 py-2 text-[12px] font-bold ${active ? 'border-[#111827] bg-[#111827] text-white' : 'border-[#DDE3EA] bg-white text-[#4B5563] hover:border-blue-400'}`}
-              >
-                <Icon className="h-4 w-4" /> {item.label}
-              </NavLink>
-            );
-          })}
-        </div>
-      </section>
-
-      <VerificationNotice isLive={isLive} status={profile.status || 'inactive'} verificationStatus={verificationStatus} />
-
+    <div className="mx-auto max-w-[1220px] space-y-4 pb-12">
       {(error || notice) && (
         <div className={`flex items-center gap-2 rounded border px-4 py-3 text-[13px] font-bold ${error ? 'border-red-100 bg-red-50 text-red-700' : 'border-emerald-100 bg-emerald-50 text-emerald-700'}`}>
           {error ? <AlertCircle className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
