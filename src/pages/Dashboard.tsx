@@ -39,6 +39,7 @@ import {
   notifyDataRefresh,
   settleUsageBillingWithApi
 } from '../lib/tiwloApi';
+import { countryByCode } from '../lib/countries';
 import { useCurrency } from '../lib/useCurrency';
 
 interface DashboardProps {
@@ -60,6 +61,7 @@ interface DashboardResource {
   specs?: string;
   createdAt?: string;
   monthlyCost?: number;
+  metadata?: Record<string, any> | null;
 }
 
 interface DashboardDroplet {
@@ -68,6 +70,7 @@ interface DashboardDroplet {
   ip: string;
   status: 'active' | 'off' | 'restarting';
   region: string;
+  countryCode?: string;
   specs?: string;
   createdAt?: string;
 }
@@ -82,9 +85,43 @@ interface MetricItem {
   graph: Array<{ value: number }>;
 }
 
-const card = 'rounded-[8px] border border-[#e8eef7] bg-white shadow-[0_14px_38px_rgba(15,23,42,0.045)]';
+const card = 'rounded-[8px] border border-[#e8eef7] bg-white';
 const textInk = 'text-[#071437]';
 const textMuted = 'text-[#667692]';
+
+const REGION_COUNTRY_HINTS: Record<string, string> = {
+  bangladesh: 'BD',
+  dhaka: 'BD',
+  bd: 'BD',
+  india: 'IN',
+  chennai: 'IN',
+  mumbai: 'IN',
+  delhi: 'IN',
+  bangalore: 'IN',
+  bengaluru: 'IN',
+  singapore: 'SG',
+  sg: 'SG',
+  tokyo: 'JP',
+  japan: 'JP',
+  sydney: 'AU',
+  australia: 'AU',
+  london: 'GB',
+  uk: 'GB',
+  england: 'GB',
+  frankfurt: 'DE',
+  germany: 'DE',
+  amsterdam: 'NL',
+  netherlands: 'NL',
+  toronto: 'CA',
+  canada: 'CA',
+  newyork: 'US',
+  'new york': 'US',
+  california: 'US',
+  usa: 'US',
+  us: 'US',
+  nyc: 'US',
+  sfo: 'US'
+};
 
 function paidSafe(invoices: any[]) {
   return invoices
@@ -104,6 +141,35 @@ function uptimeLabel(value?: string, status?: string) {
   const hours = elapsedHours % 24;
   const minutes = Math.max(2, Math.floor((elapsedHours * 7) % 60));
   return `${days}d ${hours}h ${minutes}m`;
+}
+
+function countryFlagFromCode(code?: string) {
+  return countryByCode(code || 'BD');
+}
+
+function inferCountryCode(resource: DashboardResource | DashboardDroplet) {
+  const metadata = (resource as DashboardResource).metadata || {};
+  const direct = String(
+    metadata.countryCode ||
+    metadata.country ||
+    metadata.location?.countryCode ||
+    metadata.location?.country ||
+    ''
+  ).trim().toUpperCase();
+  if (/^[A-Z]{2}$/.test(direct)) return direct;
+
+  const region = String(resource.region || '').toLowerCase();
+  for (const [needle, code] of Object.entries(REGION_COUNTRY_HINTS)) {
+    if (region.includes(needle)) return code;
+  }
+
+  const ip = String(resource.ip || '').trim();
+  if (/^(103\.|118\.|119\.30\.|123\.49\.|180\.211\.|202\.4\.)/.test(ip)) return 'BD';
+  if (/^(14\.|27\.|49\.|103\.21\.|106\.|117\.|122\.|139\.|152\.|157\.|202\.)/.test(ip)) return 'IN';
+  if (/^(8\.|23\.|24\.|35\.|44\.|52\.|54\.|66\.|67\.|68\.|69\.|70\.|72\.|73\.|96\.|104\.)/.test(ip)) return 'US';
+  if (/^(43\.|101\.|103\.1\.|110\.|116\.|121\.|122\.11\.|128\.199\.)/.test(ip)) return 'SG';
+
+  return 'BD';
 }
 
 function TinySparkline({ data, color }: { data: Array<{ value: number }>; color: string }) {
@@ -136,12 +202,10 @@ function TinySparkline({ data, color }: { data: Array<{ value: number }>; color:
 
 function TopBackgroundArt() {
   return (
-    <div className="pointer-events-none absolute inset-0 overflow-hidden rounded-[10px]">
-      <div className="absolute left-[34%] top-[68px] h-[138px] w-[520px] rotate-[-8deg] rounded-[100%] bg-[#dfe8ff]/70 blur-[1px]" />
-      <div className="absolute left-[43%] top-[86px] h-[118px] w-[360px] rotate-[-8deg] rounded-[100%] bg-[#f6f8ff]" />
-      <div className="absolute left-[46%] top-[84px] h-[150px] w-[190px] bg-[radial-gradient(#cad9ff_1px,transparent_1.3px)] opacity-75 [background-size:7px_7px] [mask-image:radial-gradient(ellipse_at_center,black_15%,transparent_72%)]" />
-      <div className="absolute left-[13%] top-[18px] h-[210px] w-[720px] rounded-full border border-[#e9effa]/70" />
-      <div className="absolute left-[21%] top-[38px] h-[180px] w-[600px] rounded-full border border-[#f0f4fb]" />
+    <div className="pointer-events-none absolute inset-0 hidden overflow-hidden rounded-[10px] md:block">
+      <div className="absolute left-[34%] top-[62px] h-[142px] w-[540px] rotate-[-7deg] rounded-[100%] bg-gradient-to-r from-transparent via-[#edf3ff] to-transparent" />
+      <div className="absolute left-[44%] top-[88px] h-[126px] w-[250px] bg-[radial-gradient(#c8d7ff_1px,transparent_1.4px)] opacity-70 [background-size:8px_8px] [mask-image:radial-gradient(ellipse_at_center,black_16%,transparent_74%)]" />
+      <div className="absolute left-[24%] top-[24px] h-[188px] w-[680px] rounded-full border border-[#eef3fb]" />
     </div>
   );
 }
@@ -158,7 +222,7 @@ function WelcomeSection() {
         </p>
         <Link
           to="/droplets/create"
-          className="mt-7 inline-flex h-11 items-center gap-2 rounded-[7px] bg-gradient-to-b from-[#1d68ff] to-[#0052e6] px-5 text-[13px] font-extrabold text-white shadow-[0_14px_24px_rgba(0,94,255,0.28)] transition hover:brightness-105"
+          className="mt-7 inline-flex h-11 items-center gap-2 rounded-[7px] bg-gradient-to-b from-[#1d68ff] to-[#0052e6] px-5 text-[13px] font-extrabold text-white transition hover:brightness-105"
         >
           Create New
           <ChevronDown className="h-4 w-4" />
@@ -183,7 +247,7 @@ function CreditCard({ creditBalance, money, creditEmpty }: { creditBalance: numb
             {creditEmpty ? 'Add credit to resume new orders' : 'Available for new orders'}
           </p>
         </div>
-        <div className="grid h-[58px] w-[58px] shrink-0 place-items-center rounded-[11px] bg-gradient-to-br from-[#2f7bff] to-[#0d43f2] text-white shadow-[0_16px_30px_rgba(0,82,255,0.35)]">
+        <div className="grid h-[58px] w-[58px] shrink-0 place-items-center rounded-[11px] bg-gradient-to-br from-[#2f7bff] to-[#0d43f2] text-white">
           <Wallet className="h-7 w-7" />
         </div>
       </div>
@@ -202,7 +266,7 @@ function QuickAccess() {
   return (
     <section className={`${card} min-h-[150px] p-5`}>
       <h2 className={`mb-4 font-display text-[15px] font-extrabold ${textInk}`}>Quick Access</h2>
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         {actions.map((action) => (
           <Link
             key={action.label}
@@ -224,7 +288,7 @@ function MetricCard({ item, loading }: { item: MetricItem; loading: boolean; key
   return (
     <Link
       to={item.link}
-      className={`${card} flex h-[78px] min-w-0 items-center justify-between gap-2 px-4 transition hover:-translate-y-0.5 hover:border-blue-200 hover:shadow-[0_18px_34px_rgba(37,99,235,0.08)]`}
+      className={`${card} flex h-[78px] min-w-0 items-center justify-between gap-2 px-4 transition hover:border-blue-200`}
     >
       <div className="flex min-w-0 items-center gap-3">
         <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-[9px] ${item.iconBg}`}>
@@ -267,13 +331,13 @@ function ResourceOverview({
         </button>
       </div>
 
-      <div className="grid grid-cols-[182px_1fr] gap-5 px-6 pb-5 pt-1">
+      <div className="grid grid-cols-1 gap-5 px-5 pb-5 pt-1 sm:grid-cols-[182px_1fr] sm:px-6">
         <div className="flex flex-col items-center">
           <div
-            className="grid h-[154px] w-[154px] place-items-center rounded-full p-[14px] shadow-[0_12px_28px_rgba(37,99,235,0.16)]"
+            className="grid h-[154px] w-[154px] place-items-center rounded-full p-[14px]"
             style={{ background: `conic-gradient(#1b63f2 0 ${coverageRatio}%, #cfdcff ${coverageRatio}% 100%)` }}
           >
-            <div className="grid h-full w-full place-items-center rounded-full bg-white shadow-[inset_0_0_0_1px_#edf2fb]">
+            <div className="grid h-full w-full place-items-center rounded-full border border-[#edf2fb] bg-white">
               <span className={`font-display text-[33px] font-extrabold leading-none ${textInk}`}>{coverageRatio}%</span>
             </div>
           </div>
@@ -302,12 +366,12 @@ function ResourceOverview({
         </div>
       </div>
 
-      <div className="grid grid-cols-2 border-t border-[#eef3f8] bg-[#fbfdff]">
+      <div className="grid grid-cols-1 border-t border-[#eef3f8] bg-[#fbfdff] sm:grid-cols-2">
         <div className="px-6 py-5">
           <p className={`text-[12px] font-bold ${textMuted}`}>Outstanding</p>
           <p className="mt-2 font-display text-[18px] font-extrabold text-rose-600">{money(outstanding)}</p>
         </div>
-        <div className="border-l border-[#eef3f8] px-6 py-5">
+        <div className="border-t border-[#eef3f8] px-6 py-5 sm:border-l sm:border-t-0">
           <p className={`text-[12px] font-bold ${textMuted}`}>Due Now</p>
           <p className="mt-2 font-display text-[18px] font-extrabold text-emerald-600">{money(dueAmount)}</p>
         </div>
@@ -325,7 +389,7 @@ function AnalyticsTooltip({ active, payload, label, money }: any) {
   if (!active || !payload?.length) return null;
 
   return (
-    <div className="rounded-[8px] border border-[#e8eef7] bg-white px-4 py-3 shadow-[0_18px_44px_rgba(15,23,42,0.14)]">
+    <div className="rounded-[8px] border border-[#e8eef7] bg-white px-4 py-3">
       <p className={`mb-2 text-[12px] font-extrabold ${textInk}`}>{label}</p>
       {payload.map((entry: any) => (
         <div key={entry.dataKey} className="flex items-center justify-between gap-5 text-[12px]">
@@ -419,18 +483,18 @@ function AnalyticsOverview({
         </ResponsiveContainer>
       </div>
 
-      <div className="grid grid-cols-3 border-t border-[#eef3f8] bg-[#fbfdff]">
+      <div className="grid grid-cols-1 border-t border-[#eef3f8] bg-[#fbfdff] sm:grid-cols-3">
         <div className="px-5 py-4">
           <p className={`text-[12px] font-bold ${textMuted}`}>Total Spend</p>
           <p className={`mt-1 font-display text-[17px] font-extrabold ${textInk}`}>{money(totalSpend)}</p>
           <p className="mt-1 text-[12px] font-extrabold text-emerald-600">+ 12.5%</p>
         </div>
-        <div className="border-l border-[#eef3f8] px-5 py-4">
+        <div className="border-t border-[#eef3f8] px-5 py-4 sm:border-l sm:border-t-0">
           <p className={`text-[12px] font-bold ${textMuted}`}>Total Invoices</p>
           <p className={`mt-1 font-display text-[17px] font-extrabold ${textInk}`}>{totalInvoices}</p>
           <p className="mt-1 text-[12px] font-extrabold text-emerald-600">+ 8.2%</p>
         </div>
-        <div className="border-l border-[#eef3f8] px-5 py-4">
+        <div className="border-t border-[#eef3f8] px-5 py-4 sm:border-l sm:border-t-0">
           <p className={`text-[12px] font-bold ${textMuted}`}>Average per Invoice</p>
           <p className={`mt-1 font-display text-[17px] font-extrabold ${textInk}`}>{money(averageInvoice)}</p>
           <p className="mt-1 text-[12px] font-extrabold text-emerald-600">+ 4.3%</p>
@@ -520,6 +584,17 @@ function ServiceHealth({ firewallCount, kubernetesCount }: { firewallCount: numb
   );
 }
 
+function DropletCountryBadge({ droplet }: { droplet: DashboardDroplet }) {
+  const country = countryFlagFromCode(droplet.countryCode || inferCountryCode(droplet));
+
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-[6px] border border-[#e8eef7] bg-white px-2 py-1 text-[11px] font-extrabold text-[#32415f]">
+      <span className="text-[13px] leading-none">{country.flag}</span>
+      <span>{country.code}</span>
+    </span>
+  );
+}
+
 function DropletsTable({ droplets }: { droplets: DashboardDroplet[] }) {
   return (
     <section className={`${card} overflow-hidden`}>
@@ -531,7 +606,40 @@ function DropletsTable({ droplets }: { droplets: DashboardDroplet[] }) {
         </Link>
       </div>
 
-      <div className="overflow-x-auto">
+      <div className="space-y-3 px-4 pb-4 md:hidden">
+        {droplets.length > 0 ? droplets.slice(0, 5).map((droplet) => (
+          <div key={droplet.id} className="rounded-[8px] border border-[#eef3f8] bg-white p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                  <span className="truncate font-extrabold text-blue-600">{droplet.name}</span>
+                </div>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <span className={`font-mono text-[12px] font-semibold ${textInk}`}>{droplet.ip}</span>
+                  <DropletCountryBadge droplet={droplet} />
+                </div>
+                <p className={`mt-2 text-[12px] font-semibold ${textMuted}`}>{droplet.region || 'Chennai, IN'} / {uptimeLabel(droplet.createdAt, droplet.status)}</p>
+              </div>
+              <span className={`shrink-0 rounded-[5px] px-2 py-1 text-[10px] font-extrabold ${
+                droplet.status === 'active'
+                  ? 'bg-emerald-50 text-emerald-600'
+                  : 'bg-slate-100 text-slate-500'
+              }`}>
+                {droplet.status === 'active' ? 'RUNNING' : 'OFF'}
+              </span>
+            </div>
+          </div>
+        )) : (
+          <div className="rounded-[8px] border border-[#eef3f8] px-5 py-8 text-center">
+            <Server className="mx-auto mb-3 h-9 w-9 text-slate-300" />
+            <p className={`font-display text-[15px] font-extrabold ${textInk}`}>No active droplets found</p>
+            <p className={`mt-1 text-[12px] font-bold ${textMuted}`}>Create a virtual machine to see it here.</p>
+          </div>
+        )}
+      </div>
+
+      <div className="hidden overflow-x-auto md:block">
         <table className="w-full min-w-[640px] text-left">
           <thead className="bg-[#fbfdff]">
             <tr className={`text-[12px] font-bold ${textMuted}`}>
@@ -552,7 +660,12 @@ function DropletsTable({ droplets }: { droplets: DashboardDroplet[] }) {
                     <span className="font-extrabold text-blue-600">{droplet.name}</span>
                   </div>
                 </td>
-                <td className={`px-5 py-4 font-semibold ${textInk}`}>{droplet.ip}</td>
+                <td className="px-5 py-4">
+                  <div className="flex items-center gap-2">
+                    <span className={`font-mono text-[12px] font-semibold ${textInk}`}>{droplet.ip}</span>
+                    <DropletCountryBadge droplet={droplet} />
+                  </div>
+                </td>
                 <td className={`px-5 py-4 font-semibold ${textInk}`}>{droplet.region || 'Chennai, IN'}</td>
                 <td className="px-5 py-4">
                   <span className={`rounded-[5px] px-2 py-1 text-[10px] font-extrabold ${
@@ -609,14 +722,14 @@ function BillingCard({
         <CreditCardIcon className="h-4 w-4 text-blue-600" />
         <h2 className={`font-display text-[15px] font-extrabold ${textInk}`}>Billing Snapshot</h2>
       </div>
-      <div className="grid grid-cols-[1fr_1fr_1fr_36px] divide-x divide-[#eef3f8]">
+      <div className="grid grid-cols-1 divide-y divide-[#eef3f8] sm:grid-cols-[1fr_1fr_1fr_36px] sm:divide-x sm:divide-y-0">
         {rows.map((row) => (
-          <div key={row.label} className="pr-3 first:pl-0 [&:not(:first-child)]:pl-4">
+          <div key={row.label} className="py-3 first:pt-0 last:pb-0 sm:py-0 sm:pr-3 sm:first:pl-0 sm:[&:not(:first-child)]:pl-4">
             <p className={`text-[12px] font-bold ${textMuted}`}>{row.label}</p>
             <p className={`mt-2 whitespace-nowrap font-display text-[15px] font-extrabold ${textInk}`}>{row.value}</p>
           </div>
         ))}
-        <Link to="/billing" className="grid place-items-center pl-4 text-blue-600">
+        <Link to="/billing" className="grid place-items-center pt-3 text-blue-600 sm:pl-4 sm:pt-0">
           <CreditCardIcon className="h-5 w-5" />
         </Link>
       </div>
@@ -635,7 +748,7 @@ function ResourcesCard({ openTickets, invoiceCount }: { openTickets: number; inv
   return (
     <section className={`${card} p-5`}>
       <h2 className={`mb-4 font-display text-[15px] font-extrabold ${textInk}`}>Resources & Help</h2>
-      <div className="grid grid-cols-2 gap-x-4 gap-y-3">
+      <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
         {items.map((item, index) => (
           <Link key={`${item.path}-${index}`} to={item.path} className="flex min-w-0 items-center justify-between gap-2">
             <div className="flex min-w-0 items-center gap-3">
@@ -657,11 +770,11 @@ function ResourcesCard({ openTickets, invoiceCount }: { openTickets: number; inv
 
 function BottomCTA() {
   return (
-    <section className="relative h-[82px] overflow-hidden rounded-[8px] bg-gradient-to-r from-[#06135d] via-[#08218f] to-[#17058f] px-7 text-white shadow-[0_18px_36px_rgba(10,24,118,0.24)]">
+    <section className="relative min-h-[82px] overflow-hidden rounded-[8px] bg-gradient-to-r from-[#06135d] via-[#08218f] to-[#17058f] px-5 py-5 text-white md:px-7 md:py-0">
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_18%_50%,rgba(32,127,255,0.24),transparent_24%),radial-gradient(circle_at_74%_42%,rgba(91,61,255,0.28),transparent_34%)]" />
       <div className="absolute -bottom-24 left-[34%] h-36 w-[680px] rotate-[-4deg] rounded-[100%] border border-blue-300/14" />
       <div className="absolute -bottom-20 left-[42%] h-28 w-[520px] rotate-[-4deg] rounded-[100%] border border-white/10" />
-      <div className="relative flex h-full items-center justify-between gap-5">
+      <div className="relative flex h-full flex-col items-start justify-between gap-5 md:flex-row md:items-center">
         <div className="flex items-center gap-5">
           <span className="grid h-12 w-12 place-items-center rounded-[8px] bg-blue-500/10 text-blue-200">
             <Cloud className="h-7 w-7" />
@@ -673,7 +786,7 @@ function BottomCTA() {
         </div>
         <Link
           to="/droplets/create"
-          className="inline-flex h-11 items-center justify-center gap-2 rounded-[7px] bg-white px-7 text-[13px] font-extrabold text-blue-700 shadow-[0_12px_26px_rgba(0,0,0,0.18)]"
+          className="inline-flex h-11 items-center justify-center gap-2 rounded-[7px] bg-white px-7 text-[13px] font-extrabold text-blue-700"
         >
           Create New Server
           <ChevronRight className="h-4 w-4" />
@@ -727,6 +840,7 @@ function DashboardPage({ user, droplets, domains }: DashboardProps) {
       ip: resource.ip || 'Provisioning',
       status: String(resource.status || '').toLowerCase() === 'active' ? 'active' : 'off',
       region: resource.region || 'Chennai, IN',
+      countryCode: inferCountryCode(resource),
       specs: resource.specs,
       createdAt: resource.createdAt
     }));
@@ -753,7 +867,7 @@ function DashboardPage({ user, droplets, domains }: DashboardProps) {
   ];
 
   const metrics: MetricItem[] = [
-    { label: 'Droplets', value: dashboardDroplets.length, icon: Server, link: '/droplets', color: '#1b63f2', iconBg: 'bg-blue-50', graph: [{ value: 9 }, { value: 8 }, { value: 10 }, { value: 9 }, { value: 13 }, { value: 11 }, { value: 12 }] },
+    { label: 'Droplets', value: dashboardDroplets.length, icon: DropletIcon, link: '/droplets', color: '#1b63f2', iconBg: 'bg-blue-50', graph: [{ value: 9 }, { value: 8 }, { value: 10 }, { value: 9 }, { value: 13 }, { value: 11 }, { value: 12 }] },
     { label: 'Domains', value: domains.length, icon: Globe, link: '/domains', color: '#10b981', iconBg: 'bg-emerald-50', graph: [{ value: 5 }, { value: 5 }, { value: 6 }, { value: 5 }, { value: 7 }, { value: 6 }, { value: 9 }] },
     { label: 'Databases', value: countByType('database'), icon: Database, link: '/databases', color: '#5b21e6', iconBg: 'bg-violet-50', graph: [{ value: 2 }, { value: 2 }, { value: 3 }, { value: 2 }, { value: 4 }, { value: 3 }, { value: 5 }] },
     { label: 'Volumes', value: countByType('volume'), icon: HardDrive, link: '/volumes', color: '#d99a21', iconBg: 'bg-amber-50', graph: [{ value: 2 }, { value: 3 }, { value: 2 }, { value: 3 }, { value: 5 }, { value: 3 }, { value: 4 }] },
@@ -771,7 +885,7 @@ function DashboardPage({ user, droplets, domains }: DashboardProps) {
   ];
 
   return (
-    <div className="relative -mx-3 -my-4 min-h-[calc(100vh-4rem)] bg-[#f6f8fc] px-3 py-5 sm:-mx-5 sm:px-5 md:-mx-7 md:-my-7 md:px-7 md:py-6">
+    <div className="relative -mx-3 -my-4 min-h-[calc(100vh-4rem)] bg-white px-3 py-5 sm:-mx-5 sm:px-5 md:-mx-7 md:-my-7 md:px-7 md:py-6">
       <div className="mx-auto max-w-[1320px] space-y-5">
         <div className="relative">
           <TopBackgroundArt />
