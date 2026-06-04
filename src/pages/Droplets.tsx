@@ -166,32 +166,32 @@ function isRunning(droplet: Droplet) {
 
 function ServerTile({ droplet, small = false }: { droplet: Droplet; small?: boolean }) {
   return (
-    <div className={`relative grid shrink-0 place-items-center rounded-[18px] bg-[#eef2ff] ${small ? 'h-12 w-12' : 'h-[86px] w-[86px]'}`}>
-      <div className={`absolute rounded-[8px] border border-[#dce5ff] bg-white ${small ? 'h-6 w-7' : 'h-11 w-14'} -translate-y-1 rotate-[-17deg]`} />
-      <div className={`absolute rounded-[8px] border border-[#dce5ff] bg-[#f7f9ff] ${small ? 'h-6 w-7' : 'h-11 w-14'} translate-y-1 rotate-[-17deg]`} />
-      <Server className={`relative text-[#617085] ${small ? 'h-5 w-5' : 'h-8 w-8'}`} />
-      <span className={`absolute rounded-full border-[3px] border-white ${isRunning(droplet) ? 'bg-emerald-500' : 'bg-slate-300'} ${small ? '-right-1 -top-1 h-4 w-4' : '-right-1 top-2 h-5 w-5'}`} />
+    <div className={`relative grid shrink-0 place-items-center rounded-[16px] bg-[#eef2ff] ${small ? 'h-10 w-10' : 'h-[72px] w-[72px]'}`}>
+      <div className={`absolute rounded-[7px] border border-[#dce5ff] bg-white ${small ? 'h-5 w-6' : 'h-9 w-11'} -translate-y-1 rotate-[-17deg]`} />
+      <div className={`absolute rounded-[7px] border border-[#dce5ff] bg-[#f7f9ff] ${small ? 'h-5 w-6' : 'h-9 w-11'} translate-y-1 rotate-[-17deg]`} />
+      <Server className={`relative text-[#617085] ${small ? 'h-4 w-4' : 'h-6 w-6'}`} />
+      <span className={`absolute rounded-full border-[3px] border-white ${isRunning(droplet) ? 'bg-emerald-500' : 'bg-slate-300'} ${small ? '-right-1 -top-1 h-3.5 w-3.5' : '-right-1 top-1.5 h-[18px] w-[18px]'}`} />
     </div>
   );
 }
 
 function UsageBar({ label, value, color }: { label: string; value: number; color: string }) {
   return (
-    <div className="grid grid-cols-[42px_1fr_42px] items-center gap-4">
-      <span className={`font-display text-[15px] font-extrabold ${textInk}`}>{label}</span>
-      <div className="h-3 overflow-hidden rounded-full bg-[#e9eef7]">
+    <div className="grid grid-cols-[38px_1fr_38px] items-center gap-3">
+      <span className={`font-display text-[14px] font-extrabold ${textInk}`}>{label}</span>
+      <div className="h-2.5 overflow-hidden rounded-full bg-[#e9eef7]">
         <div className={`h-full rounded-full ${color}`} style={{ width: `${value}%` }} />
       </div>
-      <span className={`text-right font-display text-[15px] font-extrabold ${textInk}`}>{value}%</span>
+      <span className={`text-right font-display text-[14px] font-extrabold ${textInk}`}>{value}%</span>
     </div>
   );
 }
 
 function SpecBox({ value, label }: { value: string; label: string }) {
   return (
-    <div className="min-w-0 px-4 py-3 text-center">
-      <p className={`font-display text-[15px] font-extrabold ${textInk}`}>{value}</p>
-      <p className={`mt-1 text-[12px] font-semibold ${textMuted}`}>{label}</p>
+    <div className="min-w-0 px-3 py-2.5 text-center">
+      <p className={`font-display text-[14px] font-extrabold ${textInk}`}>{value}</p>
+      <p className={`mt-1 text-[11px] font-semibold ${textMuted}`}>{label}</p>
     </div>
   );
 }
@@ -217,7 +217,7 @@ function ActionButton({
       title={title}
       disabled={disabled}
       onClick={onClick}
-      className={`grid place-items-center border border-[#edf1f7] bg-white transition hover:bg-[#f8faff] disabled:cursor-not-allowed disabled:opacity-50 ${large ? 'h-14 w-14 rounded-[13px]' : 'h-10 w-10 rounded-[9px]'} ${className}`}
+      className={`grid place-items-center border border-[#edf1f7] bg-white transition hover:bg-[#f8faff] disabled:cursor-not-allowed disabled:opacity-50 ${large ? 'h-12 w-12 rounded-[12px]' : 'h-[34px] w-[34px] rounded-[8px]'} ${className}`}
     >
       {children}
     </button>
@@ -230,19 +230,19 @@ function MonitoringPanel({ droplet }: { droplet: Droplet }) {
 
   return (
     <div>
-      <h3 className={`mb-6 text-[12px] font-extrabold uppercase tracking-normal ${textMuted}`}>Monitoring (1h)</h3>
-      <div className="relative h-[128px] pl-8">
-        <div className="absolute left-0 top-0 flex h-[105px] flex-col justify-between text-[10px] font-semibold text-[#7d8ca3]">
+      <h3 className={`mb-4 text-[11px] font-extrabold uppercase tracking-normal ${textMuted}`}>Monitoring (1h)</h3>
+      <div className="relative h-[108px] pl-7">
+        <div className="absolute left-0 top-0 flex h-[88px] flex-col justify-between text-[9px] font-semibold text-[#7d8ca3]">
           <span>100%</span>
           <span>50%</span>
           <span>0%</span>
         </div>
-        <div className="absolute left-8 right-1 top-3 h-[94px] bg-[linear-gradient(to_bottom,#edf1f7_1px,transparent_1px)] [background-size:100%_34px]" />
-        <div className="absolute left-[64%] top-[30px] z-10 rounded-[6px] bg-[#7357f6] px-2 py-1 text-[11px] font-extrabold text-white">
+        <div className="absolute left-7 right-1 top-3 h-[80px] bg-[linear-gradient(to_bottom,#edf1f7_1px,transparent_1px)] [background-size:100%_28px]" />
+        <div className="absolute left-[64%] top-[25px] z-10 rounded-[6px] bg-[#7357f6] px-2 py-0.5 text-[10px] font-extrabold text-white">
           {label}%
         </div>
-        <ResponsiveContainer width="100%" height={112}>
-          <AreaChart data={data} margin={{ top: 10, right: 8, bottom: 0, left: 0 }}>
+        <ResponsiveContainer width="100%" height={96}>
+          <AreaChart data={data} margin={{ top: 8, right: 6, bottom: 0, left: 0 }}>
             <defs>
               <linearGradient id="dropletMonitorFill" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="0%" stopColor="#7357f6" stopOpacity={0.24} />
@@ -253,7 +253,7 @@ function MonitoringPanel({ droplet }: { droplet: Droplet }) {
               type="monotone"
               dataKey="value"
               stroke="#7357f6"
-              strokeWidth={2.2}
+              strokeWidth={2}
               fill="url(#dropletMonitorFill)"
               dot={false}
               isAnimationActive={false}
@@ -261,7 +261,7 @@ function MonitoringPanel({ droplet }: { droplet: Droplet }) {
           </AreaChart>
         </ResponsiveContainer>
       </div>
-      <div className={`mt-2 flex items-center gap-1 text-[12px] font-extrabold uppercase ${textMuted}`}>
+      <div className={`mt-1 flex items-center gap-1 text-[11px] font-extrabold uppercase ${textMuted}`}>
         No metrics API data <Info className="h-3.5 w-3.5" />
       </div>
     </div>
@@ -296,7 +296,7 @@ function DropletActions({
         large={!compact}
         className="text-amber-500"
       >
-        <Power className="h-5 w-5" />
+        <Power className="h-[18px] w-[18px]" />
       </ActionButton>
       <ActionButton
         title={tpanel ? 'tPanel Login' : 'Open resource portal'}
@@ -305,16 +305,16 @@ function DropletActions({
         large={!compact}
         className="text-blue-600"
       >
-        <ExternalLink className="h-5 w-5" />
+        <ExternalLink className="h-[18px] w-[18px]" />
       </ActionButton>
       <ActionButton title="Access Console" onClick={() => setSelectedDroplet(droplet)} large={!compact} className="text-slate-600">
-        <Terminal className="h-5 w-5" />
+        <Terminal className="h-[18px] w-[18px]" />
       </ActionButton>
       <ActionButton title="Destroy" onClick={() => deleteDroplet(droplet.id)} large={!compact} className="text-rose-500">
-        <Trash2 className="h-5 w-5" />
+        <Trash2 className="h-[18px] w-[18px]" />
       </ActionButton>
       {compact && (
-        <button type="button" className="grid h-10 w-8 place-items-center rounded-[8px] text-slate-400 hover:bg-[#f8faff]" title="More actions">
+        <button type="button" className="grid h-[34px] w-7 place-items-center rounded-[8px] text-slate-400 hover:bg-[#f8faff]" title="More actions">
           <MoreVertical className="h-4 w-4" />
         </button>
       )}
@@ -352,44 +352,44 @@ function FeaturedDropletCard({
 
   return (
     <section className={`${cardClass} overflow-hidden`}>
-      <div className="grid grid-cols-1 xl:grid-cols-[315px_minmax(310px,1fr)_290px_170px]">
-        <div className="p-6 md:p-7">
-          <div className="flex flex-col gap-6 sm:flex-row xl:flex-col">
-            <div className="flex items-start gap-6">
+      <div className="grid grid-cols-1 xl:grid-cols-[280px_minmax(275px,1fr)_250px_132px]">
+        <div className="p-5">
+          <div className="flex flex-col gap-5 sm:flex-row xl:flex-col">
+            <div className="flex items-start gap-5">
               <ServerTile droplet={droplet} />
               <div className="min-w-0 pt-1">
-                <h2 className={`truncate font-display text-[24px] font-extrabold leading-tight ${textInk}`}>{droplet.name}</h2>
-                <div className="mt-3 flex items-center gap-2">
-                  <span className={`h-2.5 w-2.5 rounded-full ${isRunning(droplet) ? 'bg-emerald-500' : 'bg-slate-300'}`} />
-                  <span className="text-[14px] font-extrabold text-emerald-600">{isRunning(droplet) ? 'Running' : 'Off'}</span>
+                <h2 className={`truncate font-display text-[21px] font-extrabold leading-tight ${textInk}`}>{droplet.name}</h2>
+                <div className="mt-2.5 flex items-center gap-2">
+                  <span className={`h-2 w-2 rounded-full ${isRunning(droplet) ? 'bg-emerald-500' : 'bg-slate-300'}`} />
+                  <span className="text-[13px] font-extrabold text-emerald-600">{isRunning(droplet) ? 'Running' : 'Off'}</span>
                 </div>
                 <button
                   type="button"
                   onClick={() => setSelectedDroplet(droplet)}
-                  className="mt-4 rounded-[6px] bg-[#f1ecff] px-4 py-2 text-[13px] font-extrabold text-[#5b21e6] hover:bg-[#e9ddff]"
+                  className="mt-3 rounded-[6px] bg-[#f1ecff] px-3.5 py-1.5 text-[12px] font-extrabold text-[#5b21e6] hover:bg-[#e9ddff]"
                 >
                   {planLabel(droplet)} portal
                 </button>
-                <div className="mt-3 w-fit rounded-[6px] bg-[#f5f7fb] px-4 py-2 text-[13px] font-semibold text-[#6a7486]">
+                <div className="mt-2.5 w-fit rounded-[6px] bg-[#f5f7fb] px-3.5 py-1.5 text-[12px] font-semibold text-[#6a7486]">
                   Created: {createdLabel(droplet)}
                 </div>
               </div>
             </div>
 
             <div className="sm:ml-auto sm:min-w-[210px] xl:ml-0 xl:min-w-0">
-              <p className={`text-[12px] font-extrabold uppercase tracking-normal ${textMuted}`}>IP Address</p>
-              <div className="mt-2 flex items-center gap-2">
-                <span className={`font-display text-[22px] font-extrabold ${textInk}`}>{droplet.ip}</span>
+              <p className={`text-[11px] font-extrabold uppercase tracking-normal ${textMuted}`}>IP Address</p>
+              <div className="mt-1.5 flex items-center gap-2">
+                <span className={`font-display text-[20px] font-extrabold ${textInk}`}>{droplet.ip}</span>
                 <button
                   type="button"
                   onClick={() => navigator.clipboard?.writeText(droplet.ip).catch(() => undefined)}
-                  className="grid h-8 w-8 place-items-center rounded-[7px] text-blue-600 hover:bg-blue-50"
+                  className="grid h-7 w-7 place-items-center rounded-[7px] text-blue-600 hover:bg-blue-50"
                   title="Copy IP"
                 >
                   <Copy className="h-4 w-4" />
                 </button>
               </div>
-              <div className={`mt-3 flex items-center gap-2 text-[14px] font-semibold ${textMuted}`}>
+              <div className={`mt-2.5 flex items-center gap-2 text-[13px] font-semibold ${textMuted}`}>
                 <MapPin className="h-4 w-4" />
                 {droplet.region || 'Chennai, TN, IN'}
               </div>
@@ -397,27 +397,27 @@ function FeaturedDropletCard({
           </div>
         </div>
 
-        <div className="border-t border-[#edf1f7] p-6 md:p-7 xl:border-l xl:border-t-0">
-          <h3 className={`mb-8 text-[12px] font-extrabold uppercase tracking-normal ${textMuted}`}>Resources</h3>
-          <div className="space-y-7">
+        <div className="border-t border-[#edf1f7] p-5 xl:border-l xl:border-t-0">
+          <h3 className={`mb-6 text-[11px] font-extrabold uppercase tracking-normal ${textMuted}`}>Resources</h3>
+          <div className="space-y-5">
             <UsageBar label="CPU" value={cpu} color="bg-blue-600" />
             <UsageBar label="RAM" value={ram} color="bg-[#5b21e6]" />
           </div>
-          <div className="mt-9 grid grid-cols-3 divide-x divide-[#e6ebf4] rounded-[8px] border border-[#e8edf7] bg-[#fbfcff]">
+          <div className="mt-7 grid grid-cols-3 divide-x divide-[#e6ebf4] rounded-[8px] border border-[#e8edf7] bg-[#fbfcff]">
             <SpecBox value={splitResourceValue(droplet.cpu, '1')} label="vCPU" />
             <SpecBox value={splitResourceValue(droplet.ram, '1 GB')} label="RAM" />
             <SpecBox value={splitResourceValue(droplet.disk, '25 GB')} label="Storage" />
           </div>
         </div>
 
-        <div className="border-t border-[#edf1f7] p-6 md:p-7 xl:border-l xl:border-t-0">
+        <div className="border-t border-[#edf1f7] p-5 xl:border-l xl:border-t-0">
           <MonitoringPanel droplet={droplet} />
         </div>
 
-        <div className="border-t border-[#edf1f7] p-6 md:p-7 xl:border-l xl:border-t-0">
-          <div className="mb-6 flex items-center justify-between">
-            <h3 className={`text-[12px] font-extrabold uppercase tracking-normal ${textMuted}`}>Actions</h3>
-            <MoreVertical className="h-5 w-5 text-[#6c778c]" />
+        <div className="border-t border-[#edf1f7] p-5 xl:border-l xl:border-t-0">
+          <div className="mb-5 flex items-center justify-between">
+            <h3 className={`text-[11px] font-extrabold uppercase tracking-normal ${textMuted}`}>Actions</h3>
+            <MoreVertical className="h-4 w-4 text-[#6c778c]" />
           </div>
           <DropletActions
             actionLoading={actionLoading}
@@ -454,14 +454,14 @@ function DropletsTable({
 }) {
   return (
     <section className={`${cardClass} overflow-hidden`}>
-      <div className="flex flex-col gap-4 border-b border-[#edf1f7] px-5 py-5 sm:flex-row sm:items-center sm:justify-between md:px-6">
-        <h2 className={`font-display text-[18px] font-extrabold ${textInk}`}>Droplets</h2>
+      <div className="flex flex-col gap-3 border-b border-[#edf1f7] px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+        <h2 className={`font-display text-[16px] font-extrabold ${textInk}`}>Droplets</h2>
         <div className="flex items-center gap-2">
           <label className="relative">
             <select
               value={statusFilter}
               onChange={(event) => setStatusFilter(event.target.value as (typeof statusOptions)[number])}
-              className="h-10 appearance-none rounded-[7px] border border-[#edf1f7] bg-white pl-4 pr-9 text-[13px] font-semibold capitalize text-[#43516a] outline-none hover:bg-[#f8faff]"
+              className="h-9 appearance-none rounded-[7px] border border-[#edf1f7] bg-white pl-3.5 pr-8 text-[12px] font-semibold capitalize text-[#43516a] outline-none hover:bg-[#f8faff]"
             >
               {statusOptions.map((status) => (
                 <option key={status} value={status}>{status === 'all' ? 'All Status' : status}</option>
@@ -469,13 +469,13 @@ function DropletsTable({
             </select>
             <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#617085]" />
           </label>
-          <button type="button" className="grid h-10 w-10 place-items-center rounded-[7px] border border-[#edf1f7] bg-white text-[#617085] hover:bg-[#f8faff]" title="Filter">
+          <button type="button" className="grid h-9 w-9 place-items-center rounded-[7px] border border-[#edf1f7] bg-white text-[#617085] hover:bg-[#f8faff]" title="Filter">
             <Filter className="h-4 w-4" />
           </button>
-          <button type="button" className="grid h-10 w-10 place-items-center rounded-[7px] bg-[#f3efff] text-[#5b21e6]" title="List view">
+          <button type="button" className="grid h-9 w-9 place-items-center rounded-[7px] bg-[#f3efff] text-[#5b21e6]" title="List view">
             <List className="h-4 w-4" />
           </button>
-          <button type="button" className="grid h-10 w-10 place-items-center rounded-[7px] border border-[#edf1f7] bg-white text-[#617085] hover:bg-[#f8faff]" title="Grid view">
+          <button type="button" className="grid h-9 w-9 place-items-center rounded-[7px] border border-[#edf1f7] bg-white text-[#617085] hover:bg-[#f8faff]" title="Grid view">
             <Grid2X2 className="h-4 w-4" />
           </button>
         </div>
@@ -498,12 +498,12 @@ function DropletsTable({
                 {isRunning(droplet) ? 'Running' : 'Off'}
               </span>
             </div>
-            <div className="mt-4 grid grid-cols-3 divide-x divide-[#edf1f7] rounded-[8px] border border-[#edf1f7] bg-[#fbfcff] text-center">
+            <div className="mt-3 grid grid-cols-3 divide-x divide-[#edf1f7] rounded-[8px] border border-[#edf1f7] bg-[#fbfcff] text-center">
               <SpecBox value={cpuText(droplet)} label="" />
               <SpecBox value={ramText(droplet).replace(' RAM', '')} label="RAM" />
               <SpecBox value={storageText(droplet).replace(' SSD', '')} label="SSD" />
             </div>
-            <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
               <p className={`text-[12px] font-semibold ${textMuted}`}>Uptime: {uptimeLabel(droplet)}</p>
               <DropletActions
                 compact
@@ -525,22 +525,22 @@ function DropletsTable({
       </div>
 
       <div className="hidden overflow-x-auto md:block">
-        <table className="w-full min-w-[980px] text-left">
+        <table className="w-full min-w-[940px] text-left">
           <thead className="bg-[#fbfcff]">
             <tr className={`text-[12px] font-extrabold uppercase tracking-normal ${textMuted}`}>
-              <th className="px-6 py-4">Name</th>
-              <th className="px-6 py-4">IP Address</th>
-              <th className="px-6 py-4">Resources</th>
-              <th className="px-6 py-4">Status</th>
-              <th className="px-6 py-4">Uptime</th>
-              <th className="px-6 py-4 text-right">Actions</th>
+              <th className="px-5 py-3.5">Name</th>
+              <th className="px-5 py-3.5">IP Address</th>
+              <th className="px-5 py-3.5">Resources</th>
+              <th className="px-5 py-3.5">Status</th>
+              <th className="px-5 py-3.5">Uptime</th>
+              <th className="px-5 py-3.5 text-right">Actions</th>
             </tr>
           </thead>
           <tbody>
             {droplets.length > 0 ? droplets.map((droplet) => (
-              <tr key={droplet.id} className="border-t border-[#edf1f7] text-[14px]">
-                <td className="px-6 py-5">
-                  <div className="flex items-center gap-4">
+              <tr key={droplet.id} className="border-t border-[#edf1f7] text-[13px]">
+                <td className="px-5 py-4">
+                  <div className="flex items-center gap-3">
                     <ServerTile droplet={droplet} small />
                     <div>
                       <p className="font-extrabold text-blue-600">{droplet.name}</p>
@@ -548,25 +548,25 @@ function DropletsTable({
                     </div>
                   </div>
                 </td>
-                <td className="px-6 py-5">
+                <td className="px-5 py-4">
                   <p className={`font-mono text-[13px] font-bold ${textInk}`}>{droplet.ip}</p>
                   <p className={`mt-1 text-[12px] font-semibold ${textMuted}`}>{droplet.region}</p>
                 </td>
-                <td className="px-6 py-5">
+                <td className="px-5 py-4">
                   <div className="inline-grid grid-cols-3 divide-x divide-[#edf1f7] rounded-[8px] border border-[#edf1f7] bg-white">
-                    <span className={`px-4 py-3 text-[13px] font-extrabold ${textInk}`}>{cpuText(droplet)}</span>
-                    <span className={`px-4 py-3 text-[13px] font-extrabold ${textInk}`}>{ramText(droplet)}</span>
-                    <span className={`px-4 py-3 text-[13px] font-extrabold ${textInk}`}>{storageText(droplet)}</span>
+                    <span className={`px-3 py-2.5 text-[12px] font-extrabold ${textInk}`}>{cpuText(droplet)}</span>
+                    <span className={`px-3 py-2.5 text-[12px] font-extrabold ${textInk}`}>{ramText(droplet)}</span>
+                    <span className={`px-3 py-2.5 text-[12px] font-extrabold ${textInk}`}>{storageText(droplet)}</span>
                   </div>
                 </td>
-                <td className="px-6 py-5">
+                <td className="px-5 py-4">
                   <span className="inline-flex items-center gap-2 font-extrabold text-emerald-600">
                     <span className={`h-2 w-2 rounded-full ${isRunning(droplet) ? 'bg-emerald-500' : 'bg-slate-300'}`} />
                     {isRunning(droplet) ? 'Running' : 'Off'}
                   </span>
                 </td>
-                <td className={`px-6 py-5 font-semibold ${textMuted}`}>{uptimeLabel(droplet)}</td>
-                <td className="px-6 py-5">
+                <td className={`px-5 py-4 font-semibold ${textMuted}`}>{uptimeLabel(droplet)}</td>
+                <td className="px-5 py-4">
                   <div className="flex justify-end">
                     <DropletActions
                       compact
@@ -601,34 +601,34 @@ function ResourceUsageCard({ droplet }: { droplet?: Droplet }) {
   const average = droplet ? Math.round((cpu + ram) / 2) : 0;
 
   return (
-    <section className={`${cardClass} p-5 md:p-6`}>
-      <h2 className={`mb-6 font-display text-[16px] font-extrabold ${textInk}`}>Resource Usage</h2>
-      <div className="flex flex-col items-center gap-7 sm:flex-row">
+    <section className={`${cardClass} p-5`}>
+      <h2 className={`mb-5 font-display text-[15px] font-extrabold ${textInk}`}>Resource Usage</h2>
+      <div className="flex flex-col items-center gap-6 sm:flex-row">
         <div
-          className="grid h-[150px] w-[150px] shrink-0 place-items-center rounded-full p-[13px]"
+          className="grid h-[124px] w-[124px] shrink-0 place-items-center rounded-full p-[11px]"
           style={{ background: `conic-gradient(#1b63f2 0 ${average * 0.45}%, #5b21e6 ${average * 0.45}% ${average}%, #eeeaff ${average}% 100%)` }}
         >
           <div className="grid h-full w-full place-items-center rounded-full bg-white">
             <div className="text-center">
-              <p className={`font-display text-[28px] font-extrabold leading-none ${textInk}`}>{average}%</p>
-              <p className={`mt-2 text-[13px] font-semibold ${textMuted}`}>Avg. Usage</p>
+              <p className={`font-display text-[23px] font-extrabold leading-none ${textInk}`}>{average}%</p>
+              <p className={`mt-1.5 text-[12px] font-semibold ${textMuted}`}>Avg. Usage</p>
             </div>
           </div>
         </div>
-        <div className="w-full flex-1 space-y-5">
+        <div className="w-full flex-1 space-y-4">
           <div className="flex items-center justify-between gap-5">
-            <span className="inline-flex items-center gap-3 text-[14px] font-semibold text-[#44516a]">
-              <span className="h-2.5 w-2.5 rounded-full bg-blue-600" />
+            <span className="inline-flex items-center gap-3 text-[13px] font-semibold text-[#44516a]">
+              <span className="h-2 w-2 rounded-full bg-blue-600" />
               CPU Usage
             </span>
-            <span className={`font-display text-[15px] font-extrabold ${textInk}`}>{cpu}%</span>
+            <span className={`font-display text-[14px] font-extrabold ${textInk}`}>{cpu}%</span>
           </div>
           <div className="flex items-center justify-between gap-5">
-            <span className="inline-flex items-center gap-3 text-[14px] font-semibold text-[#44516a]">
-              <span className="h-2.5 w-2.5 rounded-full bg-[#5b21e6]" />
+            <span className="inline-flex items-center gap-3 text-[13px] font-semibold text-[#44516a]">
+              <span className="h-2 w-2 rounded-full bg-[#5b21e6]" />
               RAM Usage
             </span>
-            <span className={`font-display text-[15px] font-extrabold ${textInk}`}>{ram}%</span>
+            <span className={`font-display text-[14px] font-extrabold ${textInk}`}>{ram}%</span>
           </div>
         </div>
       </div>
@@ -636,24 +636,43 @@ function ResourceUsageCard({ droplet }: { droplet?: Droplet }) {
   );
 }
 
+function MiniWorldMap() {
+  return (
+    <svg viewBox="0 0 360 180" className="h-full w-full" aria-hidden="true">
+      <rect width="360" height="180" rx="8" fill="#fbfcff" />
+      <g fill="#e9edf8">
+        <path d="M51 63l13-11 21-3 19 8 9 15-8 15-22 2-8 13-15-2-12-15 8-10z" />
+        <path d="M116 93l14 9 7 20-8 22-12 12-11-20 5-20-7-14z" />
+        <path d="M154 58l21-8 27 3 16 13-11 12-22-2-18 9-16-9z" />
+        <path d="M195 85l24-7 25 9 13 20-9 21-27 2-17-14-20 3-10-15z" />
+        <path d="M258 73l18-11 30 2 19 11-2 17-25 3-11 14-21-8-12-13z" />
+        <path d="M285 128l28 2 18 13-4 16-25 8-21-11-10-15z" />
+        <path d="M132 48l14-4 9 5-7 8-14 1z" />
+        <path d="M222 52l16-7 13 6-8 9-19 1z" />
+      </g>
+      <g stroke="#f3f6fb" strokeWidth="1">
+        <path d="M0 60h360M0 100h360M0 140h360" />
+        <path d="M80 0v180M160 0v180M240 0v180M320 0v180" />
+      </g>
+      <circle cx="241" cy="98" r="4.5" fill="#5b21e6" />
+      <circle cx="241" cy="98" r="9" fill="#5b21e6" opacity="0.12" />
+    </svg>
+  );
+}
+
 function LocationCard({ droplets }: { droplets: Droplet[] }) {
   const location = topLocation(droplets);
 
   return (
-    <section className={`${cardClass} p-5 md:p-6`}>
-      <h2 className={`mb-6 font-display text-[16px] font-extrabold ${textInk}`}>Top Location</h2>
-      <div className="grid min-h-[150px] grid-cols-1 items-center gap-5 sm:grid-cols-[1fr_150px]">
-        <div className="relative h-[145px] overflow-hidden rounded-[8px] bg-[#fbfcff]">
-          <div className="absolute left-[8%] top-[38%] h-10 w-20 rounded-[60%] bg-[#edf1fb]" />
-          <div className="absolute left-[24%] top-[28%] h-14 w-24 rounded-[55%] bg-[#edf1fb]" />
-          <div className="absolute left-[45%] top-[34%] h-12 w-28 rounded-[55%] bg-[#edf1fb]" />
-          <div className="absolute left-[68%] top-[42%] h-10 w-20 rounded-[55%] bg-[#edf1fb]" />
-          <div className="absolute left-[35%] top-[65%] h-12 w-16 rounded-[60%] bg-[#edf1fb]" />
-          <span className="absolute left-[22%] top-[58%] h-2.5 w-2.5 rounded-full bg-[#5b21e6]" />
+    <section className={`${cardClass} p-5`}>
+      <h2 className={`mb-5 font-display text-[15px] font-extrabold ${textInk}`}>Top Location</h2>
+      <div className="grid min-h-[130px] grid-cols-1 items-center gap-4 sm:grid-cols-[1fr_135px]">
+        <div className="h-[124px] overflow-hidden rounded-[8px]">
+          <MiniWorldMap />
         </div>
         <div>
-          <p className={`font-display text-[15px] font-extrabold ${textInk}`}>{location.region}</p>
-          <p className="mt-4 inline-flex rounded-[6px] bg-[#f1ecff] px-3 py-2 text-[13px] font-extrabold text-[#5b21e6]">
+          <p className={`font-display text-[14px] font-extrabold ${textInk}`}>{location.region}</p>
+          <p className="mt-3 inline-flex rounded-[6px] bg-[#f1ecff] px-3 py-1.5 text-[12px] font-extrabold text-[#5b21e6]">
             {location.count || 0} {location.count === 1 ? 'Droplet' : 'Droplets'}
           </p>
         </div>
@@ -671,18 +690,18 @@ function QuickActionsCard() {
   ];
 
   return (
-    <section className={`${cardClass} p-5 md:p-6`}>
-      <h2 className={`mb-4 font-display text-[16px] font-extrabold ${textInk}`}>Quick Actions</h2>
+    <section className={`${cardClass} p-5`}>
+      <h2 className={`mb-3 font-display text-[15px] font-extrabold ${textInk}`}>Quick Actions</h2>
       <div>
         {actions.map((action) => (
-          <Link key={action.label} to={action.path} className="flex items-center justify-between border-b border-[#edf1f7] py-3 last:border-b-0">
-            <div className="flex min-w-0 items-center gap-4">
-              <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-[8px] ${action.bg} ${action.color}`}>
-                <action.icon className="h-5 w-5" />
+          <Link key={action.label} to={action.path} className="flex items-center justify-between border-b border-[#edf1f7] py-2.5 last:border-b-0">
+            <div className="flex min-w-0 items-center gap-3">
+              <span className={`grid h-8 w-8 shrink-0 place-items-center rounded-[8px] ${action.bg} ${action.color}`}>
+                <action.icon className="h-4 w-4" />
               </span>
-              <span className={`truncate text-[14px] font-semibold ${textInk}`}>{action.label}</span>
+              <span className={`truncate text-[13px] font-semibold ${textInk}`}>{action.label}</span>
             </div>
-            <ChevronRight className="h-5 w-5 shrink-0 text-[#7b8798]" />
+            <ChevronRight className="h-4 w-4 shrink-0 text-[#7b8798]" />
           </Link>
         ))}
       </div>
@@ -778,35 +797,35 @@ export default function DropletsPage({ droplets, setDroplets }: DropletsProps) {
   };
 
   return (
-    <div className="relative -mx-3 -my-4 min-h-[calc(100vh-4rem)] bg-[#f7f9fc] px-3 py-7 sm:-mx-5 sm:px-5 md:-mx-7 md:-my-7 md:px-7 md:py-8">
-      <div className="mx-auto max-w-[1228px] space-y-5">
-        <header className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+    <div className="relative -mx-3 -my-4 min-h-[calc(100vh-4rem)] bg-[#f7f9fc] px-3 py-5 sm:-mx-5 sm:px-5 md:-mx-7 md:-my-7 md:px-7 md:py-6">
+      <div className="mx-auto max-w-[1168px] space-y-4">
+        <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div>
-            <div className="flex items-center gap-3">
-              <h1 className={`font-display text-[31px] font-extrabold leading-tight tracking-normal ${textInk}`}>Droplets</h1>
-              <span className="inline-flex h-7 min-w-7 items-center justify-center rounded-[7px] bg-[#f1ecff] px-2 text-[14px] font-extrabold text-[#5b21e6]">
+            <div className="flex items-center gap-2.5">
+              <h1 className={`font-display text-[28px] font-extrabold leading-tight tracking-normal ${textInk}`}>Droplets</h1>
+              <span className="inline-flex h-6 min-w-6 items-center justify-center rounded-[7px] bg-[#f1ecff] px-2 text-[13px] font-extrabold text-[#5b21e6]">
                 {droplets.length}
               </span>
             </div>
-            <p className={`mt-3 text-[15px] font-medium ${textMuted}`}>Manage and monitor your cloud servers.</p>
+            <p className={`mt-2 text-[14px] font-medium ${textMuted}`}>Manage and monitor your cloud servers.</p>
           </div>
 
           <div className="flex w-full flex-col gap-3 sm:flex-row lg:w-auto">
-            <div className="relative w-full sm:w-[300px]">
-              <Search className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-[#6d7788]" />
+            <div className="relative w-full sm:w-[280px]">
+              <Search className="absolute left-4 top-1/2 h-[18px] w-[18px] -translate-y-1/2 text-[#6d7788]" />
               <input
                 type="text"
                 placeholder="Search droplets..."
                 value={searchQuery}
                 onChange={(event) => setSearchQuery(event.target.value)}
-                className="h-12 w-full rounded-[8px] border border-[#e8edf7] bg-white pl-12 pr-4 text-[14px] font-medium text-[#071437] outline-none transition focus:border-blue-300"
+                className="h-11 w-full rounded-[8px] border border-[#e8edf7] bg-white pl-11 pr-4 text-[13px] font-medium text-[#071437] outline-none transition focus:border-blue-300"
               />
             </div>
             <Link
               to="/droplets/create"
-              className="inline-flex h-12 items-center justify-center gap-2 rounded-[8px] bg-gradient-to-r from-[#5b21e6] to-[#3b16d4] px-6 text-[14px] font-extrabold text-white transition hover:brightness-105"
+              className="inline-flex h-11 items-center justify-center gap-2 rounded-[8px] bg-gradient-to-r from-[#5b21e6] to-[#3b16d4] px-5 text-[13px] font-extrabold text-white transition hover:brightness-105"
             >
-              <Plus className="h-5 w-5" /> Create Droplet
+              <Plus className="h-4 w-4" /> Create Droplet
             </Link>
           </div>
         </header>
@@ -835,7 +854,7 @@ export default function DropletsPage({ droplets, setDroplets }: DropletsProps) {
           toggleStatus={toggleStatus}
         />
 
-        <div className="grid grid-cols-1 gap-5 xl:grid-cols-[1fr_1.08fr_1.08fr]">
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1fr_1.08fr_1.08fr]">
           <ResourceUsageCard droplet={featuredDroplet} />
           <LocationCard droplets={filteredDroplets.length ? filteredDroplets : droplets} />
           <QuickActionsCard />
