@@ -207,9 +207,9 @@ export default function Sidebar({ user, isOpen, setIsOpen, onLogout }: SidebarPr
     .filter((section) => section.items.length > 0);
 
   const NavContent = () => (
-    <div className="flex h-full flex-col bg-[#08204f] text-[#9fb1d1] shadow-[inset_-1px_0_0_rgba(255,255,255,0.06)]">
-      <div className="flex items-center gap-3 px-4 pb-3 pt-4">
-        <BrandLogo variant="dark" className="h-10 w-28" />
+    <div className="flex h-full flex-col border-r border-[#e6e9f2] bg-white text-[#52637a]">
+      <div className="flex items-center gap-3 px-5 pb-4 pt-5">
+        <BrandLogo className="h-10 w-28" />
         <div className="sr-only">
           <span>{isAdminUser ? 'Tiwlo Admin' : 'Tiwlo Console'}</span>
           <span className="text-[9px] font-bold text-indigo-400 uppercase tracking-widest mt-0.5">SaaS Infrastructure</span>
@@ -219,7 +219,7 @@ export default function Sidebar({ user, isOpen, setIsOpen, onLogout }: SidebarPr
       <div className="px-3 pb-4">
         <NavLink 
           to={isAdminUser ? '/management/servers' : '/droplets/create'}
-          className="flex w-full items-center justify-center gap-2 rounded bg-[#11843b] px-3 py-2.5 text-[13px] font-bold text-white transition-all hover:bg-[#0b6b30]"
+          className="flex w-full items-center justify-center gap-2 rounded-[14px] bg-[#4f2fff] px-3 py-3 text-[13px] font-black text-white transition-colors hover:bg-[#3e24df]"
         >
           <Plus className="h-4 w-4" />
           <span>Server Create</span>
@@ -229,7 +229,7 @@ export default function Sidebar({ user, isOpen, setIsOpen, onLogout }: SidebarPr
       <nav className="no-scrollbar flex-1 overflow-y-auto px-2 pb-8">
         {visibleSections.map((section) => (
           <div key={section.label} className="mb-3 mt-5 first:mt-1">
-            <h3 className="mb-1.5 px-2.5 text-[10px] font-black uppercase tracking-[0.12em] text-[#7f95bd]">{section.label}</h3>
+            <h3 className="mb-1.5 px-2.5 text-[10px] font-black uppercase tracking-[0.12em] text-[#7b8496]">{section.label}</h3>
             <div className="space-y-0.5">
               {section.items.map((item) => (
                 <NavLink
@@ -238,15 +238,15 @@ export default function Sidebar({ user, isOpen, setIsOpen, onLogout }: SidebarPr
                   className={({ isActive }) =>
                     `group flex items-center gap-2.5 rounded px-2.5 py-2 text-[13px] transition-all duration-150 ${
                       isActive
-                        ? 'bg-white/[0.12] text-white font-bold shadow-[inset_3px_0_0_#4f9cff]'
-                        : 'text-[#d5def0] hover:bg-white/[0.07] hover:text-white'
+                        ? 'bg-[#f4f1ff] text-[#4f35ff] font-black'
+                        : 'text-[#52637a] hover:bg-[#f7f8fc] hover:text-[#111827]'
                     }`
                   }
                   onClick={() => setIsOpen(false)}
                 >
                   {({ isActive }) => (
                     <>
-                      <item.icon className={`h-4 w-4 shrink-0 ${isActive ? 'text-white' : 'text-[#9fb1d1] group-hover:text-white'}`} />
+                      <item.icon className={`h-4 w-4 shrink-0 ${isActive ? 'text-[#4f35ff]' : 'text-[#71809a] group-hover:text-[#111827]'}`} />
                       <span className="truncate tracking-tight">{item.name}</span>
                     </>
                   )}
@@ -257,10 +257,10 @@ export default function Sidebar({ user, isOpen, setIsOpen, onLogout }: SidebarPr
         ))}
       </nav>
 
-      <div className="border-t border-white/[0.08] bg-[#06183f] p-3">
+      <div className="border-t border-[#e6e9f2] bg-white p-3">
         <button
           onClick={onLogout}
-          className="flex w-full items-center gap-3 rounded px-3 py-2 text-[13px] font-bold text-[#b9c6df] transition-all duration-200 hover:bg-red-500/10 hover:text-red-300"
+          className="flex w-full items-center gap-3 rounded-[10px] bg-[#f7f8fc] px-3 py-2.5 text-[13px] font-bold text-[#52637a] transition-colors hover:bg-red-50 hover:text-red-600"
         >
           <LogOut className="h-4 w-4" />
           <span>Logout</span>

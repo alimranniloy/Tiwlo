@@ -11,7 +11,7 @@ import {
 } from 'lucide-react';
 import { User } from '../types';
 import { useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   fetchBillingOverviewWithApi,
   fetchNotificationsWithApi,
@@ -30,6 +30,7 @@ interface HeaderProps {
 
 export default function Header({ user, onLogout, isSidebarOpen, setIsSidebarOpen }: HeaderProps) {
   const navigate = useNavigate();
+  const location = useLocation();
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isNotificationOpen, setIsNotificationOpen] = useState(false);
   const [notifications, setNotifications] = useState<any[]>([]);
@@ -106,6 +107,10 @@ export default function Header({ user, onLogout, isSidebarOpen, setIsSidebarOpen
     return '/alerts';
   };
 
+  const searchPlaceholder = location.pathname.startsWith('/support')
+    ? 'Search for help articles, guides, or tutorials...'
+    : 'Search for resources, docs, or guides...';
+
   const openNotification = async (notification: any) => {
     setIsNotificationOpen(false);
     setNotifications((current) => current.filter((item) => item.id !== notification.id));
@@ -118,7 +123,7 @@ export default function Header({ user, onLogout, isSidebarOpen, setIsSidebarOpen
   };
 
   return (
-    <header className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-[#d9e1ec] bg-white px-2 shadow-[0_1px_4px_rgba(3,27,78,0.06)] sm:px-4 md:h-16 md:px-6">
+    <header className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-[#e6e9f2] bg-white px-2 sm:px-4 md:h-16 md:px-6">
       <div className="flex items-center gap-2 lg:hidden">
         <button 
           onClick={() => setIsSidebarOpen(!isSidebarOpen)}
@@ -137,8 +142,8 @@ export default function Header({ user, onLogout, isSidebarOpen, setIsSidebarOpen
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#71809a]" />
           <input
             type="text"
-            placeholder="Search by resource name or public IP"
-            className="h-10 w-full max-w-xl rounded-md border border-transparent bg-transparent py-2 pl-10 pr-4 text-[14px] text-[#031b4e] transition-all placeholder:text-[#7b8798] focus:border-[#b9cdf8] focus:bg-[#f7faff] focus:outline-none focus:ring-2 focus:ring-[#0069ff]/10"
+            placeholder={searchPlaceholder}
+            className="h-10 w-full max-w-xl rounded-[10px] border border-[#edf0f6] bg-white py-2 pl-10 pr-4 text-[14px] font-semibold text-[#031b4e] transition-colors placeholder:text-[#7b8798] focus:border-[#b9cdf8] focus:bg-[#fbfbff] focus:outline-none"
           />
         </div>
       </div>

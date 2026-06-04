@@ -41,6 +41,7 @@ const InvoicesPage = lazy(() => import('./pages/Invoices'));
 const ActivityPage = lazy(() => import('./pages/Activity'));
 const AlertsPage = lazy(() => import('./pages/Alerts'));
 const SupportPage = lazy(() => import('./pages/Support'));
+const CreateSupportTicket = lazy(() => import('./pages/CreateSupportTicket'));
 const FirewallsPage = lazy(() => import('./pages/Firewalls'));
 const AppsPage = lazy(() => import('./pages/Apps'));
 const FunctionsPage = lazy(() => import('./pages/Functions'));
@@ -318,6 +319,7 @@ function AppContent({
             <Route path="/activity" element={<ActivityPage />} />
             <Route path="/alerts" element={<AlertsPage />} />
             <Route path="/support" element={<SupportPage />} />
+            <Route path="/support/create-ticket" element={<CreateSupportTicket />} />
             <Route path="/terms" element={<LegalPage />} />
             <Route path="/privacy" element={<LegalPage />} />
             <Route path="/firewalls" element={<FirewallsPage />} />
