@@ -203,9 +203,9 @@ function TinySparkline({ data, color }: { data: Array<{ value: number }>; color:
 function TopBackgroundArt() {
   return (
     <div className="pointer-events-none absolute inset-0 hidden overflow-hidden rounded-[10px] md:block">
-      <div className="absolute left-[34%] top-[62px] h-[142px] w-[540px] rotate-[-7deg] rounded-[100%] bg-gradient-to-r from-transparent via-[#edf3ff] to-transparent" />
-      <div className="absolute left-[44%] top-[88px] h-[126px] w-[250px] bg-[radial-gradient(#c8d7ff_1px,transparent_1.4px)] opacity-70 [background-size:8px_8px] [mask-image:radial-gradient(ellipse_at_center,black_16%,transparent_74%)]" />
-      <div className="absolute left-[24%] top-[24px] h-[188px] w-[680px] rounded-full border border-[#eef3fb]" />
+      <div className="absolute left-[30%] top-[54px] h-[154px] w-[640px] rotate-[-7deg] rounded-[100%] bg-[radial-gradient(ellipse_at_center,rgba(224,235,255,0.96)_0%,rgba(238,244,255,0.76)_42%,rgba(255,255,255,0)_73%)]" />
+      <div className="absolute left-[39%] top-[78px] h-[136px] w-[330px] rotate-[-7deg] bg-[radial-gradient(#c8d7ff_1px,transparent_1.35px)] opacity-75 [background-size:8px_8px] [mask-image:radial-gradient(ellipse_at_center,black_18%,rgba(0,0,0,0.68)_42%,transparent_76%)]" />
+      <div className="absolute left-[33%] top-[78px] h-[118px] w-[520px] rotate-[-7deg] rounded-[100%] bg-[linear-gradient(90deg,transparent_0%,rgba(222,233,255,0.6)_38%,rgba(238,244,255,0.54)_58%,transparent_100%)]" />
     </div>
   );
 }
@@ -770,23 +770,23 @@ function ResourcesCard({ openTickets, invoiceCount }: { openTickets: number; inv
 
 function BottomCTA() {
   return (
-    <section className="relative min-h-[82px] overflow-hidden rounded-[8px] bg-gradient-to-r from-[#06135d] via-[#08218f] to-[#17058f] px-5 py-5 text-white md:px-7 md:py-0">
+    <section className="relative overflow-hidden rounded-[8px] bg-gradient-to-r from-[#06135d] via-[#08218f] to-[#17058f] px-5 py-5 text-white md:h-[82px] md:px-7 md:py-0">
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_18%_50%,rgba(32,127,255,0.24),transparent_24%),radial-gradient(circle_at_74%_42%,rgba(91,61,255,0.28),transparent_34%)]" />
-      <div className="absolute -bottom-24 left-[34%] h-36 w-[680px] rotate-[-4deg] rounded-[100%] border border-blue-300/14" />
-      <div className="absolute -bottom-20 left-[42%] h-28 w-[520px] rotate-[-4deg] rounded-[100%] border border-white/10" />
-      <div className="relative flex h-full flex-col items-start justify-between gap-5 md:flex-row md:items-center">
-        <div className="flex items-center gap-5">
+      <div className="absolute -bottom-24 left-[26%] h-36 w-[760px] rotate-[-4deg] rounded-[100%] border border-blue-300/14" />
+      <div className="absolute -bottom-20 left-[39%] h-28 w-[560px] rotate-[-4deg] rounded-[100%] border border-white/10" />
+      <div className="relative flex h-full flex-col items-start justify-between gap-5 sm:flex-row sm:items-center">
+        <div className="flex min-w-0 items-center gap-4 sm:gap-5">
           <span className="grid h-12 w-12 place-items-center rounded-[8px] bg-blue-500/10 text-blue-200">
             <Cloud className="h-7 w-7" />
           </span>
-          <div>
-            <h2 className="font-display text-[17px] font-extrabold">Deploy. Scale. Succeed.</h2>
-            <p className="mt-1 text-[13px] font-semibold text-blue-100">Powerful infrastructure to bring your ideas to life.</p>
+          <div className="min-w-0">
+            <h2 className="font-display text-[17px] font-extrabold leading-tight">Deploy. Scale. Succeed.</h2>
+            <p className="mt-1 max-w-[430px] text-[13px] font-semibold leading-5 text-blue-100">Powerful infrastructure to bring your ideas to life.</p>
           </div>
         </div>
         <Link
           to="/droplets/create"
-          className="inline-flex h-11 items-center justify-center gap-2 rounded-[7px] bg-white px-7 text-[13px] font-extrabold text-blue-700"
+          className="inline-flex h-11 w-full shrink-0 items-center justify-center gap-2 rounded-[7px] bg-white px-7 text-[13px] font-extrabold text-blue-700 sm:w-auto"
         >
           Create New Server
           <ChevronRight className="h-4 w-4" />
