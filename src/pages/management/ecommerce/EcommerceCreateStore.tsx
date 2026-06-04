@@ -202,6 +202,7 @@ export default function EcommerceCreateStore() {
         setOrderSummary({
           title: 'E-commerce store order completed',
           invoiceNumber: 'Processing',
+          orderNumber: createdStore.slug ? `STORE-${createdStore.slug}` : createdStore.id,
           packageName: plan?.name || selectedPlan,
           serverIp: createdStore.slug ? `${createdStore.slug}.tiwlo.com` : createdStore.id,
           monthlyCost: Number(plan?.price || 0),

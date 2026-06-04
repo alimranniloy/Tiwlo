@@ -32,6 +32,7 @@ import {
   updateStoreCustomerProfileWithApi,
   type StoreCustomerDashboard
 } from '../../../lib/tiwloApi';
+import { OrderReceipt } from '../../../components/OrderReceipt';
 import { useCurrency } from '../../../lib/useCurrency';
 
 type DashboardProps = {
@@ -839,95 +840,33 @@ function OrderDetailModal({ order, dashboard, onClose }: { order: any; dashboard
   const items = Array.isArray(order.items) ? order.items : [];
   const shipping = order.shipping || {};
   const payment = order.payment || {};
+  const customerName = [shipping.firstName, shipping.lastName].filter(Boolean).join(' ') || shipping.name || dashboard.customer.name || dashboard.customer.email || 'Customer';
   return (
-    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40 p-4">
-      <div className="max-h-[92vh] w-full max-w-4xl overflow-y-auto rounded-sm border border-[#B8B8B8] bg-white ring-1 ring-black/10">
-        <div className="flex items-center justify-between border-b border-[#EEE] bg-[#FAFAFA] px-5 py-4">
-          <div>
-            <p className="text-[10px] font-black uppercase tracking-widest text-[#999]">Order Details & Invoice</p>
-            <h2 className="text-lg font-black text-[#333]">{order.number || order.id}</h2>
-          </div>
-          <button onClick={onClose} className="rounded-sm p-2 text-[#999] hover:bg-white hover:text-[#333]">
-            <X size={18} />
-          </button>
-        </div>
-
-        <div className="grid gap-5 p-5 lg:grid-cols-12">
-          <div className="space-y-4 lg:col-span-8">
-            <section className="rounded-sm border border-[#EEE]">
-              <div className="border-b border-[#EEE] px-4 py-3">
-                <h3 className="text-sm font-black text-[#333]">Products</h3>
-              </div>
-              <div className="divide-y divide-[#EEE]">
-                {items.length === 0 ? (
-                  <EmptySmall label="No product line items were stored for this order." />
-                ) : items.map((item: any, index: number) => (
-                  <Link key={`${item.productId || item.id || index}`} to={item.productId ? storePath(dashboard, `product/${item.productId}`) : storePath(dashboard)} className="flex items-center gap-4 p-4 hover:bg-[#F9FCFF]">
-                    <div className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-sm border border-[#EEE] bg-gray-50">
-                      {item.image || item.productImage ? <img src={item.image || item.productImage} alt={item.name || item.productName || 'Product'} className="h-full w-full object-cover" /> : <Package className="text-gray-300" />}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-black text-[#333]">{item.name || item.productName || item.sku || 'Product'}</p>
-                      <p className="mt-1 text-xs text-[#999]">SKU {item.sku || '-'} - Qty {item.qty || item.quantity || 1}</p>
-                    </div>
-                    <p className="font-black text-[#333]">{money(Number(item.price || 0) * Number(item.qty || item.quantity || 1), order.currency || dashboard.store.currency)}</p>
-                  </Link>
-                ))}
-              </div>
-            </section>
-
-            <section className="grid gap-4 md:grid-cols-2">
-              <InfoCard title="Shipping" rows={[
-                ['Name', [shipping.firstName, shipping.lastName].filter(Boolean).join(' ') || shipping.name || dashboard.customer.name || '-'],
-                ['Phone', shipping.phone || dashboard.customer.phone || '-'],
-                ['Address', [shipping.address || shipping.line1, shipping.city, shipping.country, shipping.zip].filter(Boolean).join(', ') || '-']
-              ]} />
-              <InfoCard title="Payment" rows={[
-                ['Method', payment.method || payment.provider || '-'],
-                ['Status', payment.status || order.status || '-'],
-                ['Total', money(order.total, order.currency || dashboard.store.currency)]
-              ]} />
-            </section>
-          </div>
-
-          <aside className="space-y-4 lg:col-span-4">
-            <div className="rounded-sm border border-[#EEE] bg-[#FAFAFA] p-4">
-              <h3 className="text-sm font-black text-[#333]">Invoice</h3>
-              <div className="mt-4 flex items-center gap-3 rounded-sm border border-[#EEE] bg-white p-3">
-                <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-sm border border-[#EEE] bg-gray-50">
-                  {items[0]?.image || items[0]?.productImage ? <img src={items[0].image || items[0].productImage} alt={items[0]?.name || 'Product'} className="h-full w-full object-cover" /> : <Package className="text-gray-300" />}
-                </div>
-                <div className="min-w-0">
-                  <p className="truncate text-xs font-black text-[#333]">{items[0]?.name || items[0]?.productName || order.number || 'Order preview'}</p>
-                  <p className="text-[10px] font-bold text-[#999]">{items.length} item{items.length === 1 ? '' : 's'} in invoice</p>
-                </div>
-              </div>
-              <div className="mt-4 space-y-2 text-sm">
-                <div className="flex justify-between"><span className="text-[#999]">Order</span><span className="font-bold text-[#333]">{order.number || order.id}</span></div>
-                <div className="flex justify-between"><span className="text-[#999]">Date</span><span className="font-bold text-[#333]">{dateLabel(order.createdAt)}</span></div>
-                <div className="flex justify-between"><span className="text-[#999]">Status</span><span className="font-bold uppercase text-[#333]">{order.status || 'pending'}</span></div>
-                <div className="border-t border-[#DDD] pt-2 flex justify-between text-base"><span className="font-black text-[#333]">Total</span><span className="font-black text-[var(--store-accent)]">{money(order.total, order.currency || dashboard.store.currency)}</span></div>
-              </div>
-              <button type="button" onClick={() => window.print()} className="mt-4 w-full rounded-sm bg-[#333] px-4 py-2 text-xs font-black uppercase text-white hover:bg-black">Print Invoice</button>
-            </div>
-          </aside>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function InfoCard({ title, rows }: { title: string; rows: Array<[string, string]> }) {
-  return (
-    <div className="rounded-sm border border-[#EEE] bg-white p-4">
-      <h3 className="text-sm font-black text-[#333]">{title}</h3>
-      <div className="mt-3 space-y-2">
-        {rows.map(([label, value]) => (
-          <div key={label} className="text-sm">
-            <p className="text-[10px] font-black uppercase tracking-wider text-[#999]">{label}</p>
-            <p className="mt-0.5 text-[#333]">{value}</p>
-          </div>
-        ))}
+    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40 p-3">
+      <div className="relative max-h-[94vh] w-full max-w-[940px] overflow-y-auto rounded-[10px] border border-[#e8edf7] bg-[#fbfaff]">
+        <button onClick={onClose} className="absolute right-4 top-4 z-20 grid h-9 w-9 place-items-center rounded-[8px] border border-[#e8edf7] bg-white text-[#65738a] hover:text-[#071437]">
+          <X size={18} />
+        </button>
+        <OrderReceipt
+          compact
+          title="Thanks for Your Order!"
+          subtitle={`${dashboard.store.name} received your order successfully.`}
+          description="We're preparing your order and will update you once the next step is ready."
+          orderId={order.number || order.id}
+          summaryTitle="Order Summary"
+          summarySubtitle="Here are the details of your store order."
+          rows={[
+            { label: 'Order Date', value: dateLabel(order.createdAt) },
+            { label: 'Order Items', value: `${items.length} item${items.length === 1 ? '' : 's'} - ${money(order.total, order.currency || dashboard.store.currency)}` },
+            { label: 'Order Status', value: payment.status || order.status || 'pending', badge: true },
+            { label: 'Ordered By', value: customerName },
+            { label: 'Note', value: [shipping.address || shipping.line1, shipping.city, shipping.country, shipping.zip].filter(Boolean).join(', ') || 'You will receive an update once your order is ready.' }
+          ]}
+          nextDescription="The store team is reviewing your order, payment, and shipping details. You will receive a notification once the order is ready to move forward."
+          primaryLabel="Print Invoice"
+          onPrimary={() => window.print()}
+          supportHref="/support"
+        />
       </div>
     </div>
   );

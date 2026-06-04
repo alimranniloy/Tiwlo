@@ -3,7 +3,8 @@ import { randomIp, removeUndefined, toApi } from '../../core/format.js';
 import { writeAudit } from '../../core/audit.js';
 import { AppError } from '../../core/errors.js';
 import { pagination } from '../../core/validation.js';
-import { paragraph, sendTiwloEmail } from '../../core/email.js';
+import { sendTiwloEmail } from '../../core/email.js';
+import { invoiceReceiptEmailHtml } from '../../core/receiptEmail.js';
 import {
   convertCurrencyAmount as convertByPolicy,
   exchangeRatesForPolicy,
@@ -64,10 +65,14 @@ async function notifyBillingEvent(ctx, invoice, title, message, path = '/invoice
     subject: title,
     title,
     preview: message,
-    html: [
-      paragraph(message),
-      paragraph(`Invoice ${invoice.number} total: ${moneyLabel(invoice.amount, invoice.currency)}.`)
-    ].join('')
+    template: 'none',
+    html: invoiceReceiptEmailHtml({
+      invoice,
+      title,
+      message,
+      actionUrl: `${frontendBaseUrl() || ''}${path || '/invoices'}`,
+      supportUrl: `${frontendBaseUrl() || ''}/support`
+    })
   });
   await sendInvoiceWhatsApp(ctx, invoice, owner, message, path);
   await notifyDiscordInvoiceEvent(ctx, 'created', invoice, { message });

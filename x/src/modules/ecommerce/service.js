@@ -6,7 +6,8 @@ import { normalizeEmail, removeUndefined, slugify, toApi } from '../../core/form
 import { writeAudit } from '../../core/audit.js';
 import { AppError } from '../../core/errors.js';
 import { pagination, searchWhere } from '../../core/validation.js';
-import { paragraph, sendTiwloEmail } from '../../core/email.js';
+import { sendTiwloEmail } from '../../core/email.js';
+import { storeOrderReceiptEmailHtml } from '../../core/receiptEmail.js';
 import { ensureOwnerHasCredit } from '../billing/creditAutomation.js';
 import { chargeProvisioningCredit, requireProvisioningCredit } from '../billing/service.js';
 import { defaultNameserversFor, primaryDomainFor, serverIpFor, syncPowerDnsDomain } from '../powerdns/service.js';
@@ -26,6 +27,7 @@ import {
 } from './themeCatalog.js';
 
 const STOREFRONT_ROOT_DOMAIN = (process.env.STOREFRONT_ROOT_DOMAIN || 'tiwlo.com').toLowerCase();
+const APP_ORIGIN = (process.env.APP_ORIGIN || process.env.FRONTEND_URL || process.env.CLIENT_ORIGIN || 'http://localhost:3000').replace(/\/$/, '');
 const RESERVED_STOREFRONT_SUBDOMAINS = new Set([
   'admin',
   'api',
@@ -1078,10 +1080,16 @@ export const createOrder = async (ctx, input) => {
     subject: `New order ${order.number}`,
     title: 'New store order',
     preview: `${store.name} received a new order.`,
-    html: [
-      paragraph(`${store.name} received order ${order.number}.`),
-      paragraph(`Total: ${order.currency} ${Number(order.total || 0).toFixed(2)}.`)
-    ].join('')
+    template: 'none',
+    html: storeOrderReceiptEmailHtml({
+      order,
+      store,
+      customerName: storeCustomer?.name || input.shipping?.name || input.customerName || 'Customer',
+      title: 'Thanks for Your Order!',
+      subtitle: `${store.name} received order ${order.number}.`,
+      actionUrl: `${APP_ORIGIN}/store/admin/orders`,
+      supportUrl: `${APP_ORIGIN}/support`
+    })
   });
   if (storeCustomer?.email) {
     await sendTiwloEmail(ctx, {
@@ -1089,10 +1097,16 @@ export const createOrder = async (ctx, input) => {
       subject: `Order ${order.number} received`,
       title: 'Order received',
       preview: `${store.name} received your order.`,
-      html: [
-        paragraph(`Thanks ${storeCustomer.name || 'there'}, your order ${order.number} was received by ${store.name}.`),
-        paragraph(`Total: ${order.currency} ${Number(order.total || 0).toFixed(2)}.`)
-      ].join('')
+      template: 'none',
+      html: storeOrderReceiptEmailHtml({
+        order,
+        store,
+        customerName: storeCustomer.name || storeCustomer.email,
+        title: 'Thanks for Your Order!',
+        subtitle: `${store.name} received your order successfully.`,
+        actionUrl: `${APP_ORIGIN}/store/user/orders`,
+        supportUrl: `${APP_ORIGIN}/support`
+      })
     });
   }
   return toApi(order);

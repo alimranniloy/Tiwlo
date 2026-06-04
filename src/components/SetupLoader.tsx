@@ -1,5 +1,5 @@
 import React from 'react';
-import { CheckCircle2, Headphones, ReceiptText } from 'lucide-react';
+import { OrderReceipt } from './OrderReceipt';
 import { useCurrency } from '../lib/useCurrency';
 
 const accountMessages = [
@@ -21,12 +21,16 @@ const orderMessages = [
 export type OrderSummary = {
   title: string;
   invoiceNumber?: string;
+  orderNumber?: string;
   packageName?: string;
   serverIp?: string;
   hourlyRate?: number;
   monthlyCost?: number;
   status?: string;
   supportPath?: string;
+  orderedBy?: string;
+  createdAt?: string;
+  note?: string;
 };
 
 function RotatingText({ messages, interval = 1200 }: { messages: string[]; interval?: number }) {
@@ -106,47 +110,36 @@ export function TowerOrderLoader({ messages = orderMessages }: { messages?: stri
 
 export function OrderCompleteSummary({ summary, onPrimary }: { summary: OrderSummary; onPrimary: () => void }) {
   const { money } = useCurrency({ scope: 'platform', scopeId: 'console' });
+  const orderDate = summary.createdAt
+    ? new Date(summary.createdAt)
+    : new Date();
+  const dateText = Number.isNaN(orderDate.getTime())
+    ? 'Just now'
+    : orderDate.toLocaleString(undefined, { month: 'long', day: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const costText = [
+    summary.hourlyRate !== undefined ? `${money(summary.hourlyRate, 'USD')} / hour` : '',
+    summary.monthlyCost !== undefined ? `${money(summary.monthlyCost, 'USD')} monthly cap` : ''
+  ].filter(Boolean).join(' - ');
   const rows = [
-    ['Invoice', summary.invoiceNumber || 'Processing'],
-    ['Package', summary.packageName || 'Selected package'],
-    ['Server IP', summary.serverIp || 'Auto selected'],
-    ['Per hour', summary.hourlyRate !== undefined ? money(summary.hourlyRate, 'USD') : 'Included'],
-    ['Monthly cap', summary.monthlyCost !== undefined ? money(summary.monthlyCost, 'USD') : 'Included'],
-    ['Status', summary.status || 'Completed']
+    { label: 'Order Date', value: dateText },
+    { label: 'Server Configuration', value: summary.packageName || 'Custom Configuration' },
+    { label: 'Order Status', value: summary.status || 'Processing', badge: true },
+    { label: 'Ordered By', value: summary.orderedBy || 'Account Owner' },
+    { label: 'Note', value: summary.note || (costText ? `${costText}. You will be notified via email once your order is ready.` : 'You will be notified via email once your order is ready.') }
   ];
 
   return (
-    <div className="mx-auto max-w-3xl space-y-5 bg-white px-4 py-8 text-[#111827] md:px-0">
-      <div className="border border-[#d9dee7] bg-white p-5 md:p-6">
-        <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-          <div className="flex items-start gap-3">
-            <CheckCircle2 className="mt-0.5 h-6 w-6 text-[#16a34a]" />
-            <div>
-              <h1 className="text-xl font-bold tracking-tight">{summary.title}</h1>
-              <p className="mt-1 text-sm text-[#64748b]">Your order details are ready and notifications have been queued.</p>
-            </div>
-          </div>
-          <ReceiptText className="hidden h-6 w-6 text-[#0069ff] md:block" />
-        </div>
-
-        <div className="mt-6 grid grid-cols-1 border border-[#e5e8ed] md:grid-cols-2">
-          {rows.map(([label, value]) => (
-            <div key={label} className="border-b border-[#e5e8ed] px-4 py-3 last:border-b-0 md:border-r md:even:border-r-0">
-              <p className="text-[10px] font-bold uppercase tracking-wider text-[#64748b]">{label}</p>
-              <p className="mt-1 break-words text-sm font-bold text-[#111827]">{value}</p>
-            </div>
-          ))}
-        </div>
-
-        <div className="mt-5 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <a href={summary.supportPath || '/support'} className="inline-flex items-center justify-center gap-2 border border-[#d9dee7] px-4 py-2 text-sm font-bold text-[#334155] hover:bg-[#f8fafc]">
-            <Headphones className="h-4 w-4" /> Contact Support
-          </a>
-          <button onClick={onPrimary} className="inline-flex items-center justify-center bg-[#0069ff] px-5 py-2 text-sm font-bold text-white hover:bg-[#0056cc]">
-            Continue
-          </button>
-        </div>
-      </div>
+    <div className="min-h-[calc(100vh-4rem)] bg-[#fbfaff]">
+      <OrderReceipt
+        title="Thanks for Your Order!"
+        subtitle={summary.title || 'Your order has been placed successfully.'}
+        description="We're setting things up and will notify you once it's ready."
+        orderId={summary.orderNumber || summary.invoiceNumber}
+        rows={rows}
+        nextDescription="Our team is now reviewing your order and preparing the service. You will receive an email notification once it's ready to use."
+        onPrimary={onPrimary}
+        supportHref={summary.supportPath || '/support'}
+      />
     </div>
   );
 }
