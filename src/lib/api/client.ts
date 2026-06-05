@@ -31,6 +31,12 @@ export const userFields = `
   whatsappVerifiedAt
   whatsappVerifiedPhone
   whatsappVerificationRequired
+  promoCreditAmount
+  promoCreditExpiresAt
+  promoCreditStatus
+  promoCreditSource
+  promoPaymentMethod
+  promoVerifiedAt
   createdAt
   updatedAt
 `;

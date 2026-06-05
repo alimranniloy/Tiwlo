@@ -22,6 +22,8 @@ export const isReadonlySetting = (scope, key) => (
 );
 
 export const DEFAULT_NEW_ACCOUNT_CREDIT = 0;
+export const DEFAULT_SIGNUP_PROMO_CREDIT = 100;
+export const SIGNUP_PROMO_HOLD_AMOUNT = 1;
 export const ACCOUNT_CREDIT_POLICY_KEY = 'accountCreditPolicy';
 
 export const getNewAccountCredit = async (prisma) => {
@@ -31,4 +33,13 @@ export const getNewAccountCredit = async (prisma) => {
 
   const value = Number(setting?.value?.newAccountCredit ?? setting?.value ?? DEFAULT_NEW_ACCOUNT_CREDIT);
   return Number.isFinite(value) && value > 0 ? value : DEFAULT_NEW_ACCOUNT_CREDIT;
+};
+
+export const getSignupPromoCredit = async (prisma) => {
+  const setting = await prisma.systemSetting.findUnique({
+    where: { scope_scopeId_key: { scope: 'platform', scopeId: '', key: ACCOUNT_CREDIT_POLICY_KEY } }
+  });
+
+  const value = Number(setting?.value?.signupPromoCredit ?? DEFAULT_SIGNUP_PROMO_CREDIT);
+  return Number.isFinite(value) && value > 0 ? value : DEFAULT_SIGNUP_PROMO_CREDIT;
 };

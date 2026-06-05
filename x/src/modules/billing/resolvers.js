@@ -15,6 +15,7 @@ export const billingResolvers = {
       await requireAuth(ctx);
       return service.listAvailablePaymentGateways(ctx);
     },
+    signupPaymentGateways: async (_, __, ctx) => service.listAvailablePaymentGateways(ctx),
     billingOverview: async (_, __, ctx) => {
       await requireAuth(ctx);
       return service.billingOverview(ctx);
@@ -48,6 +49,10 @@ export const billingResolvers = {
     startCreditTopUp: async (_, { input }, ctx) => {
       await requireAuth(ctx);
       return service.startCreditTopUp(ctx, input);
+    },
+    startSignupPromoVerification: async (_, { input }, ctx) => {
+      await requireAuth(ctx);
+      return service.startSignupPromoVerification(ctx, input);
     },
     createCloudResourceOrder: async (_, { input }, ctx) => {
       await requireAuth(ctx);

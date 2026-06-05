@@ -82,6 +82,7 @@ async function main() {
       key: 'accountCreditPolicy',
       value: {
         newAccountCredit: 0,
+        signupPromoCredit: 100,
         blockOrdersWithoutCredit: true,
         suspendServicesWhenEmpty: true,
         autoResumeWhenCreditAdded: true
@@ -90,6 +91,7 @@ async function main() {
     update: {
       value: {
         newAccountCredit: 0,
+        signupPromoCredit: 100,
         blockOrdersWithoutCredit: true,
         suspendServicesWhenEmpty: true,
         autoResumeWhenCreditAdded: true

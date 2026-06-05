@@ -42,6 +42,12 @@ export interface User {
   whatsappVerifiedAt?: string;
   whatsappVerifiedPhone?: string;
   whatsappVerificationRequired?: boolean;
+  promoCreditAmount?: number;
+  promoCreditExpiresAt?: string;
+  promoCreditStatus?: string;
+  promoCreditSource?: string;
+  promoPaymentMethod?: string;
+  promoVerifiedAt?: string;
   role: 'super_admin' | 'admin' | 'manager' | 'staff' | 'user' | 'store_owner' | 'store_customer' | 'isp_admin';
 }
 

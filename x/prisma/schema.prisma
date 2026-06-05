@@ -30,6 +30,12 @@ model User {
   whatsappVerifiedAt       DateTime?
   whatsappVerifiedPhone    String?
   whatsappLastOtpSentAt    DateTime?
+  promoCreditAmount        Float     @default(0)
+  promoCreditExpiresAt     DateTime?
+  promoCreditStatus        String?
+  promoCreditSource        String?
+  promoPaymentMethod       String?
+  promoVerifiedAt          DateTime?
   emailVerificationToken   String?
   emailVerificationExpires DateTime?
   passwordResetTokenHash   String?

@@ -4,7 +4,7 @@ import { createToken } from '../../core/auth.js';
 import { normalizeEmail, removeUndefined, toApi } from '../../core/format.js';
 import { AppError } from '../../core/errors.js';
 import { writeAudit } from '../../core/audit.js';
-import { getNewAccountCredit } from '../../core/settings.js';
+import { getSignupPromoCredit } from '../../core/settings.js';
 import { isProfileInputComplete, profileCompletionData } from '../../core/profile.js';
 import { appOrigin, cta, paragraph, sendTiwloEmail } from '../../core/email.js';
 import { recordAuthDeviceSession } from './deviceSecurity.js';
@@ -31,6 +31,25 @@ function tokenHash(token) {
 function addHours(hours) {
   return new Date(Date.now() + hours * 60 * 60 * 1000);
 }
+
+const signupPromoProviders = new Set(['bkash', 'stripe', 'paypal']);
+
+const normalizeSignupPromoProvider = (value) => {
+  const provider = String(value || '').trim().toLowerCase();
+  return signupPromoProviders.has(provider) ? provider : '';
+};
+
+const signupPromoData = async (ctx, input = {}) => {
+  if (!input.signupPromoOptIn) return {};
+  const provider = normalizeSignupPromoProvider(input.signupPromoProvider);
+  if (!provider) throw new AppError('Choose a valid payment method for free credit verification.', 'BAD_USER_INPUT');
+  return {
+    promoCreditAmount: await getSignupPromoCredit(ctx.prisma),
+    promoCreditStatus: 'pending',
+    promoCreditSource: 'signup_payment_verification',
+    promoPaymentMethod: provider
+  };
+};
 
 async function sendVerificationEmail(ctx, user, token) {
   const link = `${appOrigin().replace(/\/$/, '')}/verify-email?token=${token}`;
@@ -130,7 +149,6 @@ export const signup = async (ctx, input) => {
   }
 
   const passwordHash = await bcrypt.hash(input.password, 10);
-  const newAccountCredit = await getNewAccountCredit(ctx.prisma);
   if (!isProfileInputComplete(input)) {
     throw new AppError('Address, billing name, country, and mobile number are required to create an account.', 'BAD_USER_INPUT');
   }
@@ -140,6 +158,7 @@ export const signup = async (ctx, input) => {
   const availability = await signupAvailability(ctx, input);
   if (!availability.emailAvailable) throw new AppError('This email address is already in use.', 'BAD_USER_INPUT');
   if (!availability.phoneAvailable) throw new AppError('This phone number is already in use.', 'BAD_USER_INPUT');
+  const promo = await signupPromoData(ctx, input);
   if (await isWhatsAppEnabled(ctx.prisma)) {
     const challenge = await createSignupOtpChallenge(ctx, input, {
       input: {
@@ -152,7 +171,8 @@ export const signup = async (ctx, input) => {
       },
       profile: profile.data,
       passwordHash,
-      verificationToken
+      verificationToken,
+      promo
     });
     return {
       ok: true,
@@ -168,11 +188,12 @@ export const signup = async (ctx, input) => {
       email,
       passwordHash,
       name: input.name,
-      credits: newAccountCredit,
+      credits: 0,
       role: 'user',
       emailVerifiedAt: null,
       emailVerificationToken: verificationToken,
       emailVerificationExpires: addHours(48),
+      ...promo,
       ...profile.data
     }
   });
@@ -203,16 +224,18 @@ export const verifySignupWhatsAppOtp = async (ctx, challengeId, code) => {
   if (!availability.phoneAvailable) throw new AppError('This phone number is already in use.', 'BAD_USER_INPUT');
 
   const emailVerificationToken = payload.verificationToken || randomToken();
+  const promo = payload.promo || {};
   const user = await ctx.prisma.user.create({
     data: {
       email,
       passwordHash: payload.passwordHash,
       name: input.name,
-      credits: await getNewAccountCredit(ctx.prisma),
+      credits: 0,
       role: 'user',
       emailVerifiedAt: null,
       emailVerificationToken,
       emailVerificationExpires: addHours(48),
+      ...promo,
       ...profile
     }
   });

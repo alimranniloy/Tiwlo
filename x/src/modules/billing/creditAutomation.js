@@ -7,6 +7,25 @@ const statusKey = (value) => String(value || '').toLowerCase();
 const isTerminal = (status) => TERMINAL_STATUSES.has(statusKey(status));
 const hasPositiveCredit = (owner) => Number(owner?.credits || 0) > 0;
 
+const expireSignupPromoCredit = async (prisma, owner, now) => {
+  if (owner?.promoCreditStatus !== 'active' || !owner.promoCreditExpiresAt) return owner;
+  if (new Date(owner.promoCreditExpiresAt).getTime() > now.getTime()) return owner;
+
+  const promoAmount = Math.max(0, Number(owner.promoCreditAmount || 0));
+  const currentCredit = Math.max(0, Number(owner.credits || 0));
+  const creditAfterExpiry = Math.max(0, currentCredit - Math.min(currentCredit, promoAmount));
+
+  return prisma.user.update({
+    where: { id: owner.id },
+    data: {
+      credits: creditAfterExpiry,
+      promoCreditAmount: 0,
+      promoCreditStatus: 'expired',
+      promoCreditExpiresAt: null
+    }
+  });
+};
+
 const suspendedState = (previousStatus, now) => ({
   state: 'suspended',
   reason: CREDIT_EXHAUSTED_REASON,
@@ -254,8 +273,9 @@ const resumeIspSites = async (prisma, ownerId, now) => {
 };
 
 export const runCreditAutomationForOwner = async (ctx, ownerId, now = new Date()) => {
-  const owner = await ctx.prisma.user.findUnique({ where: { id: ownerId } });
+  let owner = await ctx.prisma.user.findUnique({ where: { id: ownerId } });
   if (!owner) throw new AppError('Account was not found', 'NOT_FOUND');
+  owner = await expireSignupPromoCredit(ctx.prisma, owner, now);
 
   if (!hasPositiveCredit(owner)) {
     const result = zeroResult(owner, 'checked');
@@ -300,11 +320,12 @@ export const runCreditAutomationJob = async (ctx, { ownerId } = {}) => {
 };
 
 export const ensureOwnerHasCredit = async (ctx, ownerId, message) => {
-  const owner = await ctx.prisma.user.findUnique({ where: { id: ownerId } });
+  let owner = await ctx.prisma.user.findUnique({ where: { id: ownerId } });
   if (!owner) throw new AppError('Account was not found', 'NOT_FOUND');
+  await runCreditAutomationForOwner(ctx, ownerId);
+  owner = await ctx.prisma.user.findUnique({ where: { id: ownerId } });
 
   if (!hasPositiveCredit(owner)) {
-    await runCreditAutomationForOwner(ctx, ownerId);
     throw new AppError(
       message || 'Credit balance is empty. Add credit now before placing orders or provisioning services.',
       'CREDIT_REQUIRED'

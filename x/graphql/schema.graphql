@@ -22,6 +22,12 @@ type User {
   whatsappVerifiedAt: String
   whatsappVerifiedPhone: String
   whatsappVerificationRequired: Boolean
+  promoCreditAmount: Float
+  promoCreditExpiresAt: String
+  promoCreditStatus: String
+  promoCreditSource: String
+  promoPaymentMethod: String
+  promoVerifiedAt: String
   createdAt: String
   updatedAt: String
   securitySummary: JSON
@@ -1688,6 +1694,8 @@ input SignupInput {
   password: String!
   deviceFingerprint: String
   deviceMetadata: JSON
+  signupPromoOptIn: Boolean
+  signupPromoProvider: String
   phone: String
   mobileCountryCode: String
   country: String
@@ -1696,6 +1704,10 @@ input SignupInput {
   state: String
   postalCode: String
   billingName: String
+}
+
+input StartSignupPromoVerificationInput {
+  provider: String!
 }
 
 input WhatsAppPhoneInput {
@@ -2657,6 +2669,7 @@ type Query {
   adminModules(group: String, status: String, search: String, page: Int, limit: Int): [AdminModule!]!
   paymentGateways(status: String): [PaymentGateway!]!
   availablePaymentGateways: [PaymentGateway!]!
+  signupPaymentGateways: [PaymentGateway!]!
   tiwloPayOverview: TiwloPayOverview!
   adminTiwloPayOverview: AdminTiwloPayOverview!
   publicTiwloPayLink(slug: String!): PublicTiwloPayCheckout!
@@ -2843,6 +2856,7 @@ type Mutation {
   markInvoicePaid(id: ID!): Invoice!
   startInvoicePayment(input: StartInvoicePaymentInput!): CheckoutSession!
   startCreditTopUp(input: StartCreditTopUpInput!): CheckoutSession!
+  startSignupPromoVerification(input: StartSignupPromoVerificationInput!): CheckoutSession!
   settleUsageBilling: BillingOverview!
   runCreditAutomation(input: CreditAutomationInput): CreditAutomationResult!
   upsertRole(input: UpsertRoleInput!): Role!

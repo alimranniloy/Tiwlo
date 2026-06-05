@@ -195,6 +195,19 @@ export async function startCreditTopUpWithApi(amount: number, currency: string, 
   return data.startCreditTopUp;
 }
 
+export async function startSignupPromoVerificationWithApi(provider: string) {
+  const data = await graphQL<{ startSignupPromoVerification: any }>(
+    `mutation StartSignupPromoVerification($input: StartSignupPromoVerificationInput!) {
+      startSignupPromoVerification(input: $input) {
+        ${checkoutFields}
+      }
+    }`,
+    { input: { provider } }
+  );
+
+  return data.startSignupPromoVerification;
+}
+
 export async function fetchPaymentGatewaysWithApi(status?: string) {
   const data = await graphQL<{ paymentGateways: any[] }>(
     `query PaymentGateways($status: String) {
@@ -234,6 +247,25 @@ export async function fetchAvailablePaymentGatewaysWithApi() {
   );
 
   return data.availablePaymentGateways;
+}
+
+export async function fetchSignupPaymentGatewaysWithApi() {
+  const data = await graphQL<{ signupPaymentGateways: any[] }>(
+    `query SignupPaymentGateways {
+      signupPaymentGateways {
+        id
+        key
+        name
+        provider
+        status
+        mode
+        settings
+        createdAt
+      }
+    }`
+  );
+
+  return data.signupPaymentGateways;
 }
 
 export async function upsertPaymentGatewayWithApi(input: Record<string, unknown>) {

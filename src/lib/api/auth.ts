@@ -73,6 +73,8 @@ export async function signupWithApi(input: {
   state?: string;
   postalCode?: string;
   billingName?: string;
+  signupPromoOptIn?: boolean;
+  signupPromoProvider?: string;
 }) {
   const device = deviceMetadata();
   const data = await graphQL<{ signup: {

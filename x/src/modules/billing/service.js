@@ -14,6 +14,7 @@ import {
 import { ensureOwnerHasCredit, runCreditAutomationForOwner, runCreditAutomationJob } from './creditAutomation.js';
 import { notifyDiscordInvoiceEvent } from '../discord/service.js';
 import { sendInvoiceWhatsApp } from '../whatsapp/service.js';
+import { getSignupPromoCredit, SIGNUP_PROMO_HOLD_AMOUNT } from '../../core/settings.js';
 import {
   checkTPanelNodeUsername,
   createTPanelNodeAccount,
@@ -40,8 +41,12 @@ import {
 const paymentEnabledStatuses = new Set(['enabled', 'active']);
 const autoIpResourceTypes = new Set(['droplet', 'system_server']);
 const CREDIT_CURRENCY = 'USD';
+const SIGNUP_PROMO_SCOPE = 'signup_promo_verification';
+const SIGNUP_PROMO_DAYS = 30;
 
 const invoiceNumber = (prefix) => `${prefix}-${Date.now().toString(36).toUpperCase()}`;
+
+const addDays = (date, days) => new Date(date.getTime() + days * 24 * 60 * 60 * 1000);
 
 const moneyLabel = (amount, currency = CREDIT_CURRENCY) => `${String(currency || CREDIT_CURRENCY).toUpperCase()} ${Number(amount || 0).toFixed(2)}`;
 
@@ -446,6 +451,42 @@ const fulfillPaidInvoice = async (tx, invoice, paidAt = new Date()) => {
       sourceAmount: Number(invoice.amount || 0),
       sourceCurrency: invoice.currency || CREDIT_CURRENCY
     };
+  }
+
+  if (invoice.scope === SIGNUP_PROMO_SCOPE) {
+    const promoCreditAmount = roundMoney(Number(items?.promoCreditAmount || await getSignupPromoCredit(tx)));
+    const owner = await tx.user.findUnique({ where: { id: invoice.ownerId } });
+    if (owner?.promoCreditStatus === 'active' || owner?.promoVerifiedAt) {
+      items = {
+        ...items,
+        promoCreditSkippedAt: paidAt.toISOString(),
+        promoCreditSkipReason: 'already_applied'
+      };
+    } else {
+      const expiresAt = addDays(paidAt, SIGNUP_PROMO_DAYS);
+      await tx.user.update({
+        where: { id: invoice.ownerId },
+        data: {
+          credits: { increment: promoCreditAmount },
+          promoCreditAmount,
+          promoCreditExpiresAt: expiresAt,
+          promoCreditStatus: 'active',
+          promoCreditSource: 'signup_payment_verification',
+          promoPaymentMethod: invoice.items?.lastCheckout?.provider || invoice.items?.promoPaymentMethod || null,
+          promoVerifiedAt: paidAt
+        }
+      });
+      items = {
+        ...items,
+        promoCreditAppliedAt: paidAt.toISOString(),
+        promoCreditAmount,
+        promoCreditCurrency: CREDIT_CURRENCY,
+        promoCreditExpiresAt: expiresAt.toISOString(),
+        verificationHoldAmount: Number(invoice.amount || SIGNUP_PROMO_HOLD_AMOUNT),
+        verificationHoldCurrency: invoice.currency || CREDIT_CURRENCY,
+        refundNotice: 'Verification hold should be returned after payment method verification.'
+      };
+    }
   }
 
   if (invoice.scope === 'cloud_order' && items.pendingResource && !items.fulfilledResourceId) {
@@ -1212,6 +1253,90 @@ export const startCreditTopUp = async (ctx, input) => {
   await writeAudit(ctx, 'create_credit_topup', 'invoice', invoice.id, { provider: input.provider });
   await notifyBillingEvent(ctx, invoice, 'Credit top-up started', `${invoice.number} was created for ${moneyLabel(amount, currency)}.`, '/billing');
   return startInvoicePayment(ctx, { invoiceId: invoice.id, provider: input.provider || 'bkash' });
+};
+
+export const startSignupPromoVerification = async (ctx, input = {}) => {
+  const actor = await getActor(ctx);
+  if (!actor) throw new AppError('Authentication is required', 'UNAUTHENTICATED');
+  const provider = String(input.provider || actor.promoPaymentMethod || '').trim().toLowerCase();
+  if (!PAYMENT_PROVIDERS.includes(provider)) {
+    throw new AppError('Choose a valid payment method for free credit verification.', 'BAD_USER_INPUT');
+  }
+  if (actor.promoCreditStatus === 'active') {
+    throw new AppError('Free signup credit is already active on this account.', 'BAD_USER_INPUT');
+  }
+  if (actor.promoCreditStatus !== 'pending') {
+    throw new AppError('Free signup credit was not selected for this account.', 'BAD_USER_INPUT');
+  }
+
+  const promoCreditAmount = await getSignupPromoCredit(ctx.prisma);
+  const existingInvoice = await ctx.prisma.invoice.findFirst({
+    where: {
+      ownerId: actor.id,
+      scope: SIGNUP_PROMO_SCOPE,
+      status: 'open'
+    },
+    orderBy: { createdAt: 'desc' }
+  });
+  if (existingInvoice) {
+    await ctx.prisma.invoice.update({
+      where: { id: existingInvoice.id },
+      data: {
+        items: {
+          ...(existingInvoice.items || {}),
+          promoPaymentMethod: provider
+        }
+      }
+    });
+    await ctx.prisma.user.update({
+      where: { id: actor.id },
+      data: {
+        promoPaymentMethod: provider,
+        promoCreditAmount
+      }
+    });
+    return startInvoicePayment(ctx, { invoiceId: existingInvoice.id, provider });
+  }
+
+  const invoice = await ctx.prisma.invoice.create({
+    data: {
+      ownerId: actor.id,
+      number: invoiceNumber('VRF'),
+      amount: SIGNUP_PROMO_HOLD_AMOUNT,
+      currency: CREDIT_CURRENCY,
+      status: 'open',
+      scope: SIGNUP_PROMO_SCOPE,
+      dueDate: new Date(),
+      items: {
+        signupPromoVerification: true,
+        lineItems: [{
+          label: 'Payment method verification hold',
+          amount: SIGNUP_PROMO_HOLD_AMOUNT,
+          currency: CREDIT_CURRENCY
+        }],
+        promoCreditAmount,
+        promoCreditCurrency: CREDIT_CURRENCY,
+        promoCreditDays: SIGNUP_PROMO_DAYS,
+        promoPaymentMethod: provider,
+        verificationHoldAmount: SIGNUP_PROMO_HOLD_AMOUNT,
+        verificationHoldCurrency: CREDIT_CURRENCY,
+        refundNotice: 'This verification hold is marked for return after payment method verification.'
+      }
+    }
+  });
+
+  await ctx.prisma.user.update({
+    where: { id: actor.id },
+    data: {
+      promoCreditAmount,
+      promoCreditStatus: 'pending',
+      promoCreditSource: 'signup_payment_verification',
+      promoPaymentMethod: provider
+    }
+  });
+  await writeAudit(ctx, 'start_signup_promo_verification', 'invoice', invoice.id, { provider, promoCreditAmount });
+  await notifyBillingEvent(ctx, invoice, 'Signup credit verification started', `${invoice.number} was created for payment method verification.`, '/billing');
+  return startInvoicePayment(ctx, { invoiceId: invoice.id, provider });
 };
 
 const createCloudOrderInvoice = async (ctx, actor, resourceInput, billing) => {
