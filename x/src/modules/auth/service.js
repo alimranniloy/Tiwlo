@@ -159,7 +159,7 @@ export const signup = async (ctx, input) => {
   if (!availability.emailAvailable) throw new AppError('This email address is already in use.', 'BAD_USER_INPUT');
   if (!availability.phoneAvailable) throw new AppError('This phone number is already in use.', 'BAD_USER_INPUT');
   const promo = await signupPromoData(ctx, input);
-  if (await isWhatsAppEnabled(ctx.prisma)) {
+  if (!input.signupPromoOptIn && await isWhatsAppEnabled(ctx.prisma)) {
     const challenge = await createSignupOtpChallenge(ctx, input, {
       input: {
         ...input,

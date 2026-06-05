@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { AlertCircle, ArrowLeft, CheckCircle2, CreditCard, ShieldCheck, WalletCards } from 'lucide-react';
+import { AlertCircle, ArrowLeft, ArrowRight, CheckCircle2, ChevronRight, CreditCard, Mail, ShieldCheck, Sparkles } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { User as UserType } from '../types';
 import {
@@ -54,31 +54,75 @@ const initialForm: SignupForm = {
 
 const validEmail = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
 const fallbackGateways = [
-  { id: 'stripe', key: 'stripe', name: 'Card', provider: 'stripe' },
-  { id: 'paypal', key: 'paypal', name: 'PayPal', provider: 'paypal' },
-  { id: 'bkash', key: 'bkash', name: 'bKash', provider: 'bkash' }
+  { id: 'bkash', key: 'bkash', name: 'bKash', provider: 'bkash' },
+  { id: 'stripe', key: 'stripe', name: 'Stripe', provider: 'stripe' }
 ];
+const signupDraftKey = 'tiwlo_signup_draft_v2';
+const providerOrder: Record<string, number> = { bkash: 0, stripe: 1, paypal: 2 };
+const paymentLogos: Record<string, string> = {
+  bkash: '/brand/payments/bkash.svg',
+  stripe: '/brand/payments/stripe-mark.svg'
+};
+
+const providerOf = (gateway: any) => String(gateway?.provider || gateway?.key || '').toLowerCase();
+const providerLabel = (gateway: any) => {
+  const provider = providerOf(gateway);
+  if (provider === 'bkash') return 'bKash';
+  if (provider === 'stripe') return 'Stripe';
+  if (provider === 'paypal') return 'PayPal';
+  return gateway?.name || provider;
+};
+const orderedGateways = (items: any[]) => [...items].sort((a, b) => {
+  const aProvider = providerOf(a);
+  const bProvider = providerOf(b);
+  return (providerOrder[aProvider] ?? 99) - (providerOrder[bProvider] ?? 99) || providerLabel(a).localeCompare(providerLabel(b));
+});
+
+const readSignupDraft = () => {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.sessionStorage.getItem(signupDraftKey);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+};
+
+const clearSignupDraft = () => {
+  if (typeof window !== 'undefined') {
+    window.sessionStorage.removeItem(signupDraftKey);
+  }
+};
 
 export default function SignupPage({ onSignup }: SignupProps) {
   const navigate = useNavigate();
-  const [step, setStep] = useState<'email' | 'details' | 'promo'>('email');
-  const [form, setForm] = useState<SignupForm>(() => ({ ...initialForm, country: detectBrowserCountryCode(initialForm.country) }));
+  const draft = useMemo(() => readSignupDraft(), []);
+  const [step, setStep] = useState<'email' | 'details' | 'promo'>(() => (
+    ['email', 'details', 'promo'].includes(draft?.step) ? draft.step : 'email'
+  ));
+  const [form, setForm] = useState<SignupForm>(() => ({
+    ...initialForm,
+    country: detectBrowserCountryCode(initialForm.country),
+    ...(draft?.form || {})
+  }));
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const [gateways, setGateways] = useState<any[]>([]);
   const [gatewaysLoading, setGatewaysLoading] = useState(false);
-  const [selectedGateway, setSelectedGateway] = useState('stripe');
+  const [selectedGateway, setSelectedGateway] = useState(draft?.selectedGateway || 'bkash');
   const [availability, setAvailability] = useState<{ emailAvailable?: boolean; phoneAvailable?: boolean; message?: string; normalizedPhone?: string; existingAccountName?: string; existingAccountEmail?: string; existingAccountAvatar?: string }>({});
   const [availabilityLoading, setAvailabilityLoading] = useState(false);
-  const [pendingOtp, setPendingOtp] = useState<any>(null);
-  const [pendingPromoProvider, setPendingPromoProvider] = useState('');
+  const [pendingOtp, setPendingOtp] = useState<any>(draft?.pendingOtp || null);
+  const [pendingPromoProvider, setPendingPromoProvider] = useState(draft?.pendingPromoProvider || '');
   const [otp, setOtp] = useState('');
   const [otpError, setOtpError] = useState('');
   const [otpLoading, setOtpLoading] = useState(false);
   const [resendSeconds, setResendSeconds] = useState(0);
   const selectedCountry = useMemo(() => countryByCode(form.country), [form.country]);
   const normalizedEmail = form.email.trim().toLowerCase();
-  const paymentGateways = gateways.length > 0 ? gateways : fallbackGateways;
+  const paymentGateways = useMemo(() => orderedGateways(gateways.length > 0 ? gateways : fallbackGateways), [gateways]);
 
   const setValue = (key: keyof SignupForm, value: string) => {
     setForm((current) => ({ ...current, [key]: value }));
@@ -122,6 +166,20 @@ export default function SignupPage({ onSignup }: SignupProps) {
   }, [form.email, form.phone, form.country, selectedCountry.dialCode]);
 
   useEffect(() => {
+    try {
+      window.sessionStorage.setItem(signupDraftKey, JSON.stringify({
+        form,
+        step,
+        selectedGateway,
+        pendingOtp,
+        pendingPromoProvider
+      }));
+    } catch {
+      // Session storage can fail in private contexts; signup still works without drafts.
+    }
+  }, [form, step, selectedGateway, pendingOtp, pendingPromoProvider]);
+
+  useEffect(() => {
     let active = true;
     setGatewaysLoading(true);
     fetchSignupPaymentGatewaysWithApi()
@@ -129,7 +187,10 @@ export default function SignupPage({ onSignup }: SignupProps) {
         if (!active) return;
         const nextGateways = (items || []).filter((item) => item?.provider);
         setGateways(nextGateways);
-        if (nextGateways[0]?.provider) setSelectedGateway(nextGateways[0].provider);
+        if (nextGateways.length) {
+          const ordered = orderedGateways(nextGateways);
+          setSelectedGateway((current) => ordered.some((gateway) => providerOf(gateway) === current) ? current : providerOf(ordered[0]));
+        }
       })
       .catch(() => {
         if (active) setGateways([]);
@@ -211,6 +272,8 @@ export default function SignupPage({ onSignup }: SignupProps) {
 
   const startPromoVerification = async (provider: string, user: UserType) => {
     const checkout = await startSignupPromoVerificationWithApi(provider);
+    localStorage.setItem('tiwlo_user', JSON.stringify(user));
+    clearSignupDraft();
     if (checkout?.paymentUrl) {
       window.location.assign(checkout.paymentUrl);
       return;
@@ -262,6 +325,7 @@ export default function SignupPage({ onSignup }: SignupProps) {
           }
           return;
         }
+        clearSignupDraft();
         onSignup(result.user);
       }
     } catch (err) {
@@ -291,6 +355,7 @@ export default function SignupPage({ onSignup }: SignupProps) {
         }
         return;
       }
+      clearSignupDraft();
       onSignup(result.user);
     } catch (err) {
       setOtpError(err instanceof Error ? err.message : 'Unable to verify OTP.');
@@ -298,6 +363,123 @@ export default function SignupPage({ onSignup }: SignupProps) {
       setOtpLoading(false);
     }
   };
+
+  const promoContent = (
+    <section className="w-full">
+      <button type="button" onClick={() => setStep('details')} className="inline-flex items-center gap-4 text-[17px] font-bold text-[#0f172a]">
+        <span className="grid h-11 w-11 place-items-center rounded-[14px] border border-[#e6eaf2] bg-white">
+          <ArrowLeft className="h-5 w-5" />
+        </span>
+        <span>Back to account details</span>
+      </button>
+
+      <div className="mt-10 grid gap-5 min-[430px]:grid-cols-[72px_1fr] min-[430px]:items-center">
+        <div className="grid h-[68px] w-[68px] place-items-center rounded-[22px] bg-gradient-to-br from-[#5d7cff] to-[#3b22e8] text-white">
+          <ShieldCheck className="h-10 w-10" strokeWidth={2.2} />
+        </div>
+        <div className="min-w-0">
+          <div className="inline-flex items-center gap-1.5 rounded-full bg-[#eef2ff] px-3 py-1 text-[13px] font-black uppercase tracking-normal text-[#3568de]">
+            <Sparkles className="h-3.5 w-3.5" />
+            Free credit
+          </div>
+          <h1 className="mt-3 text-[30px] font-black leading-none tracking-normal text-[#071024] min-[430px]:whitespace-nowrap min-[430px]:text-[32px]">Verify payment method</h1>
+          <p className="mt-4 max-w-[330px] text-[17px] font-medium leading-7 text-[#445163]">
+            Complete verification to unlock your $100 credit for 30 days.
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-10 overflow-hidden rounded-[24px] border border-[#e8edf5] bg-white">
+        {[
+          { icon: CreditCard, color: 'text-[#2563ff]', bg: 'bg-[#f1f5ff]', text: '$1 is held to verify your payment method, then returned.' },
+          { icon: CheckCircle2, color: 'text-[#10b981]', bg: 'bg-[#ecfdf4]', text: '$100 credit is added for 30 days after payment verification.' },
+          { icon: Mail, color: 'text-[#5b2fe8]', bg: 'bg-[#f4f0ff]', text: 'After credit ends, services need active credit to keep running.' }
+        ].map((item, index) => {
+          const Icon = item.icon;
+          return (
+            <div key={item.text} className={`grid min-h-[86px] grid-cols-[58px_1fr_22px] items-center gap-4 px-5 ${index < 2 ? 'border-b border-[#edf0f5]' : ''}`}>
+              <span className={`grid h-[54px] w-[54px] place-items-center rounded-[16px] ${item.bg}`}>
+                <Icon className={`h-6 w-6 ${item.color}`} strokeWidth={2.3} />
+              </span>
+              <p className="min-w-0 text-[17px] font-bold leading-7 text-[#0f172a]">{item.text}</p>
+              <ChevronRight className="h-5 w-5 text-[#7b8794]" />
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="mt-8">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <p className="text-[17px] font-black text-[#0f172a]">Choose payment method</p>
+          {gatewaysLoading && <span className="text-[12px] font-semibold text-[#7b8794]">Loading...</span>}
+        </div>
+        <div className="grid gap-3">
+          {paymentGateways.map((gateway) => {
+            const provider = providerOf(gateway);
+            const active = selectedGateway === provider;
+            const logo = paymentLogos[provider];
+            return (
+              <button
+                key={gateway.id || provider}
+                type="button"
+                onClick={() => setSelectedGateway(provider)}
+                className={`grid min-h-[68px] grid-cols-[34px_58px_1fr] items-center gap-3 rounded-[18px] border bg-white px-4 text-left transition ${
+                  active ? 'border-[#5e8cff] bg-[#f8fbff]' : 'border-[#e5e8ef] hover:border-[#b9cdf8]'
+                }`}
+              >
+                <span className={`grid h-[25px] w-[25px] place-items-center rounded-full border-2 ${active ? 'border-[#2563ff]' : 'border-[#d7dde8]'}`}>
+                  {active && <span className="h-[11px] w-[11px] rounded-full bg-[#2563ff]" />}
+                </span>
+                <span className="grid h-[48px] w-[48px] place-items-center rounded-full bg-white">
+                  {logo ? (
+                    <img src={logo} alt={`${providerLabel(gateway)} logo`} className={`${provider === 'stripe' ? 'h-10 w-10 rounded-[10px]' : 'h-10 w-10'} object-contain`} />
+                  ) : (
+                    <span className="grid h-10 w-10 place-items-center rounded-full bg-[#eef2ff] text-[16px] font-black text-[#2563ff]">{providerLabel(gateway).charAt(0)}</span>
+                  )}
+                </span>
+                <span className="min-w-0">
+                  <span className="flex min-w-0 flex-wrap items-center gap-2">
+                    <span className="truncate text-[20px] font-black leading-6 text-[#0f172a]">{providerLabel(gateway)}</span>
+                    {provider === 'bkash' && <span className="rounded-full bg-[#f0ecff] px-2.5 py-1 text-[11px] font-black text-[#5d3fd3]">Recommended</span>}
+                  </span>
+                  <span className="mt-0.5 block truncate text-[13px] font-bold uppercase tracking-[0.08em] text-[#4b5563]">{provider}</span>
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {error && <div className="mt-4"><AuthError message={error} /></div>}
+
+      <div className="mt-7 space-y-4">
+        <button
+          type="button"
+          disabled={isLoading || !selectedGateway}
+          onClick={() => createAccount({ promo: true })}
+          className="flex h-[64px] w-full items-center justify-center gap-4 rounded-[22px] bg-[#3e22e8] px-5 text-[20px] font-black text-white transition hover:bg-[#2d18c6] disabled:cursor-not-allowed disabled:opacity-55"
+        >
+          <span>{isLoading ? 'Starting...' : 'Verify and get $100'}</span>
+          {!isLoading && <ArrowRight className="h-6 w-6" />}
+        </button>
+        <button
+          type="button"
+          disabled={isLoading}
+          onClick={() => createAccount({ promo: false })}
+          className="h-[58px] w-full rounded-[22px] border border-[#d9dce7] bg-white px-5 text-[17px] font-black text-[#3e22e8] transition hover:border-[#3e22e8] disabled:cursor-not-allowed disabled:opacity-55"
+        >
+          No, just sign up
+        </button>
+      </div>
+
+      <div className="mt-5 flex items-center justify-center gap-2 text-center text-[13px] font-semibold text-[#7b8794]">
+        <span className="grid h-6 w-6 place-items-center rounded-full bg-[#eef2f7]">
+          <ShieldCheck className="h-4 w-4 text-[#10b981]" />
+        </span>
+        <span>Your payment is <span className="text-[#3568de]">secure and encrypted</span></span>
+      </div>
+    </section>
+  );
 
   const resendOtp = async () => {
     if (!pendingOtp?.challengeId || resendSeconds > 0) return;
@@ -380,6 +562,16 @@ export default function SignupPage({ onSignup }: SignupProps) {
           </form>
         </section>
       </TiwloAuthShell>
+    );
+  }
+
+  if (step === 'promo') {
+    return (
+      <main className="min-h-screen bg-[#f8faff] px-4 py-9 font-sans text-black sm:px-6">
+        <div className="mx-auto flex min-h-[calc(100vh-4.5rem)] w-full max-w-[480px] flex-col justify-center">
+          {promoContent}
+        </div>
+      </main>
     );
   }
 
@@ -467,88 +659,7 @@ export default function SignupPage({ onSignup }: SignupProps) {
               Continue
             </TiwloAuthButton>
           </form>
-        ) : (
-          <div className="mt-7 w-full space-y-5">
-            <button type="button" onClick={() => setStep('details')} className="inline-flex items-center gap-2 text-[13px] font-semibold text-[#2563ff]">
-              <ArrowLeft className="h-4 w-4" />
-              Back to account details
-            </button>
-
-            <div className="rounded-[24px] border border-[#dfe7ff] bg-[#f7faff] p-5 sm:p-6">
-              <div className="flex items-start gap-3">
-                <div className="grid h-11 w-11 shrink-0 place-items-center rounded-[15px] bg-[#2563ff] text-white">
-                  <ShieldCheck className="h-6 w-6" />
-                </div>
-                <div className="min-w-0">
-                  <p className="text-[13px] font-bold uppercase tracking-[0.08em] text-[#2563ff]">Free credit</p>
-                  <h2 className="mt-1 text-[23px] font-semibold leading-tight text-black">Verify payment method</h2>
-                </div>
-              </div>
-
-              <div className="mt-5 grid gap-3 text-[13px] font-medium leading-5 text-[#4b5563]">
-                <div className="flex gap-3 rounded-[18px] bg-white p-3">
-                  <CreditCard className="mt-0.5 h-5 w-5 shrink-0 text-[#2563ff]" />
-                  <span className="min-w-0 break-words">$1 is held to verify your payment method, then returned.</span>
-                </div>
-                <div className="flex gap-3 rounded-[18px] bg-white p-3">
-                  <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-[#16a34a]" />
-                  <span className="min-w-0 break-words">$100 credit is added for 30 days after payment verification.</span>
-                </div>
-                <div className="flex gap-3 rounded-[18px] bg-white p-3">
-                  <WalletCards className="mt-0.5 h-5 w-5 shrink-0 text-[#111]" />
-                  <span className="min-w-0 break-words">After credit ends, services need active credit to keep running.</span>
-                </div>
-              </div>
-            </div>
-
-            <div className="rounded-[22px] border border-[#e5e7eb] bg-white p-4">
-              <div className="mb-3 flex items-center justify-between gap-3">
-                <p className="text-[13px] font-semibold text-black">Payment method</p>
-                {gatewaysLoading && <span className="text-[11px] font-medium text-[#777]">Loading...</span>}
-              </div>
-              <div className="grid gap-2">
-                {paymentGateways.map((gateway) => {
-                  const provider = String(gateway.provider || gateway.key || '').toLowerCase();
-                  const active = selectedGateway === provider;
-                  return (
-                    <button
-                      key={gateway.id || provider}
-                      type="button"
-                      onClick={() => setSelectedGateway(provider)}
-                      className={`flex min-h-[54px] items-center gap-3 rounded-[18px] border px-4 text-left transition ${
-                        active ? 'border-[#2563ff] bg-[#f3f7ff]' : 'border-[#e5e7eb] bg-white hover:border-[#bfd2ff]'
-                      }`}
-                    >
-                      <span className={`grid h-8 w-8 shrink-0 place-items-center rounded-full border ${active ? 'border-[#2563ff] bg-[#2563ff]' : 'border-[#d8d8d8] bg-white'}`}>
-                        <span className={`h-2.5 w-2.5 rounded-full ${active ? 'bg-white' : 'bg-[#d8d8d8]'}`} />
-                      </span>
-                      <span className="min-w-0">
-                        <span className="block truncate text-[14px] font-semibold text-black">{gateway.name || provider}</span>
-                        <span className="block truncate text-[12px] font-medium text-[#666]">{provider.toUpperCase()}</span>
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {error && <AuthError message={error} />}
-
-            <div className="space-y-3">
-              <TiwloAuthButton type="button" disabled={isLoading || !selectedGateway} onClick={() => createAccount({ promo: true })} className="bg-[#2563ff] hover:bg-[#174ee8]">
-                {isLoading ? 'Starting...' : 'Verify and get $100'}
-              </TiwloAuthButton>
-              <button
-                type="button"
-                disabled={isLoading}
-                onClick={() => createAccount({ promo: false })}
-                className="h-[52px] w-full rounded-[22px] border border-[#d8d8d8] bg-white px-5 text-[14px] font-semibold text-black transition hover:border-[#111] disabled:cursor-not-allowed disabled:opacity-55"
-              >
-                No, just sign up
-              </button>
-            </div>
-          </div>
-        )}
+        ) : null}
       </section>
     </TiwloAuthShell>
   );
