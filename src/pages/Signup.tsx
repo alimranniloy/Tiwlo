@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { AlertCircle, ArrowLeft, ArrowRight, CheckCircle2, ChevronRight, CreditCard, Mail, ShieldCheck, Sparkles } from 'lucide-react';
+import { AlertCircle, ArrowLeft } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { User as UserType } from '../types';
 import {
@@ -58,7 +58,7 @@ const fallbackGateways = [
   { id: 'stripe', key: 'stripe', name: 'Stripe', provider: 'stripe' }
 ];
 const signupDraftKey = 'tiwlo_signup_draft_v2';
-const providerOrder: Record<string, number> = { bkash: 0, stripe: 1, paypal: 2 };
+const providerOrder: Record<string, number> = { bkash: 0, stripe: 1 };
 const paymentLogos: Record<string, string> = {
   bkash: '/brand/payments/bkash.svg',
   stripe: '/brand/payments/stripe-mark.svg'
@@ -77,6 +77,7 @@ const orderedGateways = (items: any[]) => [...items].sort((a, b) => {
   const bProvider = providerOf(b);
   return (providerOrder[aProvider] ?? 99) - (providerOrder[bProvider] ?? 99) || providerLabel(a).localeCompare(providerLabel(b));
 });
+const promoGateways = (items: any[]) => items.filter((gateway) => Boolean(paymentLogos[providerOf(gateway)]));
 
 const readSignupDraft = () => {
   if (typeof window === 'undefined') return null;
@@ -122,7 +123,10 @@ export default function SignupPage({ onSignup }: SignupProps) {
   const [resendSeconds, setResendSeconds] = useState(0);
   const selectedCountry = useMemo(() => countryByCode(form.country), [form.country]);
   const normalizedEmail = form.email.trim().toLowerCase();
-  const paymentGateways = useMemo(() => orderedGateways(gateways.length > 0 ? gateways : fallbackGateways), [gateways]);
+  const paymentGateways = useMemo(() => {
+    const visibleGateways = promoGateways(gateways);
+    return orderedGateways(visibleGateways.length > 0 ? visibleGateways : fallbackGateways);
+  }, [gateways]);
 
   const setValue = (key: keyof SignupForm, value: string) => {
     setForm((current) => ({ ...current, [key]: value }));
@@ -186,9 +190,10 @@ export default function SignupPage({ onSignup }: SignupProps) {
       .then((items) => {
         if (!active) return;
         const nextGateways = (items || []).filter((item) => item?.provider);
+        const nextPromoGateways = promoGateways(nextGateways);
         setGateways(nextGateways);
-        if (nextGateways.length) {
-          const ordered = orderedGateways(nextGateways);
+        if (nextPromoGateways.length) {
+          const ordered = orderedGateways(nextPromoGateways);
           setSelectedGateway((current) => ordered.some((gateway) => providerOf(gateway) === current) ? current : providerOf(ordered[0]));
         }
       })
@@ -366,54 +371,38 @@ export default function SignupPage({ onSignup }: SignupProps) {
 
   const promoContent = (
     <section className="w-full">
-      <button type="button" onClick={() => setStep('details')} className="inline-flex items-center gap-4 text-[17px] font-bold text-[#0f172a]">
-        <span className="grid h-11 w-11 place-items-center rounded-[14px] border border-[#e6eaf2] bg-white">
-          <ArrowLeft className="h-5 w-5" />
-        </span>
-        <span>Back to account details</span>
+      <button type="button" onClick={() => setStep('details')} className="inline-flex h-8 items-center rounded-full border border-[#e3e8f3] bg-white px-3 text-[13px] font-bold text-[#0f172a]">
+        Back to account details
       </button>
 
-      <div className="mt-10 grid gap-5 min-[430px]:grid-cols-[72px_1fr] min-[430px]:items-center">
-        <div className="grid h-[68px] w-[68px] place-items-center rounded-[22px] bg-gradient-to-br from-[#5d7cff] to-[#3b22e8] text-white">
-          <ShieldCheck className="h-10 w-10" strokeWidth={2.2} />
+      <div className="mt-4">
+        <div className="inline-flex rounded-full bg-[#eef3ff] px-3 py-1 text-[11px] font-black uppercase tracking-normal text-[#3568de]">
+          Free credit
         </div>
-        <div className="min-w-0">
-          <div className="inline-flex items-center gap-1.5 rounded-full bg-[#eef2ff] px-3 py-1 text-[13px] font-black uppercase tracking-normal text-[#3568de]">
-            <Sparkles className="h-3.5 w-3.5" />
-            Free credit
-          </div>
-          <h1 className="mt-3 text-[30px] font-black leading-none tracking-normal text-[#071024] min-[430px]:whitespace-nowrap min-[430px]:text-[32px]">Verify payment method</h1>
-          <p className="mt-4 max-w-[330px] text-[17px] font-medium leading-7 text-[#445163]">
-            Complete verification to unlock your $100 credit for 30 days.
-          </p>
-        </div>
+        <h1 className="mt-2 text-[25px] font-black leading-[1.05] tracking-normal text-[#071024]">Verify payment method</h1>
+        <p className="mt-2 text-[14px] font-medium leading-5 text-[#445163]">
+          Unlock your $100 credit for 30 days.
+        </p>
       </div>
 
-      <div className="mt-10 overflow-hidden rounded-[24px] border border-[#e8edf5] bg-white">
+      <div className="mt-4 overflow-hidden rounded-[18px] border border-[#e6ebf4] bg-white">
         {[
-          { icon: CreditCard, color: 'text-[#2563ff]', bg: 'bg-[#f1f5ff]', text: '$1 is held to verify your payment method, then returned.' },
-          { icon: CheckCircle2, color: 'text-[#10b981]', bg: 'bg-[#ecfdf4]', text: '$100 credit is added for 30 days after payment verification.' },
-          { icon: Mail, color: 'text-[#5b2fe8]', bg: 'bg-[#f4f0ff]', text: 'After credit ends, services need active credit to keep running.' }
-        ].map((item, index) => {
-          const Icon = item.icon;
-          return (
-            <div key={item.text} className={`grid min-h-[86px] grid-cols-[58px_1fr_22px] items-center gap-4 px-5 ${index < 2 ? 'border-b border-[#edf0f5]' : ''}`}>
-              <span className={`grid h-[54px] w-[54px] place-items-center rounded-[16px] ${item.bg}`}>
-                <Icon className={`h-6 w-6 ${item.color}`} strokeWidth={2.3} />
-              </span>
-              <p className="min-w-0 text-[17px] font-bold leading-7 text-[#0f172a]">{item.text}</p>
-              <ChevronRight className="h-5 w-5 text-[#7b8794]" />
-            </div>
-          );
-        })}
+          '$1 hold is returned after verification.',
+          '$100 credit lasts 30 days.',
+          'After credit ends, services need active credit.'
+        ].map((text, index) => (
+          <div key={text} className={`px-4 py-3 ${index < 2 ? 'border-b border-[#edf1f6]' : ''}`}>
+            <p className="text-[13px] font-bold leading-5 text-[#0f172a]">{text}</p>
+          </div>
+        ))}
       </div>
 
-      <div className="mt-8">
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <p className="text-[17px] font-black text-[#0f172a]">Choose payment method</p>
-          {gatewaysLoading && <span className="text-[12px] font-semibold text-[#7b8794]">Loading...</span>}
+      <div className="mt-4">
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <p className="text-[14px] font-black text-[#0f172a]">Choose payment method</p>
+          {gatewaysLoading && <span className="text-[11px] font-semibold text-[#7b8794]">Loading...</span>}
         </div>
-        <div className="grid gap-3">
+        <div className="grid gap-2">
           {paymentGateways.map((gateway) => {
             const provider = providerOf(gateway);
             const active = selectedGateway === provider;
@@ -423,26 +412,26 @@ export default function SignupPage({ onSignup }: SignupProps) {
                 key={gateway.id || provider}
                 type="button"
                 onClick={() => setSelectedGateway(provider)}
-                className={`grid min-h-[68px] grid-cols-[34px_58px_1fr] items-center gap-3 rounded-[18px] border bg-white px-4 text-left transition ${
+                className={`grid min-h-[52px] grid-cols-[26px_42px_1fr] items-center gap-2.5 rounded-[16px] border bg-white px-3 text-left transition ${
                   active ? 'border-[#5e8cff] bg-[#f8fbff]' : 'border-[#e5e8ef] hover:border-[#b9cdf8]'
                 }`}
               >
-                <span className={`grid h-[25px] w-[25px] place-items-center rounded-full border-2 ${active ? 'border-[#2563ff]' : 'border-[#d7dde8]'}`}>
-                  {active && <span className="h-[11px] w-[11px] rounded-full bg-[#2563ff]" />}
+                <span className={`grid h-[20px] w-[20px] place-items-center rounded-full border-2 ${active ? 'border-[#2563ff]' : 'border-[#d7dde8]'}`}>
+                  {active && <span className="h-[8px] w-[8px] rounded-full bg-[#2563ff]" />}
                 </span>
-                <span className="grid h-[48px] w-[48px] place-items-center rounded-full bg-white">
+                <span className="grid h-[38px] w-[38px] place-items-center rounded-full bg-white">
                   {logo ? (
-                    <img src={logo} alt={`${providerLabel(gateway)} logo`} className={`${provider === 'stripe' ? 'h-10 w-10 rounded-[10px]' : 'h-10 w-10'} object-contain`} />
+                    <img src={logo} alt={`${providerLabel(gateway)} logo`} className={`${provider === 'stripe' ? 'h-8 w-8 rounded-[8px]' : 'h-8 w-8'} object-contain`} />
                   ) : (
-                    <span className="grid h-10 w-10 place-items-center rounded-full bg-[#eef2ff] text-[16px] font-black text-[#2563ff]">{providerLabel(gateway).charAt(0)}</span>
+                    <span className="grid h-8 w-8 place-items-center rounded-full bg-[#eef2ff] text-[14px] font-black text-[#2563ff]">{providerLabel(gateway).charAt(0)}</span>
                   )}
                 </span>
                 <span className="min-w-0">
                   <span className="flex min-w-0 flex-wrap items-center gap-2">
-                    <span className="truncate text-[20px] font-black leading-6 text-[#0f172a]">{providerLabel(gateway)}</span>
-                    {provider === 'bkash' && <span className="rounded-full bg-[#f0ecff] px-2.5 py-1 text-[11px] font-black text-[#5d3fd3]">Recommended</span>}
+                    <span className="truncate text-[16px] font-black leading-5 text-[#0f172a]">{providerLabel(gateway)}</span>
+                    {provider === 'bkash' && <span className="rounded-full bg-[#f0ecff] px-2 py-0.5 text-[10px] font-black text-[#5d3fd3]">Recommended</span>}
                   </span>
-                  <span className="mt-0.5 block truncate text-[13px] font-bold uppercase tracking-[0.08em] text-[#4b5563]">{provider}</span>
+                  <span className="block truncate text-[11px] font-bold uppercase tracking-normal text-[#4b5563]">{provider}</span>
                 </span>
               </button>
             );
@@ -452,30 +441,26 @@ export default function SignupPage({ onSignup }: SignupProps) {
 
       {error && <div className="mt-4"><AuthError message={error} /></div>}
 
-      <div className="mt-7 space-y-4">
+      <div className="mt-4 space-y-2.5">
         <button
           type="button"
           disabled={isLoading || !selectedGateway}
           onClick={() => createAccount({ promo: true })}
-          className="flex h-[64px] w-full items-center justify-center gap-4 rounded-[22px] bg-[#3e22e8] px-5 text-[20px] font-black text-white transition hover:bg-[#2d18c6] disabled:cursor-not-allowed disabled:opacity-55"
+          className="h-12 w-full rounded-[18px] bg-[#3e22e8] px-4 text-[16px] font-black text-white transition hover:bg-[#2d18c6] disabled:cursor-not-allowed disabled:opacity-55"
         >
-          <span>{isLoading ? 'Starting...' : 'Verify and get $100'}</span>
-          {!isLoading && <ArrowRight className="h-6 w-6" />}
+          {isLoading ? 'Starting...' : 'Verify and get $100'}
         </button>
         <button
           type="button"
           disabled={isLoading}
           onClick={() => createAccount({ promo: false })}
-          className="h-[58px] w-full rounded-[22px] border border-[#d9dce7] bg-white px-5 text-[17px] font-black text-[#3e22e8] transition hover:border-[#3e22e8] disabled:cursor-not-allowed disabled:opacity-55"
+          className="h-11 w-full rounded-[18px] border border-[#d9dce7] bg-white px-4 text-[14px] font-black text-[#3e22e8] transition hover:border-[#3e22e8] disabled:cursor-not-allowed disabled:opacity-55"
         >
           No, just sign up
         </button>
       </div>
 
-      <div className="mt-5 flex items-center justify-center gap-2 text-center text-[13px] font-semibold text-[#7b8794]">
-        <span className="grid h-6 w-6 place-items-center rounded-full bg-[#eef2f7]">
-          <ShieldCheck className="h-4 w-4 text-[#10b981]" />
-        </span>
+      <div className="mt-3 text-center text-[12px] font-semibold text-[#7b8794]">
         <span>Your payment is <span className="text-[#3568de]">secure and encrypted</span></span>
       </div>
     </section>
@@ -567,8 +552,8 @@ export default function SignupPage({ onSignup }: SignupProps) {
 
   if (step === 'promo') {
     return (
-      <main className="min-h-screen bg-[#f8faff] px-4 py-9 font-sans text-black sm:px-6">
-        <div className="mx-auto flex min-h-[calc(100vh-4.5rem)] w-full max-w-[480px] flex-col justify-center">
+      <main className="min-h-[100svh] bg-[#f8faff] px-4 py-3 font-sans text-black sm:px-6">
+        <div className="mx-auto flex min-h-[calc(100svh-1.5rem)] w-full max-w-[420px] flex-col justify-center">
           {promoContent}
         </div>
       </main>
