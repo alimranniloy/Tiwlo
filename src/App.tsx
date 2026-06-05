@@ -95,6 +95,7 @@ const ISPStorefront = lazy(() => import('./pages/isp/ISPStorefront'));
 const ISPAddRouter = lazy(() => import('./pages/isp/ISPAddRouter'));
 const ISPAdminRoot = lazy(() => import('./pages/isp/admin/ISPAdminRoot'));
 const WhatsAppVerificationRequired = lazy(() => import('./pages/WhatsAppVerificationRequired'));
+const SignupPromoVerificationRequired = lazy(() => import('./pages/SignupPromoVerificationRequired'));
 import { clearAuthToken, fetchAdminModules, fetchConsoleData, fetchCurrentUserWithApi, fetchPlatformStatusWithApi, getAuthToken } from './lib/api/appBootstrap';
 import { getStorefrontHostContext } from './lib/storefrontHost';
 import { isProfileComplete } from './lib/countries';
@@ -619,6 +620,16 @@ export default function App() {
       <ResettableRouter routerKey={`profile-${routerResetKey}`}>
         <Suspense fallback={<RouteLoader />}>
           <CompleteProfile user={user} setUser={setUser} onLogout={handleLogout} />
+        </Suspense>
+      </ResettableRouter>
+    );
+  }
+
+  if (!isAdminRole(user) && user.promoCreditStatus === 'pending') {
+    return (
+      <ResettableRouter routerKey={`signup-promo-${routerResetKey}`}>
+        <Suspense fallback={<RouteLoader />}>
+          <SignupPromoVerificationRequired user={user} setUser={setUser} onLogout={handleLogout} />
         </Suspense>
       </ResettableRouter>
     );

@@ -1,5 +1,5 @@
 import React from 'react';
-import { AlertCircle, CheckCircle2, LogOut, RefreshCw } from 'lucide-react';
+import { AlertCircle, CheckCircle2, RefreshCw } from 'lucide-react';
 import { User } from '../types';
 import { COUNTRIES, countryByCode, normalizePhoneForCountry, phoneValidationMessage } from '../lib/countries';
 import { startWhatsAppVerificationWithApi, verifyWhatsAppOtpWithApi } from '../lib/tiwloApi';
@@ -86,9 +86,8 @@ export default function WhatsAppVerificationRequired({ user, setUser, onLogout }
   return (
     <TiwloAuthShell>
       <div className="mb-2 flex w-full justify-end">
-        <button onClick={onLogout} className="inline-flex items-center gap-2 rounded-full border border-[#dedede] px-4 py-2 text-[12px] font-semibold text-[#555] hover:border-black hover:text-black">
-          <LogOut className="h-4 w-4" />
-          Logout
+        <button onClick={onLogout} className="h-9 rounded-full border border-[#dedede] bg-white px-4 text-[12px] font-bold text-[#333] transition hover:border-black">
+          Sign out
         </button>
       </div>
       <TiwloAuthLogo />

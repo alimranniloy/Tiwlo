@@ -54,6 +54,10 @@ export const billingResolvers = {
       await requireAuth(ctx);
       return service.startSignupPromoVerification(ctx, input);
     },
+    skipSignupPromoCredit: async (_, __, ctx) => {
+      await requireAuth(ctx);
+      return service.skipSignupPromoCredit(ctx);
+    },
     createCloudResourceOrder: async (_, { input }, ctx) => {
       await requireAuth(ctx);
       return service.createCloudResourceOrder(ctx, input);

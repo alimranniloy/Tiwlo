@@ -1339,6 +1339,37 @@ export const startSignupPromoVerification = async (ctx, input = {}) => {
   return startInvoicePayment(ctx, { invoiceId: invoice.id, provider });
 };
 
+export const skipSignupPromoCredit = async (ctx) => {
+  const actor = await getActor(ctx);
+  if (!actor) throw new AppError('Authentication is required', 'UNAUTHENTICATED');
+  if (actor.promoCreditStatus === 'active') {
+    throw new AppError('Free signup credit is already active on this account.', 'BAD_USER_INPUT');
+  }
+
+  const user = await ctx.prisma.$transaction(async (tx) => {
+    await tx.invoice.updateMany({
+      where: {
+        ownerId: actor.id,
+        scope: SIGNUP_PROMO_SCOPE,
+        status: { in: ['open', 'payment_failed'] }
+      },
+      data: { status: 'void' }
+    });
+    return tx.user.update({
+      where: { id: actor.id },
+      data: {
+        promoCreditAmount: 0,
+        promoCreditExpiresAt: null,
+        promoCreditStatus: 'skipped',
+        promoCreditSource: 'signup_skip',
+        promoPaymentMethod: null
+      }
+    });
+  });
+  await writeAudit(ctx, 'skip_signup_promo_credit', 'user', actor.id);
+  return toApi(user);
+};
+
 const createCloudOrderInvoice = async (ctx, actor, resourceInput, billing) => {
   const amount = roundMoney(billing.initialCharge);
   const currency = normalizeCurrencyCode(billing.currency || CREDIT_CURRENCY, CREDIT_CURRENCY);

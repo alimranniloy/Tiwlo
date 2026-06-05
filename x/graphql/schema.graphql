@@ -2857,6 +2857,7 @@ type Mutation {
   startInvoicePayment(input: StartInvoicePaymentInput!): CheckoutSession!
   startCreditTopUp(input: StartCreditTopUpInput!): CheckoutSession!
   startSignupPromoVerification(input: StartSignupPromoVerificationInput!): CheckoutSession!
+  skipSignupPromoCredit: User!
   settleUsageBilling: BillingOverview!
   runCreditAutomation(input: CreditAutomationInput): CreditAutomationResult!
   upsertRole(input: UpsertRoleInput!): Role!

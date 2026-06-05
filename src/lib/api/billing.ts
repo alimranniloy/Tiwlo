@@ -1,4 +1,5 @@
-import { graphQL } from './client';
+import { User } from '../../types';
+import { graphQL, userFields } from './client';
 
 const invoiceFields = `
   id
@@ -206,6 +207,18 @@ export async function startSignupPromoVerificationWithApi(provider: string) {
   );
 
   return data.startSignupPromoVerification;
+}
+
+export async function skipSignupPromoCreditWithApi() {
+  const data = await graphQL<{ skipSignupPromoCredit: User }>(
+    `mutation SkipSignupPromoCredit {
+      skipSignupPromoCredit {
+        ${userFields}
+      }
+    }`
+  );
+
+  return data.skipSignupPromoCredit;
 }
 
 export async function fetchPaymentGatewaysWithApi(status?: string) {
