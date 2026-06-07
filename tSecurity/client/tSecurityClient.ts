@@ -34,6 +34,8 @@ const metrics = {
   firstInteractionAt: 0,
   keystrokes: 0,
   pointerEvents: 0,
+  pasteEvents: 0,
+  inputEvents: 0,
   focusEvents: 0,
   inspectKeyCount: 0,
   devtoolsOpenSamples: 0,
@@ -61,6 +63,14 @@ if (typeof window !== 'undefined') {
   }, { passive: true });
   window.addEventListener('pointerdown', () => {
     metrics.pointerEvents += 1;
+    mark();
+  }, { passive: true });
+  window.addEventListener('paste', () => {
+    metrics.pasteEvents += 1;
+    mark();
+  }, { passive: true });
+  window.addEventListener('input', () => {
+    metrics.inputEvents += 1;
     mark();
   }, { passive: true });
   window.addEventListener('focusin', () => {
@@ -101,7 +111,7 @@ const deriveGatewayKey = async (state: GatewayState) => {
   const clientKeys = await crypto.subtle.generateKey(
     { name: 'ECDH', namedCurve: 'P-256' },
     true,
-    ['deriveKey']
+    ['deriveBits', 'deriveKey']
   );
   const serverPublicKey = await crypto.subtle.importKey(
     'raw',

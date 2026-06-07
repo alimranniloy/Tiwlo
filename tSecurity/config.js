@@ -56,6 +56,8 @@ export const DEFAULT_POLICY = {
     hosting: 90,
     subnetBurst: 110,
     roboticVelocity: 95,
+    pastedInput: 18,
+    fastPastedSubmission: 45,
     weakDevice: 25,
     proxySpoof: 115,
     invalidEmailDns: 105,
