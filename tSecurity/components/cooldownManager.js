@@ -26,6 +26,7 @@ export const checkCooldown = async ({ prisma, context, policy }) => {
     score: policy.weights?.activeCooldown || 130,
     block: true,
     reason: reasonForCooldown(item),
+    previousReason: item.reason || '',
     blockedUntil: item.blockedUntil,
     keyType: item.keyType
   }));

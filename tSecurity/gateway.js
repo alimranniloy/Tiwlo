@@ -1,5 +1,6 @@
 import { DEFAULT_POLICY, getTSecurityPolicy } from './config.js';
 import { behavioralCheck } from './components/behavioralCheck.js';
+import { accountAbuseCheck } from './components/accountAbuseCheck.js';
 import { clockSkewDefender } from './components/clockSkewDefender.js';
 import { consoleDefender } from './components/consoleDefender.js';
 import { checkCooldown, saveCooldownsForBlock } from './components/cooldownManager.js';
@@ -15,6 +16,7 @@ import { requestExpiration } from './components/requestExpiration.js';
 import { sessionLock } from './components/sessionLock.js';
 import { vpnCheck } from './components/vpnCheck.js';
 import { notifyTSecurityBlock } from './notifications/discordNotifier.js';
+import { buildExactDecisionReason } from './reasonBuilder.js';
 import {
   blockKnownUserByEmail,
   contextFromPayload,
@@ -137,12 +139,14 @@ const runChecks = async ({ prisma, req, action, payload, request, policy }) => {
   }
   const fingerprint = buildDeviceFingerprint({ req, request: effectiveRequest, payload: safePayload });
   const context = contextFromPayload({ action, payload: authPayloadFromGateway(safePayload), request: effectiveRequest, deviceHash: fingerprint.deviceHash });
+  const accountAbuse = await accountAbuseCheck({ prisma, action, payload: safePayload, context, policy });
   const checks = [
     sanitizer,
     proxyShield,
     requestExpiration({ payload: safePayload, policy }),
     validateEmail({ payload: safePayload, policy }),
     await dnsRecordChecker({ payload: safePayload, policy }),
+    accountAbuse,
     analyzeDeviceFingerprint({ fingerprint, policy }),
     mimeShield({ payload: safePayload, policy }),
     await checkCooldown({ prisma, context, policy }),
@@ -162,10 +166,13 @@ const runChecks = async ({ prisma, req, action, payload, request, policy }) => {
   }
   const signals = softenSignalsForAction(checks.flatMap((check) => check.signals || []), action, policy);
   const riskScore = Math.min(500, signals.reduce((total, signal) => total + Number(signal.score || 0), 0));
-  const reason = chooseBlockReason(signals) || thresholdReason(action, riskScore, policy);
+  const fallbackReason = chooseBlockReason(signals) || thresholdReason(action, riskScore, policy);
+  const exactReason = buildExactDecisionReason({ action, signals, riskScore, fallbackReason });
+  const reason = fallbackReason ? exactReason.reason : '';
   return {
     allow: !reason,
     reason,
+    exactReason,
     riskScore,
     signals,
     context,
@@ -192,6 +199,7 @@ const persistBlock = async ({ prisma, req, action, payload, context, decision, p
     payloadHash: context.payloadHash,
     blockedUntil,
     metadata: {
+      exactReason: decision.exactReason || null,
       userAgent: req.headers?.['user-agent'] || '',
       passiveFingerprint: req.fingerprint?.hash || '',
       payload: safeTicketPayload(authPayloadFromGateway(payload))
@@ -218,7 +226,7 @@ const persistBlock = async ({ prisma, req, action, payload, context, decision, p
     ipAddress: context.ipAddress,
     ipSubnet: context.ipSubnet,
     country: context.country,
-    metadata: { blockEventId, knownUser },
+    metadata: { blockEventId, knownUser, exactReason: decision.exactReason || null },
     expiresAt: addSeconds(60)
   });
   let discord = null;
