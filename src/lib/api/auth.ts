@@ -1,42 +1,9 @@
 import { User } from '../../types';
 import { graphQL, setAuthToken, userFields } from './client';
-import { detectBrowserCountryCode } from '../countries';
-
-function deviceMetadata() {
-  if (typeof window === 'undefined' || typeof navigator === 'undefined') {
-    return { deviceFingerprint: 'server', deviceMetadata: {} };
-  }
-  const screenText = typeof window.screen !== 'undefined'
-    ? `${window.screen.width}x${window.screen.height}x${window.screen.colorDepth}`
-    : '';
-  const metadata = {
-    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || '',
-    language: navigator.language || '',
-    platform: navigator.platform || '',
-    vendor: navigator.vendor || '',
-    hardwareConcurrency: navigator.hardwareConcurrency || 0,
-    deviceMemory: (navigator as Navigator & { deviceMemory?: number }).deviceMemory || 0,
-    maxTouchPoints: navigator.maxTouchPoints || 0,
-    screen: screenText,
-    userAgent: navigator.userAgent || '',
-    country: detectBrowserCountryCode('')
-  };
-  const deviceFingerprint = [
-    metadata.userAgent,
-    metadata.language,
-    metadata.platform,
-    metadata.vendor,
-    metadata.timezone,
-    metadata.screen,
-    metadata.hardwareConcurrency,
-    metadata.deviceMemory,
-    metadata.maxTouchPoints
-  ].join('|');
-  return { deviceFingerprint, deviceMetadata: metadata };
-}
+import { checkSignupAvailabilityViaTSecurity, createTSecurityAuthToken } from '../../../tSecurity/client/tSecurityClient';
 
 export async function loginWithApi(email: string, password: string) {
-  const device = deviceMetadata();
+  const tSecurityToken = await createTSecurityAuthToken('login', { email, password });
   const data = await graphQL<{ login: { token: string; user: User } }>(
     `mutation Login($input: LoginInput!) {
       login(input: $input) {
@@ -44,7 +11,7 @@ export async function loginWithApi(email: string, password: string) {
         user { ${userFields} }
       }
     }`,
-    { input: { email, password, ...device } }
+    { input: { tSecurityToken } }
   );
 
   setAuthToken(data.login.token);
@@ -76,7 +43,7 @@ export async function signupWithApi(input: {
   signupPromoOptIn?: boolean;
   signupPromoProvider?: string;
 }) {
-  const device = deviceMetadata();
+  const tSecurityToken = await createTSecurityAuthToken('signup', input);
   const data = await graphQL<{ signup: {
     ok: boolean;
     requiresWhatsAppOtp: boolean;
@@ -103,7 +70,7 @@ export async function signupWithApi(input: {
         user { ${userFields} }
       }
     }`,
-    { input: { ...input, ...device } }
+    { input: { tSecurityToken } }
   );
 
   if (data.signup.token) setAuthToken(data.signup.token);
@@ -111,22 +78,7 @@ export async function signupWithApi(input: {
 }
 
 export async function checkSignupAvailabilityWithApi(input: { email?: string; phone?: string; mobileCountryCode?: string; country?: string }) {
-  const data = await graphQL<{ signupAvailability: { ok: boolean; emailAvailable: boolean; phoneAvailable: boolean; normalizedPhone?: string; existingAccountName?: string; existingAccountEmail?: string; existingAccountAvatar?: string; message: string } }>(
-    `query SignupAvailability($email: String, $phone: String, $mobileCountryCode: String, $country: String) {
-      signupAvailability(email: $email, phone: $phone, mobileCountryCode: $mobileCountryCode, country: $country) {
-        ok
-        emailAvailable
-        phoneAvailable
-        normalizedPhone
-        existingAccountName
-        existingAccountEmail
-        existingAccountAvatar
-        message
-      }
-    }`,
-    input
-  );
-  return data.signupAvailability;
+  return checkSignupAvailabilityViaTSecurity(input);
 }
 
 export async function verifySignupWhatsAppOtpWithApi(challengeId: string, code: string) {

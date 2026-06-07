@@ -741,7 +741,7 @@ async function main() {
     ['admin.firewalls', 'main-admin', 'Edge Firewalls', '/firewalls', 'Rules, policies, WAF, and DDoS controls.'],
     ['admin.logs', 'main-admin', 'Automation Logs', '/management/logs', 'Audit events, jobs, hooks, and system cron.'],
     ['admin.api', 'main-admin', 'API Management', '/api', 'API keys, scopes, webhooks, and rate limits.'],
-    ['admin.security', 'main-admin', 'Security Policy', '/management/security', 'MFA, password policy, sessions, IP allowlists.'],
+    ['admin.security', 'main-admin', 'tSecurity', '/management/security', 'Fraud blocks, cooldowns, device fingerprints, and exact risk reasons.'],
     ['admin.settings', 'main-admin', 'System Settings', '/settings', 'Branding, platform defaults, notifications, regions.'],
 
     ['ecommerce.global-insight', 'ecommerce-admin', 'Global Insight', '/management/ecommerce', 'Merchant SaaS overview and revenue intelligence.'],

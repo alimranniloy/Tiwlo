@@ -1,6 +1,6 @@
 import { requireAdmin } from '../../core/auth.js';
 import * as service from './service.js';
-import { ensureDeviceSessionTable, securitySummaryForUser } from '../auth/deviceSecurity.js';
+import { ensureDeviceSessionTable, securitySummaryForUser } from '../../../../tSecurity/index.js';
 
 export const userResolvers = {
   User: {

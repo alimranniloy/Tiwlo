@@ -4,7 +4,7 @@ import { AppError, notFound } from '../../core/errors.js';
 import { pagination, searchWhere } from '../../core/validation.js';
 import { writeAudit } from '../../core/audit.js';
 import { runCreditAutomationForOwner } from '../billing/creditAutomation.js';
-import { enforceRestrictedStatusServices } from '../auth/systemShield.js';
+import { enforceRestrictedStatusServices } from '../../../../tSecurity/index.js';
 
 export const listUsers = async (ctx, args = {}) => {
   const { search, role, status } = args;
@@ -49,7 +49,7 @@ export const updateUser = async (ctx, actor, input) => {
   await writeAudit(ctx, 'update_user', 'user', id, {
     actorRole: actor.role,
     fields: Object.keys(removeUndefined(input)).filter((field) => field !== 'id'),
-    systemShield: shieldResult
+    tSecurity: shieldResult
   });
   return toApi(user);
 };

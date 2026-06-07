@@ -1,8 +1,10 @@
 import React from 'react';
 import { LifeBuoy, LogOut } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
 import SystemStatusPage from '../components/SystemStatusPage';
 import { fetchIdentityVerificationChallengeWithApi } from '../lib/tiwloApi';
 import { User } from '../types';
+import { getStoredTSecurityBlockReason } from '../../tSecurity/client/tSecurityClient';
 
 interface BannedAccountProps {
   user: User;
@@ -20,7 +22,9 @@ function supportMessage(user: User) {
 }
 
 export default function BannedAccount({ user, onLogout }: BannedAccountProps) {
+  const [searchParams] = useSearchParams();
   const [verificationMessage, setVerificationMessage] = React.useState('');
+  const blockReason = searchParams.get('reason') || getStoredTSecurityBlockReason();
 
   React.useEffect(() => {
     let active = true;
@@ -72,6 +76,12 @@ export default function BannedAccount({ user, onLogout }: BannedAccountProps) {
 
   return (
     <SystemStatusPage variant="disabled" title="Account Disabled | Tiwlo">
+      {blockReason && (
+        <div className="mx-auto mb-4 max-w-lg rounded-md border border-red-100 bg-red-50 px-4 py-3 text-center">
+          <p className="text-[11px] font-black uppercase tracking-wide text-red-500">tSecurity block reason</p>
+          <p className="mt-1 text-[13px] font-bold text-red-700">{blockReason}</p>
+        </div>
+      )}
       {verificationMessage && (
         <div className="mx-auto mb-4 max-w-lg rounded-md border border-red-100 bg-red-50 px-4 py-3 text-center text-[13px] font-bold text-red-700">
           {verificationMessage}

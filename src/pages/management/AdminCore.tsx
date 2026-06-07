@@ -1,39 +1,9 @@
 import React from 'react';
-import { AlertCircle, Cpu, Database, Fingerprint, Globe2, LifeBuoy, Save, ShieldAlert, SlidersHorizontal } from 'lucide-react';
+import { AlertCircle, Cpu, Database, Globe2, LifeBuoy, Save, ShieldAlert, SlidersHorizontal } from 'lucide-react';
 import { fetchPowerDnsConfigWithApi, fetchSettingsWithApi, updatePowerDnsConfigWithApi, upsertSettingWithApi } from '../../lib/tiwloApi';
 import DdosProtectionPanel from './DdosProtectionPanel';
 
-type CoreSection = 'resources' | 'domain' | 'accounts' | 'shield' | 'security' | 'support';
-
-type SystemShieldConfig = {
-  enabled: boolean;
-  autoDisable: boolean;
-  riskThreshold: number;
-  disableDelaySeconds: number;
-  autoSuspendServices: boolean;
-  blockDuplicatePhone: boolean;
-  matchRestrictedOnly: boolean;
-  vpnDetection: boolean;
-  cloudProviderSignals: boolean;
-  countryMismatchDetection: boolean;
-  emailSimilarity: boolean;
-  disableOnVpnOnly: boolean;
-};
-
-const DEFAULT_SYSTEM_SHIELD: SystemShieldConfig = {
-  enabled: true,
-  autoDisable: true,
-  riskThreshold: 80,
-  disableDelaySeconds: 2,
-  autoSuspendServices: true,
-  blockDuplicatePhone: true,
-  matchRestrictedOnly: true,
-  vpnDetection: true,
-  cloudProviderSignals: true,
-  countryMismatchDetection: true,
-  emailSimilarity: true,
-  disableOnVpnOnly: false
-};
+type CoreSection = 'resources' | 'domain' | 'accounts' | 'security' | 'support';
 
 export default function AdminCore() {
   const [activeSection, setActiveSection] = React.useState<CoreSection>('resources');
@@ -41,7 +11,6 @@ export default function AdminCore() {
   const [maxVolumes, setMaxVolumes] = React.useState(0);
   const [newAccountCredit, setNewAccountCredit] = React.useState(0);
   const [maintenanceMode, setMaintenanceMode] = React.useState(false);
-  const [systemShield, setSystemShield] = React.useState<SystemShieldConfig>(DEFAULT_SYSTEM_SHIELD);
   const [supportAppId, setSupportAppId] = React.useState('');
   const [chatWidget, setChatWidget] = React.useState(false);
   const [primaryDomain, setPrimaryDomain] = React.useState('');
@@ -60,13 +29,6 @@ export default function AdminCore() {
         setMaintenanceMode(Boolean((byKey.maintenance as any)?.enabled));
         setSupportAppId(String((byKey.supportIntegration as any)?.appId || ''));
         setChatWidget(Boolean((byKey.supportIntegration as any)?.chatWidget));
-        const shield = (byKey.systemShield as Partial<SystemShieldConfig> | undefined) || {};
-        setSystemShield({
-          ...DEFAULT_SYSTEM_SHIELD,
-          ...shield,
-          riskThreshold: Number(shield.riskThreshold ?? DEFAULT_SYSTEM_SHIELD.riskThreshold),
-          disableDelaySeconds: Number(shield.disableDelaySeconds ?? DEFAULT_SYSTEM_SHIELD.disableDelaySeconds)
-        });
       })
       .catch((err) => setError(err instanceof Error ? err.message : 'Unable to load settings'));
     fetchPowerDnsConfigWithApi()
@@ -100,15 +62,6 @@ export default function AdminCore() {
           }
         }),
         upsertSettingWithApi({ scope: 'platform', key: 'maintenance', value: { enabled: maintenanceMode } }),
-        upsertSettingWithApi({
-          scope: 'platform',
-          key: 'systemShield',
-          value: {
-            ...systemShield,
-            riskThreshold: Math.max(10, Math.min(200, Number(systemShield.riskThreshold || 80))),
-            disableDelaySeconds: Math.max(0, Math.min(5, Number(systemShield.disableDelaySeconds || 0)))
-          }
-        }),
         upsertSettingWithApi({ scope: 'platform', key: 'supportIntegration', value: { appId: supportAppId, chatWidget } })
       ]);
       setSaved(true);
@@ -122,15 +75,11 @@ export default function AdminCore() {
     { id: 'resources', label: 'Resources', desc: 'Limits and quotas', icon: Cpu },
     { id: 'domain', label: 'Domain & DNS', desc: 'Primary domain, IP, NS', icon: Globe2 },
     { id: 'accounts', label: 'User Accounts', desc: 'Signup credit and billing guard', icon: Database },
-    { id: 'shield', label: 'System Shield', desc: 'Device, phone, VPN defense', icon: Fingerprint },
     { id: 'security', label: 'Security', desc: 'Maintenance and DDoS', icon: ShieldAlert },
     { id: 'support', label: 'Support', desc: 'Live chat integration', icon: LifeBuoy }
   ];
 
   const inputClass = 'w-full rounded-sm border border-[#dfe5ee] bg-white px-3 py-2 text-sm outline-none focus:border-[#0069ff]';
-  const setShieldValue = <K extends keyof SystemShieldConfig>(key: K, value: SystemShieldConfig[K]) => {
-    setSystemShield((current) => ({ ...current, [key]: value }));
-  };
 
   return (
     <div className="space-y-6 pb-12">
@@ -215,95 +164,6 @@ export default function AdminCore() {
             </div>
           )}
 
-          {activeSection === 'shield' && (
-            <div className="space-y-6 p-6">
-              <SectionTitle icon={Fingerprint} title="System Shield" desc="Fraud matching for device, IP, phone, password, billing, and VPN/proxy signals." />
-              <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-                <ToggleRow
-                  title="Enable Shield"
-                  desc="Runs the signup scan and restricted-account service freeze."
-                  checked={systemShield.enabled}
-                  onChange={(value) => setShieldValue('enabled', value)}
-                />
-                <ToggleRow
-                  title="Auto Disable"
-                  desc="Disables risky new accounts a few seconds after signup."
-                  checked={systemShield.autoDisable}
-                  onChange={(value) => setShieldValue('autoDisable', value)}
-                />
-                <ToggleRow
-                  title="Duplicate Phone Block"
-                  desc="Same country code and mobile number disables the new signup."
-                  checked={systemShield.blockDuplicatePhone}
-                  onChange={(value) => setShieldValue('blockDuplicatePhone', value)}
-                />
-                <ToggleRow
-                  title="Suspend Linked Services"
-                  desc="Cloud, ecommerce, ISP, Tiwlo Pay, and API access are frozen."
-                  checked={systemShield.autoSuspendServices}
-                  onChange={(value) => setShieldValue('autoSuspendServices', value)}
-                />
-                <ToggleRow
-                  title="Restricted Match Only"
-                  desc="Device, password, name, and billing matches compare against disabled accounts."
-                  checked={systemShield.matchRestrictedOnly}
-                  onChange={(value) => setShieldValue('matchRestrictedOnly', value)}
-                />
-                <ToggleRow
-                  title="VPN / Proxy Signals"
-                  desc="Proxy chains, datacenter headers, and unusual network ranges add risk."
-                  checked={systemShield.vpnDetection}
-                  onChange={(value) => setShieldValue('vpnDetection', value)}
-                />
-                <ToggleRow
-                  title="Cloud ASN Intelligence"
-                  desc="Azure, AWS, Google Cloud, DigitalOcean, Hetzner, OVH, and similar hosting networks add risk."
-                  checked={systemShield.cloudProviderSignals}
-                  onChange={(value) => setShieldValue('cloudProviderSignals', value)}
-                />
-                <ToggleRow
-                  title="Country Mismatch"
-                  desc="Compares selected signup country with browser/header country telemetry."
-                  checked={systemShield.countryMismatchDetection}
-                  onChange={(value) => setShieldValue('countryMismatchDetection', value)}
-                />
-                <ToggleRow
-                  title="Email Similarity"
-                  desc="Flags similar email usernames against restricted accounts."
-                  checked={systemShield.emailSimilarity}
-                  onChange={(value) => setShieldValue('emailSimilarity', value)}
-                />
-                <ToggleRow
-                  title="Disable On VPN Alone"
-                  desc="Use only when VPN-only signups should be disabled without other matches."
-                  checked={systemShield.disableOnVpnOnly}
-                  onChange={(value) => setShieldValue('disableOnVpnOnly', value)}
-                />
-              </div>
-
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <label className="space-y-1">
-                  <span className="text-[11px] font-black uppercase text-[#64748b]">Risk Threshold</span>
-                  <input type="number" min="10" max="200" value={systemShield.riskThreshold} onChange={(event) => setShieldValue('riskThreshold', Number(event.target.value || 0))} className={inputClass} />
-                </label>
-                <label className="space-y-1">
-                  <span className="text-[11px] font-black uppercase text-[#64748b]">Disable Delay Seconds</span>
-                  <input type="number" min="0" max="5" value={systemShield.disableDelaySeconds} onChange={(event) => setShieldValue('disableDelaySeconds', Number(event.target.value || 0))} className={inputClass} />
-                </label>
-              </div>
-
-              <div className="flex flex-col gap-3 rounded-sm border border-blue-100 bg-blue-50 p-4 text-blue-800 md:flex-row md:items-center md:justify-between">
-                <div>
-                  <p className="text-sm font-black">Linked with Security & DDoS</p>
-                  <p className="mt-1 text-xs font-semibold">Backend middleware now adds secure headers, HTTP parameter pollution guard, and rate limiting beside the DDoS controls.</p>
-                </div>
-                <button onClick={() => setActiveSection('security')} className="rounded-sm border border-blue-200 bg-white px-3 py-2 text-[12px] font-black text-blue-700 hover:bg-blue-100">
-                  Open Security
-                </button>
-              </div>
-            </div>
-          )}
-
           {activeSection === 'security' && (
             <div className="space-y-6 p-6">
               <SectionTitle icon={ShieldAlert} title="Security & DDoS" desc="Maintenance mode and live attack protection." />
@@ -347,20 +207,6 @@ function SectionTitle({ icon: Icon, title, desc }: { icon: any; title: string; d
         <h2 className="text-[15px] font-black text-[#2e3d49]">{title}</h2>
         <p className="mt-1 text-[12px] font-semibold text-[#64748b]">{desc}</p>
       </div>
-    </div>
-  );
-}
-
-function ToggleRow({ title, desc, checked, onChange }: { title: string; desc: string; checked: boolean; onChange: (value: boolean) => void }) {
-  return (
-    <div className="flex flex-col gap-3 rounded-sm border border-[#e5e8ed] p-4 sm:flex-row sm:items-center sm:justify-between">
-      <div>
-        <p className="text-sm font-black text-[#2e3d49]">{title}</p>
-        <p className="mt-1 text-xs font-semibold leading-5 text-[#64748b]">{desc}</p>
-      </div>
-      <button onClick={() => onChange(!checked)} className={`relative h-7 w-12 shrink-0 rounded-full ${checked ? 'bg-[#0069ff]' : 'bg-gray-200'}`}>
-        <span className={`absolute top-1 h-5 w-5 rounded-full bg-white transition-all ${checked ? 'right-1' : 'left-1'}`}></span>
-      </button>
     </div>
   );
 }

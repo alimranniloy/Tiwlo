@@ -7,8 +7,7 @@ import { writeAudit } from '../../core/audit.js';
 import { getSignupPromoCredit } from '../../core/settings.js';
 import { isProfileInputComplete, profileCompletionData } from '../../core/profile.js';
 import { appOrigin, cta, paragraph, sendTiwloEmail } from '../../core/email.js';
-import { recordAuthDeviceSession } from './deviceSecurity.js';
-import { enforceSignupShield } from './systemShield.js';
+import { consumeSensitivePayload, recordAuthDeviceSession } from '../../../../tSecurity/index.js';
 import {
   attachWhatsAppState,
   createSignupOtpChallenge,
@@ -107,6 +106,8 @@ function queueVerificationEmail(ctx, user, token) {
 }
 
 export const login = async (ctx, input) => {
+  const secure = await consumeSensitivePayload(ctx, 'login', input);
+  input = secure.payload;
   const email = normalizeEmail(input.email);
   const user = await ctx.prisma.user.findUnique({ where: { email } });
 
@@ -141,6 +142,8 @@ export const login = async (ctx, input) => {
 };
 
 export const signup = async (ctx, input) => {
+  const secure = await consumeSensitivePayload(ctx, 'signup', input);
+  input = secure.payload;
   const email = normalizeEmail(input.email);
   const existing = await ctx.prisma.user.findUnique({ where: { email } });
   if (existing) throw new AppError('Account already exists', 'BAD_USER_INPUT');
@@ -200,11 +203,8 @@ export const signup = async (ctx, input) => {
 
   const device = await recordAuthDeviceSession(ctx, user, input, 'signup');
   await writeAudit({ ...ctx, user }, 'signup', 'user', user.id, { email, device: device.session });
-  const shield = await enforceSignupShield(ctx, user, input, device.session);
-  if (String(shield.user.status || '').toLowerCase() !== 'disabled') {
-    queueVerificationEmail(ctx, shield.user, verificationToken);
-  }
-  return { ok: true, requiresWhatsAppOtp: false, token: createToken(shield.user), user: toApi(shield.user), message: 'Account created.' };
+  queueVerificationEmail(ctx, user, verificationToken);
+  return { ok: true, requiresWhatsAppOtp: false, token: createToken(user), user: toApi(user), message: 'Account created.' };
 };
 
 export const verifySignupWhatsAppOtp = async (ctx, challengeId, code) => {
@@ -251,11 +251,8 @@ export const verifySignupWhatsAppOtp = async (ctx, challengeId, code) => {
 
   const device = await recordAuthDeviceSession(ctx, user, input, 'signup');
   await writeAudit({ ...ctx, user }, 'signup', 'user', user.id, { email, device: device.session, whatsappVerified: true });
-  const shield = await enforceSignupShield(ctx, user, input, device.session);
-  if (String(shield.user.status || '').toLowerCase() !== 'disabled') {
-    queueVerificationEmail(ctx, shield.user, emailVerificationToken);
-  }
-  const enriched = await attachWhatsAppState(ctx.prisma, shield.user);
+  queueVerificationEmail(ctx, user, emailVerificationToken);
+  const enriched = await attachWhatsAppState(ctx.prisma, user);
   return { token: createToken(enriched), user: toApi(enriched) };
 };
 

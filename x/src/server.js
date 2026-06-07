@@ -29,6 +29,7 @@ import { startPowerDnsAutomation } from './modules/powerdns/service.js';
 import { registerDiscordRoutes } from './modules/discord/service.js';
 import { ensureWhatsAppAuthSchema, publicWhatsAppStatus } from './modules/whatsapp/service.js';
 import { publicCurrencyContext } from './core/currency.js';
+import { registerTSecurity } from '../../tSecurity/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -277,6 +278,8 @@ const requestIp = (req) => normalizeClientIp(
 registerDiscordRoutes(app, { prisma, userFromRequest });
 
 app.use(express.json({ limit: '20mb' }));
+
+registerTSecurity(app, { prisma, requestIp, userFromRequest });
 
 const writeSse = (res, event) => {
   res.write(`data: ${JSON.stringify(event)}\n\n`);

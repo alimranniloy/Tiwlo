@@ -19,6 +19,7 @@ const ResetPassword = lazy(() => import('./pages/ResetPassword'));
 const VerifyEmail = lazy(() => import('./pages/VerifyEmail'));
 const EmailPortal = lazy(() => import('./pages/EmailPortal'));
 const BannedAccount = lazy(() => import('./pages/BannedAccount'));
+const TSecurityBlocked = lazy(() => import('./pages/TSecurityBlocked'));
 const MaintenancePage = lazy(() => import('./pages/Maintenance'));
 const NotFoundPage = lazy(() => import('./pages/NotFound'));
 const CompleteProfile = lazy(() => import('./pages/CompleteProfile'));
@@ -589,6 +590,7 @@ export default function App() {
           <Route path="/forgot-password" element={<ForgotPassword />} />
           <Route path="/reset-password" element={<ResetPassword onLogin={handleLogin} />} />
           <Route path="/verify-email" element={<VerifyEmail onLogin={handleLogin} />} />
+          <Route path="/blocked" element={<TSecurityBlocked />} />
           <Route path="/email" element={<EmailPortal />} />
           <Route path="/terms" element={<LegalPage />} />
           <Route path="/privacy" element={<LegalPage />} />

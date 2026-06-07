@@ -136,7 +136,7 @@ export default function Sidebar({ user, isOpen, setIsOpen, onLogout }: SidebarPr
           { name: 'Email', icon: Mail, path: '/management/email' },
           { name: 'WhatsApp API', icon: MessageCircle, path: '/management/whatsapp-api' },
           { name: 'API Management', icon: Zap, path: '/management/api' },
-          { name: 'Security Policy', icon: Lock, path: '/management/security' },
+          { name: 'tSecurity', icon: Lock, path: '/management/security' },
           { name: 'Backup', icon: Archive, path: '/management/backup' },
           { name: 'SSL', icon: ShieldCheck, path: '/management/ssl' },
           { name: 'System Settings', icon: Settings, path: '/management/settings' },

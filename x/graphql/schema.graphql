@@ -1625,10 +1625,11 @@ type AiModelChatResponse {
 }
 
 input LoginInput {
-  email: String!
-  password: String!
+  email: String
+  password: String
   deviceFingerprint: String
   deviceMetadata: JSON
+  tSecurityToken: String
 }
 
 input MailboxLoginInput {
@@ -1689,11 +1690,12 @@ input UpdateMailboxProfileInput {
 }
 
 input SignupInput {
-  name: String!
-  email: String!
-  password: String!
+  name: String
+  email: String
+  password: String
   deviceFingerprint: String
   deviceMetadata: JSON
+  tSecurityToken: String
   signupPromoOptIn: Boolean
   signupPromoProvider: String
   phone: String

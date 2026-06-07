@@ -99,7 +99,7 @@ const controlLayers: ControlLayer[] = [
     icon: ShieldCheck,
     title: 'Security controls follow the user lifecycle',
     copy: 'Device checks, country signals, disabled account review, WhatsApp OTP, Discord tickets, maintenance mode, and audit logs work together.',
-    metrics: ['System Shield', 'ID review', 'Audit logs']
+    metrics: ['tSecurity', 'ID review', 'Audit logs']
   }
 ];
 
