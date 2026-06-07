@@ -1,5 +1,5 @@
 import React from 'react';
-import { AlertCircle, ChevronRight, Cpu, Gift, Globe2, LifeBuoy, Save, ShieldAlert, SlidersHorizontal } from 'lucide-react';
+import { AlertCircle, Cpu, Gift, Globe2, LifeBuoy, Save, ShieldAlert, SlidersHorizontal } from 'lucide-react';
 import { fetchPowerDnsConfigWithApi, fetchSettingsWithApi, updatePowerDnsConfigWithApi, upsertSettingWithApi } from '../../lib/tiwloApi';
 import DdosProtectionPanel from './DdosProtectionPanel';
 
@@ -200,17 +200,16 @@ export default function AdminCore() {
                   </div>
                 </div>
                 <div className="space-y-3">
-                  <div className="flex min-h-[70px] items-center gap-3 rounded-[18px] border border-[#dbe5f7] bg-[#f4f8ff] px-3 py-2.5 shadow-[0_10px_28px_rgba(15,23,42,0.06)]">
-                    <div className="grid h-[52px] w-[52px] shrink-0 place-items-center rounded-[13px] bg-[#e9f1ff] text-[#0069ff]">
-                      <Gift className="h-7 w-7" />
+                  <div className="flex items-center gap-2 rounded-[12px] border border-[#e4ebf7] bg-[#f7faff] px-2.5 py-1.5">
+                    <div className="grid h-8 w-8 shrink-0 place-items-center rounded-[9px] bg-[#edf4ff] text-[#0069ff]">
+                      <Gift className="h-4 w-4" />
                     </div>
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-[15px] font-black leading-5 text-[#071024]">Get {money(signupPromoCredit)} free credit for new users</p>
-                      <p className="mt-1 truncate text-[12.5px] font-semibold leading-4 text-[#334155]">
+                      <p className="whitespace-nowrap text-[10.5px] font-black leading-4 text-[#071024]">Get {money(signupPromoCredit)} free credit for new users</p>
+                      <p className="whitespace-nowrap text-[10px] font-medium leading-3 text-[#334155]">
                         {signupPromoRequiresPayment ? 'No charges upfront. Cancel anytime.' : 'No payment verification required.'}
                       </p>
                     </div>
-                    <ChevronRight className="h-5 w-5 shrink-0 text-[#263443]" />
                   </div>
                   <div className="rounded-sm border border-[#eef2f7] bg-[#fbfcfe] p-3 text-[12px] font-bold text-[#475569]">
                     {creditSystemEnabled ? `${money(signupPromoHoldAmount)} hold ${signupPromoRequiresPayment ? 'will be used for verification.' : 'is ignored while verification is off.'}` : 'Credit system is disabled.'}

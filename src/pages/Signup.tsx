@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, ChevronRight, Gift } from 'lucide-react';
+import { ArrowLeft, Gift } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { User as UserType } from '../types';
 import {
@@ -480,17 +480,16 @@ export default function SignupPage({ onSignup }: SignupProps) {
           <>
             <form onSubmit={continueWithEmail} className="mt-7 space-y-6">
               {promoEnabled && (
-                <div className="flex min-h-[70px] items-center gap-3 rounded-[18px] border border-[#dbe5f7] bg-[#f4f8ff] px-3 py-2.5 shadow-[0_10px_28px_rgba(15,23,42,0.06)]">
-                  <div className="grid h-[52px] w-[52px] shrink-0 place-items-center rounded-[13px] bg-[#e9f1ff] text-[#0069ff]">
-                    <Gift className="h-7 w-7" />
+                <div className="flex items-center gap-2 rounded-[12px] border border-[#e4ebf7] bg-[#f7faff] px-2.5 py-1.5">
+                  <div className="grid h-8 w-8 shrink-0 place-items-center rounded-[9px] bg-[#edf4ff] text-[#0069ff]">
+                    <Gift className="h-4 w-4" />
                   </div>
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-[15px] font-black leading-5 text-[#071024]">Get {signupCreditLabel} free credit for new users</p>
-                    <p className="mt-1 truncate text-[12.5px] font-semibold leading-4 text-[#334155]">
+                    <p className="whitespace-nowrap text-[10.5px] font-black leading-4 text-[#071024]">Get {signupCreditLabel} free credit for new users</p>
+                    <p className="whitespace-nowrap text-[10px] font-medium leading-3 text-[#334155]">
                       {promoRequiresPayment ? 'No charges upfront. Cancel anytime.' : 'No payment verification required.'}
                     </p>
                   </div>
-                  <ChevronRight className="h-5 w-5 shrink-0 text-[#263443]" />
                 </div>
               )}
               <TiwloAuthInput
