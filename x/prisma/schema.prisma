@@ -147,6 +147,88 @@ model UserDeviceSession {
   @@index([unusual, lastSeenAt])
 }
 
+model TSecurityGatewayChallenge {
+  id               String    @id
+  serverPublicKey  String
+  serverPrivateKey String
+  salt             String
+  requestIp        String?
+  userAgent        String?
+  metadata         Json?
+  expiresAt        DateTime
+  usedAt           DateTime?
+  createdAt        DateTime  @default(now())
+
+  @@index([expiresAt])
+}
+
+model TSecurityGatewayTicket {
+  id                String    @id
+  tokenHash         String    @unique
+  action            String
+  verdict           String
+  riskScore         Int       @default(0)
+  reasons           Json?
+  payloadCiphertext Json?
+  emailHash         String?
+  phoneHash         String?
+  deviceHash        String?
+  ipAddress         String?
+  ipSubnet          String?
+  country           String?
+  metadata          Json?
+  expiresAt         DateTime
+  usedAt            DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @default(now())
+
+  @@index([action, createdAt])
+  @@index([ipSubnet, createdAt], map: "TSecurityGatewayTicket_subnet_createdAt_idx")
+  @@index([emailHash])
+}
+
+model TSecurityBlockEvent {
+  id           String    @id
+  userId       String?
+  email        String?
+  phone        String?
+  ipAddress    String?
+  ipSubnet     String?
+  country      String?
+  deviceHash   String?
+  eventType    String    @default("gateway")
+  status       String    @default("blocked")
+  reason       String
+  reasons      Json?
+  riskScore    Int       @default(0)
+  requestId    String?
+  payloadHash  String?
+  blockedUntil DateTime?
+  metadata     Json?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @default(now())
+
+  @@index([createdAt])
+  @@index([reason])
+  @@index([email])
+  @@index([phone])
+  @@index([deviceHash])
+}
+
+model TSecurityCooldown {
+  id           String   @id
+  keyType      String
+  keyHash      String   @unique
+  keyValue     String?
+  reason       String
+  blockEventId String?
+  blockedUntil DateTime
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @default(now())
+
+  @@index([blockedUntil])
+}
+
 model Role {
   id          String   @id @default(cuid())
   key         String   @unique
