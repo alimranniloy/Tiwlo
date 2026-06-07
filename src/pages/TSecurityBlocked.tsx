@@ -1,19 +1,11 @@
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { ArrowLeft, LifeBuoy } from 'lucide-react';
 import SystemStatusPage from '../components/SystemStatusPage';
-import { getStoredTSecurityBlockReason } from '../../tSecurity/client/tSecurityClient';
 
 export default function TSecurityBlocked() {
-  const [searchParams] = useSearchParams();
-  const reason = searchParams.get('reason') || getStoredTSecurityBlockReason() || 'Security Check Failed';
-
   return (
     <SystemStatusPage variant="disabled" title="Access Blocked | Tiwlo">
       <div className="space-y-4">
-        <div className="rounded-md border border-red-100 bg-red-50 px-4 py-3 text-center">
-          <p className="text-[11px] font-black uppercase tracking-wide text-red-500">tSecurity block reason</p>
-          <p className="mt-1 text-[13px] font-bold text-red-700">{reason}</p>
-        </div>
         <div className="grid gap-2 sm:grid-cols-2">
           <Link
             to="/login"

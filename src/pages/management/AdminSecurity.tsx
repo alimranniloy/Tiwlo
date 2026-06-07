@@ -1,6 +1,12 @@
 import React from 'react';
-import { AlertCircle, Ban, Clock, Fingerprint, RefreshCw, Search, ShieldCheck, Wifi } from 'lucide-react';
-import { fetchTSecurityBlockEvents, fetchTSecurityBlockSummary } from '../../../tSecurity/client/tSecurityClient';
+import { AlertCircle, Ban, Clock, Fingerprint, RefreshCw, Save, Search, ShieldCheck, SlidersHorizontal, Unlock, Wifi } from 'lucide-react';
+import {
+  fetchTSecurityBlockEvents,
+  fetchTSecurityBlockSummary,
+  fetchTSecurityPolicy,
+  releaseTSecurityBlockEvent,
+  saveTSecurityPolicy
+} from '../../../tSecurity/client/tSecurityClient';
 
 type BlockEvent = {
   id: string;
@@ -14,6 +20,21 @@ type BlockEvent = {
   riskScore?: number;
   blockedUntil?: string;
   createdAt?: string;
+  status?: string;
+};
+
+type TSecurityPolicy = {
+  enabled?: boolean;
+  mode?: string;
+  adminBypass?: boolean;
+  hideBlockReasonFromUsers?: boolean;
+  blockOnSignupAvailability?: boolean;
+  blockOnLogin?: boolean;
+  blockKnownUsersOnLogin?: boolean;
+  bindTicketToSubnet?: boolean;
+  cooldownDays?: number;
+  signupRiskBlockThreshold?: number;
+  loginRiskBlockThreshold?: number;
 };
 
 const formatDate = (value?: string) => {
@@ -31,6 +52,9 @@ export default function AdminSecurity() {
   const [search, setSearch] = React.useState('');
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState('');
+  const [policy, setPolicy] = React.useState<TSecurityPolicy | null>(null);
+  const [savingPolicy, setSavingPolicy] = React.useState(false);
+  const [releasingId, setReleasingId] = React.useState('');
 
   const load = React.useCallback(async (query = search) => {
     setLoading(true);
@@ -38,7 +62,8 @@ export default function AdminSecurity() {
     try {
       const [nextSummary, nextEvents] = await Promise.all([
         fetchTSecurityBlockSummary(),
-        fetchTSecurityBlockEvents({ search: query, limit: 150 })
+        fetchTSecurityBlockEvents({ search: query, limit: 150 }),
+        fetchTSecurityPolicy().then(setPolicy)
       ]);
       setSummary(nextSummary);
       setEvents(nextEvents);
@@ -56,6 +81,37 @@ export default function AdminSecurity() {
   const submitSearch = (event: React.FormEvent) => {
     event.preventDefault();
     load(search);
+  };
+
+  const updatePolicy = (patch: TSecurityPolicy) => {
+    setPolicy((current) => ({ ...(current || {}), ...patch }));
+  };
+
+  const persistPolicy = async () => {
+    if (!policy) return;
+    setSavingPolicy(true);
+    setError('');
+    try {
+      setPolicy(await saveTSecurityPolicy(policy as Record<string, unknown>));
+      await load(search);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to save tSecurity policy.');
+    } finally {
+      setSavingPolicy(false);
+    }
+  };
+
+  const releaseBlock = async (id: string) => {
+    setReleasingId(id);
+    setError('');
+    try {
+      await releaseTSecurityBlockEvent(id);
+      await load(search);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to unblock this tSecurity record.');
+    } finally {
+      setReleasingId('');
+    }
   };
 
   const metrics = [
@@ -125,7 +181,7 @@ export default function AdminSecurity() {
           </div>
 
           <div className="overflow-x-auto">
-            <table className="min-w-[980px] w-full border-collapse text-left">
+            <table className="min-w-[1080px] w-full border-collapse text-left">
               <thead className="bg-white text-[11px] font-black uppercase tracking-wide text-[#7b8496]">
                 <tr>
                   <th className="border-b border-[#eef2f7] px-4 py-3">User</th>
@@ -134,13 +190,14 @@ export default function AdminSecurity() {
                   <th className="border-b border-[#eef2f7] px-4 py-3">Exact Reason</th>
                   <th className="border-b border-[#eef2f7] px-4 py-3">Blocked</th>
                   <th className="border-b border-[#eef2f7] px-4 py-3">Cooldown</th>
+                  <th className="border-b border-[#eef2f7] px-4 py-3">Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#eef2f7] text-[13px]">
                 {loading && events.length === 0 ? (
-                  <tr><td colSpan={6} className="px-4 py-10 text-center font-bold text-[#7b8496]">Loading tSecurity records...</td></tr>
+                  <tr><td colSpan={7} className="px-4 py-10 text-center font-bold text-[#7b8496]">Loading tSecurity records...</td></tr>
                 ) : events.length === 0 ? (
-                  <tr><td colSpan={6} className="px-4 py-10 text-center font-bold text-[#7b8496]">No block records found.</td></tr>
+                  <tr><td colSpan={7} className="px-4 py-10 text-center font-bold text-[#7b8496]">No block records found.</td></tr>
                 ) : events.map((event) => (
                   <tr key={event.id} className="align-top hover:bg-[#fbfdff]">
                     <td className="px-4 py-3">
@@ -160,6 +217,17 @@ export default function AdminSecurity() {
                     </td>
                     <td className="px-4 py-3 text-[12px] font-semibold text-[#334155]">{formatDate(event.createdAt)}</td>
                     <td className="px-4 py-3 text-[12px] font-semibold text-[#334155]">{formatDate(event.blockedUntil)}</td>
+                    <td className="px-4 py-3">
+                      <button
+                        type="button"
+                        disabled={releasingId === event.id || event.status === 'released'}
+                        onClick={() => releaseBlock(event.id)}
+                        className="inline-flex items-center gap-2 rounded border border-emerald-100 bg-emerald-50 px-3 py-2 text-[12px] font-black text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <Unlock className="h-4 w-4" />
+                        {event.status === 'released' ? 'Released' : releasingId === event.id ? 'Releasing...' : 'Unblock'}
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -168,6 +236,81 @@ export default function AdminSecurity() {
         </section>
 
         <aside className="space-y-4">
+          <section className="rounded-lg border border-[#e5e8ed] bg-white p-5">
+            <div className="flex items-center gap-2">
+              <SlidersHorizontal className="h-4 w-4 text-[#0069ff]" />
+              <h2 className="text-[13px] font-black uppercase tracking-wide text-[#2e3d49]">Security Mode</h2>
+            </div>
+            <div className="mt-4 space-y-3">
+              <label className="block">
+                <span className="text-[11px] font-black uppercase tracking-wide text-[#7b8496]">Mode</span>
+                <select
+                  value={policy?.mode || 'balanced'}
+                  onChange={(event) => updatePolicy({ mode: event.target.value })}
+                  className="mt-1 h-10 w-full rounded border border-[#dfe5ee] bg-white px-3 text-[13px] font-bold outline-none focus:border-[#0069ff]"
+                >
+                  <option value="relaxed">Relaxed</option>
+                  <option value="balanced">Balanced</option>
+                  <option value="aggressive">Aggressive</option>
+                </select>
+              </label>
+
+              {[
+                ['enabled', 'tSecurity enabled'],
+                ['adminBypass', 'Never block admins'],
+                ['blockOnLogin', 'Hard block risky login'],
+                ['blockOnSignupAvailability', 'Hard block email checks'],
+                ['blockKnownUsersOnLogin', 'Block user status on login hit'],
+                ['bindTicketToSubnet', 'Bind token to subnet']
+              ].map(([key, label]) => (
+                <label key={key} className="flex items-center justify-between gap-3 rounded border border-[#eef2f7] px-3 py-2">
+                  <span className="text-[12px] font-bold text-[#334155]">{label}</span>
+                  <input
+                    type="checkbox"
+                    checked={Boolean((policy as any)?.[key])}
+                    onChange={(event) => updatePolicy({ [key]: event.target.checked } as TSecurityPolicy)}
+                    className="h-4 w-4 accent-[#0069ff]"
+                  />
+                </label>
+              ))}
+
+              <div className="grid grid-cols-2 gap-3">
+                <label className="block">
+                  <span className="text-[11px] font-black uppercase tracking-wide text-[#7b8496]">Cooldown Days</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={365}
+                    value={policy?.cooldownDays ?? 90}
+                    onChange={(event) => updatePolicy({ cooldownDays: Number(event.target.value) })}
+                    className="mt-1 h-10 w-full rounded border border-[#dfe5ee] px-3 text-[13px] font-bold outline-none focus:border-[#0069ff]"
+                  />
+                </label>
+                <label className="block">
+                  <span className="text-[11px] font-black uppercase tracking-wide text-[#7b8496]">Signup Block</span>
+                  <input
+                    type="number"
+                    min={80}
+                    max={500}
+                    value={policy?.signupRiskBlockThreshold ?? 240}
+                    onChange={(event) => updatePolicy({ signupRiskBlockThreshold: Number(event.target.value) })}
+                    className="mt-1 h-10 w-full rounded border border-[#dfe5ee] px-3 text-[13px] font-bold outline-none focus:border-[#0069ff]"
+                  />
+                </label>
+              </div>
+
+              <button
+                type="button"
+                disabled={!policy || savingPolicy}
+                onClick={persistPolicy}
+                className="inline-flex w-full items-center justify-center gap-2 rounded bg-[#0069ff] px-4 py-2.5 text-[13px] font-black text-white hover:bg-[#0056cc] disabled:opacity-60"
+              >
+                <Save className="h-4 w-4" />
+                {savingPolicy ? 'Saving...' : 'Save tSecurity'}
+              </button>
+            </div>
+          </section>
+
           <section className="rounded-lg border border-[#e5e8ed] bg-white p-5">
             <h2 className="text-[13px] font-black uppercase tracking-wide text-[#2e3d49]">Top Reasons</h2>
             <div className="mt-4 space-y-3">

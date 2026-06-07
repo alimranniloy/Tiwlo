@@ -53,8 +53,11 @@ export default function LoginPage({ onLogin, maintenanceMode = false }: LoginPro
     try {
       const result = await loginWithApi(normalizedEmail, password);
       onLogin(result.user);
-    } catch {
-      setError('Incorrect email or password.');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '';
+      setError(/invalid credentials|incorrect email|incorrect password/i.test(message)
+        ? 'Incorrect email or password.'
+        : message || 'Unable to log in right now. Please try again.');
     } finally {
       setIsLoggingIn(false);
     }

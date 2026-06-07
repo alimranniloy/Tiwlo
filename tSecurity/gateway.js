@@ -23,7 +23,8 @@ import {
   insertGatewayTicket,
   markGatewayTicketUsed,
   listBlockEvents,
-  blockSummary
+  blockSummary,
+  releaseBlockEvent
 } from './db/repository.js';
 import { ensureTSecuritySchema } from './db/schema.js';
 import { decryptTicketPayload, encryptTicketPayload, safeTicketPayload } from './crypto/payloadCrypto.js';
@@ -47,6 +48,7 @@ import {
 
 const allowedActions = new Set(['login', 'signup', 'signupAvailability']);
 const restrictedStatuses = new Set(['disabled', 'banned', 'blocked', 'suspended']);
+const adminRoles = new Set(['admin', 'super_admin']);
 
 const authPayloadFromGateway = (payload = {}) => {
   const form = payload.form && typeof payload.form === 'object' ? payload.form : payload;
@@ -75,6 +77,45 @@ const chooseBlockReason = (signals = []) => {
   if (!blocked.length) return '';
   return blocked.sort((left, right) => Number(right.score || 0) - Number(left.score || 0))[0].reason || blocked[0].label || 'Security Check Failed';
 };
+
+const softenSignalsForAction = (signals = [], action, policy = {}) => signals.map((signal) => {
+  if (action === 'signupAvailability' && policy.blockOnSignupAvailability !== true) {
+    return { ...signal, block: false, actionSoftened: 'availability_check' };
+  }
+  if (action === 'login' && policy.blockOnLogin !== true) {
+    return { ...signal, block: false, actionSoftened: 'login_risk_score_only' };
+  }
+  return signal;
+});
+
+const thresholdReason = (action, riskScore, policy = {}) => {
+  if (action === 'signup') {
+    const threshold = Number(policy.signupRiskBlockThreshold || 0);
+    if (threshold > 0 && riskScore >= threshold) return 'Signup Risk Threshold Exceeded';
+  }
+  if (action === 'login' && policy.blockOnLogin === true) {
+    const threshold = Number(policy.loginRiskBlockThreshold || 0);
+    if (threshold > 0 && riskScore >= threshold) return 'Login Risk Threshold Exceeded';
+  }
+  return '';
+};
+
+const publicBlockPayload = () => {
+  return {
+    reason: 'Security verification failed.',
+    reasons: [],
+    blockedUntil: '',
+    redirect: '/blocked'
+  };
+};
+
+const findUserByEmail = async (prisma, email) => {
+  const normalized = normalizeEmail(email);
+  if (!normalized) return null;
+  return prisma.user.findUnique({ where: { email: normalized } }).catch(() => null);
+};
+
+const isAdminUser = (user) => adminRoles.has(clean(user?.role).toLowerCase());
 
 const runChecks = async ({ prisma, req, action, payload, request, policy }) => {
   if (policy.enabled === false) {
@@ -119,9 +160,9 @@ const runChecks = async ({ prisma, req, action, payload, request, policy }) => {
       await identityLevenstein({ prisma, payload: safePayload, context, policy })
     );
   }
-  const signals = checks.flatMap((check) => check.signals || []);
+  const signals = softenSignalsForAction(checks.flatMap((check) => check.signals || []), action, policy);
   const riskScore = Math.min(500, signals.reduce((total, signal) => total + Number(signal.score || 0), 0));
-  const reason = chooseBlockReason(signals);
+  const reason = chooseBlockReason(signals) || thresholdReason(action, riskScore, policy);
   return {
     allow: !reason,
     reason,
@@ -157,7 +198,9 @@ const persistBlock = async ({ prisma, req, action, payload, context, decision, p
     }
   });
   await saveCooldownsForBlock(prisma, { ...context, blockedUntil }, blockEventId, decision.reason, policy);
-  const knownUser = action === 'login' ? await blockKnownUserByEmail(prisma, context.email, decision.reason) : null;
+  const knownUser = action === 'login' && policy.blockKnownUsersOnLogin === true
+    ? await blockKnownUserByEmail(prisma, context.email, decision.reason)
+    : null;
   if (req.session?.destroy) {
     req.session.destroy(() => {});
   }
@@ -271,21 +314,72 @@ export const handleGatewayPayload = async ({ prisma, req, deps, decryptedPayload
     ? { ...decryptedPayload.payload, action }
     : decryptedPayload;
   const request = requestContext(req, deps);
+  const authPayload = authPayloadFromGateway(payload);
+  const bypassUser = policy.adminBypass !== false && ['login', 'signupAvailability'].includes(action)
+    ? await findUserByEmail(prisma, authPayload.email)
+    : null;
+  if (isAdminUser(bypassUser)) {
+    const fingerprint = buildDeviceFingerprint({ req, request, payload });
+    const context = contextFromPayload({ action, payload: authPayload, request, deviceHash: fingerprint.deviceHash });
+    const decision = {
+      allow: true,
+      reason: '',
+      riskScore: 0,
+      signals: [{
+        key: 'admin_bypass',
+        label: 'Administrator account bypassed tSecurity hard blocking',
+        score: 0,
+        block: false,
+        reason: 'Admin Bypass'
+      }],
+      context,
+      fingerprint,
+      payload,
+      request
+    };
+    if (action === 'signupAvailability') {
+      return {
+        ok: true,
+        blocked: false,
+        verdict: 'allow',
+        adminBypass: true,
+        availability: await signupAvailabilityViaTSecurity(prisma, authPayload)
+      };
+    }
+    const ticket = await createAllowTicket({
+      prisma,
+      action,
+      authPayload,
+      context,
+      decision,
+      policy
+    });
+    return {
+      ok: true,
+      blocked: false,
+      verdict: 'allow',
+      adminBypass: true,
+      token: ticket.token,
+      expiresAt: ticket.expiresAt.toISOString(),
+      riskScore: 0
+    };
+  }
   const decision = await runChecks({ prisma, req, action, payload, request, policy });
 
   if (!decision.allow) {
     const safePayload = decision.payload || payload;
     const persisted = await persistBlock({ prisma, req, action, payload: safePayload, context: decision.context, decision, policy });
+    const publicPayload = publicBlockPayload(decision, persisted, policy);
     return {
       ok: false,
       blocked: true,
-      reason: decision.reason,
-      reasons: decision.signals,
+      reason: publicPayload.reason,
+      reasons: publicPayload.reasons,
       riskScore: decision.riskScore,
-      blockedUntil: persisted.blockedUntil.toISOString(),
+      blockedUntil: publicPayload.blockedUntil,
       blockEventId: persisted.blockEventId,
       discord: persisted.discord,
-      redirect: `/blocked?reason=${encodeURIComponent(decision.reason)}`
+      redirect: publicPayload.redirect
     };
   }
 
@@ -299,11 +393,11 @@ export const handleGatewayPayload = async ({ prisma, req, deps, decryptedPayload
     };
   }
 
-  const authPayload = authPayloadFromGateway(safePayload);
+  const finalAuthPayload = authPayloadFromGateway(safePayload);
   const ticket = await createAllowTicket({
     prisma,
     action,
-    authPayload,
+    authPayload: finalAuthPayload,
     context: decision.context,
     decision,
     policy
@@ -331,8 +425,9 @@ export const consumeSensitivePayload = async (ctx, action, input = {}) => {
   if (new Date(ticket.expiresAt).getTime() < Date.now()) {
     throw new TSecurityError('tSecurity verification expired. Please retry.', 'TSECURITY_EXPIRED');
   }
+  const policy = await getTSecurityPolicy(ctx.prisma).catch(() => DEFAULT_POLICY);
   const currentSubnet = subnetForIp(ctx.requestIp || '');
-  if (ticket.ipSubnet && currentSubnet && ticket.ipSubnet !== currentSubnet) {
+  if (policy.bindTicketToSubnet === true && ticket.ipSubnet && currentSubnet && ticket.ipSubnet !== currentSubnet) {
     throw new TSecurityError('tSecurity network binding changed. Please retry.', 'TSECURITY_NETWORK_CHANGED');
   }
   const payload = decryptTicketPayload(ticket.payloadCiphertext || {});
@@ -355,6 +450,7 @@ export const enforceRestrictedStatusServices = async (ctx, userId, status) => {
   await ensureTSecuritySchema(ctx.prisma);
   const user = await ctx.prisma.user.findUnique({ where: { id: userId } }).catch(() => null);
   if (!user) return null;
+  if (isAdminUser(user)) return null;
   const context = {
     email: normalizeEmail(user.email),
     phone: normalizePhone(user),
@@ -395,4 +491,4 @@ export const enforceRestrictedStatusServices = async (ctx, userId, status) => {
   return { blockEventId, blockedUntil: blockedUntil.toISOString(), reason };
 };
 
-export { listBlockEvents, blockSummary };
+export { listBlockEvents, blockSummary, releaseBlockEvent };

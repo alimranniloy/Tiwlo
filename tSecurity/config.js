@@ -5,6 +5,15 @@ export const ADMIN_BLOCKS_PATH = process.env.TSECURITY_ADMIN_BLOCKS_PATH || '/da
 
 export const DEFAULT_POLICY = {
   enabled: true,
+  mode: 'balanced',
+  adminBypass: true,
+  hideBlockReasonFromUsers: true,
+  blockOnSignupAvailability: false,
+  blockOnLogin: false,
+  blockKnownUsersOnLogin: false,
+  bindTicketToSubnet: false,
+  signupRiskBlockThreshold: 240,
+  loginRiskBlockThreshold: 360,
   gatewayTicketTtlSeconds: 600,
   challengeTtlSeconds: 90,
   cooldownDays: 90,
@@ -20,19 +29,19 @@ export const DEFAULT_POLICY = {
   humanVelocityWarnMs: 3200,
   maxForwardedHops: 3,
   blockOnMissingEmailMx: true,
-  blockOnMissingEmailNs: true,
+  blockOnMissingEmailNs: false,
   blockOnDnsLookupError: false,
   blockOnIdentityMutator: true,
   identitySimilarityThreshold: 0.9,
   identitySimilarityLookbackDays: 90,
-  blockOnClockSkew: true,
-  blockOnTimezoneMismatch: true,
+  blockOnClockSkew: false,
+  blockOnTimezoneMismatch: false,
   clockSkewToleranceMs: 10 * 60 * 1000,
   timezoneOffsetToleranceMinutes: 90,
   blockOnParamPollution: true,
   blockOnControlCharacters: true,
-  blockOnSessionLockMismatch: true,
-  blockOnConsoleInspection: true,
+  blockOnSessionLockMismatch: false,
+  blockOnConsoleInspection: false,
   devtoolsOpenSampleLimit: 2,
   blockOnMimeSpoof: true,
   blockOnRequestReplay: true,
@@ -121,6 +130,98 @@ const mergePolicy = (base, patch = {}) => ({
   }
 });
 
+const modePreset = (mode) => {
+  switch (String(mode || '').toLowerCase()) {
+    case 'relaxed':
+      return {
+        mode: 'relaxed',
+        blockOnSignupAvailability: false,
+        blockOnLogin: false,
+        blockKnownUsersOnLogin: false,
+        bindTicketToSubnet: false,
+        signupRiskBlockThreshold: 320,
+        loginRiskBlockThreshold: 500,
+        blockOnHosting: false,
+        blockOnMissingEmailMx: false,
+        blockOnMissingEmailNs: false,
+        blockOnIdentityMutator: false,
+        blockOnClockSkew: false,
+        blockOnTimezoneMismatch: false,
+        blockOnSessionLockMismatch: false,
+        blockOnConsoleInspection: false,
+        humanVelocityMinMs: 700,
+        subnetSignupLimit: 12
+      };
+    case 'aggressive':
+      return {
+        mode: 'aggressive',
+        blockOnSignupAvailability: false,
+        blockOnLogin: true,
+        blockKnownUsersOnLogin: false,
+        bindTicketToSubnet: true,
+        signupRiskBlockThreshold: 160,
+        loginRiskBlockThreshold: 260,
+        blockOnHosting: true,
+        blockOnMissingEmailMx: true,
+        blockOnMissingEmailNs: true,
+        blockOnIdentityMutator: true,
+        blockOnClockSkew: true,
+        blockOnTimezoneMismatch: true,
+        blockOnSessionLockMismatch: true,
+        blockOnConsoleInspection: true,
+        humanVelocityMinMs: 1800,
+        subnetSignupLimit: 5
+      };
+    case 'balanced':
+    default:
+      return {
+        mode: 'balanced',
+        blockOnSignupAvailability: false,
+        blockOnLogin: false,
+        blockKnownUsersOnLogin: false,
+        bindTicketToSubnet: false,
+        signupRiskBlockThreshold: 240,
+        loginRiskBlockThreshold: 360,
+        blockOnHosting: true,
+        blockOnMissingEmailMx: true,
+        blockOnMissingEmailNs: false,
+        blockOnIdentityMutator: true,
+        blockOnClockSkew: false,
+        blockOnTimezoneMismatch: false,
+        blockOnSessionLockMismatch: false,
+        blockOnConsoleInspection: false,
+        humanVelocityMinMs: 1000,
+        subnetSignupLimit: 8
+      };
+  }
+};
+
+const preservedPolicyKeys = [
+  'enabled',
+  'mode',
+  'adminBypass',
+  'hideBlockReasonFromUsers',
+  'blockOnSignupAvailability',
+  'blockOnLogin',
+  'blockKnownUsersOnLogin',
+  'bindTicketToSubnet',
+  'cooldownDays',
+  'signupRiskBlockThreshold',
+  'loginRiskBlockThreshold',
+  'gatewayTicketTtlSeconds',
+  'requestTtlMs'
+];
+
+const pickPolicyKeys = (value = {}) => preservedPolicyKeys.reduce((picked, key) => {
+  if (Object.prototype.hasOwnProperty.call(value, key)) picked[key] = value[key];
+  return picked;
+}, {});
+
+const applyModePreset = (policy, rawValue = {}) => mergePolicy(
+  mergePolicy(policy, modePreset(policy.mode)),
+  pickPolicyKeys(rawValue)
+);
+
 export const getTSecurityPolicy = async (prisma) => {
   const rows = await prisma.$queryRawUnsafe(`
     SELECT "value"
@@ -129,11 +230,11 @@ export const getTSecurityPolicy = async (prisma) => {
     LIMIT 1
   `).catch(() => []);
   const value = rows?.[0]?.value && typeof rows[0].value === 'object' ? rows[0].value : {};
-  return mergePolicy(DEFAULT_POLICY, value);
+  return applyModePreset(mergePolicy(DEFAULT_POLICY, value), value);
 };
 
 export const upsertTSecurityPolicy = async (prisma, value = {}) => {
-  const policy = mergePolicy(DEFAULT_POLICY, value);
+  const policy = applyModePreset(mergePolicy(DEFAULT_POLICY, value), value);
   await prisma.$executeRawUnsafe(`
     INSERT INTO "SystemSetting" ("id", "scope", "scopeId", "key", "value", "createdAt", "updatedAt")
     VALUES ($1, 'platform', '', 'tSecurity', CAST($2 AS jsonb), CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)

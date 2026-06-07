@@ -128,6 +128,7 @@ function FloatingAIWidgetMount() {
 }
 
 function isRestrictedUser(user?: User | null) {
+  if (isAdminRole(user)) return false;
   return restrictedStatuses.has(String(user?.status || '').toLowerCase());
 }
 

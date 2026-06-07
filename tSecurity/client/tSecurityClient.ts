@@ -271,13 +271,12 @@ const collectDeviceEvidence = () => {
 };
 
 const rememberBlockAndRedirect = (result: GatewayResult) => {
-  const reason = result.reason || result.error || 'Security Check Failed';
   try {
-    localStorage.setItem(BLOCK_REASON_KEY, reason);
+    localStorage.removeItem(BLOCK_REASON_KEY);
   } catch {
-    // Ignore storage failures; the query string still carries the reason.
+    // Ignore storage failures; the block page remains generic.
   }
-  const target = result.redirect || `/blocked?reason=${encodeURIComponent(reason)}`;
+  const target = result.redirect || '/blocked';
   window.location.assign(target);
 };
 
@@ -311,7 +310,7 @@ export async function tSecurityGateway(action: string, form: Record<string, unkn
   });
   const raw = await response.json().catch(() => null);
   const result = raw ? await openPayload(state, key, raw) : { ok: false, error: 'Empty tSecurity response.' };
-  if (result.blocked) rememberBlockAndRedirect(result);
+  if (result.blocked && result.redirect) rememberBlockAndRedirect(result);
   if (!response.ok || !result.ok) throw new Error(result.error || result.reason || 'tSecurity verification failed.');
   return result;
 }
@@ -382,4 +381,15 @@ export async function saveTSecurityPolicy(policy: Record<string, unknown>) {
   const payload = await response.json().catch(() => null);
   if (!response.ok || !payload?.ok) throw new Error(payload?.error || 'Unable to save tSecurity policy.');
   return payload.policy;
+}
+
+export async function releaseTSecurityBlockEvent(id: string) {
+  const response = await fetch(endpoint(`${ADMIN_BLOCKS_PATH}/${encodeURIComponent(id)}/release`), {
+    method: 'POST',
+    headers: authHeaders(),
+    cache: 'no-store'
+  });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || !payload?.ok) throw new Error(payload?.error || 'Unable to release tSecurity block.');
+  return payload.result;
 }

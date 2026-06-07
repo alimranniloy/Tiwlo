@@ -179,11 +179,86 @@ export const blockKnownUserByEmail = async (prisma, email, reason) => {
   if (!normalized) return null;
   const user = await prisma.user.findUnique({ where: { email: normalized } }).catch(() => null);
   if (!user) return null;
+  if (['admin', 'super_admin'].includes(clean(user.role).toLowerCase())) {
+    return { id: user.id, email: user.email, status: user.status, role: user.role, reason: 'admin_bypass' };
+  }
   const updated = await prisma.user.update({
     where: { id: user.id },
     data: { status: 'blocked' }
   }).catch(() => null);
   return updated ? { id: updated.id, email: updated.email, status: updated.status, reason } : null;
+};
+
+export const releaseBlockEvent = async (prisma, id, actor = {}) => {
+  await ensureTSecuritySchema(prisma);
+  const rows = await prisma.$queryRawUnsafe(`
+    SELECT *
+    FROM "TSecurityBlockEvent"
+    WHERE "id" = $1
+    LIMIT 1
+  `, clean(id));
+  const event = rows?.[0] || null;
+  if (!event) return null;
+
+  const keys = cooldownKeysFromContext(event);
+  const hashes = keys.map((item) => item.keyHash).filter(Boolean);
+  if (hashes.length) {
+    const placeholders = hashes.map((_, index) => `$${index + 2}`).join(', ');
+    await prisma.$executeRawUnsafe(`
+      UPDATE "TSecurityCooldown"
+      SET "blockedUntil" = CURRENT_TIMESTAMP,
+          "updatedAt" = CURRENT_TIMESTAMP
+      WHERE "blockEventId" = $1 OR "keyHash" IN (${placeholders})
+    `, event.id, ...hashes);
+  } else {
+    await prisma.$executeRawUnsafe(`
+      UPDATE "TSecurityCooldown"
+      SET "blockedUntil" = CURRENT_TIMESTAMP,
+          "updatedAt" = CURRENT_TIMESTAMP
+      WHERE "blockEventId" = $1
+    `, event.id);
+  }
+
+  const releaseMetadata = {
+    releasedAt: new Date().toISOString(),
+    releasedBy: clean(actor.id || actor.email || actor.role || 'admin'),
+    releasedByRole: clean(actor.role || '')
+  };
+  await prisma.$executeRawUnsafe(`
+    UPDATE "TSecurityBlockEvent"
+    SET "status" = 'released',
+        "blockedUntil" = CURRENT_TIMESTAMP,
+        "metadata" = COALESCE("metadata", '{}'::jsonb) || CAST($2 AS jsonb),
+        "updatedAt" = CURRENT_TIMESTAMP
+    WHERE "id" = $1
+  `, event.id, json(releaseMetadata));
+
+  let userReleased = null;
+  const email = normalizeEmail(event.email);
+  const user = event.userId
+    ? await prisma.user.findUnique({ where: { id: event.userId } }).catch(() => null)
+    : email
+      ? await prisma.user.findUnique({ where: { email } }).catch(() => null)
+      : null;
+  if (user && clean(user.status).toLowerCase() === 'blocked') {
+    const updated = await prisma.user.update({
+      where: { id: user.id },
+      data: { status: 'active' }
+    }).catch(() => null);
+    userReleased = updated ? { id: updated.id, email: updated.email, status: updated.status } : null;
+  }
+
+  const refreshed = await prisma.$queryRawUnsafe(`
+    SELECT *
+    FROM "TSecurityBlockEvent"
+    WHERE "id" = $1
+    LIMIT 1
+  `, event.id);
+  return toApi({
+    event: refreshed?.[0] || event,
+    userReleased,
+    cooldownKeysReleased: hashes.length
+  });
 };
 
 export const countRecentSignupTicketsForSubnet = async (prisma, subnet, windowMinutes) => {

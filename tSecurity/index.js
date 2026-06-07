@@ -2,7 +2,7 @@ import Fingerprint from 'express-fingerprint';
 import { ADMIN_BLOCKS_PATH, GATEWAY_PATH, getTSecurityPolicy, upsertTSecurityPolicy } from './config.js';
 import { createGatewayChallenge, openGatewayEnvelope, parseGatewayBody, sealedResponse } from './crypto/payloadCrypto.js';
 import { ensureTSecuritySchema } from './db/schema.js';
-import { blockSummary, consumeSensitivePayload, enforceRestrictedStatusServices, handleGatewayPayload, listBlockEvents, signupAvailabilityViaTSecurity } from './gateway.js';
+import { blockSummary, consumeSensitivePayload, enforceRestrictedStatusServices, handleGatewayPayload, listBlockEvents, releaseBlockEvent, signupAvailabilityViaTSecurity } from './gateway.js';
 import { ensureDeviceSessionTable, recordAuthDeviceSession, securitySummaryForUser } from './components/deviceFingerprint.js';
 import { createMemoryBruteThrottler } from './components/memoryBruteThrottler.js';
 import { clean, normalizeIp, TSecurityError } from './utils.js';
@@ -161,6 +161,16 @@ export const registerTSecurity = (app, deps) => {
       offset: Number(req.query.offset || 0)
     });
     res.json({ ok: true, events });
+  });
+
+  app.post(`${ADMIN_BLOCKS_PATH}/:id/release`, adminOnly(pluginDeps), async (req, res) => {
+    noStore(res);
+    const result = await releaseBlockEvent(pluginDeps.prisma, req.params.id, req.tSecurityAdmin);
+    if (!result) {
+      res.status(404).json({ ok: false, error: 'tSecurity block record was not found.' });
+      return;
+    }
+    res.json({ ok: true, result });
   });
 
   app.get(`${ADMIN_BLOCKS_PATH}/policy`, adminOnly(pluginDeps), async (_req, res) => {
