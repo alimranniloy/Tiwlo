@@ -8,6 +8,9 @@ type Props = {
   isLoading?: boolean;
   error?: string;
   topActionLabel: string;
+  creditAmount?: number;
+  holdAmount?: number;
+  requiresPayment?: boolean;
   verifyLabel?: string;
   loadingLabel?: string;
   skipLabel?: string;
@@ -24,7 +27,10 @@ export default function SignupPromoVerification({
   isLoading = false,
   error = '',
   topActionLabel,
-  verifyLabel = 'Verify and get $100',
+  creditAmount = 100,
+  holdAmount = 1,
+  requiresPayment = true,
+  verifyLabel,
   loadingLabel = 'Starting...',
   skipLabel = 'No, just sign up',
   onTopAction,
@@ -32,6 +38,21 @@ export default function SignupPromoVerification({
   onVerify,
   onSkip
 }: Props) {
+  const creditLabel = `$${Number(creditAmount || 0).toLocaleString('en-US', { maximumFractionDigits: 2 })}`;
+  const holdLabel = `$${Number(holdAmount || 0).toLocaleString('en-US', { maximumFractionDigits: 2 })}`;
+  const primaryLabel = verifyLabel || (requiresPayment ? `Verify and get ${creditLabel}` : `Activate ${creditLabel} credit`);
+  const facts = requiresPayment
+    ? [
+        `${holdLabel} hold is returned after verification.`,
+        `${creditLabel} credit lasts 30 days.`,
+        'After credit ends, services need active credit.'
+      ]
+    : [
+        'Payment method verification is not required.',
+        `${creditLabel} credit activates after signup.`,
+        'After credit ends, services need active credit.'
+      ];
+
   return (
     <main className="min-h-[100svh] bg-[#f8faff] px-4 py-3 font-sans text-black sm:px-6">
       <div className="mx-auto flex min-h-[calc(100svh-1.5rem)] w-full max-w-[420px] flex-col justify-center">
@@ -44,25 +65,21 @@ export default function SignupPromoVerification({
             <div className="inline-flex rounded-full bg-[#eef3ff] px-3 py-1 text-[11px] font-black uppercase tracking-normal text-[#3568de]">
               Free credit
             </div>
-            <h1 className="mt-2 text-[25px] font-black leading-[1.05] tracking-normal text-[#071024]">Verify payment method</h1>
+            <h1 className="mt-2 text-[25px] font-black leading-[1.05] tracking-normal text-[#071024]">{requiresPayment ? 'Verify payment method' : 'Activate free credit'}</h1>
             <p className="mt-2 text-[14px] font-medium leading-5 text-[#445163]">
-              Unlock your $100 credit for 30 days.
+              Unlock your {creditLabel} credit for 30 days.
             </p>
           </div>
 
           <div className="mt-4 overflow-hidden rounded-[18px] border border-[#e6ebf4] bg-white">
-            {[
-              '$1 hold is returned after verification.',
-              '$100 credit lasts 30 days.',
-              'After credit ends, services need active credit.'
-            ].map((text, index) => (
+            {facts.map((text, index) => (
               <div key={text} className={`px-4 py-3 ${index < 2 ? 'border-b border-[#edf1f6]' : ''}`}>
                 <p className="text-[13px] font-bold leading-5 text-[#0f172a]">{text}</p>
               </div>
             ))}
           </div>
 
-          <div className="mt-4">
+          {requiresPayment && <div className="mt-4">
             <div className="mb-2 flex items-center justify-between gap-3">
               <p className="text-[14px] font-black text-[#0f172a]">Choose payment method</p>
               {gatewaysLoading && <span className="text-[11px] font-semibold text-[#7b8794]">Loading...</span>}
@@ -102,18 +119,18 @@ export default function SignupPromoVerification({
                 );
               })}
             </div>
-          </div>
+          </div>}
 
           {error && <div className="mt-4"><SignupAuthError message={error} /></div>}
 
           <div className="mt-4 space-y-2.5">
             <button
               type="button"
-              disabled={isLoading || !selectedGateway}
+              disabled={isLoading || (requiresPayment && !selectedGateway)}
               onClick={onVerify}
               className="h-12 w-full rounded-[18px] bg-[#3e22e8] px-4 text-[16px] font-black text-white transition hover:bg-[#2d18c6] disabled:cursor-not-allowed disabled:opacity-55"
             >
-              {isLoading ? loadingLabel : verifyLabel}
+              {isLoading ? loadingLabel : primaryLabel}
             </button>
             <button
               type="button"
@@ -126,7 +143,7 @@ export default function SignupPromoVerification({
           </div>
 
           <div className="mt-3 text-center text-[12px] font-semibold text-[#7b8794]">
-            <span>Your payment is <span className="text-[#3568de]">secure and encrypted</span></span>
+            <span>{requiresPayment ? 'Your payment is' : 'Your signup is'} <span className="text-[#3568de]">secure and encrypted</span></span>
           </div>
         </section>
       </div>

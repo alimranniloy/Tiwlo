@@ -5,6 +5,7 @@ import SignupPromoVerification from '../components/signup/SignupPromoVerificatio
 import { orderedSignupPromoGateways, promoGateways, providerOf, visibleSignupPromoGateways } from '../components/signup/signupPromoUtils';
 import {
   fetchCurrentUserWithApi,
+  fetchSignupCreditPolicyWithApi,
   fetchSignupPaymentGatewaysWithApi,
   skipSignupPromoCreditWithApi,
   startSignupPromoVerificationWithApi
@@ -16,14 +17,23 @@ type Props = {
   onLogout: () => void;
 };
 
+const defaultCreditPolicy = {
+  creditSystemEnabled: true,
+  signupPromoCredit: 100,
+  signupPromoRequiresPayment: true,
+  signupPromoHoldAmount: 1
+};
+
 export default function SignupPromoVerificationRequired({ user, setUser, onLogout }: Props) {
   const [searchParams] = useSearchParams();
   const [gateways, setGateways] = useState<any[]>([]);
   const [gatewaysLoading, setGatewaysLoading] = useState(false);
   const [selectedGateway, setSelectedGateway] = useState(user.promoPaymentMethod || 'bkash');
+  const [creditPolicy, setCreditPolicy] = useState(defaultCreditPolicy);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const paymentGateways = useMemo(() => visibleSignupPromoGateways(gateways), [gateways]);
+  const promoRequiresPayment = creditPolicy.creditSystemEnabled && creditPolicy.signupPromoRequiresPayment !== false;
 
   useEffect(() => {
     const paymentStatus = searchParams.get('payment');
@@ -31,6 +41,18 @@ export default function SignupPromoVerificationRequired({ user, setUser, onLogou
       setError(`Payment ${paymentStatus}. Try again or skip free credit.`);
     }
   }, [searchParams]);
+
+  useEffect(() => {
+    let active = true;
+    fetchSignupCreditPolicyWithApi()
+      .then((policy) => {
+        if (active && policy) setCreditPolicy({ ...defaultCreditPolicy, ...policy });
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -74,11 +96,11 @@ export default function SignupPromoVerificationRequired({ user, setUser, onLogou
   }, [setUser]);
 
   const verify = async () => {
-    if (!selectedGateway) return;
+    if (promoRequiresPayment && !selectedGateway) return;
     setLoading(true);
     setError('');
     try {
-      const checkout = await startSignupPromoVerificationWithApi(selectedGateway);
+      const checkout = await startSignupPromoVerificationWithApi(selectedGateway || 'system');
       if (checkout?.paymentUrl) {
         window.location.assign(checkout.paymentUrl);
         return;
@@ -118,6 +140,9 @@ export default function SignupPromoVerificationRequired({ user, setUser, onLogou
       error={error}
       topActionLabel="Sign out"
       skipLabel="Skip free credit"
+      creditAmount={creditPolicy.signupPromoCredit}
+      holdAmount={creditPolicy.signupPromoHoldAmount}
+      requiresPayment={promoRequiresPayment}
       onTopAction={onLogout}
       onSelectGateway={setSelectedGateway}
       onVerify={verify}

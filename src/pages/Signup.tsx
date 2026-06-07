@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, ChevronRight, Gift } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { User as UserType } from '../types';
 import {
@@ -7,6 +7,7 @@ import {
   checkSignupAvailabilityWithApi,
   clearAuthToken,
   fetchSignupPaymentGatewaysWithApi,
+  fetchSignupCreditPolicyWithApi,
   resendSignupWhatsAppOtpWithApi,
   startSignupPromoVerificationWithApi,
   signupWithApi,
@@ -59,6 +60,14 @@ const initialForm: SignupForm = {
 
 const validEmail = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
 const signupDraftKey = 'tiwlo_signup_draft_v2';
+const defaultCreditPolicy = {
+  creditSystemEnabled: true,
+  signupPromoCredit: 100,
+  signupPromoRequiresPayment: true,
+  signupPromoHoldAmount: 1
+};
+
+const moneyText = (value: number) => `$${Number(value || 0).toLocaleString('en-US', { maximumFractionDigits: 2 })}`;
 
 const readSignupDraft = () => {
   if (typeof window === 'undefined') return null;
@@ -92,6 +101,7 @@ export default function SignupPage({ onSignup }: SignupProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const [gateways, setGateways] = useState<any[]>([]);
+  const [creditPolicy, setCreditPolicy] = useState(defaultCreditPolicy);
   const [gatewaysLoading, setGatewaysLoading] = useState(false);
   const [selectedGateway, setSelectedGateway] = useState(draft?.selectedGateway || 'bkash');
   const [availability, setAvailability] = useState<{ emailAvailable?: boolean; phoneAvailable?: boolean; message?: string; normalizedPhone?: string; existingAccountName?: string; existingAccountEmail?: string; existingAccountAvatar?: string }>({});
@@ -105,6 +115,9 @@ export default function SignupPage({ onSignup }: SignupProps) {
   const selectedCountry = useMemo(() => countryByCode(form.country), [form.country]);
   const normalizedEmail = form.email.trim().toLowerCase();
   const paymentGateways = useMemo(() => visibleSignupPromoGateways(gateways), [gateways]);
+  const promoEnabled = creditPolicy.creditSystemEnabled && Number(creditPolicy.signupPromoCredit || 0) > 0;
+  const promoRequiresPayment = promoEnabled && creditPolicy.signupPromoRequiresPayment !== false;
+  const signupCreditLabel = moneyText(creditPolicy.signupPromoCredit);
 
   const setValue = (key: keyof SignupForm, value: string) => {
     setForm((current) => ({ ...current, [key]: value }));
@@ -160,6 +173,18 @@ export default function SignupPage({ onSignup }: SignupProps) {
       // Session storage can fail in private contexts; signup still works without drafts.
     }
   }, [form, step, selectedGateway, pendingOtp, pendingPromoProvider]);
+
+  useEffect(() => {
+    let active = true;
+    fetchSignupCreditPolicyWithApi()
+      .then((policy) => {
+        if (active && policy) setCreditPolicy({ ...defaultCreditPolicy, ...policy });
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -250,7 +275,11 @@ export default function SignupPage({ onSignup }: SignupProps) {
       return;
     }
     setError('');
-    setStep('promo');
+    if (promoRequiresPayment) {
+      setStep('promo');
+      return;
+    }
+    await createAccount({ promo: promoEnabled });
   };
 
   const startPromoVerification = async (provider: string, user: UserType) => {
@@ -271,7 +300,7 @@ export default function SignupPage({ onSignup }: SignupProps) {
       setStep('details');
       return;
     }
-    const provider = promo ? selectedGateway : '';
+    const provider = promo && promoRequiresPayment ? selectedGateway : '';
 
     setError('');
     setIsLoading(true);
@@ -432,6 +461,9 @@ export default function SignupPage({ onSignup }: SignupProps) {
         topActionLabel="Back to account details"
         onTopAction={() => setStep('details')}
         onSelectGateway={setSelectedGateway}
+        creditAmount={creditPolicy.signupPromoCredit}
+        holdAmount={creditPolicy.signupPromoHoldAmount}
+        requiresPayment={promoRequiresPayment}
         onVerify={() => createAccount({ promo: true })}
         onSkip={() => createAccount({ promo: false })}
       />
@@ -447,9 +479,20 @@ export default function SignupPage({ onSignup }: SignupProps) {
         {step === 'email' ? (
           <>
             <form onSubmit={continueWithEmail} className="mt-7 space-y-6">
-              <div className="rounded-[18px] border border-[#bfd2ff] bg-[#eef4ff] px-4 py-3 text-center text-[13px] font-bold leading-5 text-[#2563ff]">
-                Get $100 free credit for new users
-              </div>
+              {promoEnabled && (
+                <div className="flex min-h-[70px] items-center gap-3 rounded-[18px] border border-[#dbe5f7] bg-[#f4f8ff] px-3 py-2.5 shadow-[0_10px_28px_rgba(15,23,42,0.06)]">
+                  <div className="grid h-[52px] w-[52px] shrink-0 place-items-center rounded-[13px] bg-[#e9f1ff] text-[#0069ff]">
+                    <Gift className="h-7 w-7" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-[15px] font-black leading-5 text-[#071024]">Get {signupCreditLabel} free credit for new users</p>
+                    <p className="mt-1 truncate text-[12.5px] font-semibold leading-4 text-[#334155]">
+                      {promoRequiresPayment ? 'No charges upfront. Cancel anytime.' : 'No payment verification required.'}
+                    </p>
+                  </div>
+                  <ChevronRight className="h-5 w-5 shrink-0 text-[#263443]" />
+                </div>
+              )}
               <TiwloAuthInput
                 label="Email address"
                 value={form.email}

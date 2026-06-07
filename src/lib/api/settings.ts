@@ -18,6 +18,13 @@ export type PlatformCurrencyStatus = {
   fallbackCurrency?: string;
 };
 
+export type SignupCreditPolicy = {
+  creditSystemEnabled: boolean;
+  signupPromoCredit: number;
+  signupPromoRequiresPayment: boolean;
+  signupPromoHoldAmount: number;
+};
+
 export async function fetchPlatformStatusWithApi(): Promise<PlatformStatus> {
   const apiBase = GRAPHQL_URL.replace(/\/graphql\/?$/, '');
   const response = await fetch(`${apiBase}/api/platform/status`, {
@@ -57,6 +64,16 @@ export async function fetchSettingsWithApi(scope: string, scopeId?: string) {
   );
 
   return data.settings;
+}
+
+export async function fetchSignupCreditPolicyWithApi(): Promise<SignupCreditPolicy> {
+  const data = await graphQL<{ signupCreditPolicy: SignupCreditPolicy }>(
+    `query SignupCreditPolicy {
+      signupCreditPolicy
+    }`
+  );
+
+  return data.signupCreditPolicy;
 }
 
 export async function upsertSettingWithApi(input: { scope: string; scopeId?: string; key: string; value: unknown }) {

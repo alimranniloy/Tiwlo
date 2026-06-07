@@ -14,7 +14,7 @@ import {
 import { ensureOwnerHasCredit, runCreditAutomationForOwner, runCreditAutomationJob } from './creditAutomation.js';
 import { notifyDiscordInvoiceEvent } from '../discord/service.js';
 import { sendInvoiceWhatsApp } from '../whatsapp/service.js';
-import { getSignupPromoCredit, SIGNUP_PROMO_HOLD_AMOUNT } from '../../core/settings.js';
+import { getAccountCreditPolicy, getSignupPromoCredit, getSignupPromoHoldAmount, SIGNUP_PROMO_HOLD_AMOUNT } from '../../core/settings.js';
 import {
   checkTPanelNodeUsername,
   createTPanelNodeAccount,
@@ -1258,9 +1258,10 @@ export const startCreditTopUp = async (ctx, input) => {
 export const startSignupPromoVerification = async (ctx, input = {}) => {
   const actor = await getActor(ctx);
   if (!actor) throw new AppError('Authentication is required', 'UNAUTHENTICATED');
-  const provider = String(input.provider || actor.promoPaymentMethod || '').trim().toLowerCase();
-  if (!PAYMENT_PROVIDERS.includes(provider)) {
-    throw new AppError('Choose a valid payment method for free credit verification.', 'BAD_USER_INPUT');
+  const policy = await getAccountCreditPolicy(ctx.prisma);
+  const promoCreditAmount = Number(policy.creditSystemEnabled ? policy.signupPromoCredit : 0);
+  if (!policy.creditSystemEnabled || promoCreditAmount <= 0) {
+    throw new AppError('Signup credit is currently disabled.', 'BAD_USER_INPUT');
   }
   if (actor.promoCreditStatus === 'active') {
     throw new AppError('Free signup credit is already active on this account.', 'BAD_USER_INPUT');
@@ -1269,7 +1270,39 @@ export const startSignupPromoVerification = async (ctx, input = {}) => {
     throw new AppError('Free signup credit was not selected for this account.', 'BAD_USER_INPUT');
   }
 
-  const promoCreditAmount = await getSignupPromoCredit(ctx.prisma);
+  if (policy.signupPromoRequiresPayment === false) {
+    const paidAt = new Date();
+    const expiresAt = addDays(paidAt, SIGNUP_PROMO_DAYS);
+    const updated = await ctx.prisma.user.update({
+      where: { id: actor.id },
+      data: {
+        credits: { increment: promoCreditAmount },
+        promoCreditAmount,
+        promoCreditExpiresAt: expiresAt,
+        promoCreditStatus: 'active',
+        promoCreditSource: 'signup_direct_credit',
+        promoPaymentMethod: null,
+        promoVerifiedAt: paidAt
+      }
+    });
+    await writeAudit(ctx, 'activate_signup_promo_credit', 'user', actor.id, { promoCreditAmount, source: 'no_payment_required' });
+    return {
+      status: 'paid',
+      provider: 'system',
+      paymentUrl: null,
+      reference: `signup_credit_${Date.now()}`,
+      message: 'Signup credit activated without payment verification.',
+      creditBalance: Number(updated.credits || 0),
+      invoice: null,
+      resource: null
+    };
+  }
+
+  const provider = String(input.provider || actor.promoPaymentMethod || '').trim().toLowerCase();
+  if (!PAYMENT_PROVIDERS.includes(provider)) {
+    throw new AppError('Choose a valid payment method for free credit verification.', 'BAD_USER_INPUT');
+  }
+  const holdAmount = Math.max(0.01, await getSignupPromoHoldAmount(ctx.prisma));
   const existingInvoice = await ctx.prisma.invoice.findFirst({
     where: {
       ownerId: actor.id,
@@ -1282,9 +1315,12 @@ export const startSignupPromoVerification = async (ctx, input = {}) => {
     await ctx.prisma.invoice.update({
       where: { id: existingInvoice.id },
       data: {
+        amount: holdAmount,
         items: {
           ...(existingInvoice.items || {}),
-          promoPaymentMethod: provider
+          promoPaymentMethod: provider,
+          verificationHoldAmount: holdAmount,
+          verificationHoldCurrency: CREDIT_CURRENCY
         }
       }
     });
@@ -1302,7 +1338,7 @@ export const startSignupPromoVerification = async (ctx, input = {}) => {
     data: {
       ownerId: actor.id,
       number: invoiceNumber('VRF'),
-      amount: SIGNUP_PROMO_HOLD_AMOUNT,
+      amount: holdAmount,
       currency: CREDIT_CURRENCY,
       status: 'open',
       scope: SIGNUP_PROMO_SCOPE,
@@ -1311,14 +1347,14 @@ export const startSignupPromoVerification = async (ctx, input = {}) => {
         signupPromoVerification: true,
         lineItems: [{
           label: 'Payment method verification hold',
-          amount: SIGNUP_PROMO_HOLD_AMOUNT,
+          amount: holdAmount,
           currency: CREDIT_CURRENCY
         }],
         promoCreditAmount,
         promoCreditCurrency: CREDIT_CURRENCY,
         promoCreditDays: SIGNUP_PROMO_DAYS,
         promoPaymentMethod: provider,
-        verificationHoldAmount: SIGNUP_PROMO_HOLD_AMOUNT,
+        verificationHoldAmount: holdAmount,
         verificationHoldCurrency: CREDIT_CURRENCY,
         refundNotice: 'This verification hold is marked for return after payment method verification.'
       }

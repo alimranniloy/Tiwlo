@@ -4,7 +4,7 @@ import { createToken } from '../../core/auth.js';
 import { normalizeEmail, removeUndefined, toApi } from '../../core/format.js';
 import { AppError } from '../../core/errors.js';
 import { writeAudit } from '../../core/audit.js';
-import { getSignupPromoCredit } from '../../core/settings.js';
+import { getAccountCreditPolicy } from '../../core/settings.js';
 import { isProfileInputComplete, profileCompletionData } from '../../core/profile.js';
 import { appOrigin, cta, paragraph, sendTiwloEmail } from '../../core/email.js';
 import { consumeSensitivePayload, recordAuthDeviceSession } from '../../../../tSecurity/index.js';
@@ -31,6 +31,10 @@ function addHours(hours) {
   return new Date(Date.now() + hours * 60 * 60 * 1000);
 }
 
+function addDays(days) {
+  return new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+}
+
 const signupPromoProviders = new Set(['bkash', 'stripe', 'paypal']);
 
 const normalizeSignupPromoProvider = (value) => {
@@ -38,15 +42,36 @@ const normalizeSignupPromoProvider = (value) => {
   return signupPromoProviders.has(provider) ? provider : '';
 };
 
-const signupPromoData = async (ctx, input = {}) => {
-  if (!input.signupPromoOptIn) return {};
+const signupCreditData = async (ctx, input = {}) => {
+  const policy = await getAccountCreditPolicy(ctx.prisma);
+  const initialCredits = policy.creditSystemEnabled ? Number(policy.newAccountCredit || 0) : 0;
+  if (!policy.creditSystemEnabled || !input.signupPromoOptIn || Number(policy.signupPromoCredit || 0) <= 0) {
+    return { initialCredits, promo: {} };
+  }
+  const promoCreditAmount = Number(policy.signupPromoCredit || 0);
+  if (policy.signupPromoRequiresPayment === false) {
+    return {
+      initialCredits: initialCredits + promoCreditAmount,
+      promo: {
+        promoCreditAmount,
+        promoCreditExpiresAt: addDays(30),
+        promoCreditStatus: 'active',
+        promoCreditSource: 'signup_direct_credit',
+        promoPaymentMethod: null,
+        promoVerifiedAt: new Date()
+      }
+    };
+  }
   const provider = normalizeSignupPromoProvider(input.signupPromoProvider);
   if (!provider) throw new AppError('Choose a valid payment method for free credit verification.', 'BAD_USER_INPUT');
   return {
-    promoCreditAmount: await getSignupPromoCredit(ctx.prisma),
-    promoCreditStatus: 'pending',
-    promoCreditSource: 'signup_payment_verification',
-    promoPaymentMethod: provider
+    initialCredits,
+    promo: {
+      promoCreditAmount,
+      promoCreditStatus: 'pending',
+      promoCreditSource: 'signup_payment_verification',
+      promoPaymentMethod: provider
+    }
   };
 };
 
@@ -161,7 +186,7 @@ export const signup = async (ctx, input) => {
   const availability = await signupAvailability(ctx, input);
   if (!availability.emailAvailable) throw new AppError('This email address is already in use.', 'BAD_USER_INPUT');
   if (!availability.phoneAvailable) throw new AppError('This phone number is already in use.', 'BAD_USER_INPUT');
-  const promo = await signupPromoData(ctx, input);
+  const credit = await signupCreditData(ctx, input);
   if (!input.signupPromoOptIn && await isWhatsAppEnabled(ctx.prisma)) {
     const challenge = await createSignupOtpChallenge(ctx, input, {
       input: {
@@ -175,7 +200,8 @@ export const signup = async (ctx, input) => {
       profile: profile.data,
       passwordHash,
       verificationToken,
-      promo
+      promo: credit.promo,
+      initialCredits: credit.initialCredits
     });
     return {
       ok: true,
@@ -191,12 +217,12 @@ export const signup = async (ctx, input) => {
       email,
       passwordHash,
       name: input.name,
-      credits: 0,
       role: 'user',
       emailVerifiedAt: null,
       emailVerificationToken: verificationToken,
       emailVerificationExpires: addHours(48),
-      ...promo,
+      credits: credit.initialCredits,
+      ...credit.promo,
       ...profile.data
     }
   });
@@ -225,12 +251,13 @@ export const verifySignupWhatsAppOtp = async (ctx, challengeId, code) => {
 
   const emailVerificationToken = payload.verificationToken || randomToken();
   const promo = payload.promo || {};
+  const initialCredits = Number(payload.initialCredits ?? 0);
   const user = await ctx.prisma.user.create({
     data: {
       email,
       passwordHash: payload.passwordHash,
       name: input.name,
-      credits: 0,
+      credits: initialCredits,
       role: 'user',
       emailVerifiedAt: null,
       emailVerificationToken,
