@@ -1,3 +1,4 @@
+import dns from 'node:dns/promises';
 import net from 'node:net';
 import { clean, headerValue, isPrivateIp, lower, normalizeIp } from '../utils.js';
 
@@ -17,27 +18,57 @@ const truthy = (...values) => values.some((value) => value === true || value ===
 
 const providerSignals = (payload = {}) => {
   const security = payload.security || payload.threat || payload.risk || {};
+  const networkText = lower([
+    payload.as,
+    payload.asn,
+    payload.asname,
+    payload.org,
+    payload.isp,
+    payload.reverse,
+    payload.hostname
+  ].filter(Boolean).join(' '));
   return {
-    vpn: truthy(payload.vpn, payload.proxy, security.vpn),
+    vpn: truthy(payload.vpn, security.vpn) || /\bvpn\b/.test(networkText),
     proxy: truthy(payload.proxy, security.proxy, payload.is_proxy),
     tor: truthy(payload.tor, security.tor, payload.is_tor),
-    hosting: truthy(payload.hosting, payload.hostingProvider, payload.is_datacenter, payload.datacenter, security.hosting),
+    hosting: truthy(payload.hosting, payload.hostingProvider, payload.is_datacenter, payload.datacenter, security.hosting) || providerRegex.test(networkText),
     raw: payload
   };
 };
 
 const fetchIpReputation = async (ip, policy) => {
   const urlTemplate = clean(policy.ipReputation?.url);
-  if (!urlTemplate || !ip || !net.isIP(ip)) return null;
+  if (!ip || !net.isIP(ip)) return null;
+  if (!urlTemplate && policy.ipReputation?.fallbackIpApi === false) return null;
   const url = urlTemplate.includes('{ip}')
     ? urlTemplate.replace('{ip}', encodeURIComponent(ip))
-    : `${urlTemplate}${urlTemplate.includes('?') ? '&' : '?'}ip=${encodeURIComponent(ip)}`;
+    : urlTemplate
+      ? `${urlTemplate}${urlTemplate.includes('?') ? '&' : '?'}ip=${encodeURIComponent(ip)}`
+      : `http://ip-api.com/json/${encodeURIComponent(ip)}?fields=status,message,query,countryCode,proxy,hosting,as,asname,org,isp`;
   const headers = { Accept: 'application/json' };
   if (policy.ipReputation?.token) headers.Authorization = `Bearer ${policy.ipReputation.token}`;
   const response = await withTimeout(url, { headers }, Number(policy.ipReputation?.timeoutMs || 2200)).catch(() => null);
   if (!response?.ok) return null;
   const payload = await response.json().catch(() => null);
+  if (payload?.status && payload.status !== 'success') return null;
   return payload ? providerSignals(payload) : null;
+};
+
+const reverseDnsSignals = async (ip, policy = {}) => {
+  const timeoutMs = Number(policy.reverseDnsTimeoutMs || 650);
+  const ptrs = await Promise.race([
+    dns.reverse(ip).catch(() => []),
+    new Promise((resolve) => setTimeout(() => resolve([]), timeoutMs))
+  ]).catch(() => []);
+  const text = lower((ptrs || []).join(' '));
+  if (!text || !providerRegex.test(text)) return null;
+  return {
+    ptrs: ptrs || [],
+    vpn: /\bvpn\b/.test(text),
+    proxy: /\bproxy\b/.test(text),
+    tor: /\btor\b/.test(text),
+    hosting: true
+  };
 };
 
 export const vpnCheck = async ({ request = {}, policy = {} }) => {
@@ -76,6 +107,18 @@ export const vpnCheck = async ({ request = {}, policy = {} }) => {
       reason: 'Datacenter IP Detected',
       asn,
       organization: org
+    });
+  }
+
+  const reverseDns = await reverseDnsSignals(ip, policy);
+  if (reverseDns?.hosting) {
+    signals.push({
+      key: 'hosting_reverse_dns',
+      label: 'Datacenter or hosting reverse DNS',
+      score: policy.weights?.hosting || 90,
+      block: policy.blockOnHosting !== false,
+      reason: reverseDns.vpn ? 'VPN Detected' : reverseDns.proxy ? 'Proxy Detected' : reverseDns.tor ? 'Tor Detected' : 'Datacenter IP Detected',
+      ptr: reverseDns.ptrs?.[0] || ''
     });
   }
 

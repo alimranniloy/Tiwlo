@@ -5,7 +5,8 @@ const title = (value) => clean(value).replace(/[_-]+/g, ' ').replace(/\s+/g, ' '
 const categoryFor = (signal = {}) => {
   const text = `${signal.key || ''} ${signal.reason || ''} ${signal.label || ''}`.toLowerCase();
   if (text.includes('credit') || text.includes('promo')) return 'Signup Credit Abuse';
-  if (text.includes('existing_account') || text.includes('multiple_signup') || text.includes('identity_mutator')) return 'Multiple Account Pattern';
+  if (text.includes('admin_device')) return 'Admin Device Signup Abuse';
+  if (text.includes('existing_account') || text.includes('existing_user_device') || text.includes('existing device') || text.includes('multiple_signup') || text.includes('identity_mutator')) return 'Multiple Account Pattern';
   if (text.includes('cooldown')) return 'Previous Block Cooldown';
   if (text.includes('automation') || text.includes('robotic') || text.includes('webdriver') || text.includes('low_interaction')) return 'Bot or Automation Pattern';
   if (text.includes('vpn') || text.includes('proxy') || text.includes('tor') || text.includes('hosting') || text.includes('datacenter')) return 'VPN Proxy or Datacenter';
@@ -26,8 +27,10 @@ const detailBits = (signal = {}) => {
   if (signal.blockedUntil) bits.push(`until: ${new Date(signal.blockedUntil).toISOString()}`);
   if (signal.elapsedMs !== undefined) bits.push(`elapsed: ${Math.round(Number(signal.elapsedMs || 0))}ms`);
   if (signal.deviceSignupCount !== undefined) bits.push(`device signups: ${signal.deviceSignupCount}`);
+  if (signal.deviceClusterSignupCount !== undefined) bits.push(`device profile signups: ${signal.deviceClusterSignupCount}`);
   if (signal.ipSignupCount !== undefined) bits.push(`IP signups: ${signal.ipSignupCount}`);
   if (signal.subnetSignupCount !== undefined) bits.push(`subnet signups: ${signal.subnetSignupCount}`);
+  if (signal.existingEmail) bits.push(`existing: ${signal.existingEmail}`);
   if (signal.recent !== undefined && signal.limit !== undefined) bits.push(`recent: ${signal.recent}/${signal.limit}`);
   if (signal.domain) bits.push(`domain: ${signal.domain}`);
   if (signal.country && signal.reportedOffset !== undefined) bits.push(`country: ${signal.country}, offset: ${signal.reportedOffset}`);

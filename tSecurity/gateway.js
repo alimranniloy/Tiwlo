@@ -122,7 +122,13 @@ const isAdminUser = (user) => adminRoles.has(clean(user?.role).toLowerCase());
 const runChecks = async ({ prisma, req, action, payload, request, policy }) => {
   if (policy.enabled === false) {
     const fingerprint = buildDeviceFingerprint({ req, request, payload });
-    const context = contextFromPayload({ action, payload: authPayloadFromGateway(payload), request, deviceHash: fingerprint.deviceHash });
+    const context = contextFromPayload({
+      action,
+      payload: authPayloadFromGateway(payload),
+      request,
+      deviceHash: fingerprint.deviceHash,
+      deviceClusterHash: fingerprint.deviceClusterHash
+    });
     return { allow: true, riskScore: 0, signals: [], context, fingerprint, payload };
   }
 
@@ -138,7 +144,13 @@ const runChecks = async ({ prisma, req, action, payload, request, policy }) => {
     };
   }
   const fingerprint = buildDeviceFingerprint({ req, request: effectiveRequest, payload: safePayload });
-  const context = contextFromPayload({ action, payload: authPayloadFromGateway(safePayload), request: effectiveRequest, deviceHash: fingerprint.deviceHash });
+  const context = contextFromPayload({
+    action,
+    payload: authPayloadFromGateway(safePayload),
+    request: effectiveRequest,
+    deviceHash: fingerprint.deviceHash,
+    deviceClusterHash: fingerprint.deviceClusterHash
+  });
   const accountAbuse = await accountAbuseCheck({ prisma, action, payload: safePayload, context, policy });
   const checks = [
     sanitizer,
@@ -200,6 +212,7 @@ const persistBlock = async ({ prisma, req, action, payload, context, decision, p
     blockedUntil,
     metadata: {
       exactReason: decision.exactReason || null,
+      deviceClusterHash: context.deviceClusterHash || '',
       userAgent: req.headers?.['user-agent'] || '',
       passiveFingerprint: req.fingerprint?.hash || '',
       payload: safeTicketPayload(authPayloadFromGateway(payload))
@@ -226,7 +239,7 @@ const persistBlock = async ({ prisma, req, action, payload, context, decision, p
     ipAddress: context.ipAddress,
     ipSubnet: context.ipSubnet,
     country: context.country,
-    metadata: { blockEventId, knownUser, exactReason: decision.exactReason || null },
+    metadata: { blockEventId, knownUser, exactReason: decision.exactReason || null, deviceClusterHash: context.deviceClusterHash || '' },
     expiresAt: addSeconds(60)
   });
   let discord = null;
@@ -265,6 +278,7 @@ const createAllowTicket = async ({ prisma, action, authPayload, context, decisio
     country: context.country,
     metadata: {
       payloadShape: Object.keys(authPayload || {}).sort(),
+      deviceClusterHash: context.deviceClusterHash || '',
       payloadHash: sha256(json(safeTicketPayload(authPayload)))
     },
     expiresAt
@@ -328,7 +342,13 @@ export const handleGatewayPayload = async ({ prisma, req, deps, decryptedPayload
     : null;
   if (isAdminUser(bypassUser)) {
     const fingerprint = buildDeviceFingerprint({ req, request, payload });
-    const context = contextFromPayload({ action, payload: authPayload, request, deviceHash: fingerprint.deviceHash });
+    const context = contextFromPayload({
+      action,
+      payload: authPayload,
+      request,
+      deviceHash: fingerprint.deviceHash,
+      deviceClusterHash: fingerprint.deviceClusterHash
+    });
     const decision = {
       allow: true,
       reason: '',

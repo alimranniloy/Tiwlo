@@ -17,6 +17,20 @@ const parseUserAgent = (userAgent = '') => {
   return { browser, os, deviceName: `${browser} on ${os}` };
 };
 
+const deviceClusterSeed = (metadata = {}) => [
+  clean(metadata.platform),
+  clean(metadata.timezone),
+  clean(metadata.screen),
+  clean(metadata.hardwareConcurrency),
+  clean(metadata.deviceMemory),
+  clean(metadata.maxTouchPoints)
+].filter(Boolean).join('|');
+
+export const buildDeviceClusterHash = (metadata = {}) => {
+  const seed = deviceClusterSeed(metadata);
+  return seed ? hashValue(`device-cluster:${seed}`) : '';
+};
+
 export const buildDeviceFingerprint = ({ req, request = {}, payload = {} }) => {
   const metadata = payload.deviceMetadata || payload.device || payload.form?.deviceMetadata || {};
   const passiveHash = clean(req?.fingerprint?.hash);
@@ -37,6 +51,7 @@ export const buildDeviceFingerprint = ({ req, request = {}, payload = {} }) => {
   const hash = hashValue(`device:${seed || userAgent || request.ipAddress || 'unknown'}`);
   return {
     deviceHash: hash,
+    deviceClusterHash: buildDeviceClusterHash(metadata),
     fingerprintHint: hash.slice(0, 12),
     passiveHash,
     metadata,
@@ -81,6 +96,11 @@ export const recordAuthDeviceSession = async (ctx, user, input = {}, event = 'lo
   const requestIp = normalizeIp(ctx.requestIp || metadata.ipAddress);
   const fingerprintSeed = clean(input.deviceFingerprint) || `${userAgent}|${requestIp || 'unknown'}|${metadata.screen || ''}|${metadata.timezone || ''}`;
   const fingerprintHash = hashValue(`auth-device:${fingerprintSeed}`);
+  const gatewayFingerprint = buildDeviceFingerprint({
+    req: null,
+    request: { userAgent, ipAddress: requestIp },
+    payload: input
+  });
   const fingerprintHint = fingerprintHash.slice(0, 12);
   const parsed = parseUserAgent(userAgent);
   const country = requestCountry(ctx.requestHeaders, metadata.country || input.country || user.country);
@@ -121,7 +141,9 @@ export const recordAuthDeviceSession = async (ctx, user, input = {}, event = 'lo
       deviceMemory: Number(metadata.deviceMemory || 0),
       maxTouchPoints: Number(metadata.maxTouchPoints || 0),
       screen: metadata.screen || '',
-      passiveHash: sha256(clean(metadata.passiveHash || ''))
+      passiveHash: sha256(clean(metadata.passiveHash || '')),
+      gatewayDeviceHash: gatewayFingerprint.deviceHash,
+      deviceClusterHash: gatewayFingerprint.deviceClusterHash
     }
   };
 

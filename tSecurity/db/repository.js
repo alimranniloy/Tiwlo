@@ -147,7 +147,7 @@ export const cooldownKeysFromContext = (context = {}) => {
   ].filter(Boolean);
 };
 
-export const contextFromPayload = ({ action, payload = {}, request = {}, deviceHash = '' }) => {
+export const contextFromPayload = ({ action, payload = {}, request = {}, deviceHash = '', deviceClusterHash = '' }) => {
   const email = normalizeEmail(payload.email || payload.form?.email);
   const phone = normalizePhone({
     phone: payload.phone || payload.form?.phone,
@@ -160,6 +160,7 @@ export const contextFromPayload = ({ action, payload = {}, request = {}, deviceH
     email,
     phone,
     deviceHash,
+    deviceClusterHash: clean(deviceClusterHash),
     ipAddress,
     ipSubnet,
     country: clean(payload.country || payload.form?.country || request.country).toUpperCase(),
@@ -168,6 +169,7 @@ export const contextFromPayload = ({ action, payload = {}, request = {}, deviceH
       email,
       phone,
       deviceHash,
+      deviceClusterHash,
       ipAddress,
       ipSubnet
     }))

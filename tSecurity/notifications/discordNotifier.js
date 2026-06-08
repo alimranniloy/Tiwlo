@@ -17,8 +17,10 @@ const formatSignal = (signal = {}) => {
   if (signal.keyType) bits.push(`type=${signal.keyType}`);
   if (signal.elapsedMs !== undefined) bits.push(`elapsed=${Math.round(Number(signal.elapsedMs || 0))}ms`);
   if (signal.deviceSignupCount !== undefined) bits.push(`deviceSignups=${signal.deviceSignupCount}`);
+  if (signal.deviceClusterSignupCount !== undefined) bits.push(`deviceProfileSignups=${signal.deviceClusterSignupCount}`);
   if (signal.ipSignupCount !== undefined) bits.push(`ipSignups=${signal.ipSignupCount}`);
   if (signal.subnetSignupCount !== undefined) bits.push(`subnetSignups=${signal.subnetSignupCount}`);
+  if (signal.existingEmail) bits.push(`existing=${signal.existingEmail}`);
   if (signal.domain) bits.push(`domain=${signal.domain}`);
   const reason = clean(signal.reason || signal.label || signal.key || 'Security signal');
   return bits.length ? `${reason} (${bits.join(', ')})` : reason;

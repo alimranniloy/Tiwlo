@@ -32,6 +32,9 @@ type TSecurityPolicy = {
   blockOnLogin?: boolean;
   blockKnownUsersOnLogin?: boolean;
   bindTicketToSubnet?: boolean;
+  blockOnSameDeviceSignup?: boolean;
+  blockOnSameSubnetSignup?: boolean;
+  blockOnAdminDeviceSignup?: boolean;
   cooldownDays?: number;
   signupRiskBlockThreshold?: number;
   loginRiskBlockThreshold?: number;
@@ -261,6 +264,9 @@ export default function AdminSecurity() {
                 ['blockOnLogin', 'Hard block risky login'],
                 ['blockOnSignupAvailability', 'Hard block email checks'],
                 ['blockKnownUsersOnLogin', 'Block user status on login hit'],
+                ['blockOnSameDeviceSignup', 'Block repeat signup device'],
+                ['blockOnSameSubnetSignup', 'Block repeat signup subnet'],
+                ['blockOnAdminDeviceSignup', 'Block admin device signup'],
                 ['bindTicketToSubnet', 'Bind token to subnet']
               ].map(([key, label]) => (
                 <label key={key} className="flex items-center justify-between gap-3 rounded border border-[#eef2f7] px-3 py-2">
