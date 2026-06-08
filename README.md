@@ -68,12 +68,24 @@ curl -fsSL https://raw.githubusercontent.com/alimranniloy/Tiwlo/main/scripts/ins
 
 ## Server Update
 
-Use this command on the production server to pull the latest code and run the Tiwlo update script:
+Use this command on the production server to deploy the latest code through the secure obfuscated pipeline. It checks out the source in a temporary folder, builds it, obfuscates the runtime files, wipes source code from the production folder, and restarts the app.
 
 ```bash
-cd /var/www/Tiwlo
-git pull origin main
-sudo env TIWLO_MAIL_DOMAIN=tiwlo.com TIWLO_EMAIL=admin@tiwlo.com bash scripts/update-tiwlo.sh
+curl -fsSL https://raw.githubusercontent.com/alimranniloy/Tiwlo/main/scripts/deploy-obfuscated.sh \
+  | sudo env TIWLO_INSTALL_DIR=/var/www/Tiwlo TIWLO_REPO_URL=https://github.com/alimranniloy/Tiwlo.git TIWLO_DEPLOY_SWAP_MB=2048 bash
+```
+
+If a very small VPS still kills `npm install` because of low memory, retry with a larger deploy swap and keep it for future updates:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/alimranniloy/Tiwlo/main/scripts/deploy-obfuscated.sh \
+  | sudo env TIWLO_INSTALL_DIR=/var/www/Tiwlo TIWLO_REPO_URL=https://github.com/alimranniloy/Tiwlo.git TIWLO_DEPLOY_SWAP_MB=3072 TIWLO_KEEP_DEPLOY_SWAP=1 bash
+```
+
+After one successful secure deploy, future updates can use the installed update command:
+
+```bash
+sudo TIWLO_INSTALL_DIR=/var/www/Tiwlo /usr/local/bin/tiwlo-secure-update
 ```
 
 ## Run On A Fresh Ubuntu Server
@@ -265,13 +277,13 @@ sudo tpanel-update
 
 ## One-Line Code Update
 
-Update this Tiwlo server without removing PostgreSQL data:
+Update this Tiwlo server without removing PostgreSQL data. This uses the secure obfuscated deploy pipeline and does not require a `.git` folder inside `/var/www/Tiwlo`:
 
 ```bash
-cd /var/www/Tiwlo && bash ./scripts/update-tiwlo.sh
+sudo TIWLO_INSTALL_DIR=/var/www/Tiwlo /usr/local/bin/tiwlo-secure-update
 ```
 
-The update command runs `git pull`, installs mail and SSL packages, enables the Certbot renewal timer, installs dependencies, runs Prisma `db:push`, rebuilds the frontend, and restarts systemd services if they exist. It does not run `prisma migrate reset`, `DROP DATABASE`, or delete `.data/postgres`.
+If the update command is not installed yet, run the full secure deploy command from the **Server Update** section once. The update process preserves `.env`, uploaded files, PostgreSQL data, PM2 data, and other runtime state. It does not run `prisma migrate reset`, `DROP DATABASE`, or delete `.data/postgres`.
 
 ## Tiwlo SSL And Let's Encrypt Troubleshooting
 
