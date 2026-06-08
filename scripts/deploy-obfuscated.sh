@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-DEPLOY_SCRIPT_VERSION="2026-06-08-mjs-obfuscation"
+DEPLOY_SCRIPT_VERSION="2026-06-08-frontend-server-js"
 ROOT="${TIWLO_INSTALL_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 BRANCH="${TIWLO_GIT_BRANCH:-main}"
 REPO_URL="${TIWLO_REPO_URL:-}"
@@ -754,20 +754,7 @@ obfuscate_dir() {
 
 obfuscate_file() {
   local file="$1"
-  local input_file="$file"
-  local output_file="$file"
-  local temp_js=""
-
-  case "$file" in
-    *.mjs)
-      temp_js="${file%.mjs}.obfuscator-input.js"
-      cp "$file" "$temp_js"
-      input_file="$temp_js"
-      output_file="$temp_js"
-      ;;
-  esac
-
-  "$OBFUSCATOR_BIN" "$input_file" --output "$output_file" \
+  "$OBFUSCATOR_BIN" "$file" --output "$file" \
     --target node \
     --compact true \
     --identifier-names-generator hexadecimal \
@@ -782,10 +769,22 @@ obfuscate_file() {
     --string-array-encoding base64 \
     --string-array-threshold 0.45 \
     --source-map false
+}
 
-  if [ -n "$temp_js" ]; then
-    mv "$temp_js" "$file"
-  fi
+patch_release_frontend_server_script() {
+  node <<'NODE'
+const fs = require('fs');
+const packagePath = 'package.json';
+if (!fs.existsSync(packagePath)) process.exit(0);
+const pkg = JSON.parse(fs.readFileSync(packagePath, 'utf8'));
+pkg.scripts = pkg.scripts || {};
+for (const key of ['serve', 'start']) {
+  if (pkg.scripts[key] && pkg.scripts[key].includes('scripts/serve-tiwlo-frontend.mjs')) {
+    pkg.scripts[key] = pkg.scripts[key].replace('scripts/serve-tiwlo-frontend.mjs', 'scripts/serve-tiwlo-frontend.js');
+  }
+}
+fs.writeFileSync(packagePath, `${JSON.stringify(pkg, null, 2)}\n`);
+NODE
 }
 
 prepare_obfuscated_release() {
@@ -800,7 +799,7 @@ prepare_obfuscated_release() {
   [ -d "$CHECKOUT_DIR/x/api" ] && copy_tree "$CHECKOUT_DIR/x/api/" "$RELEASE_DIR/x/api"
   [ -d "$CHECKOUT_DIR/dist" ] && copy_tree "$CHECKOUT_DIR/dist/" "$RELEASE_DIR/dist"
   [ -d "$CHECKOUT_DIR/public/brand" ] && copy_tree "$CHECKOUT_DIR/public/brand/" "$RELEASE_DIR/public/brand"
-  [ -f "$CHECKOUT_DIR/scripts/serve-tiwlo-frontend.mjs" ] && cp "$CHECKOUT_DIR/scripts/serve-tiwlo-frontend.mjs" "$RELEASE_DIR/scripts/serve-tiwlo-frontend.mjs"
+  [ -f "$CHECKOUT_DIR/scripts/serve-tiwlo-frontend.mjs" ] && cp "$CHECKOUT_DIR/scripts/serve-tiwlo-frontend.mjs" "$RELEASE_DIR/scripts/serve-tiwlo-frontend.js"
 
   cp "$CHECKOUT_DIR/package.json" "$RELEASE_DIR/package.json"
   [ -f "$CHECKOUT_DIR/package-lock.json" ] && cp "$CHECKOUT_DIR/package-lock.json" "$RELEASE_DIR/package-lock.json"
@@ -809,9 +808,10 @@ prepare_obfuscated_release() {
   [ -d "$CHECKOUT_DIR/node_modules" ] && copy_tree "$CHECKOUT_DIR/node_modules/" "$RELEASE_DIR/node_modules"
   [ -d "$CHECKOUT_DIR/x/node_modules" ] && copy_tree "$CHECKOUT_DIR/x/node_modules/" "$RELEASE_DIR/x/node_modules"
 
+  (cd "$RELEASE_DIR" && patch_release_frontend_server_script)
   obfuscate_dir "$RELEASE_DIR/x/src" 0.55
   obfuscate_dir "$RELEASE_DIR/tSecurity" 0.6
-  [ -f "$RELEASE_DIR/scripts/serve-tiwlo-frontend.mjs" ] && obfuscate_file "$RELEASE_DIR/scripts/serve-tiwlo-frontend.mjs"
+  [ -f "$RELEASE_DIR/scripts/serve-tiwlo-frontend.js" ] && obfuscate_file "$RELEASE_DIR/scripts/serve-tiwlo-frontend.js"
 }
 
 install_obfuscated_release() {
