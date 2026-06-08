@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-DEPLOY_SCRIPT_VERSION="2026-06-08-preserve-off-tmpfs"
+DEPLOY_SCRIPT_VERSION="2026-06-08-prisma-env-export"
 ROOT="${TIWLO_INSTALL_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 BRANCH="${TIWLO_GIT_BRANCH:-main}"
 REPO_URL="${TIWLO_REPO_URL:-}"
@@ -465,6 +465,27 @@ set_env_value_if_missing() {
   fi
 }
 
+set_env_value() {
+  local file="$1"
+  local key="$2"
+  local value="$3"
+  local tmp
+  mkdir -p "$(dirname "$file")"
+  touch "$file"
+  tmp="$(mktemp "$TMP_BASE/tiwlo-env.XXXXXX")"
+  if grep -qE "^[[:space:]]*${key}=" "$file"; then
+    awk -v key="$key" -v value="$value" '
+      BEGIN { line = key "=\"" value "\"" }
+      $0 ~ "^[[:space:]]*" key "=" { print line; next }
+      { print }
+    ' "$file" > "$tmp"
+  else
+    cp "$file" "$tmp"
+    printf '%s="%s"\n' "$key" "$value" >> "$tmp"
+  fi
+  mv "$tmp" "$file"
+}
+
 ensure_runtime_env_files() {
   local backend_env="$ROOT/x/.env"
   local root_env="$ROOT/.env"
@@ -495,6 +516,28 @@ ensure_runtime_env_files() {
   set_env_value_if_missing "$backend_env" API_BASE_URL "$api_base_url"
 }
 
+merge_backend_env_from_preserve() {
+  local source="$1"
+  local target="$ROOT/x/.env"
+  local source_db
+  local target_db
+  local value
+  local key
+  local default_db="postgresql://postgres:postgres@127.0.0.1:5432/tiwlo?schema=public"
+
+  [ -f "$source" ] || return 0
+  source_db="$(read_env_value "$source" DATABASE_URL)"
+  target_db="$(read_env_value "$target" DATABASE_URL)"
+  if [ -n "$source_db" ] && { [ -z "$target_db" ] || [ "$target_db" = "$default_db" ]; }; then
+    set_env_value "$target" DATABASE_URL "$source_db"
+    echo "Recovered DATABASE_URL from preserved backend env"
+  fi
+  for key in JWT_SECRET FRONTEND_ORIGIN API_BASE_URL SMTP_HOST SMTP_PUBLIC_HOST SMTP_TLS_SERVERNAME SMTP_PORT SMTP_SECURE SMTP_USER SMTP_PASS MAIL_FROM MAIL_FROM_NAME MAIL_REPLY_TO; do
+    value="$(read_env_value "$source" "$key")"
+    [ -n "$value" ] && set_env_value_if_missing "$target" "$key" "$value"
+  done
+}
+
 restore_stranded_preserve_path() {
   local preserve_dir="$1"
   local label="$2"
@@ -504,6 +547,9 @@ restore_stranded_preserve_path() {
 
   if [ ! -e "$source" ] && [ ! -L "$source" ]; then
     return 0
+  fi
+  if [ "$label" = "x.env" ]; then
+    merge_backend_env_from_preserve "$source"
   fi
   if [ -e "$target" ] || [ -L "$target" ]; then
     return 0
@@ -587,6 +633,17 @@ clone_fresh_source_to_temp() {
   fi
 }
 
+load_backend_env_for_prisma() {
+  local backend_env="$CHECKOUT_DIR/x/.env"
+  local database_url
+  database_url="${DATABASE_URL:-$(read_env_value "$backend_env" DATABASE_URL)}"
+  if [ -z "$database_url" ]; then
+    echo "DATABASE_URL is missing from $backend_env; Prisma was not run and database was not touched." >&2
+    exit 1
+  fi
+  export DATABASE_URL="$database_url"
+}
+
 install_dependencies_and_build() {
   ensure_deploy_swap
   prepare_low_memory_node_env
@@ -609,6 +666,7 @@ install_dependencies_and_build() {
   fi
 
   step "Preparing Prisma from temporary checkout"
+  load_backend_env_for_prisma
   npm --prefix x run db:generate
   if [ "$RUN_DB_PUSH" = "1" ]; then
     npm --prefix x run db:push
