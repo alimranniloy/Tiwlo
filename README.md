@@ -20,9 +20,9 @@ Developed by **Al Imran Niloy** for **Tiwlo Company**.
 - Backend: Node.js, Express, Apollo GraphQL, Prisma, PostgreSQL.
 - Runtime ports: frontend `3000`, backend GraphQL `4000`, PostgreSQL `5432` or fallback `55432`.
 
-## Quick Run
+## Quick Run For Local Development
 
-From the project root:
+Use these commands only from a readable local or development checkout. Production servers should use the secure update commands in the next section.
 
 Windows PowerShell:
 
@@ -30,13 +30,13 @@ Windows PowerShell:
 powershell -ExecutionPolicy Bypass -File .\scripts\start-tiwlo.ps1
 ```
 
-Linux, macOS, or Ubuntu server:
+Linux or macOS development:
 
 ```bash
 bash ./scripts/start-tiwlo.sh
 ```
 
-The startup script prepares Node.js `24.15.0`, installs dependencies, prepares PostgreSQL, runs Prisma, seeds demo data, builds the frontend, starts the backend, and serves the production frontend.
+The startup script prepares Node.js `24.15.0`, installs dependencies, prepares PostgreSQL, runs Prisma, seeds demo data, builds the frontend, starts the backend, and serves the frontend from the local checkout.
 
 After startup:
 
@@ -50,7 +50,11 @@ Demo admin login:
 - Email: `admin` or `admin@tiwlo.app`
 - Password: `admin`
 
-## One-Line Ubuntu Install With Domain, SSL, And Auto-Start
+## Production Install And Secure Update
+
+Use this section for the real production server. Production deploys are source-wiped and obfuscated: the server does not keep a readable Git checkout in `/var/www/Tiwlo` after a secure update.
+
+First-time Ubuntu install with domain, SSL, and auto-start:
 
 Point your domain DNS `A` record to the Ubuntu server IP first, then run this single command:
 
@@ -58,7 +62,7 @@ Point your domain DNS `A` record to the Ubuntu server IP first, then run this si
 curl -fsSL https://raw.githubusercontent.com/alimranniloy/Tiwlo/main/scripts/install-tiwlo-ubuntu.sh | sudo env TIWLO_DOMAIN="your-domain.com" TIWLO_EMAIL="admin@your-domain.com" bash
 ```
 
-This installs server packages, clones or updates `/var/www/Tiwlo`, builds Tiwlo, enables `tiwlo-backend` and `tiwlo-frontend` systemd services, configures Nginx, opens firewall ports, and requests SSL with Certbot. After reboot or shutdown/start, systemd starts the app automatically.
+This installs server packages, prepares `/var/www/Tiwlo`, builds Tiwlo, enables services, configures Nginx, opens firewall ports, and requests SSL with Certbot. After the first install, use the secure update command below for code updates.
 
 IP-only install without SSL:
 
@@ -66,9 +70,9 @@ IP-only install without SSL:
 curl -fsSL https://raw.githubusercontent.com/alimranniloy/Tiwlo/main/scripts/install-tiwlo-ubuntu.sh | sudo bash
 ```
 
-## Server Update
+### Secure Production Update
 
-Use this single command on the production server. It cleans old failed deploy temp files, moves deploy work out of `/tmp`, checks out the source in a temporary folder, builds it, obfuscates the runtime files, wipes source code from the production folder, and restarts the app.
+Use this single command on the production server. It cleans old failed deploy temp files, moves deploy work out of `/tmp`, checks out source in a temporary folder, installs dependencies, runs Prisma safely, builds the frontend, obfuscates backend and `tSecurity`, wipes readable source from production, and restarts the app.
 
 ```bash
 curl -fsSL "https://raw.githubusercontent.com/alimranniloy/Tiwlo/main/scripts/update-tiwlo.sh?fresh=$(date +%s)" | sudo env TIWLO_INSTALL_DIR=/var/www/Tiwlo bash
@@ -88,9 +92,17 @@ After one successful secure deploy, future updates can use the installed update 
 sudo TIWLO_INSTALL_DIR=/var/www/Tiwlo /usr/local/bin/tiwlo-secure-update
 ```
 
-## Run On A Fresh Ubuntu Server
+Production command rules:
 
-These steps are for a blank Ubuntu VPS.
+- Use `update-tiwlo.sh` or `/usr/local/bin/tiwlo-secure-update` for production code updates.
+- Do not use `git pull` inside `/var/www/Tiwlo`; the secure production folder is not meant to keep `.git`.
+- Do not run `bash ./scripts/start-tiwlo.sh` inside the wiped production folder; that command is for readable local/dev checkouts.
+- Do not run `scripts/deploy-obfuscated.sh` directly unless debugging the deploy pipeline. The update command fetches and runs it with the right temp, swap, env, and cleanup settings.
+- The updater preserves `.env`, `x/.env`, `public/uploads`, `.data`, `.logs`, and `.tools`. It does not run `prisma migrate reset`, `DROP DATABASE`, or delete PostgreSQL data.
+
+## Manual Fresh Server Run For Testing
+
+These steps are for a blank Ubuntu VPS when you want a readable test/dev checkout. For the real production server, use **Production Install And Secure Update** instead.
 
 1. Update the server and install basic tools:
 
@@ -145,9 +157,11 @@ Then visit:
 - `http://YOUR_SERVER_IP:3000`
 - `http://YOUR_SERVER_IP:4000/graphql`
 
-## Ubuntu Production With Domain, Nginx, And tPanel Installer
+## Manual Domain And Nginx Setup
 
-For a real domain, point your DNS `A` record to the server IP first. Then run Tiwlo with same-domain API routing:
+The one-line production installer is the recommended path. Use this manual section only when you intentionally keep a readable checkout for setup/testing.
+
+For a real domain, point your DNS `A` record to the server IP first. In a readable checkout, run Tiwlo with same-domain API routing:
 
 ```bash
 cd /var/www/Tiwlo
@@ -157,7 +171,7 @@ API_BASE_URL="https://your-domain.com" \
 bash ./scripts/start-tiwlo.sh
 ```
 
-For the automated domain + SSL + reboot-safe setup, use the one-line installer above instead of the manual Nginx steps.
+For the automated domain + SSL + reboot-safe setup, use the one-line installer above instead of these manual Nginx steps.
 
 Create an Nginx site:
 
@@ -243,13 +257,13 @@ After SSL, open:
 https://your-domain.com
 ```
 
-For reboot-safe production services, install systemd units after the first successful setup:
+For reboot-safe services in a readable checkout, install systemd units after the first successful setup:
 
 ```bash
 sudo bash ./scripts/install-tiwlo-systemd.sh
 ```
 
-This runs the backend with `Type=simple`, serves the built frontend through the Node production server, and proxies tPanel installer/API paths through the frontend service.
+This runs the backend with `Type=simple`, serves the built frontend through the Node server, and proxies tPanel installer/API paths through the frontend service. On source-wiped production servers, prefer the secure update shortcut instead of rebuilding from this readable checkout.
 
 ## tPanel License Install Command
 
@@ -275,15 +289,15 @@ Update an installed tPanel server without deleting user data:
 sudo tpanel-update
 ```
 
-## One-Line Code Update
+## Installed Update Shortcut
 
-Update this Tiwlo server without removing PostgreSQL data. This uses the secure obfuscated deploy pipeline and does not require a `.git` folder inside `/var/www/Tiwlo`:
+After one successful secure production update, the updater installs a shortcut. Use it for normal future updates:
 
 ```bash
 sudo TIWLO_INSTALL_DIR=/var/www/Tiwlo /usr/local/bin/tiwlo-secure-update
 ```
 
-If the shortcut is not installed yet, run the single command from the **Server Update** section once. The update process preserves `.env`, uploaded files, PostgreSQL data, PM2 data, and other runtime state. It does not run `prisma migrate reset`, `DROP DATABASE`, or delete `.data/postgres`.
+If the shortcut is not installed yet, run the single command from **Secure Production Update** once. The update process preserves `.env`, uploaded files, PostgreSQL data, PM2 data, and other runtime state. It does not run `prisma migrate reset`, `DROP DATABASE`, or delete `.data/postgres`.
 
 ## Tiwlo SSL And Let's Encrypt Troubleshooting
 
@@ -461,6 +475,17 @@ Important variables:
 
 ## Useful Commands
 
+Production:
+
+```bash
+sudo TIWLO_INSTALL_DIR=/var/www/Tiwlo /usr/local/bin/tiwlo-secure-update
+pm2 status
+pm2 logs tiwlo-backend-obfuscated --lines 100
+curl http://127.0.0.1:4000/health
+```
+
+Readable local/development checkout:
+
 ```bash
 npm run build
 npm run dev
@@ -477,7 +502,13 @@ npm --prefix x run db:studio
 - PostgreSQL logs: `.logs/postgres.log`
 - Setup log: `.logs/setup.log`
 
-If the frontend opens but API calls fail on a domain, rebuild with:
+On production, if the frontend opens but API calls fail after changing domain/env values, run a secure update with the correct public URLs:
+
+```bash
+curl -fsSL "https://raw.githubusercontent.com/alimranniloy/Tiwlo/main/scripts/update-tiwlo.sh?fresh=$(date +%s)" | sudo env TIWLO_INSTALL_DIR=/var/www/Tiwlo FRONTEND_GRAPHQL_URL="/graphql" FRONTEND_ORIGIN="https://your-domain.com" API_BASE_URL="https://your-domain.com" bash
+```
+
+In a readable development checkout only, rebuild with:
 
 ```bash
 FRONTEND_GRAPHQL_URL="/graphql" \
@@ -486,7 +517,13 @@ API_BASE_URL="https://your-domain.com" \
 bash ./scripts/start-tiwlo.sh
 ```
 
-If the frontend opens by server IP but login/API calls fail, rebuild with same-origin GraphQL:
+If the frontend opens by server IP but login/API calls fail, production should use:
+
+```bash
+curl -fsSL "https://raw.githubusercontent.com/alimranniloy/Tiwlo/main/scripts/update-tiwlo.sh?fresh=$(date +%s)" | sudo env TIWLO_INSTALL_DIR=/var/www/Tiwlo FRONTEND_GRAPHQL_URL="/graphql" FRONTEND_ORIGIN="http://YOUR_SERVER_IP:3000" API_BASE_URL="http://YOUR_SERVER_IP:4000" bash
+```
+
+In a readable development checkout only, rebuild with same-origin GraphQL:
 
 ```bash
 FRONTEND_GRAPHQL_URL="/graphql" \
@@ -506,13 +543,21 @@ sudo systemctl status tiwlo-backend tiwlo-frontend nginx --no-pager
 sudo journalctl -u tiwlo-backend -n 100 --no-pager
 ```
 
-If Nginx shows `502 Bad Gateway` after a reboot, rerun the installer to refresh Node, PostgreSQL, Nginx, and systemd auto-start:
+If Nginx shows `502 Bad Gateway` after a reboot, first check the secure runtime services:
+
+```bash
+pm2 status
+pm2 logs tiwlo-backend-obfuscated --lines 100
+sudo systemctl status tiwlo-frontend nginx --no-pager
+```
+
+If system packages or Nginx need a full repair, rerun the installer to refresh Node, PostgreSQL, Nginx, and auto-start:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/alimranniloy/Tiwlo/main/scripts/install-tiwlo-ubuntu.sh | sudo env TIWLO_DOMAIN="tiwlo.com" TIWLO_EMAIL="admin@tiwlo.com" bash
 ```
 
-Install or refresh reboot-safe services:
+Install or refresh reboot-safe services in a readable checkout:
 
 ```bash
 cd /var/www/Tiwlo && sudo FRONTEND_GRAPHQL_URL="/graphql" FRONTEND_ORIGIN="https://your-domain.com" API_BASE_URL="https://your-domain.com" bash ./scripts/install-tiwlo-systemd.sh
