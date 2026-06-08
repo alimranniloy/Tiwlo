@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-DEPLOY_SCRIPT_VERSION="2026-06-08-obfuscator-cli-flags"
+DEPLOY_SCRIPT_VERSION="2026-06-08-mjs-obfuscation"
 ROOT="${TIWLO_INSTALL_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 BRANCH="${TIWLO_GIT_BRANCH:-main}"
 REPO_URL="${TIWLO_REPO_URL:-}"
@@ -754,7 +754,20 @@ obfuscate_dir() {
 
 obfuscate_file() {
   local file="$1"
-  "$OBFUSCATOR_BIN" "$file" --output "$file" \
+  local input_file="$file"
+  local output_file="$file"
+  local temp_js=""
+
+  case "$file" in
+    *.mjs)
+      temp_js="${file%.mjs}.obfuscator-input.js"
+      cp "$file" "$temp_js"
+      input_file="$temp_js"
+      output_file="$temp_js"
+      ;;
+  esac
+
+  "$OBFUSCATOR_BIN" "$input_file" --output "$output_file" \
     --target node \
     --compact true \
     --identifier-names-generator hexadecimal \
@@ -769,6 +782,10 @@ obfuscate_file() {
     --string-array-encoding base64 \
     --string-array-threshold 0.45 \
     --source-map false
+
+  if [ -n "$temp_js" ]; then
+    mv "$temp_js" "$file"
+  fi
 }
 
 prepare_obfuscated_release() {
