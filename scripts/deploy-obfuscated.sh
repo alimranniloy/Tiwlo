@@ -13,11 +13,12 @@ STOP_SYSTEMD_BACKEND="${TIWLO_STOP_SYSTEMD_BACKEND:-1}"
 RESTART_SYSTEMD_FRONTEND="${TIWLO_RESTART_SYSTEMD_FRONTEND:-1}"
 OBFUSCATOR_VERSION="${JAVASCRIPT_OBFUSCATOR_VERSION:-4.1.1}"
 TMP_BASE="${TIWLO_DEPLOY_TMP_BASE:-/tmp}"
+CUSTOM_TMP_BASE="${TIWLO_DEPLOY_TMP_BASE:-}"
 TOOL_DIR="${TIWLO_OBFUSCATOR_TOOL_DIR:-$ROOT/.tools/javascript-obfuscator}"
 INSTALL_UPDATE_COMMAND="${TIWLO_INSTALL_UPDATE_COMMAND:-1}"
 UPDATE_COMMAND_PATH="${TIWLO_UPDATE_COMMAND_PATH:-/usr/local/bin/tiwlo-secure-update}"
 DEPLOY_SWAP_MB="${TIWLO_DEPLOY_SWAP_MB:-4096}"
-DEPLOY_SWAP_FILE="${TIWLO_DEPLOY_SWAP_FILE:-$ROOT/.data/tiwlo-deploy.swap}"
+DEPLOY_SWAP_FILE="${TIWLO_DEPLOY_SWAP_FILE:-}"
 KEEP_DEPLOY_SWAP="${TIWLO_KEEP_DEPLOY_SWAP:-0}"
 NPM_CACHE_DIR="${TIWLO_NPM_CACHE_DIR:-}"
 NODE_OLD_SPACE_MB="${TIWLO_NODE_OLD_SPACE_MB:-1024}"
@@ -30,6 +31,7 @@ SELF_COPY="${TIWLO_DEPLOY_SELF_COPY:-}"
 OBFUSCATOR_BIN=""
 DEPLOY_SWAP_CREATED="0"
 NPM_CACHE_CREATED="0"
+PRESERVE_RESTORED="0"
 
 step() {
   printf '\n==> %s\n' "$*"
@@ -56,11 +58,17 @@ realpath_m() {
 cleanup() {
   [ -n "$CHECKOUT_DIR" ] && rm -rf -- "$CHECKOUT_DIR"
   [ -n "$RELEASE_DIR" ] && rm -rf -- "$RELEASE_DIR"
-  [ -n "$PRESERVE_DIR" ] && rm -rf -- "$PRESERVE_DIR"
+  if [ -n "$PRESERVE_DIR" ]; then
+    if [ "$PRESERVE_RESTORED" = "1" ] || [ -z "$(find "$PRESERVE_DIR" -mindepth 1 -print -quit 2>/dev/null)" ]; then
+      rm -rf -- "$PRESERVE_DIR"
+    else
+      echo "Preserved runtime data was left at $PRESERVE_DIR because deploy stopped before restore." >&2
+    fi
+  fi
   [ -n "$SELF_COPY" ] && rm -f -- "$SELF_COPY"
   if [ "$DEPLOY_SWAP_CREATED" = "1" ] && [ "$KEEP_DEPLOY_SWAP" != "1" ]; then
-    run_sudo swapoff "$DEPLOY_SWAP_FILE" >/dev/null 2>&1 || true
-    run_sudo rm -f "$DEPLOY_SWAP_FILE" >/dev/null 2>&1 || true
+    [ -n "$DEPLOY_SWAP_FILE" ] && run_sudo swapoff "$DEPLOY_SWAP_FILE" >/dev/null 2>&1 || true
+    [ -n "$DEPLOY_SWAP_FILE" ] && run_sudo rm -f "$DEPLOY_SWAP_FILE" >/dev/null 2>&1 || true
   fi
   if [ "$NPM_CACHE_CREATED" = "1" ] && [ -n "$NPM_CACHE_DIR" ]; then
     rm -rf -- "$NPM_CACHE_DIR"
@@ -109,6 +117,21 @@ resolve_repo_url() {
   REPO_URL="${REPO_URL:-https://github.com/alimranniloy/Tiwlo.git}"
 }
 
+resolve_deploy_paths() {
+  if [ -z "$CUSTOM_TMP_BASE" ]; then
+    TMP_BASE="$(realpath_m "$(dirname "$ROOT")/.tiwlo-tmp")"
+  else
+    TMP_BASE="$(realpath_m "$TMP_BASE")"
+  fi
+  mkdir -p "$TMP_BASE"
+
+  if [ -z "$DEPLOY_SWAP_FILE" ]; then
+    DEPLOY_SWAP_FILE="$(realpath_m "$(dirname "$ROOT")/.tiwlo-deploy.swap")"
+  else
+    DEPLOY_SWAP_FILE="$(realpath_m "$DEPLOY_SWAP_FILE")"
+  fi
+}
+
 install_external_update_command() {
   if [ "$INSTALL_UPDATE_COMMAND" != "1" ]; then
     return 0
@@ -135,8 +158,13 @@ current_swap_mb() {
   fi
 }
 
+swap_path_is_active() {
+  local path="$1"
+  [ -r /proc/swaps ] && awk -v path="$path" 'NR > 1 && $1 == path { found = 1 } END { exit found ? 0 : 1 }' /proc/swaps
+}
+
 swap_file_is_active() {
-  [ -r /proc/swaps ] && awk -v path="$DEPLOY_SWAP_FILE" 'NR > 1 && $1 == path { found = 1 } END { exit found ? 0 : 1 }' /proc/swaps
+  swap_path_is_active "$DEPLOY_SWAP_FILE"
 }
 
 file_size_mb() {
@@ -327,6 +355,34 @@ preserve_path() {
   mv "$source" "$PRESERVE_DIR/$label"
 }
 
+make_preserve_dir() {
+  local preserve_parent
+  preserve_parent="$(dirname "$ROOT")"
+  PRESERVE_DIR="$(mktemp -d "$preserve_parent/.tiwlo-preserve.XXXXXX")"
+  PRESERVE_RESTORED="0"
+}
+
+remove_swap_path_if_possible() {
+  local path="$1"
+  if [ -z "$path" ] || [ ! -f "$path" ]; then
+    return 0
+  fi
+  if swap_path_is_active "$path"; then
+    if ! run_sudo swapoff "$path" >/dev/null 2>&1; then
+      echo "Could not swapoff $path; keeping it in place." >&2
+      return 0
+    fi
+  fi
+  run_sudo rm -f "$path" >/dev/null 2>&1 || true
+}
+
+drop_legacy_deploy_swap_before_preserve() {
+  local legacy_swap="$ROOT/.data/tiwlo-deploy.swap"
+  if [ "$legacy_swap" != "$DEPLOY_SWAP_FILE" ]; then
+    remove_swap_path_if_possible "$legacy_swap"
+  fi
+}
+
 restore_path() {
   local label="$1"
   local relative="$2"
@@ -341,7 +397,8 @@ restore_path() {
 
 hard_wipe_existing_production_code() {
   step "Hard wiping readable source and old .git from production root"
-  PRESERVE_DIR="$(mktemp -d "$TMP_BASE/tiwlo-preserve.XXXXXX")"
+  make_preserve_dir
+  drop_legacy_deploy_swap_before_preserve
 
   preserve_path ".env" "root.env"
   preserve_path "x/.env" "x.env"
@@ -361,6 +418,7 @@ hard_wipe_existing_production_code() {
   restore_path "data" ".data"
   restore_path "logs" ".logs"
   restore_path "tools" ".tools"
+  PRESERVE_RESTORED="1"
 }
 
 clone_fresh_source_to_temp() {
@@ -565,6 +623,7 @@ post_wipe_temporary_source() {
 main() {
   self_reexec_from_temp "$@"
   assert_safe_root
+  resolve_deploy_paths
   resolve_repo_url
 
   if ! have git || ! have node || ! have npm; then
