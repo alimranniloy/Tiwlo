@@ -19,7 +19,7 @@ UPDATE_COMMAND_PATH="${TIWLO_UPDATE_COMMAND_PATH:-/usr/local/bin/tiwlo-secure-up
 DEPLOY_SWAP_MB="${TIWLO_DEPLOY_SWAP_MB:-4096}"
 DEPLOY_SWAP_FILE="${TIWLO_DEPLOY_SWAP_FILE:-$ROOT/.data/tiwlo-deploy.swap}"
 KEEP_DEPLOY_SWAP="${TIWLO_KEEP_DEPLOY_SWAP:-0}"
-NPM_CACHE_DIR="${TIWLO_NPM_CACHE_DIR:-$ROOT/.data/npm-cache}"
+NPM_CACHE_DIR="${TIWLO_NPM_CACHE_DIR:-}"
 NODE_OLD_SPACE_MB="${TIWLO_NODE_OLD_SPACE_MB:-1024}"
 INSTALL_AI_MODEL_RUNTIME="${TIWLO_INSTALL_AI_MODEL_RUNTIME:-0}"
 
@@ -29,6 +29,7 @@ PRESERVE_DIR=""
 SELF_COPY="${TIWLO_DEPLOY_SELF_COPY:-}"
 OBFUSCATOR_BIN=""
 DEPLOY_SWAP_CREATED="0"
+NPM_CACHE_CREATED="0"
 
 step() {
   printf '\n==> %s\n' "$*"
@@ -60,6 +61,9 @@ cleanup() {
   if [ "$DEPLOY_SWAP_CREATED" = "1" ] && [ "$KEEP_DEPLOY_SWAP" != "1" ]; then
     run_sudo swapoff "$DEPLOY_SWAP_FILE" >/dev/null 2>&1 || true
     run_sudo rm -f "$DEPLOY_SWAP_FILE" >/dev/null 2>&1 || true
+  fi
+  if [ "$NPM_CACHE_CREATED" = "1" ] && [ -n "$NPM_CACHE_DIR" ]; then
+    rm -rf -- "$NPM_CACHE_DIR"
   fi
 }
 trap cleanup EXIT
@@ -173,15 +177,18 @@ ensure_deploy_swap() {
 }
 
 prepare_low_memory_node_env() {
+  if [ -z "$NPM_CACHE_DIR" ]; then
+    NPM_CACHE_DIR="$(mktemp -d "$TMP_BASE/tiwlo-npm-cache.XXXXXX")"
+    NPM_CACHE_CREATED="1"
+  fi
   mkdir -p "$NPM_CACHE_DIR"
   export npm_config_cache="$NPM_CACHE_DIR"
   export npm_config_audit=false
   export npm_config_fund=false
   export npm_config_progress=false
-  export npm_config_prefer_offline=true
+  export npm_config_prefer_online=true
   export npm_config_update_notifier=false
   export npm_config_maxsockets=1
-  export npm_config_jobs=1
   export MAKEFLAGS="-j1"
   export CMAKE_BUILD_PARALLEL_LEVEL=1
   export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--max-old-space-size=$NODE_OLD_SPACE_MB"
@@ -227,6 +234,74 @@ const removeLlamaRuntime = (filePath) => {
 removeLlamaRuntime(path.join(backendDir, 'package.json'));
 removeLlamaRuntime(path.join(backendDir, 'package-lock.json'));
 NODE
+}
+
+validate_node_modules_package_jsons() {
+  local dir="$1"
+  [ -d "$dir" ] || return 0
+  node - "$dir" <<'NODE'
+const fs = require('fs');
+const path = require('path');
+
+const root = process.argv[2];
+const ignored = new Set(['.bin']);
+const stack = [root];
+
+while (stack.length) {
+  const current = stack.pop();
+  let entries = [];
+  try {
+    entries = fs.readdirSync(current, { withFileTypes: true });
+  } catch {
+    continue;
+  }
+
+  for (const entry of entries) {
+    const fullPath = path.join(current, entry.name);
+    if (entry.isDirectory()) {
+      if (!ignored.has(entry.name)) stack.push(fullPath);
+      continue;
+    }
+    if (entry.isFile() && entry.name === 'package.json') {
+      try {
+        JSON.parse(fs.readFileSync(fullPath, 'utf8'));
+      } catch (error) {
+        console.error(`Invalid package.json: ${fullPath}`);
+        console.error(error.message);
+        process.exit(1);
+      }
+    }
+  }
+}
+NODE
+}
+
+clean_npm_cache_for_retry() {
+  step "Cleaning temporary npm cache before retry"
+  npm cache clean --force >/dev/null 2>&1 || true
+  rm -rf -- "$NPM_CACHE_DIR"
+  mkdir -p "$NPM_CACHE_DIR"
+}
+
+npm_install_with_retry() {
+  local label="$1"
+  local modules_dir="$2"
+  shift 2
+  local attempt=1
+
+  while [ "$attempt" -le 2 ]; do
+    if "$@" && validate_node_modules_package_jsons "$modules_dir"; then
+      return 0
+    fi
+    if [ "$attempt" -ge 2 ]; then
+      echo "$label dependency install produced an invalid node_modules tree after retry." >&2
+      return 1
+    fi
+    step "$label dependency tree was incomplete; retrying from a clean cache"
+    rm -rf -- "$modules_dir"
+    clean_npm_cache_for_retry
+    attempt=$((attempt + 1))
+  done
 }
 
 copy_tree() {
@@ -310,14 +385,16 @@ install_dependencies_and_build() {
   disable_backend_ai_runtime_for_low_memory
 
   if [ -f package-lock.json ]; then
-    npm ci --omit=optional --no-audit --no-fund --progress=false || npm install --omit=optional --no-audit --no-fund --progress=false
+    npm_install_with_retry "Frontend" "$CHECKOUT_DIR/node_modules" npm ci --omit=optional --no-audit --no-fund --progress=false \
+      || npm_install_with_retry "Frontend" "$CHECKOUT_DIR/node_modules" npm install --omit=optional --no-audit --no-fund --progress=false
   else
-    npm install --omit=optional --no-audit --no-fund --progress=false
+    npm_install_with_retry "Frontend" "$CHECKOUT_DIR/node_modules" npm install --omit=optional --no-audit --no-fund --progress=false
   fi
   if [ -f x/package-lock.json ]; then
-    npm --prefix x ci --omit=optional --no-audit --no-fund --progress=false || npm --prefix x install --omit=optional --no-audit --no-fund --progress=false
+    npm_install_with_retry "Backend" "$CHECKOUT_DIR/x/node_modules" npm --prefix x ci --omit=optional --no-audit --no-fund --progress=false \
+      || npm_install_with_retry "Backend" "$CHECKOUT_DIR/x/node_modules" npm --prefix x install --omit=optional --no-audit --no-fund --progress=false
   else
-    npm --prefix x install --omit=optional --no-audit --no-fund --progress=false
+    npm_install_with_retry "Backend" "$CHECKOUT_DIR/x/node_modules" npm --prefix x install --omit=optional --no-audit --no-fund --progress=false
   fi
 
   step "Preparing Prisma from temporary checkout"
