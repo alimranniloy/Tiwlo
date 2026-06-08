@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+DEPLOY_SCRIPT_VERSION="2026-06-08-preserve-off-tmpfs"
 ROOT="${TIWLO_INSTALL_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 BRANCH="${TIWLO_GIT_BRANCH:-main}"
 REPO_URL="${TIWLO_REPO_URL:-}"
@@ -632,7 +633,9 @@ main() {
   fi
 
   echo "Production root: $ROOT"
+  echo "Deploy script version: $DEPLOY_SCRIPT_VERSION"
   echo "Temporary source only: $TMP_BASE"
+  echo "Deploy swap file: $DEPLOY_SWAP_FILE"
   echo "Repository: $REPO_URL"
 
   install_external_update_command
