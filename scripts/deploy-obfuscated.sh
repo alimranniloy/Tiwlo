@@ -16,12 +16,18 @@ TMP_BASE="${TIWLO_DEPLOY_TMP_BASE:-/tmp}"
 TOOL_DIR="${TIWLO_OBFUSCATOR_TOOL_DIR:-$ROOT/.tools/javascript-obfuscator}"
 INSTALL_UPDATE_COMMAND="${TIWLO_INSTALL_UPDATE_COMMAND:-1}"
 UPDATE_COMMAND_PATH="${TIWLO_UPDATE_COMMAND_PATH:-/usr/local/bin/tiwlo-secure-update}"
+DEPLOY_SWAP_MB="${TIWLO_DEPLOY_SWAP_MB:-2048}"
+DEPLOY_SWAP_FILE="${TIWLO_DEPLOY_SWAP_FILE:-$ROOT/.data/tiwlo-deploy.swap}"
+KEEP_DEPLOY_SWAP="${TIWLO_KEEP_DEPLOY_SWAP:-0}"
+NPM_CACHE_DIR="${TIWLO_NPM_CACHE_DIR:-$ROOT/.data/npm-cache}"
+NODE_OLD_SPACE_MB="${TIWLO_NODE_OLD_SPACE_MB:-1536}"
 
 CHECKOUT_DIR=""
 RELEASE_DIR=""
 PRESERVE_DIR=""
 SELF_COPY="${TIWLO_DEPLOY_SELF_COPY:-}"
 OBFUSCATOR_BIN=""
+DEPLOY_SWAP_CREATED="0"
 
 step() {
   printf '\n==> %s\n' "$*"
@@ -50,6 +56,10 @@ cleanup() {
   [ -n "$RELEASE_DIR" ] && rm -rf -- "$RELEASE_DIR"
   [ -n "$PRESERVE_DIR" ] && rm -rf -- "$PRESERVE_DIR"
   [ -n "$SELF_COPY" ] && rm -f -- "$SELF_COPY"
+  if [ "$DEPLOY_SWAP_CREATED" = "1" ] && [ "$KEEP_DEPLOY_SWAP" != "1" ]; then
+    run_sudo swapoff "$DEPLOY_SWAP_FILE" >/dev/null 2>&1 || true
+    run_sudo rm -f "$DEPLOY_SWAP_FILE" >/dev/null 2>&1 || true
+  fi
 }
 trap cleanup EXIT
 
@@ -110,6 +120,48 @@ install_external_update_command() {
   else
     echo "Could not install $UPDATE_COMMAND_PATH; use the GitHub raw script command for future updates." >&2
   fi
+}
+
+current_swap_mb() {
+  if [ -r /proc/meminfo ]; then
+    awk '/^SwapTotal:/ { print int($2 / 1024) }' /proc/meminfo
+  else
+    echo 0
+  fi
+}
+
+ensure_deploy_swap() {
+  if [ "$(uname -s)" != "Linux" ] || [ "${DEPLOY_SWAP_MB:-0}" = "0" ]; then
+    return 0
+  fi
+  if [ "$(current_swap_mb)" -ge 512 ]; then
+    return 0
+  fi
+
+  step "Creating temporary deploy swap (${DEPLOY_SWAP_MB}MB) to prevent npm OOM kills"
+  mkdir -p "$(dirname "$DEPLOY_SWAP_FILE")"
+  if [ ! -f "$DEPLOY_SWAP_FILE" ]; then
+    if have fallocate; then
+      run_sudo fallocate -l "${DEPLOY_SWAP_MB}M" "$DEPLOY_SWAP_FILE"
+    else
+      run_sudo dd if=/dev/zero of="$DEPLOY_SWAP_FILE" bs=1M count="$DEPLOY_SWAP_MB" status=none
+    fi
+    run_sudo chmod 600 "$DEPLOY_SWAP_FILE"
+    run_sudo mkswap "$DEPLOY_SWAP_FILE" >/dev/null
+  fi
+  run_sudo swapon "$DEPLOY_SWAP_FILE"
+  DEPLOY_SWAP_CREATED="1"
+}
+
+prepare_low_memory_node_env() {
+  mkdir -p "$NPM_CACHE_DIR"
+  export npm_config_cache="$NPM_CACHE_DIR"
+  export npm_config_audit=false
+  export npm_config_fund=false
+  export npm_config_progress=false
+  export npm_config_prefer_offline=true
+  export npm_config_update_notifier=false
+  export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--max-old-space-size=$NODE_OLD_SPACE_MB"
 }
 
 copy_tree() {
@@ -185,17 +237,20 @@ clone_fresh_source_to_temp() {
 }
 
 install_dependencies_and_build() {
+  ensure_deploy_swap
+  prepare_low_memory_node_env
+
   step "Installing dependencies inside temporary checkout"
   cd "$CHECKOUT_DIR"
   if [ -f package-lock.json ]; then
-    npm ci || npm install
+    npm ci --no-audit --no-fund --progress=false || npm install --no-audit --no-fund --progress=false
   else
-    npm install
+    npm install --no-audit --no-fund --progress=false
   fi
   if [ -f x/package-lock.json ]; then
-    npm --prefix x ci || npm --prefix x install
+    npm --prefix x ci --no-audit --no-fund --progress=false || npm --prefix x install --no-audit --no-fund --progress=false
   else
-    npm --prefix x install
+    npm --prefix x install --no-audit --no-fund --progress=false
   fi
 
   step "Preparing Prisma from temporary checkout"
