@@ -3,16 +3,25 @@ set -euo pipefail
 
 ROOT="${TIWLO_INSTALL_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 BRANCH="${TIWLO_GIT_BRANCH:-main}"
-RUNTIME_DIR="${TIWLO_OBFUSCATED_DIR:-$ROOT/.runtime/tiwlo-obfuscated}"
-TOOL_DIR="${TIWLO_OBFUSCATOR_TOOL_DIR:-$ROOT/.tools/javascript-obfuscator}"
+REPO_URL="${TIWLO_REPO_URL:-}"
 PM2_APP_NAME="${TIWLO_PM2_APP_NAME:-tiwlo-backend-obfuscated}"
 BACKEND_PORT="${BACKEND_PORT:-4000}"
+FRONTEND_PORT="${FRONTEND_PORT:-3000}"
 RUN_DB_PUSH="${TIWLO_RUN_DB_PUSH:-1}"
 RUN_FRONTEND_BUILD="${TIWLO_BUILD_FRONTEND:-1}"
-RESET_BEFORE_PULL="${TIWLO_RESET_BEFORE_PULL:-0}"
-WIPE_READABLE_SOURCE="${TIWLO_WIPE_READABLE_SOURCE:-0}"
 STOP_SYSTEMD_BACKEND="${TIWLO_STOP_SYSTEMD_BACKEND:-1}"
+RESTART_SYSTEMD_FRONTEND="${TIWLO_RESTART_SYSTEMD_FRONTEND:-1}"
 OBFUSCATOR_VERSION="${JAVASCRIPT_OBFUSCATOR_VERSION:-4.1.1}"
+TMP_BASE="${TIWLO_DEPLOY_TMP_BASE:-/tmp}"
+TOOL_DIR="${TIWLO_OBFUSCATOR_TOOL_DIR:-$ROOT/.tools/javascript-obfuscator}"
+INSTALL_UPDATE_COMMAND="${TIWLO_INSTALL_UPDATE_COMMAND:-1}"
+UPDATE_COMMAND_PATH="${TIWLO_UPDATE_COMMAND_PATH:-/usr/local/bin/tiwlo-secure-update}"
+
+CHECKOUT_DIR=""
+RELEASE_DIR=""
+PRESERVE_DIR=""
+SELF_COPY="${TIWLO_DEPLOY_SELF_COPY:-}"
+OBFUSCATOR_BIN=""
 
 step() {
   printf '\n==> %s\n' "$*"
@@ -36,18 +45,71 @@ realpath_m() {
   realpath -m "$1"
 }
 
-safe_runtime_path() {
-  local root_real runtime_real
-  root_real="$(realpath "$ROOT")"
-  runtime_real="$(realpath_m "$RUNTIME_DIR")"
-  case "$runtime_real" in
-    "$root_real/.runtime/"*|"$root_real/.deploy/"*) ;;
-    *)
-      echo "Refusing to use unsafe runtime path: $runtime_real" >&2
-      echo "Set TIWLO_OBFUSCATED_DIR under $root_real/.runtime or $root_real/.deploy." >&2
+cleanup() {
+  [ -n "$CHECKOUT_DIR" ] && rm -rf -- "$CHECKOUT_DIR"
+  [ -n "$RELEASE_DIR" ] && rm -rf -- "$RELEASE_DIR"
+  [ -n "$PRESERVE_DIR" ] && rm -rf -- "$PRESERVE_DIR"
+  [ -n "$SELF_COPY" ] && rm -f -- "$SELF_COPY"
+}
+trap cleanup EXIT
+
+self_reexec_from_temp() {
+  if [ "${TIWLO_DEPLOY_SELF_REEXEC:-0}" = "1" ]; then
+    return 0
+  fi
+  local source_file="${BASH_SOURCE[0]:-$0}"
+  if [ ! -f "$source_file" ]; then
+    return 0
+  fi
+  SELF_COPY="$(mktemp "$TMP_BASE/tiwlo-obfuscated-deploy.XXXXXX.sh")"
+  cp "$source_file" "$SELF_COPY"
+  chmod 700 "$SELF_COPY"
+  export TIWLO_DEPLOY_SELF_REEXEC=1
+  export TIWLO_DEPLOY_SELF_COPY="$SELF_COPY"
+  exec "$SELF_COPY" "$@"
+}
+
+assert_safe_root() {
+  ROOT="$(realpath_m "$ROOT")"
+  case "$ROOT" in
+    ""|"/"|"/root"|"/home"|"/var"|"/var/www"|"/usr"|"/opt"|"/tmp")
+      echo "Unsafe TIWLO_INSTALL_DIR: $ROOT" >&2
       exit 1
       ;;
   esac
+  mkdir -p "$ROOT"
+  if [ ! -d "$ROOT" ]; then
+    echo "Production root does not exist: $ROOT" >&2
+    exit 1
+  fi
+}
+
+resolve_repo_url() {
+  if [ -n "$REPO_URL" ]; then
+    return 0
+  fi
+  if [ -d "$ROOT/.git" ]; then
+    REPO_URL="$(git -C "$ROOT" config --get remote.origin.url || true)"
+  fi
+  REPO_URL="${REPO_URL:-https://github.com/alimranniloy/Tiwlo.git}"
+}
+
+install_external_update_command() {
+  if [ "$INSTALL_UPDATE_COMMAND" != "1" ]; then
+    return 0
+  fi
+  local source_file="${BASH_SOURCE[0]:-$0}"
+  if [ ! -f "$source_file" ]; then
+    return 0
+  fi
+  step "Installing external secure update command"
+  if run_sudo mkdir -p "$(dirname "$UPDATE_COMMAND_PATH")" >/dev/null 2>&1 \
+    && run_sudo cp "$source_file" "$UPDATE_COMMAND_PATH" >/dev/null 2>&1 \
+    && run_sudo chmod 700 "$UPDATE_COMMAND_PATH" >/dev/null 2>&1; then
+    echo "Future updates: sudo TIWLO_INSTALL_DIR=$ROOT $UPDATE_COMMAND_PATH"
+  else
+    echo "Could not install $UPDATE_COMMAND_PATH; use the GitHub raw script command for future updates." >&2
+  fi
 }
 
 copy_tree() {
@@ -57,39 +119,74 @@ copy_tree() {
   if have rsync; then
     rsync -a --delete "$src" "$dest"
   else
-    rm -rf "$dest"
+    rm -rf -- "$dest"
     cp -a "$src" "$dest"
   fi
 }
 
-link_or_copy() {
-  local src="$1"
-  local dest="$2"
-  mkdir -p "$(dirname "$dest")"
-  rm -rf "$dest"
-  if ln -s "$src" "$dest" 2>/dev/null; then
+preserve_path() {
+  local relative="$1"
+  local label="$2"
+  local source="$ROOT/$relative"
+  if [ ! -e "$source" ] && [ ! -L "$source" ]; then
     return 0
   fi
-  cp -a "$src" "$dest"
+  mkdir -p "$PRESERVE_DIR/$(dirname "$label")"
+  mv "$source" "$PRESERVE_DIR/$label"
 }
 
-refresh_code() {
-  step "Updating git checkout"
-  cd "$ROOT"
-  if [ ! -d .git ]; then
-    echo "No .git directory found at $ROOT" >&2
-    exit 1
+restore_path() {
+  local label="$1"
+  local relative="$2"
+  local source="$PRESERVE_DIR/$label"
+  if [ ! -e "$source" ] && [ ! -L "$source" ]; then
+    return 0
   fi
-  git fetch origin "$BRANCH" --prune
-  if [ "$RESET_BEFORE_PULL" = "1" ] || [ "$WIPE_READABLE_SOURCE" = "1" ]; then
-    git reset --hard "origin/$BRANCH"
-  else
-    git pull --ff-only origin "$BRANCH"
+  mkdir -p "$ROOT/$(dirname "$relative")"
+  rm -rf -- "$ROOT/$relative"
+  mv "$source" "$ROOT/$relative"
+}
+
+hard_wipe_existing_production_code() {
+  step "Hard wiping readable source and old .git from production root"
+  PRESERVE_DIR="$(mktemp -d "$TMP_BASE/tiwlo-preserve.XXXXXX")"
+
+  preserve_path ".env" "root.env"
+  preserve_path "x/.env" "x.env"
+  preserve_path "public/uploads" "public/uploads"
+  preserve_path ".data" "data"
+  preserve_path ".logs" "logs"
+  preserve_path ".tools" "tools"
+
+  # This is the strict wipe point: it removes old source folders, .git, scripts,
+  # TypeScript/JavaScript source, previous checkout files, and stale dist.
+  find "$ROOT" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+
+  mkdir -p "$ROOT"
+  restore_path "root.env" ".env"
+  restore_path "x.env" "x/.env"
+  restore_path "public/uploads" "public/uploads"
+  restore_path "data" ".data"
+  restore_path "logs" ".logs"
+  restore_path "tools" ".tools"
+}
+
+clone_fresh_source_to_temp() {
+  step "Cloning fresh source into temporary checkout"
+  CHECKOUT_DIR="$(mktemp -d "$TMP_BASE/tiwlo-src.XXXXXX")"
+  rm -rf -- "$CHECKOUT_DIR"
+  git clone --depth 1 --branch "$BRANCH" "$REPO_URL" "$CHECKOUT_DIR"
+
+  [ -f "$ROOT/.env" ] && cp "$ROOT/.env" "$CHECKOUT_DIR/.env"
+  if [ -f "$ROOT/x/.env" ]; then
+    mkdir -p "$CHECKOUT_DIR/x"
+    cp "$ROOT/x/.env" "$CHECKOUT_DIR/x/.env"
   fi
 }
 
-install_dependencies() {
-  step "Installing project dependencies"
+install_dependencies_and_build() {
+  step "Installing dependencies inside temporary checkout"
+  cd "$CHECKOUT_DIR"
   if [ -f package-lock.json ]; then
     npm ci || npm install
   else
@@ -101,14 +198,14 @@ install_dependencies() {
     npm --prefix x install
   fi
 
-  step "Preparing Prisma"
+  step "Preparing Prisma from temporary checkout"
   npm --prefix x run db:generate
   if [ "$RUN_DB_PUSH" = "1" ]; then
     npm --prefix x run db:push
   fi
 
   if [ "$RUN_FRONTEND_BUILD" = "1" ]; then
-    step "Building frontend"
+    step "Building frontend in temporary checkout"
     npm run build
   fi
 }
@@ -119,7 +216,7 @@ ensure_obfuscator() {
     return 0
   fi
 
-  step "Installing javascript-obfuscator locally for production deploy"
+  step "Installing javascript-obfuscator outside readable source"
   mkdir -p "$TOOL_DIR"
   if [ ! -f "$TOOL_DIR/package.json" ]; then
     (cd "$TOOL_DIR" && npm init -y >/dev/null)
@@ -128,49 +225,10 @@ ensure_obfuscator() {
   OBFUSCATOR_BIN="$TOOL_DIR/node_modules/.bin/javascript-obfuscator"
 }
 
-stop_existing_backend_service() {
-  if [ "$STOP_SYSTEMD_BACKEND" != "1" ] || ! have systemctl; then
-    return 0
-  fi
-  if systemctl list-unit-files tiwlo-backend.service >/dev/null 2>&1; then
-    step "Stopping readable-source systemd backend service"
-    run_sudo systemctl stop tiwlo-backend.service >/dev/null 2>&1 || true
-  fi
-}
-
-prepare_runtime_tree() {
-  safe_runtime_path
-  local tmp_dir previous_dir
-  tmp_dir="${RUNTIME_DIR}.tmp"
-  previous_dir="${RUNTIME_DIR}.previous"
-
-  step "Creating obfuscated runtime tree"
-  rm -rf "$tmp_dir" "$previous_dir"
-  mkdir -p "$tmp_dir/x" "$tmp_dir/public" "$tmp_dir/.logs"
-
-  copy_tree "$ROOT/x/src/" "$tmp_dir/x/src"
-  copy_tree "$ROOT/x/graphql/" "$tmp_dir/x/graphql"
-  [ -d "$ROOT/x/private-assets" ] && copy_tree "$ROOT/x/private-assets/" "$tmp_dir/x/private-assets"
-  [ -d "$ROOT/x/api" ] && copy_tree "$ROOT/x/api/" "$tmp_dir/x/api"
-  copy_tree "$ROOT/tSecurity/" "$tmp_dir/tSecurity"
-
-  cp "$ROOT/x/package.json" "$tmp_dir/x/package.json"
-  [ -f "$ROOT/x/package-lock.json" ] && cp "$ROOT/x/package-lock.json" "$tmp_dir/x/package-lock.json"
-  [ -f "$ROOT/x/prisma.config.ts" ] && cp "$ROOT/x/prisma.config.ts" "$tmp_dir/x/prisma.config.ts"
-  [ -d "$ROOT/x/prisma" ] && copy_tree "$ROOT/x/prisma/" "$tmp_dir/x/prisma"
-
-  [ -d "$ROOT/public/brand" ] && copy_tree "$ROOT/public/brand/" "$tmp_dir/public/brand"
-  [ -d "$ROOT/public/uploads" ] && link_or_copy "$ROOT/public/uploads" "$tmp_dir/public/uploads"
-  [ -d "$ROOT/.data" ] && link_or_copy "$ROOT/.data" "$tmp_dir/.data"
-  [ -d "$ROOT/.logs" ] && link_or_copy "$ROOT/.logs" "$tmp_dir/.logs"
-  [ -d "$ROOT/.tools" ] && link_or_copy "$ROOT/.tools" "$tmp_dir/.tools"
-  [ -f "$ROOT/.env" ] && link_or_copy "$ROOT/.env" "$tmp_dir/.env"
-  [ -f "$ROOT/x/.env" ] && link_or_copy "$ROOT/x/.env" "$tmp_dir/x/.env"
-  [ -d "$ROOT/node_modules" ] && link_or_copy "$ROOT/node_modules" "$tmp_dir/node_modules"
-  [ -d "$ROOT/x/node_modules" ] && link_or_copy "$ROOT/x/node_modules" "$tmp_dir/x/node_modules"
-
-  step "Obfuscating backend source"
-  "$OBFUSCATOR_BIN" "$tmp_dir/x/src" --output "$tmp_dir/x/src" \
+obfuscate_dir() {
+  local dir="$1"
+  local threshold="${2:-0.55}"
+  "$OBFUSCATOR_BIN" "$dir" --output "$dir" \
     --target node \
     --compact true \
     --identifier-names-generator hexadecimal \
@@ -183,15 +241,18 @@ prepare_runtime_tree() {
     --simplify true \
     --string-array true \
     --string-array-encoding base64 \
-    --string-array-threshold 0.55 \
+    --string-array-threshold "$threshold" \
     --rotate-string-array true \
     --shuffle-string-array true \
     --split-strings false \
     --transform-object-keys false \
     --numbers-to-expressions false \
     --source-map false
+}
 
-  "$OBFUSCATOR_BIN" "$tmp_dir/tSecurity" --output "$tmp_dir/tSecurity" \
+obfuscate_file() {
+  local file="$1"
+  "$OBFUSCATOR_BIN" "$file" --output "$file" \
     --target node \
     --compact true \
     --identifier-names-generator hexadecimal \
@@ -204,77 +265,132 @@ prepare_runtime_tree() {
     --simplify true \
     --string-array true \
     --string-array-encoding base64 \
-    --string-array-threshold 0.6 \
-    --rotate-string-array true \
-    --shuffle-string-array true \
-    --split-strings false \
-    --transform-object-keys false \
-    --numbers-to-expressions false \
+    --string-array-threshold 0.45 \
     --source-map false
-
-  if [ -d "$RUNTIME_DIR" ]; then
-    mv "$RUNTIME_DIR" "$previous_dir"
-  fi
-  mv "$tmp_dir" "$RUNTIME_DIR"
-  rm -rf "$previous_dir"
 }
 
-restart_backend() {
-  step "Restarting backend from obfuscated runtime"
+prepare_obfuscated_release() {
+  step "Preparing final obfuscated runtime release"
+  RELEASE_DIR="$(mktemp -d "$TMP_BASE/tiwlo-release.XXXXXX")"
+
+  mkdir -p "$RELEASE_DIR/x" "$RELEASE_DIR/public" "$RELEASE_DIR/scripts"
+  copy_tree "$CHECKOUT_DIR/x/src/" "$RELEASE_DIR/x/src"
+  copy_tree "$CHECKOUT_DIR/tSecurity/" "$RELEASE_DIR/tSecurity"
+  copy_tree "$CHECKOUT_DIR/x/graphql/" "$RELEASE_DIR/x/graphql"
+  [ -d "$CHECKOUT_DIR/x/private-assets" ] && copy_tree "$CHECKOUT_DIR/x/private-assets/" "$RELEASE_DIR/x/private-assets"
+  [ -d "$CHECKOUT_DIR/x/api" ] && copy_tree "$CHECKOUT_DIR/x/api/" "$RELEASE_DIR/x/api"
+  [ -d "$CHECKOUT_DIR/dist" ] && copy_tree "$CHECKOUT_DIR/dist/" "$RELEASE_DIR/dist"
+  [ -d "$CHECKOUT_DIR/public/brand" ] && copy_tree "$CHECKOUT_DIR/public/brand/" "$RELEASE_DIR/public/brand"
+  [ -f "$CHECKOUT_DIR/scripts/serve-tiwlo-frontend.mjs" ] && cp "$CHECKOUT_DIR/scripts/serve-tiwlo-frontend.mjs" "$RELEASE_DIR/scripts/serve-tiwlo-frontend.mjs"
+
+  cp "$CHECKOUT_DIR/package.json" "$RELEASE_DIR/package.json"
+  [ -f "$CHECKOUT_DIR/package-lock.json" ] && cp "$CHECKOUT_DIR/package-lock.json" "$RELEASE_DIR/package-lock.json"
+  cp "$CHECKOUT_DIR/x/package.json" "$RELEASE_DIR/x/package.json"
+  [ -f "$CHECKOUT_DIR/x/package-lock.json" ] && cp "$CHECKOUT_DIR/x/package-lock.json" "$RELEASE_DIR/x/package-lock.json"
+  [ -d "$CHECKOUT_DIR/node_modules" ] && copy_tree "$CHECKOUT_DIR/node_modules/" "$RELEASE_DIR/node_modules"
+  [ -d "$CHECKOUT_DIR/x/node_modules" ] && copy_tree "$CHECKOUT_DIR/x/node_modules/" "$RELEASE_DIR/x/node_modules"
+
+  obfuscate_dir "$RELEASE_DIR/x/src" 0.55
+  obfuscate_dir "$RELEASE_DIR/tSecurity" 0.6
+  [ -f "$RELEASE_DIR/scripts/serve-tiwlo-frontend.mjs" ] && obfuscate_file "$RELEASE_DIR/scripts/serve-tiwlo-frontend.mjs"
+}
+
+install_obfuscated_release() {
+  step "Installing obfuscated runtime into production root"
+  mkdir -p "$ROOT"
+  cp -a "$RELEASE_DIR"/. "$ROOT"/
+  mkdir -p "$ROOT/public" "$ROOT/.logs"
+  if [ -d "$PRESERVE_DIR/public/uploads" ] && [ ! -e "$ROOT/public/uploads" ]; then
+    mkdir -p "$ROOT/public"
+    mv "$PRESERVE_DIR/public/uploads" "$ROOT/public/uploads"
+  fi
+}
+
+stop_readable_source_services() {
+  if [ "$STOP_SYSTEMD_BACKEND" = "1" ] && have systemctl; then
+    if systemctl list-unit-files tiwlo-backend.service >/dev/null 2>&1; then
+      step "Stopping old readable-source backend service"
+      run_sudo systemctl stop tiwlo-backend.service >/dev/null 2>&1 || true
+    fi
+  fi
+  if have pm2 && [ "$PM2_APP_NAME" != "tiwlo-backend" ] && pm2 describe tiwlo-backend >/dev/null 2>&1; then
+    pm2 delete tiwlo-backend >/dev/null 2>&1 || true
+  fi
+}
+
+restart_obfuscated_backend() {
+  step "Restarting backend from obfuscated code"
   if have pm2; then
     if pm2 describe "$PM2_APP_NAME" >/dev/null 2>&1; then
       PORT="$BACKEND_PORT" pm2 restart "$PM2_APP_NAME" --update-env
     else
-      PORT="$BACKEND_PORT" pm2 start "$RUNTIME_DIR/x/src/server.js" \
+      PORT="$BACKEND_PORT" pm2 start "$ROOT/x/src/server.js" \
         --name "$PM2_APP_NAME" \
-        --cwd "$RUNTIME_DIR/x" \
+        --cwd "$ROOT/x" \
         --time \
         --interpreter node
     fi
     pm2 save || true
-    return 0
-  fi
-
-  mkdir -p "$ROOT/.logs"
-  local pid_file="$ROOT/.logs/${PM2_APP_NAME}.pid"
-  if [ -f "$pid_file" ]; then
-    local old_pid
-    old_pid="$(cat "$pid_file" 2>/dev/null || true)"
-    if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
-      kill "$old_pid" || true
+  else
+    if have systemctl && systemctl list-unit-files tiwlo-backend.service >/dev/null 2>&1; then
+      run_sudo systemctl restart tiwlo-backend.service >/dev/null 2>&1 || true
+      return 0
+    fi
+    local pid_file="$ROOT/.logs/${PM2_APP_NAME}.pid"
+    if [ -f "$pid_file" ]; then
+      local old_pid
+      old_pid="$(cat "$pid_file" 2>/dev/null || true)"
+      [ -n "$old_pid" ] && kill "$old_pid" >/dev/null 2>&1 || true
       sleep 2
     fi
+    PORT="$BACKEND_PORT" nohup node "$ROOT/x/src/server.js" \
+      >"$ROOT/.logs/${PM2_APP_NAME}.out.log" \
+      2>"$ROOT/.logs/${PM2_APP_NAME}.err.log" &
+    echo "$!" > "$pid_file"
   fi
-  PORT="$BACKEND_PORT" nohup node "$RUNTIME_DIR/x/src/server.js" \
-    >"$ROOT/.logs/${PM2_APP_NAME}.out.log" \
-    2>"$ROOT/.logs/${PM2_APP_NAME}.err.log" &
-  echo "$!" > "$pid_file"
+
+  if [ "$RESTART_SYSTEMD_FRONTEND" = "1" ] && have systemctl; then
+    if systemctl list-unit-files tiwlo-frontend.service >/dev/null 2>&1; then
+      run_sudo systemctl restart tiwlo-frontend.service >/dev/null 2>&1 || true
+    fi
+  fi
 }
 
-wipe_readable_source() {
-  if [ "$WIPE_READABLE_SOURCE" != "1" ]; then
-    return 0
-  fi
-  step "Wiping readable source folders from checkout"
-  echo "Next deploy will restore them with: git reset --hard origin/$BRANCH"
-  rm -rf "$ROOT/x/src" "$ROOT/tSecurity" "$ROOT/src"
+post_wipe_temporary_source() {
+  step "Post-wiping temporary checkout and new .git"
+  rm -rf -- "$CHECKOUT_DIR" "$RELEASE_DIR"
+  CHECKOUT_DIR=""
+  RELEASE_DIR=""
 }
 
 main() {
-  if ! have node || ! have npm; then
-    echo "Node.js and npm are required before running this deploy script." >&2
+  self_reexec_from_temp "$@"
+  assert_safe_root
+  resolve_repo_url
+
+  if ! have git || ! have node || ! have npm; then
+    echo "git, node, and npm are required on the server." >&2
     exit 1
   fi
-  refresh_code
-  install_dependencies
+
+  echo "Production root: $ROOT"
+  echo "Temporary source only: $TMP_BASE"
+  echo "Repository: $REPO_URL"
+
+  install_external_update_command
+  hard_wipe_existing_production_code
+  clone_fresh_source_to_temp
+  install_dependencies_and_build
   ensure_obfuscator
-  prepare_runtime_tree
-  stop_existing_backend_service
-  restart_backend
-  wipe_readable_source
-  step "Obfuscated deploy complete"
-  echo "Runtime: $RUNTIME_DIR"
-  echo "Backend entry: $RUNTIME_DIR/x/src/server.js"
+  prepare_obfuscated_release
+  install_obfuscated_release
+  stop_readable_source_services
+  restart_obfuscated_backend
+  post_wipe_temporary_source
+
+  step "Secure obfuscated deployment complete"
+  echo "Readable source and .git are not kept in $ROOT."
+  echo "Backend entry: $ROOT/x/src/server.js"
   echo "PM2 app/fallback name: $PM2_APP_NAME"
 }
 

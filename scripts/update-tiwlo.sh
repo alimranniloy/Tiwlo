@@ -11,6 +11,32 @@ else
   ROOT="$PWD"
 fi
 
+if [ "${TIWLO_SECURE_OBFUSCATED_UPDATE:-1}" = "1" ] && [ "${TIWLO_LEGACY_UPDATE:-0}" != "1" ]; then
+  echo "Secure obfuscated update is enabled. Delegating to the hard-wipe deploy pipeline..."
+  export TIWLO_INSTALL_DIR="$ROOT"
+  export TIWLO_REPO_URL="${TIWLO_REPO_URL:-https://github.com/alimranniloy/Tiwlo.git}"
+  if [ -f "$ROOT/.git/config" ]; then
+    detected_repo="$(git -C "$ROOT" config --get remote.origin.url 2>/dev/null || true)"
+    [ -n "$detected_repo" ] && export TIWLO_REPO_URL="$detected_repo"
+  fi
+  if [ -f "$ROOT/scripts/deploy-obfuscated.sh" ]; then
+    exec bash "$ROOT/scripts/deploy-obfuscated.sh"
+  fi
+  secure_deploy_script="$(mktemp /tmp/tiwlo-secure-deploy.XXXXXX.sh)"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "https://raw.githubusercontent.com/alimranniloy/Tiwlo/main/scripts/deploy-obfuscated.sh" -o "$secure_deploy_script"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -qO "$secure_deploy_script" "https://raw.githubusercontent.com/alimranniloy/Tiwlo/main/scripts/deploy-obfuscated.sh"
+  else
+    echo "curl or wget is required to fetch the secure deploy script." >&2
+    exit 1
+  fi
+  chmod 700 "$secure_deploy_script"
+  export TIWLO_DEPLOY_SELF_REEXEC=1
+  export TIWLO_DEPLOY_SELF_COPY="$secure_deploy_script"
+  exec bash "$secure_deploy_script"
+fi
+
 if [ ! -d "$ROOT/.git" ]; then
   echo "Could not find a Tiwlo git checkout at $ROOT."
   echo "Run from the Tiwlo directory or set TIWLO_INSTALL_DIR=/path/to/Tiwlo."
