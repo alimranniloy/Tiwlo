@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-DEPLOY_SCRIPT_VERSION="2026-06-08-rollup-optional-deps"
+DEPLOY_SCRIPT_VERSION="2026-06-08-obfuscator-cli-flags"
 ROOT="${TIWLO_INSTALL_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 BRANCH="${TIWLO_GIT_BRANCH:-main}"
 REPO_URL="${TIWLO_REPO_URL:-}"
@@ -717,18 +717,14 @@ install_dependencies_and_build() {
 }
 
 ensure_obfuscator() {
-  if have javascript-obfuscator; then
-    OBFUSCATOR_BIN="$(command -v javascript-obfuscator)"
-    return 0
-  fi
-
-  step "Installing javascript-obfuscator outside readable source"
+  step "Installing pinned javascript-obfuscator outside readable source"
   mkdir -p "$TOOL_DIR"
   if [ ! -f "$TOOL_DIR/package.json" ]; then
     (cd "$TOOL_DIR" && npm init -y >/dev/null)
   fi
-  npm --prefix "$TOOL_DIR" install "javascript-obfuscator@$OBFUSCATOR_VERSION" --omit=dev
+  npm --prefix "$TOOL_DIR" install "javascript-obfuscator@$OBFUSCATOR_VERSION" --omit=dev --no-audit --no-fund --progress=false
   OBFUSCATOR_BIN="$TOOL_DIR/node_modules/.bin/javascript-obfuscator"
+  "$OBFUSCATOR_BIN" --version >/dev/null
 }
 
 obfuscate_dir() {
@@ -748,8 +744,8 @@ obfuscate_dir() {
     --string-array true \
     --string-array-encoding base64 \
     --string-array-threshold "$threshold" \
-    --rotate-string-array true \
-    --shuffle-string-array true \
+    --string-array-rotate true \
+    --string-array-shuffle true \
     --split-strings false \
     --transform-object-keys false \
     --numbers-to-expressions false \
