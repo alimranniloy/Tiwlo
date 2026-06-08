@@ -435,6 +435,66 @@ drop_legacy_deploy_swap_before_preserve() {
   fi
 }
 
+random_secret() {
+  openssl rand -hex 32 2>/dev/null || date +%s%N
+}
+
+read_env_value() {
+  local file="$1"
+  local key="$2"
+  if [ ! -f "$file" ]; then
+    return 0
+  fi
+  grep -E "^[[:space:]]*${key}=" "$file" | tail -n 1 | sed -E "s/^[^=]+=//; s/^\"//; s/\"$//; s/^'//; s/'$//"
+}
+
+env_has_value() {
+  local file="$1"
+  local key="$2"
+  [ -f "$file" ] && grep -Eq "^[[:space:]]*${key}=[\"']?.+" "$file"
+}
+
+set_env_value_if_missing() {
+  local file="$1"
+  local key="$2"
+  local value="$3"
+  mkdir -p "$(dirname "$file")"
+  touch "$file"
+  if ! env_has_value "$file" "$key"; then
+    printf '%s="%s"\n' "$key" "$value" >> "$file"
+  fi
+}
+
+ensure_runtime_env_files() {
+  local backend_env="$ROOT/x/.env"
+  local root_env="$ROOT/.env"
+  local database_url
+  local frontend_origin
+  local api_base_url
+
+  database_url="${DATABASE_URL:-${TIWLO_DATABASE_URL:-}}"
+  database_url="${database_url:-$(read_env_value "$backend_env" DATABASE_URL)}"
+  database_url="${database_url:-$(read_env_value "$root_env" DATABASE_URL)}"
+  database_url="${database_url:-postgresql://postgres:postgres@127.0.0.1:5432/tiwlo?schema=public}"
+
+  frontend_origin="${FRONTEND_ORIGIN:-$(read_env_value "$backend_env" FRONTEND_ORIGIN)}"
+  frontend_origin="${frontend_origin:-$(read_env_value "$root_env" APP_URL)}"
+  frontend_origin="${frontend_origin:-http://127.0.0.1:${FRONTEND_PORT}}"
+  api_base_url="${API_BASE_URL:-$(read_env_value "$backend_env" API_BASE_URL)}"
+  api_base_url="${api_base_url:-$frontend_origin}"
+
+  if ! env_has_value "$backend_env" DATABASE_URL; then
+    step "Recreating missing backend environment file"
+  fi
+  set_env_value_if_missing "$root_env" VITE_GRAPHQL_URL "${FRONTEND_GRAPHQL_URL:-/graphql}"
+  set_env_value_if_missing "$root_env" APP_URL "$frontend_origin"
+  set_env_value_if_missing "$backend_env" DATABASE_URL "$database_url"
+  set_env_value_if_missing "$backend_env" JWT_SECRET "${JWT_SECRET:-$(random_secret)}"
+  set_env_value_if_missing "$backend_env" PORT "$BACKEND_PORT"
+  set_env_value_if_missing "$backend_env" FRONTEND_ORIGIN "$frontend_origin"
+  set_env_value_if_missing "$backend_env" API_BASE_URL "$api_base_url"
+}
+
 restore_stranded_preserve_path() {
   local preserve_dir="$1"
   local label="$2"
@@ -733,6 +793,7 @@ main() {
   install_external_update_command
   recover_stranded_preserve_dirs
   hard_wipe_existing_production_code
+  ensure_runtime_env_files
   clone_fresh_source_to_temp
   install_dependencies_and_build
   ensure_obfuscator
