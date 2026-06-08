@@ -15,18 +15,34 @@ if [ "${TIWLO_SECURE_OBFUSCATED_UPDATE:-1}" = "1" ] && [ "${TIWLO_LEGACY_UPDATE:
   echo "Secure obfuscated update is enabled. Delegating to the hard-wipe deploy pipeline..."
   export TIWLO_INSTALL_DIR="$ROOT"
   export TIWLO_REPO_URL="${TIWLO_REPO_URL:-https://github.com/alimranniloy/Tiwlo.git}"
+  ROOT="$(realpath -m "$ROOT")"
   if [ -f "$ROOT/.git/config" ]; then
     detected_repo="$(git -C "$ROOT" config --get remote.origin.url 2>/dev/null || true)"
     [ -n "$detected_repo" ] && export TIWLO_REPO_URL="$detected_repo"
   fi
-  if [ -f "$ROOT/scripts/deploy-obfuscated.sh" ]; then
+
+  export TIWLO_DEPLOY_TMP_BASE="${TIWLO_DEPLOY_TMP_BASE:-$(dirname "$ROOT")/.tiwlo-tmp}"
+  export TIWLO_DEPLOY_SWAP_FILE="${TIWLO_DEPLOY_SWAP_FILE:-$(dirname "$ROOT")/.tiwlo-deploy.swap}"
+  export TIWLO_DEPLOY_SWAP_MB="${TIWLO_DEPLOY_SWAP_MB:-4096}"
+  mkdir -p "$TIWLO_DEPLOY_TMP_BASE"
+
+  legacy_swap="$ROOT/.data/tiwlo-deploy.swap"
+  if [ -f "$legacy_swap" ]; then
+    swapoff "$legacy_swap" >/dev/null 2>&1 || true
+    rm -f "$legacy_swap" >/dev/null 2>&1 || true
+  fi
+  find /tmp -path '*/tiwlo-deploy.swap' -type f -exec rm -f -- {} + >/dev/null 2>&1 || true
+  find /tmp -maxdepth 1 -type d \( -name 'tiwlo-src.*' -o -name 'tiwlo-release.*' -o -name 'tiwlo-npm-cache.*' \) -exec rm -rf -- {} + >/dev/null 2>&1 || true
+
+  if [ "${TIWLO_USE_LOCAL_DEPLOY_SCRIPT:-0}" = "1" ] && [ -f "$ROOT/scripts/deploy-obfuscated.sh" ]; then
     exec bash "$ROOT/scripts/deploy-obfuscated.sh"
   fi
-  secure_deploy_script="$(mktemp /tmp/tiwlo-secure-deploy.XXXXXX.sh)"
+  secure_deploy_script="$(mktemp "$TIWLO_DEPLOY_TMP_BASE/tiwlo-secure-deploy.XXXXXX.sh")"
+  secure_deploy_url="https://raw.githubusercontent.com/alimranniloy/Tiwlo/${TIWLO_GIT_BRANCH:-main}/scripts/deploy-obfuscated.sh?fresh=$(date +%s)"
   if command -v curl >/dev/null 2>&1; then
-    curl -fsSL "https://raw.githubusercontent.com/alimranniloy/Tiwlo/main/scripts/deploy-obfuscated.sh" -o "$secure_deploy_script"
+    curl -fsSL -H 'Cache-Control: no-cache' "$secure_deploy_url" -o "$secure_deploy_script"
   elif command -v wget >/dev/null 2>&1; then
-    wget -qO "$secure_deploy_script" "https://raw.githubusercontent.com/alimranniloy/Tiwlo/main/scripts/deploy-obfuscated.sh"
+    wget --no-cache -qO "$secure_deploy_script" "$secure_deploy_url"
   else
     echo "curl or wget is required to fetch the secure deploy script." >&2
     exit 1

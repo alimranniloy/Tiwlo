@@ -68,18 +68,16 @@ curl -fsSL https://raw.githubusercontent.com/alimranniloy/Tiwlo/main/scripts/ins
 
 ## Server Update
 
-Use this command on the production server to deploy the latest code through the secure obfuscated pipeline. It checks out the source in a temporary folder, builds it, obfuscates the runtime files, wipes source code from the production folder, and restarts the app.
+Use this single command on the production server. It cleans old failed deploy temp files, moves deploy work out of `/tmp`, checks out the source in a temporary folder, builds it, obfuscates the runtime files, wipes source code from the production folder, and restarts the app.
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/alimranniloy/Tiwlo/main/scripts/deploy-obfuscated.sh?fresh=$(date +%s)" \
-  | sudo env TIWLO_INSTALL_DIR=/var/www/Tiwlo TIWLO_REPO_URL=https://github.com/alimranniloy/Tiwlo.git TIWLO_DEPLOY_TMP_BASE=/var/www/.tiwlo-tmp TIWLO_DEPLOY_SWAP_FILE=/var/www/.tiwlo-deploy.swap TIWLO_DEPLOY_SWAP_MB=4096 bash
+curl -fsSL "https://raw.githubusercontent.com/alimranniloy/Tiwlo/main/scripts/update-tiwlo.sh?fresh=$(date +%s)" | sudo env TIWLO_INSTALL_DIR=/var/www/Tiwlo bash
 ```
 
-If a very small VPS still kills `npm install` because of low memory, retry with a larger deploy swap and keep it for future updates:
+If a very small VPS still kills `npm install` because of low memory, run the same update command with a larger deploy swap:
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/alimranniloy/Tiwlo/main/scripts/deploy-obfuscated.sh?fresh=$(date +%s)" \
-  | sudo env TIWLO_INSTALL_DIR=/var/www/Tiwlo TIWLO_REPO_URL=https://github.com/alimranniloy/Tiwlo.git TIWLO_DEPLOY_TMP_BASE=/var/www/.tiwlo-tmp TIWLO_DEPLOY_SWAP_FILE=/var/www/.tiwlo-deploy.swap TIWLO_DEPLOY_SWAP_MB=6144 TIWLO_KEEP_DEPLOY_SWAP=1 bash
+curl -fsSL "https://raw.githubusercontent.com/alimranniloy/Tiwlo/main/scripts/update-tiwlo.sh?fresh=$(date +%s)" | sudo env TIWLO_INSTALL_DIR=/var/www/Tiwlo TIWLO_DEPLOY_SWAP_MB=6144 TIWLO_KEEP_DEPLOY_SWAP=1 bash
 ```
 
 The deploy script skips the heavy local AI runtime package by default so small VPS installs do not run out of memory. To install the local `node-llama-cpp` AI runtime on a larger server, add `TIWLO_INSTALL_AI_MODEL_RUNTIME=1` to the command.
@@ -285,7 +283,7 @@ Update this Tiwlo server without removing PostgreSQL data. This uses the secure 
 sudo TIWLO_INSTALL_DIR=/var/www/Tiwlo /usr/local/bin/tiwlo-secure-update
 ```
 
-If the update command is not installed yet, run the full secure deploy command from the **Server Update** section once. The update process preserves `.env`, uploaded files, PostgreSQL data, PM2 data, and other runtime state. It does not run `prisma migrate reset`, `DROP DATABASE`, or delete `.data/postgres`.
+If the shortcut is not installed yet, run the single command from the **Server Update** section once. The update process preserves `.env`, uploaded files, PostgreSQL data, PM2 data, and other runtime state. It does not run `prisma migrate reset`, `DROP DATABASE`, or delete `.data/postgres`.
 
 ## Tiwlo SSL And Let's Encrypt Troubleshooting
 

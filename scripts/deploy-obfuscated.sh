@@ -137,18 +137,69 @@ install_external_update_command() {
   if [ "$INSTALL_UPDATE_COMMAND" != "1" ]; then
     return 0
   fi
-  local source_file="${BASH_SOURCE[0]:-$0}"
-  if [ ! -f "$source_file" ]; then
-    return 0
-  fi
   step "Installing external secure update command"
+  local launcher
+  launcher="$(mktemp "$TMP_BASE/tiwlo-secure-update.XXXXXX")"
+  cat >"$launcher" <<'BASH'
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="${TIWLO_INSTALL_DIR:-/var/www/Tiwlo}"
+BRANCH="${TIWLO_GIT_BRANCH:-main}"
+REPO_URL="${TIWLO_REPO_URL:-https://github.com/alimranniloy/Tiwlo.git}"
+ROOT="$(realpath -m "$ROOT")"
+TMP_BASE="${TIWLO_DEPLOY_TMP_BASE:-$(dirname "$ROOT")/.tiwlo-tmp}"
+DEPLOY_SWAP_FILE="${TIWLO_DEPLOY_SWAP_FILE:-$(dirname "$ROOT")/.tiwlo-deploy.swap}"
+DEPLOY_SWAP_MB="${TIWLO_DEPLOY_SWAP_MB:-4096}"
+mkdir -p "$TMP_BASE"
+
+cleanup_legacy_artifacts() {
+  local legacy_swap="$ROOT/.data/tiwlo-deploy.swap"
+  if [ -f "$legacy_swap" ]; then
+    swapoff "$legacy_swap" >/dev/null 2>&1 || true
+    rm -f "$legacy_swap" >/dev/null 2>&1 || true
+  fi
+  find /tmp -path '*/tiwlo-deploy.swap' -type f -exec rm -f -- {} + >/dev/null 2>&1 || true
+  find /tmp -maxdepth 1 -type d \( -name 'tiwlo-src.*' -o -name 'tiwlo-release.*' -o -name 'tiwlo-npm-cache.*' \) -exec rm -rf -- {} + >/dev/null 2>&1 || true
+}
+
+fetch_latest_deploy_script() {
+  local script
+  local url
+  script="$(mktemp "$TMP_BASE/tiwlo-secure-deploy.XXXXXX.sh")"
+  url="https://raw.githubusercontent.com/alimranniloy/Tiwlo/${BRANCH}/scripts/deploy-obfuscated.sh?fresh=$(date +%s)"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL -H 'Cache-Control: no-cache' "$url" -o "$script"
+  elif command -v wget >/dev/null 2>&1; then
+    wget --no-cache -qO "$script" "$url"
+  else
+    echo "curl or wget is required to fetch the secure deploy script." >&2
+    exit 1
+  fi
+  chmod 700 "$script"
+  printf '%s\n' "$script"
+}
+
+cleanup_legacy_artifacts
+deploy_script="$(fetch_latest_deploy_script)"
+export TIWLO_INSTALL_DIR="$ROOT"
+export TIWLO_REPO_URL="$REPO_URL"
+export TIWLO_DEPLOY_TMP_BASE="$TMP_BASE"
+export TIWLO_DEPLOY_SWAP_FILE="$DEPLOY_SWAP_FILE"
+export TIWLO_DEPLOY_SWAP_MB="$DEPLOY_SWAP_MB"
+export TIWLO_DEPLOY_SELF_REEXEC=1
+export TIWLO_DEPLOY_SELF_COPY="$deploy_script"
+exec bash "$deploy_script"
+BASH
+
   if run_sudo mkdir -p "$(dirname "$UPDATE_COMMAND_PATH")" >/dev/null 2>&1 \
-    && run_sudo cp "$source_file" "$UPDATE_COMMAND_PATH" >/dev/null 2>&1 \
+    && run_sudo cp "$launcher" "$UPDATE_COMMAND_PATH" >/dev/null 2>&1 \
     && run_sudo chmod 700 "$UPDATE_COMMAND_PATH" >/dev/null 2>&1; then
     echo "Future updates: sudo TIWLO_INSTALL_DIR=$ROOT $UPDATE_COMMAND_PATH"
   else
     echo "Could not install $UPDATE_COMMAND_PATH; use the GitHub raw script command for future updates." >&2
   fi
+  rm -f "$launcher"
 }
 
 current_swap_mb() {
@@ -382,6 +433,47 @@ drop_legacy_deploy_swap_before_preserve() {
   if [ "$legacy_swap" != "$DEPLOY_SWAP_FILE" ]; then
     remove_swap_path_if_possible "$legacy_swap"
   fi
+}
+
+restore_stranded_preserve_path() {
+  local preserve_dir="$1"
+  local label="$2"
+  local relative="$3"
+  local source="$preserve_dir/$label"
+  local target="$ROOT/$relative"
+
+  if [ ! -e "$source" ] && [ ! -L "$source" ]; then
+    return 0
+  fi
+  if [ -e "$target" ] || [ -L "$target" ]; then
+    return 0
+  fi
+  if [ "$label" = "data" ]; then
+    remove_swap_path_if_possible "$source/tiwlo-deploy.swap"
+  fi
+
+  mkdir -p "$ROOT/$(dirname "$relative")"
+  mv "$source" "$target"
+  echo "Recovered $relative from $preserve_dir"
+}
+
+recover_stranded_preserve_dirs() {
+  local candidate
+  for candidate in /tmp/tiwlo-preserve.* "$(dirname "$ROOT")"/.tiwlo-preserve.*; do
+    [ -d "$candidate" ] || continue
+    step "Checking stranded preserve folder: $candidate"
+    restore_stranded_preserve_path "$candidate" "root.env" ".env"
+    restore_stranded_preserve_path "$candidate" "x.env" "x/.env"
+    restore_stranded_preserve_path "$candidate" "public/uploads" "public/uploads"
+    restore_stranded_preserve_path "$candidate" "data" ".data"
+    restore_stranded_preserve_path "$candidate" "logs" ".logs"
+    restore_stranded_preserve_path "$candidate" "tools" ".tools"
+    if [ -z "$(find "$candidate" -mindepth 1 -print -quit 2>/dev/null)" ]; then
+      rm -rf -- "$candidate"
+    else
+      echo "Left non-empty preserve folder in place: $candidate"
+    fi
+  done
 }
 
 restore_path() {
@@ -639,6 +731,7 @@ main() {
   echo "Repository: $REPO_URL"
 
   install_external_update_command
+  recover_stranded_preserve_dirs
   hard_wipe_existing_production_code
   clone_fresh_source_to_temp
   install_dependencies_and_build
