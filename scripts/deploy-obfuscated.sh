@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-DEPLOY_SCRIPT_VERSION="2026-06-08-prisma-env-export"
+DEPLOY_SCRIPT_VERSION="2026-06-08-rollup-optional-deps"
 ROOT="${TIWLO_INSTALL_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 BRANCH="${TIWLO_GIT_BRANCH:-main}"
 REPO_URL="${TIWLO_REPO_URL:-}"
@@ -644,6 +644,43 @@ load_backend_env_for_prisma() {
   export DATABASE_URL="$database_url"
 }
 
+ensure_rollup_native_optional_dependency() {
+  local rollup_pkg
+  rollup_pkg="$(node <<'NODE'
+const { arch, platform, report } = process;
+
+const linuxLibc = () => {
+  if (platform !== 'linux') return '';
+  const glibc = report?.getReport?.().header?.glibcVersionRuntime;
+  return glibc ? 'gnu' : 'musl';
+};
+
+const names = {
+  'linux:x64:gnu': '@rollup/rollup-linux-x64-gnu',
+  'linux:x64:musl': '@rollup/rollup-linux-x64-musl',
+  'linux:arm64:gnu': '@rollup/rollup-linux-arm64-gnu',
+  'linux:arm64:musl': '@rollup/rollup-linux-arm64-musl',
+  'linux:arm:gnueabihf': '@rollup/rollup-linux-arm-gnueabihf',
+  'linux:arm:musleabihf': '@rollup/rollup-linux-arm-musleabihf'
+};
+
+const libc = arch === 'arm' ? linuxLibc().replace('gnu', 'gnueabihf').replace('musl', 'musleabihf') : linuxLibc();
+const pkg = names[`${platform}:${arch}:${libc}`];
+if (!pkg) process.exit(0);
+
+try {
+  require.resolve(pkg, { paths: [process.cwd()] });
+} catch {
+  console.log(pkg);
+}
+NODE
+)"
+  if [ -n "$rollup_pkg" ]; then
+    step "Installing missing Rollup native package: $rollup_pkg"
+    npm install --no-save --no-audit --no-fund --progress=false "$rollup_pkg"
+  fi
+}
+
 install_dependencies_and_build() {
   ensure_deploy_swap
   prepare_low_memory_node_env
@@ -653,10 +690,10 @@ install_dependencies_and_build() {
   disable_backend_ai_runtime_for_low_memory
 
   if [ -f package-lock.json ]; then
-    npm_install_with_retry "Frontend" "$CHECKOUT_DIR/node_modules" npm ci --omit=optional --no-audit --no-fund --progress=false \
-      || npm_install_with_retry "Frontend" "$CHECKOUT_DIR/node_modules" npm install --omit=optional --no-audit --no-fund --progress=false
+    npm_install_with_retry "Frontend" "$CHECKOUT_DIR/node_modules" npm ci --no-audit --no-fund --progress=false \
+      || npm_install_with_retry "Frontend" "$CHECKOUT_DIR/node_modules" npm install --no-audit --no-fund --progress=false
   else
-    npm_install_with_retry "Frontend" "$CHECKOUT_DIR/node_modules" npm install --omit=optional --no-audit --no-fund --progress=false
+    npm_install_with_retry "Frontend" "$CHECKOUT_DIR/node_modules" npm install --no-audit --no-fund --progress=false
   fi
   if [ -f x/package-lock.json ]; then
     npm_install_with_retry "Backend" "$CHECKOUT_DIR/x/node_modules" npm --prefix x ci --omit=optional --no-audit --no-fund --progress=false \
@@ -674,6 +711,7 @@ install_dependencies_and_build() {
 
   if [ "$RUN_FRONTEND_BUILD" = "1" ]; then
     step "Building frontend in temporary checkout"
+    ensure_rollup_native_optional_dependency
     npm run build
   fi
 }
