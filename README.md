@@ -72,15 +72,17 @@ Use this command on the production server to deploy the latest code through the 
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/alimranniloy/Tiwlo/main/scripts/deploy-obfuscated.sh \
-  | sudo env TIWLO_INSTALL_DIR=/var/www/Tiwlo TIWLO_REPO_URL=https://github.com/alimranniloy/Tiwlo.git TIWLO_DEPLOY_SWAP_MB=2048 bash
+  | sudo env TIWLO_INSTALL_DIR=/var/www/Tiwlo TIWLO_REPO_URL=https://github.com/alimranniloy/Tiwlo.git TIWLO_DEPLOY_SWAP_MB=4096 bash
 ```
 
 If a very small VPS still kills `npm install` because of low memory, retry with a larger deploy swap and keep it for future updates:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/alimranniloy/Tiwlo/main/scripts/deploy-obfuscated.sh \
-  | sudo env TIWLO_INSTALL_DIR=/var/www/Tiwlo TIWLO_REPO_URL=https://github.com/alimranniloy/Tiwlo.git TIWLO_DEPLOY_SWAP_MB=3072 TIWLO_KEEP_DEPLOY_SWAP=1 bash
+  | sudo env TIWLO_INSTALL_DIR=/var/www/Tiwlo TIWLO_REPO_URL=https://github.com/alimranniloy/Tiwlo.git TIWLO_DEPLOY_SWAP_MB=6144 TIWLO_KEEP_DEPLOY_SWAP=1 bash
 ```
+
+The deploy script skips the heavy local AI runtime package by default so small VPS installs do not run out of memory. To install the local `node-llama-cpp` AI runtime on a larger server, add `TIWLO_INSTALL_AI_MODEL_RUNTIME=1` to the command.
 
 After one successful secure deploy, future updates can use the installed update command:
 

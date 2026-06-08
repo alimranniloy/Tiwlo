@@ -16,11 +16,12 @@ TMP_BASE="${TIWLO_DEPLOY_TMP_BASE:-/tmp}"
 TOOL_DIR="${TIWLO_OBFUSCATOR_TOOL_DIR:-$ROOT/.tools/javascript-obfuscator}"
 INSTALL_UPDATE_COMMAND="${TIWLO_INSTALL_UPDATE_COMMAND:-1}"
 UPDATE_COMMAND_PATH="${TIWLO_UPDATE_COMMAND_PATH:-/usr/local/bin/tiwlo-secure-update}"
-DEPLOY_SWAP_MB="${TIWLO_DEPLOY_SWAP_MB:-2048}"
+DEPLOY_SWAP_MB="${TIWLO_DEPLOY_SWAP_MB:-4096}"
 DEPLOY_SWAP_FILE="${TIWLO_DEPLOY_SWAP_FILE:-$ROOT/.data/tiwlo-deploy.swap}"
 KEEP_DEPLOY_SWAP="${TIWLO_KEEP_DEPLOY_SWAP:-0}"
 NPM_CACHE_DIR="${TIWLO_NPM_CACHE_DIR:-$ROOT/.data/npm-cache}"
-NODE_OLD_SPACE_MB="${TIWLO_NODE_OLD_SPACE_MB:-1536}"
+NODE_OLD_SPACE_MB="${TIWLO_NODE_OLD_SPACE_MB:-1024}"
+INSTALL_AI_MODEL_RUNTIME="${TIWLO_INSTALL_AI_MODEL_RUNTIME:-0}"
 
 CHECKOUT_DIR=""
 RELEASE_DIR=""
@@ -130,27 +131,45 @@ current_swap_mb() {
   fi
 }
 
+swap_file_is_active() {
+  [ -r /proc/swaps ] && awk -v path="$DEPLOY_SWAP_FILE" 'NR > 1 && $1 == path { found = 1 } END { exit found ? 0 : 1 }' /proc/swaps
+}
+
+file_size_mb() {
+  if [ -f "$1" ]; then
+    du -m "$1" 2>/dev/null | awk '{ print int($1) }'
+  else
+    echo 0
+  fi
+}
+
 ensure_deploy_swap() {
   if [ "$(uname -s)" != "Linux" ] || [ "${DEPLOY_SWAP_MB:-0}" = "0" ]; then
     return 0
   fi
-  if [ "$(current_swap_mb)" -ge 512 ]; then
+  if [ "$(current_swap_mb)" -ge "$DEPLOY_SWAP_MB" ]; then
+    echo "Existing swap meets deploy target: $(current_swap_mb)MB >= ${DEPLOY_SWAP_MB}MB"
     return 0
   fi
 
-  step "Creating temporary deploy swap (${DEPLOY_SWAP_MB}MB) to prevent npm OOM kills"
+  step "Ensuring deploy swap (${DEPLOY_SWAP_MB}MB target) to prevent npm OOM kills"
   mkdir -p "$(dirname "$DEPLOY_SWAP_FILE")"
-  if [ ! -f "$DEPLOY_SWAP_FILE" ]; then
+  if swap_file_is_active; then
+    run_sudo swapoff "$DEPLOY_SWAP_FILE" >/dev/null 2>&1 || true
+  fi
+  if [ "$(file_size_mb "$DEPLOY_SWAP_FILE")" -lt "$DEPLOY_SWAP_MB" ]; then
+    run_sudo rm -f "$DEPLOY_SWAP_FILE"
     if have fallocate; then
       run_sudo fallocate -l "${DEPLOY_SWAP_MB}M" "$DEPLOY_SWAP_FILE"
     else
       run_sudo dd if=/dev/zero of="$DEPLOY_SWAP_FILE" bs=1M count="$DEPLOY_SWAP_MB" status=none
     fi
-    run_sudo chmod 600 "$DEPLOY_SWAP_FILE"
-    run_sudo mkswap "$DEPLOY_SWAP_FILE" >/dev/null
   fi
+  run_sudo chmod 600 "$DEPLOY_SWAP_FILE"
+  run_sudo mkswap "$DEPLOY_SWAP_FILE" >/dev/null
   run_sudo swapon "$DEPLOY_SWAP_FILE"
   DEPLOY_SWAP_CREATED="1"
+  echo "Deploy swap active: $(current_swap_mb)MB total"
 }
 
 prepare_low_memory_node_env() {
@@ -161,7 +180,53 @@ prepare_low_memory_node_env() {
   export npm_config_progress=false
   export npm_config_prefer_offline=true
   export npm_config_update_notifier=false
+  export npm_config_maxsockets=1
+  export npm_config_jobs=1
+  export MAKEFLAGS="-j1"
+  export CMAKE_BUILD_PARALLEL_LEVEL=1
   export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--max-old-space-size=$NODE_OLD_SPACE_MB"
+}
+
+disable_backend_ai_runtime_for_low_memory() {
+  if [ "$INSTALL_AI_MODEL_RUNTIME" = "1" ]; then
+    return 0
+  fi
+  if [ ! -f "$CHECKOUT_DIR/x/package.json" ]; then
+    return 0
+  fi
+
+  step "Skipping heavy local AI runtime package for small-VPS deploy"
+  node <<'NODE'
+const fs = require('fs');
+const path = require('path');
+
+const backendDir = path.join(process.cwd(), 'x');
+const removeLlamaRuntime = (filePath) => {
+  if (!fs.existsSync(filePath)) return;
+  const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+
+  if (data.dependencies) delete data.dependencies['node-llama-cpp'];
+  if (data.optionalDependencies) delete data.optionalDependencies['node-llama-cpp'];
+  if (data.packages) {
+    for (const key of Object.keys(data.packages)) {
+      if (key.includes('node_modules/node-llama-cpp') || key.includes('node_modules/@node-llama-cpp')) {
+        delete data.packages[key];
+      }
+    }
+    if (data.packages['']?.dependencies) {
+      delete data.packages[''].dependencies['node-llama-cpp'];
+    }
+    if (data.packages['']?.optionalDependencies) {
+      delete data.packages[''].optionalDependencies['node-llama-cpp'];
+    }
+  }
+
+  fs.writeFileSync(filePath, `${JSON.stringify(data, null, 2)}\n`);
+};
+
+removeLlamaRuntime(path.join(backendDir, 'package.json'));
+removeLlamaRuntime(path.join(backendDir, 'package-lock.json'));
+NODE
 }
 
 copy_tree() {
@@ -242,15 +307,17 @@ install_dependencies_and_build() {
 
   step "Installing dependencies inside temporary checkout"
   cd "$CHECKOUT_DIR"
+  disable_backend_ai_runtime_for_low_memory
+
   if [ -f package-lock.json ]; then
-    npm ci --no-audit --no-fund --progress=false || npm install --no-audit --no-fund --progress=false
+    npm ci --omit=optional --no-audit --no-fund --progress=false || npm install --omit=optional --no-audit --no-fund --progress=false
   else
-    npm install --no-audit --no-fund --progress=false
+    npm install --omit=optional --no-audit --no-fund --progress=false
   fi
   if [ -f x/package-lock.json ]; then
-    npm --prefix x ci --no-audit --no-fund --progress=false || npm --prefix x install --no-audit --no-fund --progress=false
+    npm --prefix x ci --omit=optional --no-audit --no-fund --progress=false || npm --prefix x install --omit=optional --no-audit --no-fund --progress=false
   else
-    npm --prefix x install --no-audit --no-fund --progress=false
+    npm --prefix x install --omit=optional --no-audit --no-fund --progress=false
   fi
 
   step "Preparing Prisma from temporary checkout"
