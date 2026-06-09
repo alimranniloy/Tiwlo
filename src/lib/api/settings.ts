@@ -25,6 +25,22 @@ export type SignupCreditPolicy = {
   signupPromoHoldAmount: number;
 };
 
+export type TrackingIntegrationsStatus = {
+  googleAnalytics: {
+    enabled: boolean;
+    measurementId: string;
+  };
+  googleTagManager: {
+    enabled: boolean;
+    containerId: string;
+  };
+  facebookPixel: {
+    enabled: boolean;
+    pixelId: string;
+  };
+  updatedAt?: string | null;
+};
+
 export async function fetchPlatformStatusWithApi(): Promise<PlatformStatus> {
   const apiBase = GRAPHQL_URL.replace(/\/graphql\/?$/, '');
   const response = await fetch(`${apiBase}/api/platform/status`, {
@@ -33,6 +49,18 @@ export async function fetchPlatformStatusWithApi(): Promise<PlatformStatus> {
   });
   if (!response.ok) {
     throw new Error(`Platform status request failed: ${response.status}`);
+  }
+  return response.json();
+}
+
+export async function fetchTrackingIntegrationsWithApi(): Promise<TrackingIntegrationsStatus> {
+  const apiBase = GRAPHQL_URL.replace(/\/graphql\/?$/, '');
+  const response = await fetch(`${apiBase}/api/platform/tracking`, {
+    headers: { Accept: 'application/json' },
+    cache: 'no-store'
+  });
+  if (!response.ok) {
+    throw new Error(`Tracking settings request failed: ${response.status}`);
   }
   return response.json();
 }

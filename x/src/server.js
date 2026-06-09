@@ -148,6 +148,59 @@ const blockAssetPreview = (res) => {
   res.status(404).type('text/plain; charset=utf-8').send('Not found');
 };
 
+const cleanTextValue = (value = '', maxLength = 6000) => String(value || '').trim().slice(0, maxLength);
+
+const googleMeasurementIdFrom = (value = '') => {
+  const text = cleanTextValue(value);
+  return text.match(/\bG-[A-Z0-9]{4,}\b/i)?.[0]?.toUpperCase() || '';
+};
+
+const googleTagManagerIdFrom = (value = '') => {
+  const text = cleanTextValue(value);
+  return text.match(/\bGTM-[A-Z0-9]{4,}\b/i)?.[0]?.toUpperCase() || '';
+};
+
+const facebookPixelIdFrom = (value = '') => {
+  const text = cleanTextValue(value);
+  const explicit = text.match(/fbq\(['"]init['"],\s*['"](\d{5,30})['"]\)/i)?.[1];
+  if (explicit) return explicit;
+  return text.match(/\b\d{5,30}\b/)?.[0] || '';
+};
+
+const publicTrackingConfig = async () => {
+  const setting = await prisma.systemSetting.findUnique({
+    where: { scope_scopeId_key: { scope: 'platform', scopeId: '', key: 'trackingIntegrations' } }
+  });
+  const value = setting?.value && typeof setting.value === 'object' && !Array.isArray(setting.value) ? setting.value : {};
+  const google = value.googleAnalytics && typeof value.googleAnalytics === 'object' && !Array.isArray(value.googleAnalytics)
+    ? value.googleAnalytics
+    : {};
+  const facebook = value.facebookPixel && typeof value.facebookPixel === 'object' && !Array.isArray(value.facebookPixel)
+    ? value.facebookPixel
+    : {};
+  const tagManager = value.googleTagManager && typeof value.googleTagManager === 'object' && !Array.isArray(value.googleTagManager)
+    ? value.googleTagManager
+    : {};
+  const measurementId = googleMeasurementIdFrom(google.measurementId || google.tagSnippet || google.script || '');
+  const containerId = googleTagManagerIdFrom(tagManager.containerId || tagManager.tagSnippet || tagManager.script || '');
+  const pixelId = facebookPixelIdFrom(facebook.pixelId || facebook.pixelSnippet || facebook.script || '');
+  return {
+    googleAnalytics: {
+      enabled: Boolean(google.enabled) && Boolean(measurementId),
+      measurementId
+    },
+    googleTagManager: {
+      enabled: Boolean(tagManager.enabled) && Boolean(containerId),
+      containerId
+    },
+    facebookPixel: {
+      enabled: Boolean(facebook.enabled) && Boolean(pixelId),
+      pixelId
+    },
+    updatedAt: setting?.updatedAt || null
+  };
+};
+
 app.get('/api/platform/status', async (_req, res) => {
   res.setHeader('Cache-Control', 'no-store, private, max-age=0');
   try {
@@ -164,6 +217,20 @@ app.get('/api/platform/status', async (_req, res) => {
     });
   } catch (error) {
     res.status(500).json({ maintenance: { enabled: false }, error: error.message || 'Unable to read platform status' });
+  }
+});
+
+app.get('/api/platform/tracking', async (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store, private, max-age=0');
+  try {
+    res.json(await publicTrackingConfig());
+  } catch (error) {
+    res.status(500).json({
+      googleAnalytics: { enabled: false, measurementId: '' },
+      googleTagManager: { enabled: false, containerId: '' },
+      facebookPixel: { enabled: false, pixelId: '' },
+      error: error.message || 'Unable to read tracking settings'
+    });
   }
 });
 

@@ -1,9 +1,16 @@
 import React from 'react';
-import { AlertCircle, Cpu, Gift, Globe2, LifeBuoy, Save, ShieldAlert, SlidersHorizontal } from 'lucide-react';
+import { AlertCircle, BarChart3, Cpu, Gift, Globe2, LifeBuoy, Save, ShieldAlert, SlidersHorizontal } from 'lucide-react';
 import { fetchPowerDnsConfigWithApi, fetchSettingsWithApi, updatePowerDnsConfigWithApi, upsertSettingWithApi } from '../../lib/tiwloApi';
 import DdosProtectionPanel from './DdosProtectionPanel';
 
-type CoreSection = 'resources' | 'domain' | 'credit' | 'security' | 'support';
+type CoreSection = 'resources' | 'domain' | 'credit' | 'tracking' | 'security' | 'support';
+
+const extractGoogleMeasurementId = (value = '') => String(value || '').match(/\bG-[A-Z0-9]{4,}\b/i)?.[0]?.toUpperCase() || '';
+const extractGoogleTagManagerId = (value = '') => String(value || '').match(/\bGTM-[A-Z0-9]{4,}\b/i)?.[0]?.toUpperCase() || '';
+const extractFacebookPixelId = (value = '') => {
+  const text = String(value || '');
+  return text.match(/fbq\(['"]init['"],\s*['"](\d{5,30})['"]\)/i)?.[1] || text.match(/\b\d{5,30}\b/)?.[0] || '';
+};
 
 export default function AdminCore() {
   const [activeSection, setActiveSection] = React.useState<CoreSection>('resources');
@@ -17,6 +24,12 @@ export default function AdminCore() {
   const [maintenanceMode, setMaintenanceMode] = React.useState(false);
   const [supportAppId, setSupportAppId] = React.useState('');
   const [chatWidget, setChatWidget] = React.useState(false);
+  const [googleAnalyticsEnabled, setGoogleAnalyticsEnabled] = React.useState(false);
+  const [googleAnalyticsInput, setGoogleAnalyticsInput] = React.useState('');
+  const [googleTagManagerEnabled, setGoogleTagManagerEnabled] = React.useState(false);
+  const [googleTagManagerInput, setGoogleTagManagerInput] = React.useState('');
+  const [facebookPixelEnabled, setFacebookPixelEnabled] = React.useState(false);
+  const [facebookPixelInput, setFacebookPixelInput] = React.useState('');
   const [primaryDomain, setPrimaryDomain] = React.useState('');
   const [serverIp, setServerIp] = React.useState('');
   const [nameserversText, setNameserversText] = React.useState('');
@@ -38,6 +51,16 @@ export default function AdminCore() {
         setMaintenanceMode(Boolean((byKey.maintenance as any)?.enabled));
         setSupportAppId(String((byKey.supportIntegration as any)?.appId || ''));
         setChatWidget(Boolean((byKey.supportIntegration as any)?.chatWidget));
+        const tracking = (byKey.trackingIntegrations as any) || {};
+        const googleAnalytics = tracking.googleAnalytics || {};
+        const googleTagManager = tracking.googleTagManager || {};
+        const facebookPixel = tracking.facebookPixel || {};
+        setGoogleAnalyticsEnabled(Boolean(googleAnalytics.enabled));
+        setGoogleAnalyticsInput(String(googleAnalytics.tagSnippet || googleAnalytics.measurementId || ''));
+        setGoogleTagManagerEnabled(Boolean(googleTagManager.enabled));
+        setGoogleTagManagerInput(String(googleTagManager.tagSnippet || googleTagManager.containerId || ''));
+        setFacebookPixelEnabled(Boolean(facebookPixel.enabled));
+        setFacebookPixelInput(String(facebookPixel.pixelSnippet || facebookPixel.pixelId || ''));
       })
       .catch((err) => setError(err instanceof Error ? err.message : 'Unable to load settings'));
     fetchPowerDnsConfigWithApi()
@@ -53,6 +76,9 @@ export default function AdminCore() {
     setError('');
     setSaved(false);
     try {
+      const googleMeasurementId = extractGoogleMeasurementId(googleAnalyticsInput);
+      const googleContainerId = extractGoogleTagManagerId(googleTagManagerInput);
+      const facebookPixelId = extractFacebookPixelId(facebookPixelInput);
       await Promise.all([
         upsertSettingWithApi({ scope: 'platform', key: 'resourceLimits', value: { maxDroplets, maxVolumes } }),
         updatePowerDnsConfigWithApi({
@@ -75,10 +101,32 @@ export default function AdminCore() {
           }
         }),
         upsertSettingWithApi({ scope: 'platform', key: 'maintenance', value: { enabled: maintenanceMode } }),
-        upsertSettingWithApi({ scope: 'platform', key: 'supportIntegration', value: { appId: supportAppId, chatWidget } })
+        upsertSettingWithApi({ scope: 'platform', key: 'supportIntegration', value: { appId: supportAppId, chatWidget } }),
+        upsertSettingWithApi({
+          scope: 'platform',
+          key: 'trackingIntegrations',
+          value: {
+            googleAnalytics: {
+              enabled: googleAnalyticsEnabled,
+              measurementId: googleMeasurementId,
+              tagSnippet: googleAnalyticsInput.trim()
+            },
+            googleTagManager: {
+              enabled: googleTagManagerEnabled,
+              containerId: googleContainerId,
+              tagSnippet: googleTagManagerInput.trim()
+            },
+            facebookPixel: {
+              enabled: facebookPixelEnabled,
+              pixelId: facebookPixelId,
+              pixelSnippet: facebookPixelInput.trim()
+            }
+          }
+        })
       ]);
       setSaved(true);
       window.dispatchEvent(new Event('tiwlo:platform-status-refresh'));
+      window.dispatchEvent(new Event('tiwlo:tracking-refresh'));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to save settings');
     }
@@ -88,12 +136,16 @@ export default function AdminCore() {
     { id: 'resources', label: 'Resources', desc: 'Limits and quotas', icon: Cpu },
     { id: 'domain', label: 'Domain & DNS', desc: 'Primary domain, IP, NS', icon: Globe2 },
     { id: 'credit', label: 'Credit System', desc: 'Signup credit and hold', icon: Gift },
+    { id: 'tracking', label: 'Analytics', desc: 'Google tag and pixels', icon: BarChart3 },
     { id: 'security', label: 'Security', desc: 'Maintenance and DDoS', icon: ShieldAlert },
     { id: 'support', label: 'Support', desc: 'Live chat integration', icon: LifeBuoy }
   ];
 
   const inputClass = 'w-full rounded-sm border border-[#dfe5ee] bg-white px-3 py-2 text-sm outline-none focus:border-[#0069ff]';
   const money = (value: number) => `$${Number(value || 0).toLocaleString('en-US', { maximumFractionDigits: 2 })}`;
+  const googleMeasurementId = extractGoogleMeasurementId(googleAnalyticsInput);
+  const googleContainerId = extractGoogleTagManagerId(googleTagManagerInput);
+  const facebookPixelId = extractFacebookPixelId(facebookPixelInput);
 
   return (
     <div className="space-y-6 pb-12">
@@ -219,6 +271,81 @@ export default function AdminCore() {
               <div className="flex items-start gap-2 rounded-sm border border-blue-100 bg-blue-50 px-3 py-2 text-[12px] font-semibold text-blue-700">
                 <AlertCircle className="mt-0.5 h-4 w-4" />
                 <span>Accounts with 0 credit must add credit before orders or services run.</span>
+              </div>
+            </div>
+          )}
+
+          {activeSection === 'tracking' && (
+            <div className="space-y-6 p-6">
+              <SectionTitle icon={BarChart3} title="Analytics & Pixels" desc="Google Analytics, Google Tag Manager, and Facebook Pixel for the portal." />
+              <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
+                <div className="space-y-4 rounded-sm border border-[#e5e8ed] p-4">
+                  <ToggleRow
+                    title="Google Analytics"
+                    desc={googleMeasurementId ? `Connected ID: ${googleMeasurementId}` : 'Paste the Google tag script or GA4 measurement ID.'}
+                    enabled={googleAnalyticsEnabled}
+                    onToggle={() => setGoogleAnalyticsEnabled((value) => !value)}
+                  />
+                  <label className="block space-y-1">
+                    <span className="text-[11px] font-black uppercase text-[#64748b]">Google tag script / measurement ID</span>
+                    <textarea
+                      value={googleAnalyticsInput}
+                      onChange={(event) => setGoogleAnalyticsInput(event.target.value)}
+                      rows={8}
+                      className={`${inputClass} font-mono text-xs`}
+                      placeholder={`<!-- Google tag (gtag.js) -->\n<script async src="https://www.googletagmanager.com/gtag/js?id=G-XXXXXXXXXX"></script>\n<script>\n  gtag('config', 'G-XXXXXXXXXX');\n</script>`}
+                    />
+                  </label>
+                  <p className={`text-[12px] font-bold ${googleAnalyticsEnabled && !googleMeasurementId ? 'text-red-600' : 'text-[#64748b]'}`}>
+                    {googleMeasurementId ? `GA4 measurement ID detected: ${googleMeasurementId}` : 'No GA4 measurement ID detected yet.'}
+                  </p>
+                </div>
+
+                <div className="space-y-4 rounded-sm border border-[#e5e8ed] p-4">
+                  <ToggleRow
+                    title="Facebook Pixel"
+                    desc={facebookPixelId ? `Connected ID: ${facebookPixelId}` : 'Paste the Pixel ID or Meta Pixel script.'}
+                    enabled={facebookPixelEnabled}
+                    onToggle={() => setFacebookPixelEnabled((value) => !value)}
+                  />
+                  <label className="block space-y-1">
+                    <span className="text-[11px] font-black uppercase text-[#64748b]">Facebook / Meta pixel ID or script</span>
+                    <textarea
+                      value={facebookPixelInput}
+                      onChange={(event) => setFacebookPixelInput(event.target.value)}
+                      rows={8}
+                      className={`${inputClass} font-mono text-xs`}
+                      placeholder={`123456789012345\n\nor paste:\nfbq('init', '123456789012345');`}
+                    />
+                  </label>
+                  <p className={`text-[12px] font-bold ${facebookPixelEnabled && !facebookPixelId ? 'text-red-600' : 'text-[#64748b]'}`}>
+                    {facebookPixelId ? `Facebook pixel ID detected: ${facebookPixelId}` : 'No Facebook pixel ID detected yet.'}
+                  </p>
+                </div>
+              </div>
+
+              <div className="space-y-4 rounded-sm border border-[#e5e8ed] p-4">
+                <ToggleRow
+                  title="Google Tag Manager"
+                  desc={googleContainerId ? `Connected container: ${googleContainerId}` : 'Optional GTM container for extra Google tags.'}
+                  enabled={googleTagManagerEnabled}
+                  onToggle={() => setGoogleTagManagerEnabled((value) => !value)}
+                />
+                <label className="block space-y-1">
+                  <span className="text-[11px] font-black uppercase text-[#64748b]">GTM container ID or script</span>
+                  <textarea
+                    value={googleTagManagerInput}
+                    onChange={(event) => setGoogleTagManagerInput(event.target.value)}
+                    rows={5}
+                    className={`${inputClass} font-mono text-xs`}
+                    placeholder="GTM-XXXXXXX"
+                  />
+                </label>
+              </div>
+
+              <div className="flex items-start gap-2 rounded-sm border border-blue-100 bg-blue-50 px-3 py-2 text-[12px] font-semibold text-blue-700">
+                <AlertCircle className="mt-0.5 h-4 w-4" />
+                <span>Only clean tracking IDs are loaded on the public site; pasted scripts are saved for admin reference.</span>
               </div>
             </div>
           )}

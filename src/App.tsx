@@ -108,6 +108,7 @@ import { SERVICE_MODULE_GROUP, SERVICE_MODULE_KEYS, serviceEnabled } from './lib
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
 import { CrystalSetupLoader } from './components/SetupLoader';
+import TrackingScripts from './components/TrackingScripts';
 
 const restrictedStatuses = new Set(['banned', 'blocked', 'suspended', 'disabled']);
 
@@ -130,6 +131,7 @@ function ResettableRouter({ routerKey, children }: { routerKey: string; children
     <Fragment key={routerKey}>
       <Router>
         <ScrollToTop />
+        <TrackingScripts />
         {children}
       </Router>
     </Fragment>
