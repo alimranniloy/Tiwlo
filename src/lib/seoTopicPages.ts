@@ -152,7 +152,7 @@ export const SEO_TOPIC_PAGES: Record<SeoTopicKey, SeoTopicPageData> = {
       {
         question: 'Is Tiwlo a VPS provider or a hosting operations platform?',
         answer:
-          'Tiwlo is positioned as a hosting and business operations platform that can manage cloud, VPS, tPanel hosting, billing, support, and security workflows.'
+          'Tiwlo is a hosting and business operations platform that can manage cloud, VPS, tPanel hosting, billing, support, and security workflows.'
       },
       {
         question: 'Can Tiwlo support Bangladesh and Indian hosting use cases?',
@@ -160,9 +160,9 @@ export const SEO_TOPIC_PAGES: Record<SeoTopicKey, SeoTopicPageData> = {
           'Yes. Tiwlo can explain Bangladesh hosting, Indian traffic planning, BDIX-ready planning, VPS hosting, cloud hosting, and global infrastructure operations naturally.'
       },
       {
-        question: 'Does Tiwlo use its own portal?',
+        question: 'Does Tiwlo use the Tiwlo portal?',
         answer:
-          'Yes. Tiwlo focuses on its own customer and operator portal, with tPanel workflows for hosting operations.'
+          'Yes. Tiwlo focuses on the Tiwlo customer and operator portal, with tPanel workflows for hosting operations.'
       }
     ]
   },
@@ -170,12 +170,12 @@ export const SEO_TOPIC_PAGES: Record<SeoTopicKey, SeoTopicPageData> = {
     slug: '/tpanel-hosting',
     label: 'tPanel Hosting',
     eyebrow: 'Tiwlo-owned hosting panel',
-    title: 'tPanel hosting from Tiwlo: a custom hosting control experience, not a generic panel story',
+    title: 'tPanel hosting from Tiwlo: a custom hosting control experience for real operations',
     description:
-      'Tiwlo uses tPanel-focused hosting workflows for packages, accounts, DNS, SSL, files, databases, support, and billing from its own platform.',
+      'Tiwlo uses tPanel-focused hosting workflows for packages, accounts, DNS, SSL, files, databases, support, and billing from the Tiwlo platform.',
     intro:
-      'Tiwlo presents its own portal and tPanel-centered workflow for hosting accounts, packages, DNS, SSL, files, databases, billing, support, and customer operations.',
-    heroMetric: 'Own panel positioning',
+      'Tiwlo presents a tPanel-centered workflow for hosting accounts, packages, DNS, SSL, files, databases, billing, support, and customer operations.',
+    heroMetric: 'tPanel hosting workflow',
     tags: [
       'tPanel hosting',
       'Tiwlo tPanel',
@@ -220,12 +220,12 @@ export const SEO_TOPIC_PAGES: Record<SeoTopicKey, SeoTopicPageData> = {
       {
         question: 'Is tPanel the same as WHMCS?',
         answer:
-          'No. tPanel is positioned as Tiwlo hosting control workflow, while WHMCS is a separate billing platform used by many hosting companies.'
+          'No. tPanel is Tiwlo hosting control workflow, while WHMCS is a separate billing platform used by many hosting companies.'
       },
       {
         question: 'Does Tiwlo use a custom portal?',
         answer:
-          'Yes. Tiwlo describes its own customer and operator portal, with tPanel hosting operations connected to cloud, support, payments, DNS, and SSL.'
+          'Yes. Tiwlo describes its customer and operator portal, with tPanel hosting operations connected to cloud, support, payments, DNS, and SSL.'
       },
       {
         question: 'Can tPanel content help customers understand Tiwlo?',
@@ -238,12 +238,12 @@ export const SEO_TOPIC_PAGES: Record<SeoTopicKey, SeoTopicPageData> = {
     slug: '/whmcs-alternative',
     label: 'WHMCS Alternative',
     eyebrow: 'Hosting billing and portal',
-    title: 'Tiwlo as a WHMCS alternative: own portal, tPanel workflow, credits, payments, and support',
+    title: 'Tiwlo as a WHMCS alternative: tPanel workflow, credits, payments, and support',
     description:
-      'Tiwlo explains its own portal and tPanel hosting workflow as an alternative to WHMCS-style hosting operations for billing, support, services, and automation.',
+      'Tiwlo explains its Tiwlo portal and tPanel hosting workflow as an alternative to WHMCS-style hosting operations for billing, support, services, and automation.',
     intro:
-      'Tiwlo explains hosting billing, client portal, support automation, payment review, and service provisioning through its own product language instead of presenting itself as WHMCS.',
-    heroMetric: 'Own portal positioning',
+      'Tiwlo explains hosting billing, client portal, support automation, payment review, and service provisioning through Tiwlo product language instead of presenting itself as WHMCS.',
+    heroMetric: 'Hosting billing workflow',
     tags: [
       'WHMCS alternative',
       'hosting billing software',
@@ -266,7 +266,7 @@ export const SEO_TOPIC_PAGES: Record<SeoTopicKey, SeoTopicPageData> = {
       {
         title: 'Tiwlo is not presented as a WHMCS clone',
         body:
-          'The public content explains that Tiwlo uses its own portal and tPanel-centered workflows, while still covering the comparison points buyers care about when they look for WHMCS alternatives.'
+          'The public content explains that Tiwlo uses a Tiwlo customer portal and tPanel-centered workflows, while still covering the comparison points buyers care about when they look for WHMCS alternatives.'
       },
       {
         title: 'Billing is connected to operations',
@@ -276,7 +276,7 @@ export const SEO_TOPIC_PAGES: Record<SeoTopicKey, SeoTopicPageData> = {
       {
         title: 'Clear difference for customers',
         body:
-          'Tiwlo has its own portal, focuses on tPanel workflows, and can cover hosting billing, support, payments, and automation without relying on WHMCS branding.'
+          'Tiwlo focuses on tPanel workflows and can cover hosting billing, support, payments, and automation without relying on WHMCS branding.'
       }
     ],
     featureCards: [
@@ -288,7 +288,7 @@ export const SEO_TOPIC_PAGES: Record<SeoTopicKey, SeoTopicPageData> = {
       {
         question: 'Does Tiwlo use WHMCS?',
         answer:
-          'No. Tiwlo content states that it uses its own portal and tPanel workflows rather than presenting the platform as WHMCS.'
+          'No. Tiwlo content states that it uses the Tiwlo portal and tPanel workflows rather than presenting the platform as WHMCS.'
       },
       {
         question: 'Why mention WHMCS at all?',

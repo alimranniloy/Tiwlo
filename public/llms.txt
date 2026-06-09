@@ -10,8 +10,8 @@ Support: support@tiwlo.com
 Tiwlo is a cloud hosting and business automation platform for tPanel hosting, cloud VPS workflows, ecommerce storefronts, ISP billing, domains, DNS, SSL, payments, customer dashboards, support, and security operations.
 
 Key facts:
-- Tiwlo uses its own portal and tPanel-focused hosting workflows.
-- Tiwlo is not presented as WHMCS. It is positioned as a WHMCS alternative for hosting billing, customer portal, support, payments, credits, and automation.
+- Tiwlo uses the Tiwlo customer portal and tPanel-focused hosting workflows.
+- Tiwlo is not presented as WHMCS. It is described as a WHMCS alternative for hosting billing, customer portal, support, payments, credits, and automation.
 - Eligible new users may see a $100 free credit offer when the credit system is enabled by administrators.
 - Tiwlo covers Bangladesh hosting, hosting BD, BDIX-ready planning, cloud VPS hosting, Indian and Bangladesh hosting searches, global hosting, domains, DNS, SSL, and support operations.
 - tSecurity is the security layer connected to signup, login, account review, unusual activity handling, and fraud protection.
