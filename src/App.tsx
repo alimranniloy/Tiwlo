@@ -115,10 +115,23 @@ function RouteLoader() {
   return null;
 }
 
+function ScrollToTop() {
+  const { pathname, search } = useLocation();
+
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+  }, [pathname, search]);
+
+  return null;
+}
+
 function ResettableRouter({ routerKey, children }: { routerKey: string; children: ReactNode }) {
   return (
     <Fragment key={routerKey}>
-      <Router>{children}</Router>
+      <Router>
+        <ScrollToTop />
+        {children}
+      </Router>
     </Fragment>
   );
 }

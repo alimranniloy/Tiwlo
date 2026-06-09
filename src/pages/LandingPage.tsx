@@ -14,6 +14,8 @@ import {
 } from 'lucide-react';
 import Seo, { TIWLO_SEO, TIWLO_SOCIAL_LINKS, tiwloOrganizationSchema, tiwloWebsiteSchema } from '../components/Seo';
 import { SEO_TOPIC_LINKS } from '../lib/seoTopicPages';
+import SharedSiteHeader from '../components/landing/SiteHeader';
+import SharedSiteFooter from '../components/landing/SiteFooter';
 
 const CONSENT_KEY = 'tiwlo_cookie_consent_v1';
 const HERO_VIDEO = '/media/computer-room-2.mp4';
@@ -767,7 +769,7 @@ export default function LandingPage() {
         schema={landingSchema}
       />
       <PromoBar />
-      <SiteHeader />
+      <SharedSiteHeader />
       <main>
         <HeroSection />
         <PlatformSection />
@@ -775,7 +777,7 @@ export default function LandingPage() {
         <ResourcesSection />
         <CtaSection />
       </main>
-      <FooterSection />
+      <SharedSiteFooter />
       <CookieConsentBanner />
     </div>
   );

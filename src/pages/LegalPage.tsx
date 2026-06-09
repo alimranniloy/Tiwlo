@@ -1,8 +1,9 @@
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { ArrowRight, BadgeCheck, FileText, LockKeyhole, Mail, ShieldCheck } from 'lucide-react';
-import BrandLogo from '../components/BrandLogo';
 import Seo, { TIWLO_SEO, tiwloOrganizationSchema, tiwloWebsiteSchema } from '../components/Seo';
+import SiteHeader from '../components/landing/SiteHeader';
+import SiteFooter from '../components/landing/SiteFooter';
 
 type LegalSection = {
   title: string;
@@ -192,19 +193,7 @@ export default function LegalPage() {
         schema={createLegalSchema(page)}
       />
 
-      <header className="border-b border-slate-200 bg-white">
-        <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4 sm:px-6">
-          <Link to="/" className="inline-flex">
-            <BrandLogo className="h-8 w-28" />
-          </Link>
-          <nav className="hidden items-center gap-5 text-[13px] font-bold text-slate-600 sm:flex">
-            <Link to="/about" className="hover:text-slate-950">About</Link>
-            <Link to="/privacy" className="hover:text-slate-950">Privacy</Link>
-            <Link to="/terms" className="hover:text-slate-950">Terms</Link>
-            <Link to="/support" className="hover:text-slate-950">Support</Link>
-          </nav>
-        </div>
-      </header>
+      <SiteHeader />
 
       <main className="mx-auto max-w-6xl px-4 py-10 sm:px-6 sm:py-14">
         <section className="grid gap-6 lg:grid-cols-[0.92fr_1.08fr] lg:items-end">
@@ -279,6 +268,7 @@ export default function LegalPage() {
           </Link>
         </section>
       </main>
+      <SiteFooter />
     </div>
   );
 }

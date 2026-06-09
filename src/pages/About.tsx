@@ -1,8 +1,9 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRight, BadgeCheck, Building2, CalendarDays, Cloud, CreditCard, Globe2, Network, ShieldCheck, Store, UserRound } from 'lucide-react';
-import BrandLogo from '../components/BrandLogo';
 import Seo, { TIWLO_SEO, TIWLO_SOCIAL_LINKS, tiwloOrganizationSchema, tiwloWebsiteSchema } from '../components/Seo';
+import SiteHeader from '../components/landing/SiteHeader';
+import SiteFooter from '../components/landing/SiteFooter';
 
 const platformPillars = [
   { title: 'Cloud and hosting', detail: 'Droplets, domains, DNS, SSL, tPanel hosting accounts, packages, and operator controls.', icon: Cloud },
@@ -45,27 +46,6 @@ const aboutSchema = [
   }
 ];
 
-function PublicHeader() {
-  return (
-    <header className="border-b border-slate-200 bg-white/90 backdrop-blur">
-      <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
-        <Link to="/" className="inline-flex items-center">
-          <BrandLogo className="h-8 w-28" />
-        </Link>
-        <nav className="hidden items-center gap-6 text-[13px] font-bold text-slate-600 md:flex">
-          <Link to="/products" className="hover:text-slate-950">Products</Link>
-          <Link to="/services" className="hover:text-slate-950">Solutions</Link>
-          <Link to="/pricing" className="hover:text-slate-950">Pricing</Link>
-          <Link to="/support" className="hover:text-slate-950">Support</Link>
-        </nav>
-        <Link to="/signup" className="rounded bg-slate-950 px-4 py-2 text-[12px] font-black text-white hover:bg-slate-800">
-          Get started
-        </Link>
-      </div>
-    </header>
-  );
-}
-
 export default function AboutPage() {
   return (
     <div className="min-h-screen bg-[#f6f8fb] text-slate-950">
@@ -75,7 +55,7 @@ export default function AboutPage() {
         canonicalPath="/about"
         schema={aboutSchema}
       />
-      <PublicHeader />
+      <SiteHeader />
 
       <main>
         <section className="relative overflow-hidden bg-[#071514] text-white">
@@ -207,16 +187,7 @@ export default function AboutPage() {
         </section>
       </main>
 
-      <footer className="border-t border-slate-200 bg-white px-4 py-8">
-        <div className="mx-auto flex max-w-7xl flex-col gap-4 text-sm font-semibold text-slate-500 sm:flex-row sm:items-center sm:justify-between">
-          <p>(c) 2026 Tiwlo. Founded by Al Imran Niloy.</p>
-          <div className="flex flex-wrap gap-4">
-            <Link to="/privacy" className="hover:text-slate-950">Privacy</Link>
-            <Link to="/terms" className="hover:text-slate-950">Terms</Link>
-            <Link to="/support" className="hover:text-slate-950">Support</Link>
-          </div>
-        </div>
-      </footer>
+      <SiteFooter />
     </div>
   );
 }

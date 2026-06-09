@@ -33,13 +33,13 @@ export const SEO_TOPIC_PAGES: Record<SeoTopicKey, SeoTopicPageData> = {
   bangladeshHosting: {
     slug: '/bangladesh-hosting',
     label: 'Bangladesh Hosting',
-    eyebrow: 'Bangladesh and global hosting intent',
+    eyebrow: 'Bangladesh and global hosting',
     title: 'Bangladesh web hosting with Tiwlo cloud, BDIX-ready planning, and tPanel operations',
     description:
       'Tiwlo helps customers compare Bangladesh web hosting, BDIX hosting needs, cloud hosting, VPS hosting, domains, SSL, support, and tPanel control workflows from one official platform.',
     intro:
-      'This page is built for people searching for reliable web hosting in Bangladesh, BDIX-ready hosting strategy, hosting BD, Indian and Bangladesh hosting options, and cloud hosting that can still be managed from one clean portal.',
-    heroMetric: 'BD + global search coverage',
+      'Tiwlo helps teams plan reliable Bangladesh hosting, BDIX-ready network strategy, India-facing traffic, global cloud hosting, domains, SSL, billing, and support from one clean portal.',
+    heroMetric: 'BD + global coverage',
     tags: [
       'best hosting in BD',
       'Bangladesh web hosting',
@@ -84,7 +84,7 @@ export const SEO_TOPIC_PAGES: Record<SeoTopicKey, SeoTopicPageData> = {
       {
         question: 'Is Tiwlo only for Bangladesh hosting?',
         answer:
-          'No. Tiwlo is positioned for Bangladesh, South Asia, and global hosting operations. Bangladesh keywords are covered because many users search for hosting BD, BDIX hosting, VPS BD, and local support.'
+          'No. Tiwlo is positioned for Bangladesh, South Asia, and global hosting operations with hosting, VPS, domain, DNS, SSL, billing, and support workflows.'
       },
       {
         question: 'Does Tiwlo mention BDIX hosting?',
@@ -101,13 +101,13 @@ export const SEO_TOPIC_PAGES: Record<SeoTopicKey, SeoTopicPageData> = {
   cloudVps: {
     slug: '/cloud-vps-hosting',
     label: 'Cloud VPS Hosting',
-    eyebrow: 'Cloud, VPS, and server hosting intent',
+    eyebrow: 'Cloud, VPS, and server hosting',
     title: 'Cloud VPS hosting for Bangladesh, India, and global infrastructure teams',
     description:
       'Explore Tiwlo cloud VPS hosting for server deployment, packages, DNS, SSL, payments, and customer operations across Bangladesh, India, and global use cases.',
     intro:
       'Tiwlo helps hosting operators present VPS and cloud hosting as a complete customer journey: choose a package, deploy service, connect domain, issue SSL, manage billing, and keep support in the same account.',
-    heroMetric: 'Cloud + VPS topic coverage',
+    heroMetric: 'Cloud + VPS operations',
     tags: [
       'cloud VPS hosting',
       'Bangladesh VPS',
@@ -155,9 +155,9 @@ export const SEO_TOPIC_PAGES: Record<SeoTopicKey, SeoTopicPageData> = {
           'Tiwlo is positioned as a hosting and business operations platform that can manage cloud, VPS, tPanel hosting, billing, support, and security workflows.'
       },
       {
-        question: 'Can Tiwlo support Bangladesh and Indian hosting searches?',
+        question: 'Can Tiwlo support Bangladesh and Indian hosting use cases?',
         answer:
-          'Yes. The public content covers Bangladesh hosting, Indian hosting, BDIX planning, VPS hosting, cloud hosting, and global infrastructure operations naturally.'
+          'Yes. Tiwlo can explain Bangladesh hosting, Indian traffic planning, BDIX-ready planning, VPS hosting, cloud hosting, and global infrastructure operations naturally.'
       },
       {
         question: 'Does Tiwlo use its own portal?',
@@ -169,12 +169,12 @@ export const SEO_TOPIC_PAGES: Record<SeoTopicKey, SeoTopicPageData> = {
   tpanelHosting: {
     slug: '/tpanel-hosting',
     label: 'tPanel Hosting',
-    eyebrow: 'Tiwlo-owned hosting panel intent',
+    eyebrow: 'Tiwlo-owned hosting panel',
     title: 'tPanel hosting from Tiwlo: a custom hosting control experience, not a generic panel story',
     description:
       'Tiwlo uses tPanel-focused hosting workflows for packages, accounts, DNS, SSL, files, databases, support, and billing from its own platform.',
     intro:
-      'People searching for Tiwlo hosting, tPanel hosting, hosting panel BD, cPanel alternative, or modern web hosting panels should understand that Tiwlo presents its own portal and tPanel-centered workflow.',
+      'Tiwlo presents its own portal and tPanel-centered workflow for hosting accounts, packages, DNS, SSL, files, databases, billing, support, and customer operations.',
     heroMetric: 'Own panel positioning',
     tags: [
       'tPanel hosting',
@@ -201,9 +201,9 @@ export const SEO_TOPIC_PAGES: Record<SeoTopicKey, SeoTopicPageData> = {
           'Tiwlo does not need to look like a generic hosting reseller page. It can explain tPanel as the practical hosting workflow for accounts, package limits, DNS, SSL, files, databases, and support.'
       },
       {
-        title: 'Why this matters for search engines and AI answers',
+        title: 'Why this matters for customers',
         body:
-          'Clear pages help Google, Bing, and AI search understand that Tiwlo is connected to tPanel hosting, custom hosting portal, cloud operations, payments, and Bangladesh hosting intent.'
+          'Clear product information helps customers understand that Tiwlo is connected to tPanel hosting, custom hosting portal, cloud operations, payments, and Bangladesh hosting needs.'
       },
       {
         title: 'Operator-first hosting language',
@@ -228,22 +228,22 @@ export const SEO_TOPIC_PAGES: Record<SeoTopicKey, SeoTopicPageData> = {
           'Yes. Tiwlo describes its own customer and operator portal, with tPanel hosting operations connected to cloud, support, payments, DNS, and SSL.'
       },
       {
-        question: 'Can tPanel content help Tiwlo rank for hosting panel searches?',
+        question: 'Can tPanel content help customers understand Tiwlo?',
         answer:
-          'It can help search engines understand the topic, but rankings depend on crawlability, content quality, links, brand signals, speed, and user behavior.'
+          'Yes. Clear tPanel content explains how hosting accounts, domains, SSL, support, and billing fit inside the Tiwlo workflow.'
       }
     ]
   },
   whmcsAlternative: {
     slug: '/whmcs-alternative',
     label: 'WHMCS Alternative',
-    eyebrow: 'Hosting billing and portal intent',
+    eyebrow: 'Hosting billing and portal',
     title: 'Tiwlo as a WHMCS alternative: own portal, tPanel workflow, credits, payments, and support',
     description:
       'Tiwlo explains its own portal and tPanel hosting workflow as an alternative to WHMCS-style hosting operations for billing, support, services, and automation.',
     intro:
-      'Many hosting buyers search for WHMCS alternative, hosting billing software, client portal, support automation, payment review, and service provisioning. Tiwlo explains those concepts through its own product language.',
-    heroMetric: 'WHMCS alternative intent',
+      'Tiwlo explains hosting billing, client portal, support automation, payment review, and service provisioning through its own product language instead of presenting itself as WHMCS.',
+    heroMetric: 'Own portal positioning',
     tags: [
       'WHMCS alternative',
       'hosting billing software',
@@ -266,7 +266,7 @@ export const SEO_TOPIC_PAGES: Record<SeoTopicKey, SeoTopicPageData> = {
       {
         title: 'Tiwlo is not presented as a WHMCS clone',
         body:
-          'The public content explains that Tiwlo uses its own portal and tPanel-centered workflows, while still covering the search language buyers use when comparing WHMCS alternatives.'
+          'The public content explains that Tiwlo uses its own portal and tPanel-centered workflows, while still covering the comparison points buyers care about when they look for WHMCS alternatives.'
       },
       {
         title: 'Billing is connected to operations',
@@ -274,9 +274,9 @@ export const SEO_TOPIC_PAGES: Record<SeoTopicKey, SeoTopicPageData> = {
           'Invoices, promo credits, payment proof review, service creation, customer state, support, and security review can be discussed as one connected workflow.'
       },
       {
-        title: 'Clear difference for AI and search',
+        title: 'Clear difference for customers',
         body:
-          'Search engines and AI systems need explicit facts. This page states that Tiwlo has its own portal, focuses on tPanel, and can cover hosting billing, support, payments, and automation without relying on WHMCS branding.'
+          'Tiwlo has its own portal, focuses on tPanel workflows, and can cover hosting billing, support, payments, and automation without relying on WHMCS branding.'
       }
     ],
     featureCards: [
@@ -293,7 +293,7 @@ export const SEO_TOPIC_PAGES: Record<SeoTopicKey, SeoTopicPageData> = {
       {
         question: 'Why mention WHMCS at all?',
         answer:
-          'Because many buyers search for WHMCS alternatives when they need hosting billing, client portal, automation, and support workflows.'
+          'Because many buyers compare WHMCS alternatives when they need hosting billing, client portal, automation, and support workflows.'
       },
       {
         question: 'Can Tiwlo handle hosting billing and support?',
@@ -305,12 +305,12 @@ export const SEO_TOPIC_PAGES: Record<SeoTopicKey, SeoTopicPageData> = {
   freeCredit: {
     slug: '/hosting-free-credit',
     label: '$100 Free Credit',
-    eyebrow: 'Signup credit and trial intent',
+    eyebrow: 'Signup credit and trial',
     title: 'Get $100 free credit for eligible new users on Tiwlo hosting and cloud workflows',
     description:
       'Tiwlo can offer $100 free credit for eligible new users, with admin-controlled verification, payment, credit, and account review settings.',
     intro:
-      'Users searching for free hosting credit, cloud hosting trial, VPS credit, hosting credit BD, or Tiwlo free credit should see a clear page explaining the offer without crowding the home page.',
+      'Users who want free hosting credit, cloud hosting trial credit, VPS credit, hosting credit BD, or Tiwlo free credit get a clear explanation of the offer without crowding the home page.',
     heroMetric: '$100 new-user credit',
     tags: [
       '100 free credit hosting',
@@ -337,9 +337,9 @@ export const SEO_TOPIC_PAGES: Record<SeoTopicKey, SeoTopicPageData> = {
           'Tiwlo can show a $100 free credit message for eligible new users. The actual credit rules, verification, payment hold, and availability are controlled by platform settings.'
       },
       {
-        title: 'Why the credit page exists',
+        title: 'Why the credit offer is explained clearly',
         body:
-          'A separate page helps search engines understand the offer while keeping the home page focused on the product. It also gives users a direct explanation before signup.'
+          'The offer is explained separately so users can understand eligibility, verification, payment rules, and admin-controlled credit behavior before signup.'
       },
       {
         title: 'Credit and security can work together',
@@ -366,20 +366,20 @@ export const SEO_TOPIC_PAGES: Record<SeoTopicKey, SeoTopicPageData> = {
       {
         question: 'Does the credit page replace the signup page?',
         answer:
-          'No. It is an SEO and user education page linked from the footer and sitemap, while signup remains the account creation path.'
+          'No. It is a public offer explanation page linked from the footer and sitemap, while signup remains the account creation path.'
       }
     ]
   },
   hostingFeatures: {
     slug: '/hosting-features',
     label: 'Hosting Features',
-    eyebrow: 'Feature and comparison intent',
+    eyebrow: 'Feature and comparison',
     title: 'Tiwlo hosting features: cloud, tPanel, DNS, SSL, payments, support, and security',
     description:
       'Compare Tiwlo hosting features across cloud hosting, tPanel, domains, DNS, SSL, payments, customer portal, support, and tSecurity workflows.',
     intro:
-      'This page gives search engines and AI systems a single structured feature summary for Tiwlo hosting, cloud, portal, support, payments, and security topics.',
-    heroMetric: 'Feature summary page',
+      'This page gives customers a single feature summary for Tiwlo hosting, cloud, portal, support, payments, credits, domains, DNS, SSL, and security workflows.',
+    heroMetric: 'Operations summary',
     tags: [
       'Tiwlo hosting features',
       'cloud hosting features',
@@ -400,9 +400,9 @@ export const SEO_TOPIC_PAGES: Record<SeoTopicKey, SeoTopicPageData> = {
     ],
     sections: [
       {
-        title: 'Feature coverage for buyers and crawlers',
+        title: 'Feature coverage for buyers',
         body:
-          'Tiwlo explains cloud hosting, tPanel accounts, DNS, SSL, payments, credits, invoices, support, security, and customer dashboards in one place for clear indexing.'
+          'Tiwlo explains cloud hosting, tPanel accounts, DNS, SSL, payments, credits, invoices, support, security, and customer dashboards in one place.'
       },
       {
         title: 'Designed for operations, not only marketing',
@@ -410,9 +410,9 @@ export const SEO_TOPIC_PAGES: Record<SeoTopicKey, SeoTopicPageData> = {
           'The platform language focuses on real workflows: packages, account status, service creation, payment proof review, ticket routing, verification, and admin control.'
       },
       {
-        title: 'Useful for AI answer engines',
+        title: 'Useful for product understanding',
         body:
-          'AI systems need concise, consistent facts. This page gives a stable summary of what Tiwlo is, what it offers, and how it differs from generic hosting tools.'
+          'The page gives a stable summary of what Tiwlo is, what it offers, and how it differs from generic hosting tools.'
       }
     ],
     featureCards: [
@@ -427,12 +427,12 @@ export const SEO_TOPIC_PAGES: Record<SeoTopicKey, SeoTopicPageData> = {
           'Tiwlo is used for cloud hosting, tPanel hosting operations, ecommerce, ISP billing, domains, DNS, SSL, payments, support, and security workflows.'
       },
       {
-        question: 'Is Tiwlo useful for Bangladesh hosting searches?',
+        question: 'Is Tiwlo useful for Bangladesh hosting needs?',
         answer:
-          'Yes. The content covers Bangladesh hosting, hosting BD, BDIX planning, VPS hosting, cloud hosting, and tPanel-related searches in a natural way.'
+          'Yes. Tiwlo covers Bangladesh hosting, hosting BD, BDIX planning, VPS hosting, cloud hosting, and tPanel-related operations in a natural way.'
       },
       {
-        question: 'Does Tiwlo provide public SEO pages?',
+        question: 'Does Tiwlo provide public product pages?',
         answer:
           'Yes. These pages are public, linked from the footer, included in the sitemap, and described with structured data.'
       }
