@@ -8,6 +8,9 @@
     <meta name="keywords" content="Tiwlo, tPanel, cloud hosting, server control panel, ecommerce hosting, ISP billing software, domain management, DNS manager, SSL automation, cloud server dashboard, web hosting panel, payment gateway, business automation" />
     <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
     <meta name="author" content="Tiwlo" />
+    <meta name="publisher" content="Tiwlo Company" />
+    <meta name="founder" content="Al Imran Niloy" />
+    <meta name="copyright" content="Tiwlo Company" />
     <link rel="canonical" href="https://tiwlo.com/" />
     <link rel="icon" type="image/png" href="/brand/icon.png" />
     <link rel="apple-touch-icon" href="/brand/icon.png" />
@@ -23,29 +26,125 @@
     <meta property="og:image" content="https://tiwlo.com/brand/logo.png" />
     <meta property="og:image:alt" content="Tiwlo cloud hosting and business platform" />
     <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:site" content="@tiwlopx" />
     <meta name="twitter:title" content="Tiwlo - Cloud Hosting and Business Automation Platform" />
     <meta name="twitter:description" content="Cloud hosting, tPanel server management, ecommerce, ISP billing, domains, DNS, SSL, and payments in one platform." />
     <meta name="twitter:image" content="https://tiwlo.com/brand/logo.png" />
     <script type="application/ld+json">
       {
         "@context": "https://schema.org",
-        "@type": "SoftwareApplication",
-        "name": "Tiwlo",
-        "applicationCategory": "BusinessApplication",
-        "operatingSystem": "Web",
-        "url": "https://tiwlo.com/",
-        "image": "https://tiwlo.com/brand/logo.png",
-        "description": "Cloud hosting, tPanel server management, ecommerce, ISP billing, domains, SSL automation, payments, and business dashboards.",
-        "brand": {
-          "@type": "Brand",
-          "name": "Tiwlo",
-          "logo": "https://tiwlo.com/brand/logo.png"
-        },
-        "offers": {
-          "@type": "Offer",
-          "availability": "https://schema.org/InStock",
-          "priceCurrency": "USD"
-        }
+        "@graph": [
+          {
+            "@type": "Organization",
+            "@id": "https://tiwlo.com/#organization",
+            "name": "Tiwlo",
+            "legalName": "Tiwlo Company",
+            "alternateName": ["Tiwlo Cloud", "Tiwlo Platform", "Tiwlo Operations Cloud"],
+            "url": "https://tiwlo.com/",
+            "logo": {
+              "@type": "ImageObject",
+              "@id": "https://tiwlo.com/#logo",
+              "url": "https://tiwlo.com/brand/logo.png",
+              "contentUrl": "https://tiwlo.com/brand/logo.png",
+              "caption": "Tiwlo logo"
+            },
+            "image": "https://tiwlo.com/brand/logo.png",
+            "foundingDate": "2020",
+            "founder": {
+              "@type": "Person",
+              "@id": "https://tiwlo.com/#founder",
+              "name": "Al Imran Niloy",
+              "url": "https://tiwlo.com/about",
+              "sameAs": [
+                "https://x.com/tiwlopx",
+                "https://www.facebook.com/tiwlopx",
+                "https://www.instagram.com/tiwlopx",
+                "https://www.linkedin.com/company/tiwlopx",
+                "https://www.youtube.com/@tiwlopx",
+                "https://github.com/tiwlopx",
+                "https://www.tiktok.com/@tiwlopx"
+              ]
+            },
+            "contactPoint": [
+              {
+                "@type": "ContactPoint",
+                "contactType": "customer support",
+                "email": "support@tiwlo.com",
+                "url": "https://tiwlo.com/support",
+                "availableLanguage": ["en", "bn"]
+              }
+            ],
+            "areaServed": "Worldwide",
+            "knowsAbout": [
+              "Cloud hosting",
+              "tPanel hosting control panel",
+              "Ecommerce automation",
+              "ISP billing",
+              "Domain management",
+              "DNS automation",
+              "SSL automation",
+              "Payment operations",
+              "Business automation"
+            ],
+            "sameAs": [
+              "https://x.com/tiwlopx",
+              "https://www.facebook.com/tiwlopx",
+              "https://www.instagram.com/tiwlopx",
+              "https://www.linkedin.com/company/tiwlopx",
+              "https://www.youtube.com/@tiwlopx",
+              "https://github.com/tiwlopx",
+              "https://www.tiktok.com/@tiwlopx"
+            ]
+          },
+          {
+            "@type": "Person",
+            "@id": "https://tiwlo.com/#founder",
+            "name": "Al Imran Niloy",
+            "jobTitle": "Founder",
+            "worksFor": { "@id": "https://tiwlo.com/#organization" },
+            "url": "https://tiwlo.com/about",
+            "sameAs": [
+              "https://x.com/tiwlopx",
+              "https://www.facebook.com/tiwlopx",
+              "https://www.instagram.com/tiwlopx",
+              "https://www.linkedin.com/company/tiwlopx",
+              "https://www.youtube.com/@tiwlopx",
+              "https://github.com/tiwlopx",
+              "https://www.tiktok.com/@tiwlopx"
+            ]
+          },
+          {
+            "@type": "WebSite",
+            "@id": "https://tiwlo.com/#website",
+            "name": "Tiwlo",
+            "url": "https://tiwlo.com/",
+            "publisher": { "@id": "https://tiwlo.com/#organization" },
+            "inLanguage": "en",
+            "potentialAction": {
+              "@type": "SearchAction",
+              "target": "https://tiwlo.com/documentation?q={search_term_string}",
+              "query-input": "required name=search_term_string"
+            }
+          },
+          {
+            "@type": "SoftwareApplication",
+            "@id": "https://tiwlo.com/#software",
+            "name": "Tiwlo",
+            "applicationCategory": "BusinessApplication",
+            "operatingSystem": "Web",
+            "url": "https://tiwlo.com/",
+            "image": "https://tiwlo.com/brand/logo.png",
+            "description": "Cloud hosting, tPanel server management, ecommerce, ISP billing, domains, SSL automation, payments, and business dashboards.",
+            "creator": { "@id": "https://tiwlo.com/#organization" },
+            "publisher": { "@id": "https://tiwlo.com/#organization" },
+            "offers": {
+              "@type": "Offer",
+              "availability": "https://schema.org/InStock",
+              "priceCurrency": "USD",
+              "url": "https://tiwlo.com/pricing"
+            }
+          }
+        ]
       }
     </script>
   </head>

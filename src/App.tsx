@@ -49,6 +49,7 @@ const FunctionsPage = lazy(() => import('./pages/Functions'));
 const MarketplacePage = lazy(() => import('./pages/Marketplace'));
 const KubernetesPage = lazy(() => import('./pages/Kubernetes'));
 const LegalPage = lazy(() => import('./pages/LegalPage'));
+const AboutPage = lazy(() => import('./pages/About'));
 const CloudStorePage = lazy(() => import('./pages/CloudStore'));
 const StoreManagementPage = lazy(() => import('./pages/StoreManagement'));
 const StoreAdminDashboard = lazy(() => import('./cloudstore/storeadmin/StoreAdminDashboard'));
@@ -323,6 +324,7 @@ function AppContent({
             <Route path="/alerts" element={<AlertsPage />} />
             <Route path="/support" element={<SupportPage />} />
             <Route path="/support/create-ticket" element={<CreateSupportTicket />} />
+            <Route path="/about" element={<AboutPage />} />
             <Route path="/terms" element={<LegalPage />} />
             <Route path="/privacy" element={<LegalPage />} />
             <Route path="/firewalls" element={<FirewallsPage />} />
@@ -578,6 +580,7 @@ export default function App() {
           <Route path="/pricing" element={<MarketingInfoPage variant="pricing" />} />
           <Route path="/support" element={<MarketingInfoPage variant="support" />} />
           <Route path="/documentation" element={<DocumentationPage />} />
+          <Route path="/about" element={<AboutPage />} />
           <Route path="/commerce" element={<CommercePage />} />
           <Route path="/broadband" element={<BroadbandPage />} />
           <Route path="/pay/:slug" element={<TiwloPayCheckout />} />

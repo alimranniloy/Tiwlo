@@ -1,2 +1,5 @@
 User-agent: *
+Allow: /
 Disallow: /api/system-assets/
+
+Sitemap: https://tiwlo.com/sitemap.xml

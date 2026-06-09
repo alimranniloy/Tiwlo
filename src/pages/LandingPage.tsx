@@ -12,6 +12,7 @@ import {
   TerminalSquare,
   type LucideIcon
 } from 'lucide-react';
+import Seo, { TIWLO_SEO, TIWLO_SOCIAL_LINKS, tiwloOrganizationSchema, tiwloWebsiteSchema } from '../components/Seo';
 
 const CONSENT_KEY = 'tiwlo_cookie_consent_v1';
 const HERO_VIDEO = '/media/computer-room-2.mp4';
@@ -33,6 +34,7 @@ type ControlLayer = {
 };
 
 const topLinks = [
+  { label: 'About', to: '/about' },
   { label: 'Blog', to: '/documentation' },
   { label: 'Docs', to: '/documentation' },
   { label: 'Careers', to: '/partners' },
@@ -45,6 +47,7 @@ const navLinks = [
   { label: 'Solutions', to: '/services', menu: true },
   { label: 'Developers', to: '/api', menu: true },
   { label: 'Partners', to: '/partners', menu: true },
+  { label: 'About', to: '/about' },
   { label: 'Pricing', to: '/pricing' }
 ];
 
@@ -140,10 +143,89 @@ const resourceCards = [
 ];
 
 const footerColumns = [
-  { title: 'Products', links: ['Droplets', 'tPanel Hosting', 'Tiwlo Pay', 'Cloud Store'] },
-  { title: 'Solutions', links: ['Website Hosting', 'ISP Billing', 'Ecommerce', 'Operations'] },
-  { title: 'Resources', links: ['Documentation', 'API', 'Support', 'Status'] },
-  { title: 'Company', links: ['About', 'Security', 'Partners', 'Contact'] }
+  {
+    title: 'Products',
+    links: [
+      { label: 'Droplets', to: '/products' },
+      { label: 'tPanel Hosting', to: '/products' },
+      { label: 'Tiwlo Pay', to: '/pricing' },
+      { label: 'Cloud Store', to: '/commerce' }
+    ]
+  },
+  {
+    title: 'Solutions',
+    links: [
+      { label: 'Website Hosting', to: '/services' },
+      { label: 'ISP Billing', to: '/broadband' },
+      { label: 'Ecommerce', to: '/commerce' },
+      { label: 'Operations', to: '/services' }
+    ]
+  },
+  {
+    title: 'Resources',
+    links: [
+      { label: 'Documentation', to: '/documentation' },
+      { label: 'API', to: '/api' },
+      { label: 'Support', to: '/support' },
+      { label: 'Pricing', to: '/pricing' }
+    ]
+  },
+  {
+    title: 'Company',
+    links: [
+      { label: 'About', to: '/about' },
+      { label: 'Security', to: '/about' },
+      { label: 'Partners', to: '/partners' },
+      { label: 'Contact', to: '/support' }
+    ]
+  }
+];
+
+const landingSchema = [
+  tiwloOrganizationSchema,
+  tiwloWebsiteSchema,
+  {
+    '@type': 'SoftwareApplication',
+    '@id': 'https://tiwlo.com/#software',
+    name: 'Tiwlo',
+    applicationCategory: 'BusinessApplication',
+    operatingSystem: 'Web',
+    url: TIWLO_SEO.url,
+    image: TIWLO_SEO.logo,
+    description: TIWLO_SEO.description,
+    creator: { '@id': 'https://tiwlo.com/#organization' },
+    publisher: { '@id': 'https://tiwlo.com/#organization' },
+    offers: {
+      '@type': 'Offer',
+      availability: 'https://schema.org/InStock',
+      priceCurrency: 'USD',
+      url: 'https://tiwlo.com/pricing'
+    },
+    featureList: [
+      'Cloud hosting',
+      'tPanel hosting accounts',
+      'Ecommerce storefronts',
+      'ISP billing',
+      'Domain management',
+      'DNS automation',
+      'SSL automation',
+      'Tiwlo Pay',
+      'Support automation'
+    ]
+  },
+  {
+    '@type': 'WebPage',
+    '@id': 'https://tiwlo.com/#webpage',
+    url: TIWLO_SEO.url,
+    name: 'Tiwlo - Operations Cloud',
+    description: TIWLO_SEO.description,
+    isPartOf: { '@id': 'https://tiwlo.com/#website' },
+    about: { '@id': 'https://tiwlo.com/#organization' },
+    primaryImageOfPage: {
+      '@type': 'ImageObject',
+      url: TIWLO_SEO.logo
+    }
+  }
 ];
 
 function readConsent() {
@@ -640,7 +722,7 @@ function FooterSection() {
               <h3 className="text-[16px] font-black">{column.title}</h3>
               <div className="mt-4 space-y-2.5">
                 {column.links.map((item) => (
-                  <Link key={item} to="/documentation" className="block text-[14px] font-semibold text-white/70 hover:text-[#7cf4ff]">{item}</Link>
+                  <Link key={item.label} to={item.to} className="block text-[14px] font-semibold text-white/70 hover:text-[#7cf4ff]">{item.label}</Link>
                 ))}
               </div>
             </div>
@@ -655,6 +737,9 @@ function FooterSection() {
             <Link to="/privacy" className="hover:text-[#7cf4ff]">Privacy</Link>
             <Link to="/terms" className="hover:text-[#7cf4ff]">Terms</Link>
             <Link to="/support" className="hover:text-[#7cf4ff]">Support</Link>
+            {TIWLO_SOCIAL_LINKS.slice(0, 4).map((item) => (
+              <a key={item.label} href={item.url} target="_blank" rel="noreferrer" className="hover:text-[#7cf4ff]">{item.label}</a>
+            ))}
           </div>
         </div>
       </div>
@@ -665,6 +750,12 @@ function FooterSection() {
 export default function LandingPage() {
   return (
     <div className="min-h-screen bg-black font-sans text-white selection:bg-[#7cf4ff] selection:text-black">
+      <Seo
+        title="Tiwlo - Cloud Hosting, tPanel, Ecommerce, ISP Billing, Domains, SSL, and Payments"
+        description={TIWLO_SEO.description}
+        canonicalPath="/"
+        schema={landingSchema}
+      />
       <PromoBar />
       <SiteHeader />
       <main>
