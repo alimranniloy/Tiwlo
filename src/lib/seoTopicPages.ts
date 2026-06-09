@@ -196,14 +196,14 @@ export const SEO_TOPIC_PAGES: Record<SeoTopicKey, SeoTopicPageData> = {
     ],
     sections: [
       {
-        title: 'tPanel is part of the Tiwlo product story',
+        title: 'tPanel is part of the Tiwlo platform story',
         body:
           'Tiwlo does not need to look like a generic hosting reseller page. It can explain tPanel as the practical hosting workflow for accounts, package limits, DNS, SSL, files, databases, and support.'
       },
       {
         title: 'Why this matters for customers',
         body:
-          'Clear product information helps customers understand that Tiwlo is connected to tPanel hosting, custom hosting portal, cloud operations, payments, and Bangladesh hosting needs.'
+          'Clear platform information helps customers understand that Tiwlo is connected to tPanel hosting, custom hosting portal, cloud operations, payments, and Bangladesh hosting needs.'
       },
       {
         title: 'Operator-first hosting language',
@@ -280,7 +280,7 @@ export const SEO_TOPIC_PAGES: Record<SeoTopicKey, SeoTopicPageData> = {
       }
     ],
     featureCards: [
-      { title: 'Own portal', body: 'Tiwlo can present its own customer portal and admin workflows instead of depending on WHMCS pages.' },
+      { title: 'Tiwlo portal', body: 'Tiwlo can present customer portal and admin workflows without depending on WHMCS pages.' },
       { title: 'Credit system', body: 'The $100 free credit message can be connected to signup, verification, payment rules, and admin settings.' },
       { title: 'Unified support', body: 'Tickets, Discord alerts, live chat, payment proof events, and verification review can stay connected.' }
     ],

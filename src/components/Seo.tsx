@@ -21,7 +21,7 @@ export const TIWLO_SEO = {
   founderName: 'Al Imran Niloy',
   email: 'support@tiwlo.com',
   description:
-    'Tiwlo is a cloud hosting and business automation platform for tPanel servers, ecommerce stores, ISP billing, domains, DNS, SSL, payments, client dashboards, and infrastructure management.'
+    'Tiwlo is a technology company for cloud hosting, web hosting, VPS, tPanel software, AI tools, business automation, ecommerce services, digital payments, tFiber internet infrastructure, domains, DNS, SSL, client dashboards, and infrastructure management.'
 };
 
 export const tiwloOrganizationSchema = {
@@ -56,9 +56,20 @@ export const tiwloOrganizationSchema = {
       availableLanguage: ['en', 'bn']
     }
   ],
-  areaServed: 'Worldwide',
+  location: [
+    {
+      '@type': 'Place',
+      name: 'Bangladesh'
+    },
+    {
+      '@type': 'Place',
+      name: 'United Kingdom'
+    }
+  ],
+  areaServed: ['Bangladesh', 'United Kingdom', 'Worldwide'],
   knowsAbout: [
     'Cloud hosting',
+    'Web hosting',
     'Bangladesh web hosting',
     'BDIX hosting planning',
     'Cloud VPS hosting',
@@ -66,6 +77,9 @@ export const tiwloOrganizationSchema = {
     'WHMCS alternative',
     'Hosting client portal',
     'Ecommerce automation',
+    'Digital payments',
+    'AI tools',
+    'tFiber internet infrastructure',
     'ISP billing',
     'Domain management',
     'DNS automation',

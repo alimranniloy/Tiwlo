@@ -109,16 +109,16 @@ export default function SeoTopicPage({ topicKey }: SeoTopicPageProps) {
                   <Globe2 className="h-7 w-7" />
                 </div>
                 <div>
-                  <p className="text-[12px] font-black uppercase tracking-[0.18em] text-white/52">Tiwlo profile</p>
+                  <p className="text-[12px] font-black uppercase tracking-[0.18em] text-white/52">Page coverage</p>
                   <h2 className="mt-1 text-2xl font-black">{page.label}</h2>
                 </div>
               </div>
               <div className="relative mt-5 grid gap-3">
                 {[
-                  ['Official brand', 'Tiwlo'],
-                  ['Founder', 'Al Imran Niloy'],
-                  ['Founded', '2020'],
-                  ['Product', 'Cloud hosting + tPanel workflow']
+                  ['Focus', page.heroMetric],
+                  ['Workflow', page.featureCards[0]?.title || page.label],
+                  ['Operations', page.featureCards[1]?.title || 'Billing context'],
+                  ['Support', page.featureCards[2]?.title || 'Account context']
                 ].map(([label, value]) => (
                   <div key={label} className="border border-white/10 bg-black/25 p-4">
                     <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[#7cf4ff]">{label}</p>
