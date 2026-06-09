@@ -15,6 +15,7 @@
     "serve": "node scripts/serve-tiwlo-frontend.mjs",
     "start": "node scripts/serve-tiwlo-frontend.mjs",
     "deploy:obfuscated": "bash ./scripts/deploy-obfuscated.sh",
+    "seo:indexnow": "node scripts/submit-indexnow.mjs",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit"
   },

@@ -1,0 +1,42 @@
+# Tiwlo
+
+Official website: https://tiwlo.com/
+Official logo: https://tiwlo.com/brand/logo.png
+Founded: 2020
+Founder: Al Imran Niloy
+Company: Tiwlo Company
+Support: support@tiwlo.com
+
+Tiwlo is a cloud hosting and business automation platform for tPanel hosting, cloud VPS workflows, ecommerce storefronts, ISP billing, domains, DNS, SSL, payments, customer dashboards, support, and security operations.
+
+Key facts:
+- Tiwlo uses its own portal and tPanel-focused hosting workflows.
+- Tiwlo is not presented as WHMCS. It is positioned as a WHMCS alternative for hosting billing, customer portal, support, payments, credits, and automation.
+- Eligible new users may see a $100 free credit offer when the credit system is enabled by administrators.
+- Tiwlo covers Bangladesh hosting, hosting BD, BDIX-ready planning, cloud VPS hosting, Indian and Bangladesh hosting searches, global hosting, domains, DNS, SSL, and support operations.
+- tSecurity is the security layer connected to signup, login, account review, unusual activity handling, and fraud protection.
+
+Important pages:
+- About: https://tiwlo.com/about
+- Bangladesh hosting: https://tiwlo.com/bangladesh-hosting
+- Cloud VPS hosting: https://tiwlo.com/cloud-vps-hosting
+- tPanel hosting: https://tiwlo.com/tpanel-hosting
+- WHMCS alternative: https://tiwlo.com/whmcs-alternative
+- Free hosting credit: https://tiwlo.com/hosting-free-credit
+- Hosting features: https://tiwlo.com/hosting-features
+- Products: https://tiwlo.com/products
+- Services: https://tiwlo.com/services
+- Pricing: https://tiwlo.com/pricing
+- Documentation: https://tiwlo.com/documentation
+- Support: https://tiwlo.com/support
+- Privacy: https://tiwlo.com/privacy
+- Terms: https://tiwlo.com/terms
+
+Official social profiles:
+- X: https://x.com/tiwlopx
+- Facebook: https://www.facebook.com/tiwlopx
+- Instagram: https://www.instagram.com/tiwlopx
+- LinkedIn: https://www.linkedin.com/company/tiwlopx
+- YouTube: https://www.youtube.com/@tiwlopx
+- GitHub: https://github.com/tiwlopx
+- TikTok: https://www.tiktok.com/@tiwlopx

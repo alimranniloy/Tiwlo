@@ -2,12 +2,15 @@ import React from 'react';
 import { Link } from 'react-router-dom';
 import BrandLogo from '../BrandLogo';
 import { TIWLO_SOCIAL_LINKS } from '../Seo';
+import { SEO_TOPIC_LINKS } from '../../lib/seoTopicPages';
 
 const footerGroups = [
   {
     title: 'Product',
     links: [
       { label: 'Cloud hosting', to: '/products' },
+      { label: 'Bangladesh Hosting', to: '/bangladesh-hosting' },
+      { label: 'Cloud VPS', to: '/cloud-vps-hosting' },
       { label: 'ISP Hub', to: '/broadband' },
       { label: 'Merchants', to: '/commerce' },
       { label: 'Integrations', to: '/api' }
@@ -17,6 +20,8 @@ const footerGroups = [
     title: 'Company',
     links: [
       { label: 'About Us', to: '/about' },
+      { label: 'tPanel Hosting', to: '/tpanel-hosting' },
+      { label: 'WHMCS Alternative', to: '/whmcs-alternative' },
       { label: 'Privacy', to: '/privacy' },
       { label: 'Terms', to: '/terms' }
     ]
@@ -25,6 +30,8 @@ const footerGroups = [
     title: 'Support',
     links: [
       { label: 'Documentation', to: '/documentation' },
+      { label: '$100 Free Credit', to: '/hosting-free-credit' },
+      { label: 'Hosting Features', to: '/hosting-features' },
       { label: 'Help Center', to: '/support' },
       { label: 'Pricing', to: '/pricing' }
     ]
@@ -64,6 +71,11 @@ export default function Footer() {
             (c) 2026 Tiwlo. Founded by Al Imran Niloy.
           </div>
           <div className="flex flex-wrap justify-center gap-6">
+            {SEO_TOPIC_LINKS.slice(0, 3).map((item) => (
+              <Link key={item.to} to={item.to} className="text-sm font-medium text-gray-400 hover:text-gray-900">
+                {item.label}
+              </Link>
+            ))}
             {TIWLO_SOCIAL_LINKS.slice(0, 5).map((item) => (
               <a key={item.label} href={item.url} target="_blank" rel="noreferrer" className="text-sm font-medium text-gray-400 hover:text-gray-900">
                 {item.label}

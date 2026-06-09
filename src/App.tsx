@@ -50,6 +50,7 @@ const MarketplacePage = lazy(() => import('./pages/Marketplace'));
 const KubernetesPage = lazy(() => import('./pages/Kubernetes'));
 const LegalPage = lazy(() => import('./pages/LegalPage'));
 const AboutPage = lazy(() => import('./pages/About'));
+const SeoTopicPage = lazy(() => import('./pages/SeoTopicPage'));
 const CloudStorePage = lazy(() => import('./pages/CloudStore'));
 const StoreManagementPage = lazy(() => import('./pages/StoreManagement'));
 const StoreAdminDashboard = lazy(() => import('./cloudstore/storeadmin/StoreAdminDashboard'));
@@ -325,6 +326,12 @@ function AppContent({
             <Route path="/support" element={<SupportPage />} />
             <Route path="/support/create-ticket" element={<CreateSupportTicket />} />
             <Route path="/about" element={<AboutPage />} />
+            <Route path="/bangladesh-hosting" element={<SeoTopicPage topicKey="bangladeshHosting" />} />
+            <Route path="/cloud-vps-hosting" element={<SeoTopicPage topicKey="cloudVps" />} />
+            <Route path="/tpanel-hosting" element={<SeoTopicPage topicKey="tpanelHosting" />} />
+            <Route path="/whmcs-alternative" element={<SeoTopicPage topicKey="whmcsAlternative" />} />
+            <Route path="/hosting-free-credit" element={<SeoTopicPage topicKey="freeCredit" />} />
+            <Route path="/hosting-features" element={<SeoTopicPage topicKey="hostingFeatures" />} />
             <Route path="/terms" element={<LegalPage />} />
             <Route path="/privacy" element={<LegalPage />} />
             <Route path="/firewalls" element={<FirewallsPage />} />
@@ -581,6 +588,12 @@ export default function App() {
           <Route path="/support" element={<MarketingInfoPage variant="support" />} />
           <Route path="/documentation" element={<DocumentationPage />} />
           <Route path="/about" element={<AboutPage />} />
+          <Route path="/bangladesh-hosting" element={<SeoTopicPage topicKey="bangladeshHosting" />} />
+          <Route path="/cloud-vps-hosting" element={<SeoTopicPage topicKey="cloudVps" />} />
+          <Route path="/tpanel-hosting" element={<SeoTopicPage topicKey="tpanelHosting" />} />
+          <Route path="/whmcs-alternative" element={<SeoTopicPage topicKey="whmcsAlternative" />} />
+          <Route path="/hosting-free-credit" element={<SeoTopicPage topicKey="freeCredit" />} />
+          <Route path="/hosting-features" element={<SeoTopicPage topicKey="hostingFeatures" />} />
           <Route path="/commerce" element={<CommercePage />} />
           <Route path="/broadband" element={<BroadbandPage />} />
           <Route path="/pay/:slug" element={<TiwloPayCheckout />} />

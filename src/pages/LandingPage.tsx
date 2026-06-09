@@ -13,6 +13,7 @@ import {
   type LucideIcon
 } from 'lucide-react';
 import Seo, { TIWLO_SEO, TIWLO_SOCIAL_LINKS, tiwloOrganizationSchema, tiwloWebsiteSchema } from '../components/Seo';
+import { SEO_TOPIC_LINKS } from '../lib/seoTopicPages';
 
 const CONSENT_KEY = 'tiwlo_cookie_consent_v1';
 const HERO_VIDEO = '/media/computer-room-2.mp4';
@@ -148,6 +149,7 @@ const footerColumns = [
     links: [
       { label: 'Droplets', to: '/products' },
       { label: 'tPanel Hosting', to: '/products' },
+      { label: 'tPanel Page', to: '/tpanel-hosting' },
       { label: 'Tiwlo Pay', to: '/pricing' },
       { label: 'Cloud Store', to: '/commerce' }
     ]
@@ -156,6 +158,8 @@ const footerColumns = [
     title: 'Solutions',
     links: [
       { label: 'Website Hosting', to: '/services' },
+      { label: 'Bangladesh Hosting', to: '/bangladesh-hosting' },
+      { label: 'Cloud VPS', to: '/cloud-vps-hosting' },
       { label: 'ISP Billing', to: '/broadband' },
       { label: 'Ecommerce', to: '/commerce' },
       { label: 'Operations', to: '/services' }
@@ -166,6 +170,8 @@ const footerColumns = [
     links: [
       { label: 'Documentation', to: '/documentation' },
       { label: 'API', to: '/api' },
+      { label: '$100 Free Credit', to: '/hosting-free-credit' },
+      { label: 'Hosting Features', to: '/hosting-features' },
       { label: 'Support', to: '/support' },
       { label: 'Pricing', to: '/pricing' }
     ]
@@ -175,6 +181,7 @@ const footerColumns = [
     links: [
       { label: 'About', to: '/about' },
       { label: 'Security', to: '/about' },
+      { label: 'WHMCS Alternative', to: '/whmcs-alternative' },
       { label: 'Partners', to: '/partners' },
       { label: 'Contact', to: '/support' }
     ]
@@ -737,6 +744,9 @@ function FooterSection() {
             <Link to="/privacy" className="hover:text-[#7cf4ff]">Privacy</Link>
             <Link to="/terms" className="hover:text-[#7cf4ff]">Terms</Link>
             <Link to="/support" className="hover:text-[#7cf4ff]">Support</Link>
+            {SEO_TOPIC_LINKS.slice(0, 3).map((item) => (
+              <Link key={item.to} to={item.to} className="hover:text-[#7cf4ff]">{item.label}</Link>
+            ))}
             {TIWLO_SOCIAL_LINKS.slice(0, 4).map((item) => (
               <a key={item.label} href={item.url} target="_blank" rel="noreferrer" className="hover:text-[#7cf4ff]">{item.label}</a>
             ))}

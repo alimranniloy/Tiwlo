@@ -1,5 +1,7 @@
 User-agent: *
 Allow: /
+Allow: /llms.txt
+Allow: /tiwlo-indexnow-2026.txt
 Disallow: /api/system-assets/
 
 Sitemap: https://tiwlo.com/sitemap.xml

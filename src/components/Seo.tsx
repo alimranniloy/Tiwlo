@@ -29,7 +29,7 @@ export const tiwloOrganizationSchema = {
   '@id': 'https://tiwlo.com/#organization',
   name: TIWLO_SEO.name,
   legalName: TIWLO_SEO.legalName,
-  alternateName: ['Tiwlo Cloud', 'Tiwlo Platform', 'Tiwlo Operations Cloud'],
+  alternateName: ['Tiwlo Cloud', 'Tiwlo Platform', 'Tiwlo Operations Cloud', 'Tiwlo Hosting', 'Tiwlo tPanel'],
   url: TIWLO_SEO.url,
   logo: {
     '@type': 'ImageObject',
@@ -59,7 +59,12 @@ export const tiwloOrganizationSchema = {
   areaServed: 'Worldwide',
   knowsAbout: [
     'Cloud hosting',
+    'Bangladesh web hosting',
+    'BDIX hosting planning',
+    'Cloud VPS hosting',
     'tPanel hosting control panel',
+    'WHMCS alternative',
+    'Hosting client portal',
     'Ecommerce automation',
     'ISP billing',
     'Domain management',
@@ -90,6 +95,7 @@ type SeoProps = {
   description: string;
   canonicalPath?: string;
   image?: string;
+  keywords?: string[];
   schema?: Record<string, unknown> | Record<string, unknown>[];
 };
 
@@ -102,7 +108,7 @@ const setMeta = (selector: string, attribute: 'content' | 'href', value: string,
   node?.setAttribute(attribute, value);
 };
 
-export default function Seo({ title, description, canonicalPath = '/', image = TIWLO_SEO.logo, schema }: SeoProps) {
+export default function Seo({ title, description, canonicalPath = '/', image = TIWLO_SEO.logo, keywords, schema }: SeoProps) {
   React.useEffect(() => {
     const canonical = new URL(canonicalPath, TIWLO_SEO.url).toString();
     document.title = title;
@@ -118,6 +124,13 @@ export default function Seo({ title, description, canonicalPath = '/', image = T
     setMeta('meta[name="twitter:title"]', 'content', title);
     setMeta('meta[name="twitter:description"]', 'content', description);
     setMeta('meta[name="twitter:image"]', 'content', image);
+    if (keywords?.length) {
+      setMeta('meta[name="keywords"]', 'content', keywords.join(', '), () => {
+        const meta = document.createElement('meta');
+        meta.setAttribute('name', 'keywords');
+        return meta;
+      });
+    }
     setMeta('link[rel="canonical"]', 'href', canonical, () => {
       const link = document.createElement('link');
       link.setAttribute('rel', 'canonical');
@@ -140,7 +153,7 @@ export default function Seo({ title, description, canonicalPath = '/', image = T
     return () => {
       document.getElementById(id)?.remove();
     };
-  }, [canonicalPath, description, image, schema, title]);
+  }, [canonicalPath, description, image, keywords, schema, title]);
 
   return null;
 }
