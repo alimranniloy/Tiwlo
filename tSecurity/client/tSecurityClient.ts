@@ -273,11 +273,24 @@ const collectDeviceEvidence = () => {
 const rememberBlockAndRedirect = (result: GatewayResult) => {
   try {
     localStorage.removeItem(BLOCK_REASON_KEY);
+    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem('tiwlo_user');
+    sessionStorage.removeItem('tiwlo_signup_draft_v2');
   } catch {
     // Ignore storage failures; the block page remains generic.
   }
   const target = result.redirect || '/blocked';
   window.location.assign(target);
+};
+
+export const clearTSecurityClientState = () => {
+  try {
+    localStorage.removeItem(BLOCK_REASON_KEY);
+    localStorage.removeItem(SESSION_LOCK_KEY);
+    sessionStorage.removeItem('tiwlo_signup_draft_v2');
+  } catch {
+    // Storage can be unavailable in private contexts.
+  }
 };
 
 export const getStoredTSecurityBlockReason = () => {

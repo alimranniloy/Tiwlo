@@ -5,9 +5,13 @@ import type { Domain, Droplet, User } from './types';
 import { clearAuthToken, fetchConsoleData, fetchCurrentUserWithApi, fetchPlatformStatusWithApi, getAuthToken } from './lib/api/appBootstrap';
 import { getStorefrontHostContext } from './lib/storefrontHost';
 import { isProfileComplete } from './lib/profileCompletion';
+import { clearTSecurityClientState } from '../tSecurity/client/tSecurityClient';
 
-const PublicRoutes = lazy(() => import('./routes/PublicRoutes'));
-const ConsoleRoutes = lazy(() => import('./routes/ConsoleRoutes'));
+const loadPublicRoutes = () => import('./routes/PublicRoutes');
+const loadConsoleRoutes = () => import('./routes/ConsoleRoutes');
+
+const PublicRoutes = lazy(loadPublicRoutes);
+const ConsoleRoutes = lazy(loadConsoleRoutes);
 const CrystalSetupLoader = lazy(() => import('./components/SetupLoader').then((module) => ({ default: module.CrystalSetupLoader })));
 const TrackingScripts = lazy(() => import('./components/TrackingScripts'));
 const FloatingAIWidget = lazy(() => import('./components/FloatingAIWidget'));
@@ -27,7 +31,7 @@ const PUBLIC_STATUS_DELAY_MS = 12000;
 const TRACKING_MOUNT_DELAY_MS = 9000;
 
 function RouteLoader() {
-  return null;
+  return <div aria-hidden="true" className="min-h-screen bg-white" />;
 }
 
 function ScrollToTop() {
@@ -282,6 +286,7 @@ export default function App() {
   };
 
   const handleLogin = (authenticatedUser: User) => {
+    if (!isRestrictedUser(authenticatedUser)) void loadConsoleRoutes();
     resetAppRoute('/');
     setUser(authenticatedUser);
     localStorage.setItem('tiwlo_user', JSON.stringify(authenticatedUser));
@@ -289,15 +294,12 @@ export default function App() {
   };
 
   const handleLogout = () => {
-    resetAppRoute('/');
     setUser(null);
     setShowWelcome(false);
     clearAuthToken();
+    clearTSecurityClientState();
     localStorage.removeItem('tiwlo_user');
-  };
-
-  if (platformStatus.loading && user) {
-    return null;
+    resetAppRoute('/');
   }
 
   if (showWelcome && user && !isRestrictedUser(user) && (!platformStatus.maintenance || isAdminRole(user))) {
