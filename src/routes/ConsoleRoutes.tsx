@@ -3,6 +3,7 @@ import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import type { Domain, Droplet, User } from '../types';
 import { fetchAdminModules } from '../lib/api/appBootstrap';
 import { SERVICE_MODULE_GROUP, SERVICE_MODULE_KEYS, serviceEnabled } from '../lib/serviceModules';
+import TiwloRouteLoader from '../components/TiwloRouteLoader';
 
 const ActionConfirmationProvider = lazy(() => import('../components/ActionConfirmation').then((module) => ({ default: module.ActionConfirmationProvider })));
 const Sidebar = lazy(() => import('../components/Sidebar'));
@@ -92,7 +93,7 @@ const ISPAddRouter = lazy(() => import('../pages/isp/ISPAddRouter'));
 const ISPAdminRoot = lazy(() => import('../pages/isp/admin/ISPAdminRoot'));
 
 function RouteLoader() {
-  return null;
+  return <TiwloRouteLoader />;
 }
 
 function ConsoleActionProvider({ children }: { children: ReactNode }) {

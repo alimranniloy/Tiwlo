@@ -1,6 +1,7 @@
 import { lazy, Suspense } from 'react';
 import { Route, Routes } from 'react-router-dom';
 import type { User } from '../types';
+import TiwloRouteLoader from '../components/TiwloRouteLoader';
 
 const MarketingInfoPage = lazy(() => import('../pages/MarketingInfoPage'));
 const DocumentationPage = lazy(() => import('../pages/Documentation'));
@@ -23,7 +24,7 @@ const LegalPage = lazy(() => import('../pages/LegalPage'));
 const NotFoundPage = lazy(() => import('../pages/NotFound'));
 
 function RouteLoader() {
-  return null;
+  return <TiwloRouteLoader />;
 }
 
 export default function PublicRoutes({ onLogin }: { onLogin: (user: User) => void }) {

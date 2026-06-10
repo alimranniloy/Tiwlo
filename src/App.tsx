@@ -6,6 +6,7 @@ import { clearAuthToken, fetchConsoleData, fetchCurrentUserWithApi, fetchPlatfor
 import { getStorefrontHostContext } from './lib/storefrontHost';
 import { isProfileComplete } from './lib/profileCompletion';
 import { clearTSecurityClientState } from '../tSecurity/client/tSecurityClient';
+import TiwloRouteLoader from './components/TiwloRouteLoader';
 
 const loadPublicRoutes = () => import('./routes/PublicRoutes');
 const loadConsoleRoutes = () => import('./routes/ConsoleRoutes');
@@ -30,7 +31,7 @@ const PUBLIC_STATUS_DELAY_MS = 12000;
 const TRACKING_MOUNT_DELAY_MS = 9000;
 
 function RouteLoader() {
-  return null;
+  return <TiwloRouteLoader />;
 }
 
 function ScrollToTop() {
