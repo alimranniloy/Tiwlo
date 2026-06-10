@@ -5,7 +5,7 @@ import { fetchTrackingIntegrationsWithApi, type TrackingIntegrationsStatus } fro
 const GOOGLE_LOADER_ID = 'tiwlo-google-analytics-loader';
 const GOOGLE_TAG_MANAGER_LOADER_ID = 'tiwlo-google-tag-manager-loader';
 const FACEBOOK_LOADER_ID = 'tiwlo-facebook-pixel-loader';
-const TRACKING_IDLE_DELAY_MS = 9000;
+const TRACKING_IDLE_DELAY_MS = 0;
 
 let activeGoogleMeasurementId = '';
 let activeGoogleTagManagerId = '';
@@ -164,6 +164,7 @@ export default function TrackingScripts() {
   React.useEffect(() => {
     let mounted = true;
     const load = () => {
+      if (!trackingReady) return;
       fetchTrackingIntegrationsWithApi()
         .then((nextConfig) => {
           if (mounted) setConfig(nextConfig);
@@ -179,7 +180,7 @@ export default function TrackingScripts() {
       mounted = false;
       window.removeEventListener('tiwlo:tracking-refresh', load);
     };
-  }, []);
+  }, [trackingReady]);
 
   React.useEffect(() => {
     return scheduleTrackingStart(() => setTrackingReady(true));

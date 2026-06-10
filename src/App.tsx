@@ -3,8 +3,12 @@ import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'r
 import type { Droplet, Domain, User } from './types';
 
 // Pages
-import LandingPage from './pages/LandingPage';
-
+const LandingPage = lazy(() => import('./pages/LandingPage'));
+const ActionConfirmationProvider = lazy(() => import('./components/ActionConfirmation').then((module) => ({ default: module.ActionConfirmationProvider })));
+const Sidebar = lazy(() => import('./components/Sidebar'));
+const Header = lazy(() => import('./components/Header'));
+const CrystalSetupLoader = lazy(() => import('./components/SetupLoader').then((module) => ({ default: module.CrystalSetupLoader })));
+const TrackingScripts = lazy(() => import('./components/TrackingScripts'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const ServicesPage = lazy(() => import('./pages/Services'));
 const ProductsPage = lazy(() => import('./pages/Products'));
@@ -101,16 +105,12 @@ const WhatsAppVerificationRequired = lazy(() => import('./pages/WhatsAppVerifica
 const SignupPromoVerificationRequired = lazy(() => import('./pages/SignupPromoVerificationRequired'));
 import { clearAuthToken, fetchAdminModules, fetchConsoleData, fetchCurrentUserWithApi, fetchPlatformStatusWithApi, getAuthToken } from './lib/api/appBootstrap';
 import { getStorefrontHostContext } from './lib/storefrontHost';
-import { isProfileComplete } from './lib/countries';
+import { isProfileComplete } from './lib/profileCompletion';
 import { SERVICE_MODULE_GROUP, SERVICE_MODULE_KEYS, serviceEnabled } from './lib/serviceModules';
 
-// Components
-import Sidebar from './components/Sidebar';
-import Header from './components/Header';
-import { CrystalSetupLoader } from './components/SetupLoader';
-import TrackingScripts from './components/TrackingScripts';
-
 const restrictedStatuses = new Set(['banned', 'blocked', 'suspended', 'disabled']);
+const PUBLIC_STATUS_DELAY_MS = 12000;
+const TRACKING_MOUNT_DELAY_MS = 9000;
 
 function RouteLoader() {
   return null;
@@ -126,15 +126,69 @@ function ScrollToTop() {
   return null;
 }
 
+function DeferredTrackingScripts() {
+  const [enabled, setEnabled] = useState(false);
+
+  useEffect(() => {
+    let done = false;
+    let timerId: number | undefined;
+
+    const enable = () => {
+      if (done) return;
+      done = true;
+      setEnabled(true);
+    };
+
+    const schedule = () => {
+      timerId = window.setTimeout(enable, TRACKING_MOUNT_DELAY_MS);
+    };
+
+    const interactionEvents = ['pointerdown', 'keydown', 'touchstart'] as const;
+
+    if (document.readyState === 'complete') {
+      schedule();
+    } else {
+      window.addEventListener('load', schedule, { once: true });
+    }
+
+    interactionEvents.forEach((eventName) => {
+      window.addEventListener(eventName, enable, { once: true, passive: true });
+    });
+
+    return () => {
+      done = true;
+      if (timerId !== undefined) window.clearTimeout(timerId);
+      window.removeEventListener('load', schedule);
+      interactionEvents.forEach((eventName) => window.removeEventListener(eventName, enable));
+    };
+  }, []);
+
+  if (!enabled) return null;
+
+  return (
+    <Suspense fallback={null}>
+      <TrackingScripts />
+    </Suspense>
+  );
+}
+
 function ResettableRouter({ routerKey, children }: { routerKey: string; children: ReactNode }) {
   return (
     <Fragment key={routerKey}>
       <Router>
         <ScrollToTop />
-        <TrackingScripts />
+        <DeferredTrackingScripts />
         {children}
       </Router>
     </Fragment>
+  );
+}
+
+function ConsoleActionProvider({ children }: { children: ReactNode }) {
+  return (
+    <Suspense fallback={<RouteLoader />}>
+      <ActionConfirmationProvider>{children}</ActionConfirmationProvider>
+    </Suspense>
   );
 }
 
@@ -155,14 +209,16 @@ function isAdminRole(user?: User | null) {
 
 function WelcomeScreen() {
   return (
-    <CrystalSetupLoader
-      messages={[
-        'Setting up your console',
-        'Checking billing profile',
-        'Syncing services and modules',
-        'Opening dashboard'
-      ]}
-    />
+    <Suspense fallback={<RouteLoader />}>
+      <CrystalSetupLoader
+        messages={[
+          'Setting up your console',
+          'Checking billing profile',
+          'Syncing services and modules',
+          'Opening dashboard'
+        ]}
+      />
+    </Suspense>
   );
 }
 
@@ -226,22 +282,26 @@ function AppContent({
   return (
     <div className="flex min-h-screen bg-[#f7f8fb] font-sans text-[#031b4e]">
       {!hideLayout && (
-        <Sidebar 
-          user={user}
-          isOpen={isSidebarOpen} 
-          setIsOpen={setIsSidebarOpen} 
-          onLogout={handleLogout} 
-        />
+        <Suspense fallback={<RouteLoader />}>
+          <Sidebar
+            user={user}
+            isOpen={isSidebarOpen}
+            setIsOpen={setIsSidebarOpen}
+            onLogout={handleLogout}
+          />
+        </Suspense>
       )}
       
       <div className="flex-1 flex flex-col min-w-0">
         {!hideLayout && (
-          <Header 
-            user={user} 
-            onLogout={handleLogout} 
-            isSidebarOpen={isSidebarOpen}
-            setIsSidebarOpen={setIsSidebarOpen}
-          />
+          <Suspense fallback={<RouteLoader />}>
+            <Header
+              user={user}
+              onLogout={handleLogout}
+              isSidebarOpen={isSidebarOpen}
+              setIsSidebarOpen={setIsSidebarOpen}
+            />
+          </Suspense>
         )}
         
         <main className={`flex-1 overflow-y-auto ${hideLayout ? '' : 'tiwlo-console-main px-3 py-4 sm:px-5 md:px-7 md:py-7'}`}>
@@ -386,6 +446,7 @@ function AppContent({
 
 export default function App() {
   const storefrontHost = getStorefrontHostContext();
+  const hasStorefrontHost = Boolean(storefrontHost);
   const isEmailHost = typeof window !== 'undefined' && /^(?:tmail|email)\./.test(window.location.hostname.toLowerCase());
   const [showWelcome, setShowWelcome] = useState(false);
   const [routerResetKey, setRouterResetKey] = useState(0);
@@ -418,7 +479,7 @@ export default function App() {
   useEffect(() => {
     let isMounted = true;
     let idleId: number | undefined;
-    let timerId: number | undefined;
+    let loadTimerId: number | undefined;
     const loadStatus = async () => {
       try {
         const status = await fetchPlatformStatusWithApi();
@@ -434,29 +495,41 @@ export default function App() {
       }
     };
 
+    const beginStatusLoad = () => {
+      const requestIdle = (window as any).requestIdleCallback as undefined | ((callback: () => void, options?: { timeout: number }) => number);
+      if (requestIdle) {
+        idleId = requestIdle(loadStatus, { timeout: 2500 });
+        return;
+      }
+      loadStatus();
+    };
+
     const scheduleInitialStatusLoad = () => {
-      if (user || storefrontHost || isEmailHost) {
+      if (user || hasStorefrontHost || isEmailHost) {
         loadStatus();
         return;
       }
-      const requestIdle = (window as any).requestIdleCallback as undefined | ((callback: () => void, options?: { timeout: number }) => number);
-      if (requestIdle) {
-        idleId = requestIdle(loadStatus, { timeout: 1800 });
-        return;
-      }
-      timerId = window.setTimeout(loadStatus, 900);
+      loadTimerId = window.setTimeout(beginStatusLoad, PUBLIC_STATUS_DELAY_MS);
     };
 
-    scheduleInitialStatusLoad();
+    const startAfterWindowLoad = () => scheduleInitialStatusLoad();
+    if (user || hasStorefrontHost || isEmailHost) {
+      scheduleInitialStatusLoad();
+    } else if (document.readyState === 'complete') {
+      startAfterWindowLoad();
+    } else {
+      window.addEventListener('load', startAfterWindowLoad, { once: true });
+    }
     window.addEventListener('tiwlo:platform-status-refresh', loadStatus);
     return () => {
       isMounted = false;
       const cancelIdle = (window as any).cancelIdleCallback as undefined | ((id: number) => void);
       if (idleId !== undefined) cancelIdle?.(idleId);
-      if (timerId !== undefined) window.clearTimeout(timerId);
+      if (loadTimerId !== undefined) window.clearTimeout(loadTimerId);
+      window.removeEventListener('load', startAfterWindowLoad);
       window.removeEventListener('tiwlo:platform-status-refresh', loadStatus);
     };
-  }, []);
+  }, [hasStorefrontHost, isEmailHost, user?.id]);
 
   useEffect(() => {
     if (!user) return;
@@ -681,15 +754,17 @@ export default function App() {
 
   return (
     <ResettableRouter routerKey={`app-${routerResetKey}`}>
-      <AppContent 
-        user={user} 
-        setUser={setUser} 
-        droplets={droplets} 
-        setDroplets={setDroplets} 
-        domains={domains} 
-        setDomains={setDomains} 
-        handleLogout={handleLogout} 
-      />
+      <ConsoleActionProvider>
+        <AppContent
+          user={user}
+          setUser={setUser}
+          droplets={droplets}
+          setDroplets={setDroplets}
+          domains={domains}
+          setDomains={setDomains}
+          handleLogout={handleLogout}
+        />
+      </ConsoleActionProvider>
       <Suspense fallback={null}>
         <FloatingAIWidgetMount />
       </Suspense>

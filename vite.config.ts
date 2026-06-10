@@ -1,12 +1,30 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
-import {defineConfig, loadEnv} from 'vite';
+import {defineConfig, loadEnv, type Plugin} from 'vite';
+
+function nonBlockingCssPlugin(): Plugin {
+  return {
+    name: 'tiwlo-non-blocking-css',
+    enforce: 'post',
+    transformIndexHtml: {
+      order: 'post',
+      handler(html) {
+        return html.replace(/<link\s+([^>]*rel="stylesheet"[^>]*)>/g, (tag, attrs: string) => {
+          const href = attrs.match(/\bhref="([^"]+\.css)"/)?.[1];
+          if (!href) return tag;
+          const crossorigin = attrs.match(/\scrossorigin(?:=(?:"[^"]*"|'[^']*'|[^\s>]+))?/)?.[0] || '';
+          return `<link rel="preload" as="style"${crossorigin} href="${href}" onload="this.onload=null;this.rel='stylesheet'"><noscript><link rel="stylesheet"${crossorigin} href="${href}"></noscript>`;
+        });
+      },
+    },
+  };
+}
 
 export default defineConfig(({mode}) => {
   const env = loadEnv(mode, '.', '');
   return {
-    plugins: [react(), tailwindcss()],
+    plugins: [react(), tailwindcss(), nonBlockingCssPlugin()],
     define: {
       'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),
     },
