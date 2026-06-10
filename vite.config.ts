@@ -35,6 +35,7 @@ export default defineConfig(({mode}) => {
     },
     build: {
       sourcemap: false,
+      modulePreload: false,
     },
     server: {
       // HMR can be disabled via DISABLE_HMR when running background startup tasks.

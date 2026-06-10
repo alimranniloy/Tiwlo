@@ -1,9 +1,9 @@
 import { Fragment, lazy, Suspense, useState, useEffect, type ReactElement, type ReactNode } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import type { Droplet, Domain, User } from './types';
+import LandingPage from './pages/LandingPage';
 
 // Pages
-const LandingPage = lazy(() => import('./pages/LandingPage'));
 const ActionConfirmationProvider = lazy(() => import('./components/ActionConfirmation').then((module) => ({ default: module.ActionConfirmationProvider })));
 const Sidebar = lazy(() => import('./components/Sidebar'));
 const Header = lazy(() => import('./components/Header'));
