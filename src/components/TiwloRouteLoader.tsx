@@ -7,7 +7,7 @@ export default function TiwloRouteLoader() {
           alt=""
           aria-hidden="true"
           draggable={false}
-          className="h-5 w-5 animate-ping object-contain"
+          className="h-3.5 w-3.5 animate-ping object-contain"
         />
       </div>
     </div>
