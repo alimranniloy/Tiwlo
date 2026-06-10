@@ -23,7 +23,7 @@ const LegalPage = lazy(() => import('../pages/LegalPage'));
 const NotFoundPage = lazy(() => import('../pages/NotFound'));
 
 function RouteLoader() {
-  return <div aria-hidden="true" className="min-h-screen bg-white" />;
+  return null;
 }
 
 export default function PublicRoutes({ onLogin }: { onLogin: (user: User) => void }) {

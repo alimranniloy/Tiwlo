@@ -92,7 +92,7 @@ const ISPAddRouter = lazy(() => import('../pages/isp/ISPAddRouter'));
 const ISPAdminRoot = lazy(() => import('../pages/isp/admin/ISPAdminRoot'));
 
 function RouteLoader() {
-  return <div aria-hidden="true" className="min-h-screen bg-white" />;
+  return null;
 }
 
 function ConsoleActionProvider({ children }: { children: ReactNode }) {

@@ -1,4 +1,4 @@
-import { Fragment, lazy, Suspense, useEffect, useState, type ReactNode } from 'react';
+import { Fragment, lazy, startTransition, Suspense, useEffect, useState, type ReactNode } from 'react';
 import { BrowserRouter as Router, Route, Routes, useLocation } from 'react-router-dom';
 import LandingPage from './pages/LandingPage';
 import type { Domain, Droplet, User } from './types';
@@ -12,7 +12,6 @@ const loadConsoleRoutes = () => import('./routes/ConsoleRoutes');
 
 const PublicRoutes = lazy(loadPublicRoutes);
 const ConsoleRoutes = lazy(loadConsoleRoutes);
-const CrystalSetupLoader = lazy(() => import('./components/SetupLoader').then((module) => ({ default: module.CrystalSetupLoader })));
 const TrackingScripts = lazy(() => import('./components/TrackingScripts'));
 const FloatingAIWidget = lazy(() => import('./components/FloatingAIWidget'));
 const LoginPage = lazy(() => import('./pages/Login'));
@@ -31,7 +30,7 @@ const PUBLIC_STATUS_DELAY_MS = 12000;
 const TRACKING_MOUNT_DELAY_MS = 9000;
 
 function RouteLoader() {
-  return <div aria-hidden="true" className="min-h-screen bg-white" />;
+  return null;
 }
 
 function ScrollToTop() {
@@ -104,6 +103,13 @@ function ResettableRouter({ routerKey, children }: { routerKey: string; children
 
 function PublicEntry({ onLogin }: { onLogin: (user: User) => void }) {
   const location = useLocation();
+
+  useEffect(() => {
+    if (['/login', '/signup', '/verify-email', '/reset-password'].includes(location.pathname)) {
+      void loadConsoleRoutes();
+    }
+  }, [location.pathname]);
+
   if (location.pathname === '/') return <LandingPage />;
 
   return (
@@ -122,26 +128,10 @@ function isAdminRole(user?: User | null) {
   return ['admin', 'super_admin'].includes(String(user?.role || '').toLowerCase());
 }
 
-function WelcomeScreen() {
-  return (
-    <Suspense fallback={<RouteLoader />}>
-      <CrystalSetupLoader
-        messages={[
-          'Setting up your console',
-          'Checking billing profile',
-          'Syncing services and modules',
-          'Opening dashboard'
-        ]}
-      />
-    </Suspense>
-  );
-}
-
 export default function App() {
   const storefrontHost = getStorefrontHostContext();
   const hasStorefrontHost = Boolean(storefrontHost);
   const isEmailHost = typeof window !== 'undefined' && /^(?:tmail|email)\./.test(window.location.hostname.toLowerCase());
-  const [showWelcome, setShowWelcome] = useState(false);
   const [routerResetKey, setRouterResetKey] = useState(0);
   const [platformStatus, setPlatformStatus] = useState<{ loading: boolean; maintenance: boolean; whatsappEnabled: boolean }>({
     loading: true,
@@ -272,12 +262,6 @@ export default function App() {
     };
   }, [user?.id, user?.role, user?.status, platformStatus.maintenance]);
 
-  useEffect(() => {
-    if (!showWelcome) return undefined;
-    const timer = window.setTimeout(() => setShowWelcome(false), 3000);
-    return () => window.clearTimeout(timer);
-  }, [showWelcome]);
-
   const resetAppRoute = (path = '/') => {
     if (typeof window !== 'undefined') {
       window.history.replaceState(null, '', path);
@@ -287,23 +271,21 @@ export default function App() {
 
   const handleLogin = (authenticatedUser: User) => {
     if (!isRestrictedUser(authenticatedUser)) void loadConsoleRoutes();
-    resetAppRoute('/');
-    setUser(authenticatedUser);
     localStorage.setItem('tiwlo_user', JSON.stringify(authenticatedUser));
-    setShowWelcome(true);
+    startTransition(() => {
+      resetAppRoute('/');
+      setUser(authenticatedUser);
+    });
   };
 
   const handleLogout = () => {
-    setUser(null);
-    setShowWelcome(false);
     clearAuthToken();
     clearTSecurityClientState();
     localStorage.removeItem('tiwlo_user');
-    resetAppRoute('/');
-  }
-
-  if (showWelcome && user && !isRestrictedUser(user) && (!platformStatus.maintenance || isAdminRole(user))) {
-    return <WelcomeScreen />;
+    startTransition(() => {
+      setUser(null);
+      resetAppRoute('/');
+    });
   }
 
   if (platformStatus.maintenance && !isAdminRole(user)) {
