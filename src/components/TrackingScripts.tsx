@@ -5,12 +5,52 @@ import { fetchTrackingIntegrationsWithApi, type TrackingIntegrationsStatus } fro
 const GOOGLE_LOADER_ID = 'tiwlo-google-analytics-loader';
 const GOOGLE_TAG_MANAGER_LOADER_ID = 'tiwlo-google-tag-manager-loader';
 const FACEBOOK_LOADER_ID = 'tiwlo-facebook-pixel-loader';
+const TRACKING_IDLE_DELAY_MS = 9000;
 
 let activeGoogleMeasurementId = '';
 let activeGoogleTagManagerId = '';
 let activeFacebookPixelId = '';
 
 const cleanPath = () => `${window.location.pathname}${window.location.search}${window.location.hash}`;
+
+function scheduleTrackingStart(callback: () => void) {
+  let done = false;
+  let timer: number | undefined;
+  let idleId: number | undefined;
+  const win = window as any;
+
+  const run = () => {
+    if (done) return;
+    done = true;
+    callback();
+  };
+  const beginWhenIdle = () => {
+    if (typeof win.requestIdleCallback === 'function') {
+      idleId = win.requestIdleCallback(run, { timeout: 2500 });
+      return;
+    }
+    run();
+  };
+  const schedule = () => {
+    timer = window.setTimeout(beginWhenIdle, TRACKING_IDLE_DELAY_MS);
+  };
+  const interactionEvents = ['pointerdown', 'keydown', 'touchstart'] as const;
+
+  if (document.readyState === 'complete') {
+    schedule();
+  } else {
+    window.addEventListener('load', schedule, { once: true });
+  }
+  interactionEvents.forEach((eventName) => window.addEventListener(eventName, run, { once: true, passive: true }));
+
+  return () => {
+    done = true;
+    window.removeEventListener('load', schedule);
+    interactionEvents.forEach((eventName) => window.removeEventListener(eventName, run));
+    if (timer) window.clearTimeout(timer);
+    if (idleId && typeof win.cancelIdleCallback === 'function') win.cancelIdleCallback(idleId);
+  };
+}
 
 function loadGoogleAnalytics(measurementId: string) {
   const id = String(measurementId || '').trim().toUpperCase();
@@ -119,6 +159,7 @@ function sendFacebookPageView() {
 export default function TrackingScripts() {
   const location = useLocation();
   const [config, setConfig] = React.useState<TrackingIntegrationsStatus | null>(null);
+  const [trackingReady, setTrackingReady] = React.useState(false);
 
   React.useEffect(() => {
     let mounted = true;
@@ -141,7 +182,11 @@ export default function TrackingScripts() {
   }, []);
 
   React.useEffect(() => {
-    if (!config) return;
+    return scheduleTrackingStart(() => setTrackingReady(true));
+  }, []);
+
+  React.useEffect(() => {
+    if (!config || !trackingReady) return;
 
     const googleReady = config.googleAnalytics?.enabled
       ? loadGoogleAnalytics(config.googleAnalytics.measurementId)
@@ -156,7 +201,7 @@ export default function TrackingScripts() {
 
     if (googleReady) sendGooglePageView(path);
     if (facebookReady) sendFacebookPageView();
-  }, [config, location.pathname, location.search, location.hash]);
+  }, [config, trackingReady, location.pathname, location.search, location.hash]);
 
   return null;
 }

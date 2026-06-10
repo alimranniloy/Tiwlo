@@ -62,7 +62,17 @@ export default function SiteFooter() {
         </div>
         <div className="mt-10 flex flex-col gap-5 border-t border-white/10 pt-7 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-4">
-            <img src="/brand/white-logo-small.png" alt="Tiwlo" className="h-9 w-[120px] object-contain object-left" />
+            <img
+              src="/brand/white-logo-256.png"
+              srcSet="/brand/white-logo-256.png 256w, /brand/white-logo-320.png 320w, /brand/white-logo-small.png 512w"
+              sizes="120px"
+              width={320}
+              height={107}
+              alt="Tiwlo"
+              className="h-9 w-[120px] object-contain object-left"
+              loading="lazy"
+              decoding="async"
+            />
             <p className="text-[13px] font-semibold text-white/62">(c) 2026 Tiwlo. All rights reserved.</p>
           </div>
           <div className="flex flex-wrap gap-5 text-[13px] font-bold text-white/70">

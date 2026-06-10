@@ -61,9 +61,18 @@ const promoMessages = [
 ];
 
 const showcaseLogos = [
-  '/brand/showcase/tmail-logo-white-small.png',
-  '/brand/showcase/tfiber-small.png',
-  '/brand/showcase/tpanel-small.png'
+  {
+    src: '/brand/showcase/tmail-logo-white-220.png',
+    srcSet: '/brand/showcase/tmail-logo-white-220.png 220w, /brand/showcase/tmail-logo-white-320.png 320w, /brand/showcase/tmail-logo-white-small.png 640w'
+  },
+  {
+    src: '/brand/showcase/tfiber-220.png',
+    srcSet: '/brand/showcase/tfiber-220.png 220w, /brand/showcase/tfiber-320.png 320w, /brand/showcase/tfiber-small.png 640w'
+  },
+  {
+    src: '/brand/showcase/tpanel-220.png',
+    srcSet: '/brand/showcase/tpanel-220.png 220w, /brand/showcase/tpanel-320.png 320w, /brand/showcase/tpanel-small.png 640w'
+  }
 ];
 
 const controlLayers: ControlLayer[] = [
@@ -354,7 +363,16 @@ function SiteHeader() {
     <header className="sticky top-0 z-50 border-b border-white/10 bg-black text-white">
       <div className="mx-auto flex h-14 max-w-[1320px] items-center justify-between px-3 sm:h-16 sm:px-4 md:px-8">
         <button onClick={() => navigate('/')} className="flex items-center">
-          <img src="/brand/white-logo-small.png" alt="Tiwlo" className="h-7 w-[100px] object-contain object-left sm:h-8 sm:w-[128px]" />
+          <img
+            src="/brand/white-logo-256.png"
+            srcSet="/brand/white-logo-256.png 256w, /brand/white-logo-320.png 320w, /brand/white-logo-small.png 512w"
+            sizes="(min-width: 640px) 128px, 100px"
+            width={320}
+            height={107}
+            alt="Tiwlo"
+            className="h-7 w-[100px] object-contain object-left sm:h-8 sm:w-[128px]"
+            decoding="async"
+          />
         </button>
         <nav className="hidden items-center gap-7 lg:flex">
           {navLinks.map((item) => (
@@ -477,13 +495,18 @@ function HeroSection() {
 function LogoShowcaseRow() {
   return (
     <div className="mx-auto mt-9 flex w-full max-w-[760px] items-center justify-center gap-2 sm:mt-12 sm:gap-8">
-      {showcaseLogos.map((src) => (
-        <div key={src} className="min-w-0 flex-1">
+      {showcaseLogos.map((logo) => (
+        <div key={logo.src} className="min-w-0 flex-1">
           <img
-            src={src}
+            src={logo.src}
+            srcSet={logo.srcSet}
+            sizes="(min-width: 640px) 220px, 120px"
             alt=""
+            width={320}
+            height={107}
             className="mx-auto max-h-7 w-full object-contain opacity-88 sm:max-h-11"
             loading="eager"
+            decoding="async"
             draggable={false}
           />
         </div>
@@ -739,7 +762,17 @@ function FooterSection() {
         </div>
         <div className="mt-10 flex flex-col gap-5 border-t border-white/10 pt-7 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-4">
-            <img src="/brand/white-logo-small.png" alt="Tiwlo" className="h-9 w-[120px] object-contain object-left" />
+            <img
+              src="/brand/white-logo-256.png"
+              srcSet="/brand/white-logo-256.png 256w, /brand/white-logo-320.png 320w, /brand/white-logo-small.png 512w"
+              sizes="120px"
+              width={320}
+              height={107}
+              alt="Tiwlo"
+              className="h-9 w-[120px] object-contain object-left"
+              loading="lazy"
+              decoding="async"
+            />
             <p className="text-[13px] font-semibold text-white/62">(c) 2026 Tiwlo. All rights reserved.</p>
           </div>
           <div className="flex flex-wrap gap-5 text-[13px] font-bold text-white/70">
