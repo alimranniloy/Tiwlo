@@ -1,7 +1,7 @@
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { ArrowRight, BadgeCheck, FileText, LockKeyhole, Mail, ShieldCheck } from 'lucide-react';
-import Seo, { TIWLO_SEO, tiwloOrganizationSchema, tiwloWebsiteSchema } from '../components/Seo';
+import Seo, { TIWLO_SEO, createTiwloBreadcrumbSchema, tiwloOrganizationSchema, tiwloWebsiteSchema } from '../components/Seo';
 import SiteHeader from '../components/landing/SiteHeader';
 import SiteFooter from '../components/landing/SiteFooter';
 
@@ -170,11 +170,19 @@ function createLegalSchema(page: LegalContent) {
       isPartOf: { '@id': 'https://tiwlo.com/#website' },
       publisher: { '@id': 'https://tiwlo.com/#organization' },
       about: { '@id': 'https://tiwlo.com/#organization' },
+      breadcrumb: { '@id': `${canonical}#breadcrumb` },
       mainEntity: {
         '@type': 'Organization',
         '@id': 'https://tiwlo.com/#organization'
       }
-    }
+    },
+    createTiwloBreadcrumbSchema(
+      [
+        { name: 'Home', item: '/' },
+        { name: page.label, item: page.canonicalPath }
+      ],
+      `${canonical}#breadcrumb`
+    )
   ];
 }
 

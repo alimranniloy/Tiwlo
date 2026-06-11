@@ -20,16 +20,36 @@ export const TIWLO_SEO = {
   foundingDate: '2020',
   founderName: 'Al Imran Niloy',
   email: 'support@tiwlo.com',
+  telephone: '+8801410014060',
+  addressLocality: 'Dhaka',
+  addressRegion: 'Dhaka',
+  addressCountry: 'BD',
   description:
     'Tiwlo is a technology company for cloud hosting, web hosting, VPS, tPanel software, AI tools, business automation, ecommerce services, digital payments, tFiber internet infrastructure, domains, DNS, SSL, client dashboards, and infrastructure management.'
 };
+
+export const tiwloPostalAddressSchema = {
+  '@type': 'PostalAddress',
+  addressLocality: TIWLO_SEO.addressLocality,
+  addressRegion: TIWLO_SEO.addressRegion,
+  addressCountry: TIWLO_SEO.addressCountry
+};
+
+const tiwloServiceOffers = [
+  ['Cloud hosting and VPS', 'Cloud hosting, VPS hosting, web hosting, DNS, SSL, and infrastructure management.'],
+  ['tPanel hosting operations', 'Hosting account provisioning, package limits, file management, databases, domains, and support workflows.'],
+  ['tFiber internet infrastructure', 'Broadband-style service records, subscriber billing, router context, and connectivity support workflows.'],
+  ['Ecommerce and Cloud Store', 'Storefronts, products, orders, customers, checkout, and business automation.'],
+  ['Tiwlo Pay and billing', 'Digital payment workflows, invoices, merchant verification, credits, and payment review.'],
+  ['ISP billing and support', 'Subscriber management, packages, invoices, tickets, and account support for service providers.']
+];
 
 export const tiwloOrganizationSchema = {
   '@type': 'Organization',
   '@id': 'https://tiwlo.com/#organization',
   name: TIWLO_SEO.name,
   legalName: TIWLO_SEO.legalName,
-  alternateName: ['Tiwlo Cloud', 'Tiwlo Platform', 'Tiwlo Operations Cloud', 'Tiwlo Hosting', 'Tiwlo tPanel'],
+  alternateName: ['Tiwlo Cloud', 'Tiwlo Platform', 'Tiwlo Operations Cloud', 'Tiwlo Hosting', 'Tiwlo tPanel', 'Tiwlo tFiber', 'tFiber', 'Tiwlo Pay', 'tMail'],
   url: TIWLO_SEO.url,
   logo: {
     '@type': 'ImageObject',
@@ -40,6 +60,14 @@ export const tiwloOrganizationSchema = {
   },
   image: TIWLO_SEO.logo,
   foundingDate: TIWLO_SEO.foundingDate,
+  foundingLocation: {
+    '@type': 'Place',
+    name: 'Dhaka, Bangladesh',
+    address: tiwloPostalAddressSchema
+  },
+  address: tiwloPostalAddressSchema,
+  telephone: TIWLO_SEO.telephone,
+  email: TIWLO_SEO.email,
   founder: {
     '@type': 'Person',
     '@id': 'https://tiwlo.com/#founder',
@@ -51,15 +79,18 @@ export const tiwloOrganizationSchema = {
     {
       '@type': 'ContactPoint',
       contactType: 'customer support',
+      telephone: TIWLO_SEO.telephone,
       email: TIWLO_SEO.email,
       url: 'https://tiwlo.com/support',
-      availableLanguage: ['en', 'bn']
+      areaServed: ['BD', 'GB', 'Worldwide'],
+      availableLanguage: ['English', 'Bengali']
     }
   ],
   location: [
     {
       '@type': 'Place',
-      name: 'Bangladesh'
+      name: 'Dhaka, Bangladesh',
+      address: tiwloPostalAddressSchema
     },
     {
       '@type': 'Place',
@@ -87,6 +118,28 @@ export const tiwloOrganizationSchema = {
     'Payment operations',
     'Business automation'
   ],
+  brand: [
+    { '@type': 'Brand', name: 'Tiwlo' },
+    { '@type': 'Brand', name: 'tPanel' },
+    { '@type': 'Brand', name: 'tFiber' },
+    { '@type': 'Brand', name: 'Tiwlo Pay' },
+    { '@type': 'Brand', name: 'tMail' }
+  ],
+  hasOfferCatalog: {
+    '@type': 'OfferCatalog',
+    name: 'Tiwlo service catalog',
+    itemListElement: tiwloServiceOffers.map(([name, description], index) => ({
+      '@type': 'Offer',
+      position: index + 1,
+      itemOffered: {
+        '@type': 'Service',
+        name,
+        description,
+        provider: { '@id': 'https://tiwlo.com/#organization' },
+        areaServed: ['Bangladesh', 'United Kingdom', 'Worldwide']
+      }
+    }))
+  },
   sameAs: TIWLO_SOCIAL_LINKS.map((item) => item.url)
 };
 
@@ -99,10 +152,36 @@ export const tiwloWebsiteSchema = {
   inLanguage: 'en',
   potentialAction: {
     '@type': 'SearchAction',
-    target: 'https://tiwlo.com/documentation?q={search_term_string}',
+    target: {
+      '@type': 'EntryPoint',
+      urlTemplate: 'https://tiwlo.com/documentation?q={search_term_string}'
+    },
     'query-input': 'required name=search_term_string'
   }
 };
+
+type BreadcrumbInput = {
+  name: string;
+  item: string;
+};
+
+export function createTiwloBreadcrumbSchema(items: BreadcrumbInput[], id?: string) {
+  const normalizedItems = items.map((item) => ({
+    ...item,
+    item: new URL(item.item, TIWLO_SEO.url).toString()
+  }));
+  const lastItem = normalizedItems[normalizedItems.length - 1];
+  return {
+    '@type': 'BreadcrumbList',
+    '@id': id || `${lastItem?.item || TIWLO_SEO.url}#breadcrumb`,
+    itemListElement: normalizedItems.map((item, index) => ({
+      '@type': 'ListItem',
+      position: index + 1,
+      name: item.name,
+      item: item.item
+    }))
+  };
+}
 
 type SeoProps = {
   title: string;

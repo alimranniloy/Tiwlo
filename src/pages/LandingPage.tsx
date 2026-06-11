@@ -6,13 +6,14 @@ import {
   Boxes,
   ChevronDown,
   CloudUpload,
+  FileQuestion,
   Network,
   Server,
   ShieldCheck,
   TerminalSquare,
   type LucideIcon
 } from 'lucide-react';
-import Seo, { TIWLO_SEO, TIWLO_SOCIAL_LINKS, tiwloOrganizationSchema, tiwloWebsiteSchema } from '../components/Seo';
+import Seo, { TIWLO_SEO, TIWLO_SOCIAL_LINKS, createTiwloBreadcrumbSchema, tiwloOrganizationSchema, tiwloWebsiteSchema } from '../components/Seo';
 import { SEO_TOPIC_LINKS } from '../lib/seoTopicPages';
 import SharedSiteHeader from '../components/landing/SiteHeader';
 import SharedSiteFooter from '../components/landing/SiteFooter';
@@ -154,6 +155,29 @@ const resourceCards = [
   }
 ];
 
+const homeFaqs = [
+  {
+    question: 'What is Tiwlo used for?',
+    answer:
+      'Tiwlo connects cloud hosting, VPS, tPanel hosting operations, ecommerce, ISP billing, domains, DNS, SSL, payments, support, and account security in one platform.'
+  },
+  {
+    question: 'Does Tiwlo include tFiber workflows?',
+    answer:
+      'Yes. Tiwlo content includes tFiber and ISP-style infrastructure workflows for broadband service records, subscriber billing, router context, and support visibility.'
+  },
+  {
+    question: 'Where is Tiwlo based?',
+    answer:
+      'Tiwlo lists Dhaka, Bangladesh as its public business address context and serves Bangladesh, the United Kingdom, and worldwide technology customers.'
+  },
+  {
+    question: 'How can customers contact Tiwlo?',
+    answer:
+      'Customers can contact Tiwlo through support@tiwlo.com, +8801410014060, or the support page at tiwlo.com/support.'
+  }
+];
+
 const footerColumns = [
   {
     title: 'Products',
@@ -239,10 +263,24 @@ const landingSchema = [
     description: TIWLO_SEO.description,
     isPartOf: { '@id': 'https://tiwlo.com/#website' },
     about: { '@id': 'https://tiwlo.com/#organization' },
+    breadcrumb: { '@id': 'https://tiwlo.com/#breadcrumb' },
     primaryImageOfPage: {
       '@type': 'ImageObject',
       url: TIWLO_SEO.logo
     }
+  },
+  createTiwloBreadcrumbSchema([{ name: 'Home', item: '/' }], 'https://tiwlo.com/#breadcrumb'),
+  {
+    '@type': 'FAQPage',
+    '@id': 'https://tiwlo.com/#faq',
+    mainEntity: homeFaqs.map((faq) => ({
+      '@type': 'Question',
+      name: faq.question,
+      acceptedAnswer: {
+        '@type': 'Answer',
+        text: faq.answer
+      }
+    }))
   }
 ];
 
@@ -721,6 +759,30 @@ function ResourcesSection() {
   );
 }
 
+function HomeFaqSection() {
+  return (
+    <section className="bg-[linear-gradient(180deg,#020707,#071414)] py-16 text-white sm:py-24">
+      <div className="mx-auto max-w-[1220px] px-4 sm:px-5 md:px-8">
+        <div className="mb-7 flex items-end justify-between gap-4">
+          <div>
+            <p className="text-[12px] font-black uppercase tracking-[0.2em] text-[#7cf4ff]">FAQ</p>
+            <h2 className="mt-3 text-[30px] font-black leading-tight tracking-normal sm:text-[42px]">Tiwlo company and platform basics</h2>
+          </div>
+          <FileQuestion className="hidden h-10 w-10 text-[#7cf4ff] sm:block" />
+        </div>
+        <div className="grid gap-3 md:grid-cols-2">
+          {homeFaqs.map((faq) => (
+            <article key={faq.question} className="border border-white/10 bg-[#071918] p-5 sm:p-6">
+              <h3 className="text-[17px] font-black leading-6 text-white">{faq.question}</h3>
+              <p className="mt-3 text-[14px] font-semibold leading-7 text-white/68">{faq.answer}</p>
+            </article>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function CtaSection() {
   const navigate = useNavigate();
   return (
@@ -808,6 +870,7 @@ export default function LandingPage() {
         <PlatformSection />
         <WorkflowSection />
         <ResourcesSection />
+        <HomeFaqSection />
         <CtaSection />
       </main>
       <SharedSiteFooter />

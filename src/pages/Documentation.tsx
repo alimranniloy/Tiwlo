@@ -34,7 +34,11 @@ import { useCurrency } from '../lib/useCurrency';
 export default function Documentation() {
   const { money } = useCurrency({ scope: 'platform', scopeId: 'docs' });
   const [activeSection, setActiveSection] = useState('Introduction');
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState(() => {
+    if (typeof window === 'undefined') return '';
+    const params = new URLSearchParams(window.location.search);
+    return params.get('q') || params.get('search') || '';
+  });
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
   const sections = [

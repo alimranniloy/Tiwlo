@@ -1,7 +1,7 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRight, BookOpenText, CheckCircle2, Cloud, FileQuestion, Globe2 } from 'lucide-react';
-import Seo, { TIWLO_SEO, tiwloOrganizationSchema, tiwloWebsiteSchema } from '../components/Seo';
+import Seo, { TIWLO_SEO, createTiwloBreadcrumbSchema, tiwloOrganizationSchema, tiwloWebsiteSchema } from '../components/Seo';
 import SiteHeader from '../components/landing/SiteHeader';
 import SiteFooter from '../components/landing/SiteFooter';
 import { SEO_TOPIC_LINKS, SEO_TOPIC_PAGES, type SeoTopicKey, type SeoTopicPageData } from '../lib/seoTopicPages';
@@ -28,19 +28,19 @@ function createSchema(page: SeoTopicPageData) {
       isPartOf: { '@id': 'https://tiwlo.com/#website' },
       about: { '@id': 'https://tiwlo.com/#organization' },
       publisher: { '@id': 'https://tiwlo.com/#organization' },
+      breadcrumb: { '@id': `${canonical}#breadcrumb` },
       primaryImageOfPage: {
         '@type': 'ImageObject',
         url: TIWLO_SEO.logo
       }
     },
-    {
-      '@type': 'BreadcrumbList',
-      '@id': `${canonical}#breadcrumb`,
-      itemListElement: [
-        { '@type': 'ListItem', position: 1, name: 'Home', item: 'https://tiwlo.com/' },
-        { '@type': 'ListItem', position: 2, name: page.label, item: canonical }
-      ]
-    },
+    createTiwloBreadcrumbSchema(
+      [
+        { name: 'Home', item: '/' },
+        { name: page.label, item: page.slug }
+      ],
+      `${canonical}#breadcrumb`
+    ),
     {
       '@type': 'FAQPage',
       '@id': `${canonical}#faq`,

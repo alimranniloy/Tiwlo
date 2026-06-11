@@ -56,7 +56,7 @@
             "@id": "https://tiwlo.com/#organization",
             "name": "Tiwlo",
             "legalName": "Tiwlo Company",
-            "alternateName": ["Tiwlo Cloud", "Tiwlo Platform", "Tiwlo Operations Cloud", "Tiwlo Hosting", "Tiwlo tPanel"],
+            "alternateName": ["Tiwlo Cloud", "Tiwlo Platform", "Tiwlo Operations Cloud", "Tiwlo Hosting", "Tiwlo tPanel", "Tiwlo tFiber", "tFiber", "Tiwlo Pay", "tMail"],
             "url": "https://tiwlo.com/",
             "logo": {
               "@type": "ImageObject",
@@ -67,6 +67,24 @@
             },
             "image": "https://tiwlo.com/brand/logo.png",
             "foundingDate": "2020",
+            "foundingLocation": {
+              "@type": "Place",
+              "name": "Dhaka, Bangladesh",
+              "address": {
+                "@type": "PostalAddress",
+                "addressLocality": "Dhaka",
+                "addressRegion": "Dhaka",
+                "addressCountry": "BD"
+              }
+            },
+            "address": {
+              "@type": "PostalAddress",
+              "addressLocality": "Dhaka",
+              "addressRegion": "Dhaka",
+              "addressCountry": "BD"
+            },
+            "telephone": "+8801410014060",
+            "email": "support@tiwlo.com",
             "founder": {
               "@type": "Person",
               "@id": "https://tiwlo.com/#founder",
@@ -86,18 +104,37 @@
               {
                 "@type": "ContactPoint",
                 "contactType": "customer support",
+                "telephone": "+8801410014060",
                 "email": "support@tiwlo.com",
                 "url": "https://tiwlo.com/support",
-                "availableLanguage": ["en", "bn"]
+                "areaServed": ["BD", "GB", "Worldwide"],
+                "availableLanguage": ["English", "Bengali"]
               }
             ],
-            "areaServed": "Worldwide",
+            "location": [
+              {
+                "@type": "Place",
+                "name": "Dhaka, Bangladesh",
+                "address": {
+                  "@type": "PostalAddress",
+                  "addressLocality": "Dhaka",
+                  "addressRegion": "Dhaka",
+                  "addressCountry": "BD"
+                }
+              },
+              {
+                "@type": "Place",
+                "name": "United Kingdom"
+              }
+            ],
+            "areaServed": ["Bangladesh", "United Kingdom", "Worldwide"],
             "knowsAbout": [
               "Cloud hosting",
               "Bangladesh web hosting",
               "BDIX hosting planning",
               "Cloud VPS hosting",
               "tPanel hosting control panel",
+              "tFiber internet infrastructure",
               "WHMCS alternative",
               "Hosting client portal",
               "Ecommerce automation",
@@ -108,6 +145,85 @@
               "Payment operations",
               "Business automation"
             ],
+            "brand": [
+              { "@type": "Brand", "name": "Tiwlo" },
+              { "@type": "Brand", "name": "tPanel" },
+              { "@type": "Brand", "name": "tFiber" },
+              { "@type": "Brand", "name": "Tiwlo Pay" },
+              { "@type": "Brand", "name": "tMail" }
+            ],
+            "hasOfferCatalog": {
+              "@type": "OfferCatalog",
+              "name": "Tiwlo service catalog",
+              "itemListElement": [
+                {
+                  "@type": "Offer",
+                  "position": 1,
+                  "itemOffered": {
+                    "@type": "Service",
+                    "name": "Cloud hosting and VPS",
+                    "description": "Cloud hosting, VPS hosting, web hosting, DNS, SSL, and infrastructure management.",
+                    "provider": { "@id": "https://tiwlo.com/#organization" },
+                    "areaServed": ["Bangladesh", "United Kingdom", "Worldwide"]
+                  }
+                },
+                {
+                  "@type": "Offer",
+                  "position": 2,
+                  "itemOffered": {
+                    "@type": "Service",
+                    "name": "tPanel hosting operations",
+                    "description": "Hosting account provisioning, package limits, file management, databases, domains, and support workflows.",
+                    "provider": { "@id": "https://tiwlo.com/#organization" },
+                    "areaServed": ["Bangladesh", "United Kingdom", "Worldwide"]
+                  }
+                },
+                {
+                  "@type": "Offer",
+                  "position": 3,
+                  "itemOffered": {
+                    "@type": "Service",
+                    "name": "tFiber internet infrastructure",
+                    "description": "Broadband-style service records, subscriber billing, router context, and connectivity support workflows.",
+                    "provider": { "@id": "https://tiwlo.com/#organization" },
+                    "areaServed": ["Bangladesh", "United Kingdom", "Worldwide"]
+                  }
+                },
+                {
+                  "@type": "Offer",
+                  "position": 4,
+                  "itemOffered": {
+                    "@type": "Service",
+                    "name": "Ecommerce and Cloud Store",
+                    "description": "Storefronts, products, orders, customers, checkout, and business automation.",
+                    "provider": { "@id": "https://tiwlo.com/#organization" },
+                    "areaServed": ["Bangladesh", "United Kingdom", "Worldwide"]
+                  }
+                },
+                {
+                  "@type": "Offer",
+                  "position": 5,
+                  "itemOffered": {
+                    "@type": "Service",
+                    "name": "Tiwlo Pay and billing",
+                    "description": "Digital payment workflows, invoices, merchant verification, credits, and payment review.",
+                    "provider": { "@id": "https://tiwlo.com/#organization" },
+                    "areaServed": ["Bangladesh", "United Kingdom", "Worldwide"]
+                  }
+                },
+                {
+                  "@type": "Offer",
+                  "position": 6,
+                  "itemOffered": {
+                    "@type": "Service",
+                    "name": "ISP billing and support",
+                    "description": "Subscriber management, packages, invoices, tickets, and account support for service providers.",
+                    "provider": { "@id": "https://tiwlo.com/#organization" },
+                    "areaServed": ["Bangladesh", "United Kingdom", "Worldwide"]
+                  }
+                }
+              ]
+            },
             "sameAs": [
               "https://x.com/tiwlopx",
               "https://www.facebook.com/tiwlopx",
@@ -144,7 +260,10 @@
             "inLanguage": "en",
             "potentialAction": {
               "@type": "SearchAction",
-              "target": "https://tiwlo.com/documentation?q={search_term_string}",
+              "target": {
+                "@type": "EntryPoint",
+                "urlTemplate": "https://tiwlo.com/documentation?q={search_term_string}"
+              },
               "query-input": "required name=search_term_string"
             }
           },
@@ -165,6 +284,70 @@
               "priceCurrency": "USD",
               "url": "https://tiwlo.com/pricing"
             }
+          },
+          {
+            "@type": "WebPage",
+            "@id": "https://tiwlo.com/#webpage",
+            "url": "https://tiwlo.com/",
+            "name": "Tiwlo - Operations Cloud",
+            "description": "Tiwlo is a technology company for cloud hosting, web hosting, VPS, tPanel software, AI tools, business automation, ecommerce services, digital payments, tFiber internet infrastructure, domains, DNS, SSL, client dashboards, and infrastructure management.",
+            "isPartOf": { "@id": "https://tiwlo.com/#website" },
+            "about": { "@id": "https://tiwlo.com/#organization" },
+            "breadcrumb": { "@id": "https://tiwlo.com/#breadcrumb" },
+            "primaryImageOfPage": {
+              "@type": "ImageObject",
+              "url": "https://tiwlo.com/brand/logo.png"
+            }
+          },
+          {
+            "@type": "BreadcrumbList",
+            "@id": "https://tiwlo.com/#breadcrumb",
+            "itemListElement": [
+              {
+                "@type": "ListItem",
+                "position": 1,
+                "name": "Home",
+                "item": "https://tiwlo.com/"
+              }
+            ]
+          },
+          {
+            "@type": "FAQPage",
+            "@id": "https://tiwlo.com/#faq",
+            "mainEntity": [
+              {
+                "@type": "Question",
+                "name": "What is Tiwlo used for?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Tiwlo connects cloud hosting, VPS, tPanel hosting operations, ecommerce, ISP billing, domains, DNS, SSL, payments, support, and account security in one platform."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Does Tiwlo include tFiber workflows?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Yes. Tiwlo content includes tFiber and ISP-style infrastructure workflows for broadband service records, subscriber billing, router context, and support visibility."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Where is Tiwlo based?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Tiwlo lists Dhaka, Bangladesh as its public business address context and serves Bangladesh, the United Kingdom, and worldwide technology customers."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "How can customers contact Tiwlo?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Customers can contact Tiwlo through support@tiwlo.com, +8801410014060, or the support page at tiwlo.com/support."
+                }
+              }
+            ]
           }
         ]
       }

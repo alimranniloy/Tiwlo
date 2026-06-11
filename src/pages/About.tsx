@@ -1,7 +1,7 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRight, Building2, Cloud, Globe2, MapPin, Network, ShieldCheck, Store } from 'lucide-react';
-import Seo, { TIWLO_SEO, TIWLO_SOCIAL_LINKS, tiwloOrganizationSchema, tiwloWebsiteSchema } from '../components/Seo';
+import Seo, { TIWLO_SEO, TIWLO_SOCIAL_LINKS, createTiwloBreadcrumbSchema, tiwloOrganizationSchema, tiwloWebsiteSchema } from '../components/Seo';
 import SiteHeader from '../components/landing/SiteHeader';
 import SiteFooter from '../components/landing/SiteFooter';
 
@@ -43,11 +43,19 @@ const aboutSchema = [
     description: 'Learn about Tiwlo, a technology company for cloud hosting, web hosting, VPS, tPanel software, AI tools, business automation, ecommerce services, digital payments, tFiber internet infrastructure, and digital services.',
     isPartOf: { '@id': 'https://tiwlo.com/#website' },
     about: { '@id': 'https://tiwlo.com/#organization' },
+    breadcrumb: { '@id': 'https://tiwlo.com/about#breadcrumb' },
     primaryImageOfPage: {
       '@type': 'ImageObject',
       url: TIWLO_SEO.logo
     }
   },
+  createTiwloBreadcrumbSchema(
+    [
+      { name: 'Home', item: '/' },
+      { name: 'About Tiwlo', item: '/about' }
+    ],
+    'https://tiwlo.com/about#breadcrumb'
+  ),
   {
     '@type': 'Person',
     '@id': 'https://tiwlo.com/#founder',
