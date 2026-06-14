@@ -180,7 +180,7 @@ export default function StoreManagement() {
 
   const configItems = [
     { title: 'Store Settings', icon: Settings, path: adminPath },
-    { title: 'API & Webhooks', icon: ShoppingBag, path: '/api' },
+    { title: 'API & Webhooks', icon: ShoppingBag, path: '/api-tokens' },
     { title: 'Support Tickets', icon: MessageSquare, path: '/support' },
     { title: 'Help Center', icon: HelpCircle, path: '/documentation' }
   ];

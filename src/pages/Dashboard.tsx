@@ -260,7 +260,7 @@ function QuickAccess() {
     { label: 'Create Droplet', icon: DropletIcon, link: '/droplets/create', color: 'text-blue-600', bg: 'bg-blue-50' },
     { label: 'Marketplace', icon: ShoppingBag, link: '/marketplace', color: 'text-pink-600', bg: 'bg-pink-50' },
     { label: 'DNS Settings', icon: Globe, link: '/dns', color: 'text-violet-600', bg: 'bg-violet-50' },
-    { label: 'API Access', icon: Braces, link: '/api', color: 'text-emerald-600', bg: 'bg-emerald-50' }
+    { label: 'API Access', icon: Braces, link: '/api-tokens', color: 'text-emerald-600', bg: 'bg-emerald-50' }
   ];
 
   return (

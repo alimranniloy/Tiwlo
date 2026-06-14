@@ -303,6 +303,7 @@ function ConsoleContent({
               <Route path="/commerce" element={<CommercePage />} />
               <Route path="/partners" element={<MarketingInfoPage variant="partners" />} />
               <Route path="/pricing" element={<MarketingInfoPage variant="pricing" />} />
+              <Route path="/developers" element={<MarketingInfoPage variant="developers" />} />
               <Route path="/broadband" element={<BroadbandPage />} />
               <Route path="/documentation" element={<DocumentationPage />} />
               <Route path="/team" element={<TeamPage user={user} />} />
@@ -311,7 +312,8 @@ function ConsoleContent({
               <Route path="/id-verification" element={<IdentityVerification user={user} onLogout={handleLogout} />} />
               <Route path="/tpanel" element={serviceRoute(SERVICE_MODULE_KEYS.tpanel, <TPanel />, '/management/tpanel')} />
               <Route path="/pay/:slug" element={<TiwloPayCheckout />} />
-              <Route path="/api" element={<APIPage />} />
+              <Route path="/api-tokens" element={<APIPage />} />
+              <Route path="/api" element={<Navigate to="/api-tokens" replace />} />
               <Route path="/droplets/create" element={<CreateDroplet />} />
               <Route path="/settings" element={<SettingsPage user={user} setUser={setUser} />} />
               <Route path="/verify-email" element={<VerifyEmail onLogin={(nextUser) => {

@@ -30,6 +30,37 @@ import {
   Cpu as CpuIcon
 } from 'lucide-react';
 import { useCurrency } from '../lib/useCurrency';
+import Seo, { createTiwloBreadcrumbSchema, tiwloOrganizationSchema, tiwloWebsiteSchema } from '../components/Seo';
+
+const documentationDescription =
+  'Read Tiwlo documentation for cloud hosting, droplets, networking, DNS, storage, databases, monitoring, billing, API usage, and security workflows.';
+
+const documentationSchema = [
+  tiwloOrganizationSchema,
+  tiwloWebsiteSchema,
+  {
+    '@type': 'TechArticle',
+    '@id': 'https://tiwlo.com/documentation#webpage',
+    url: 'https://tiwlo.com/documentation',
+    name: 'Tiwlo Documentation',
+    headline: 'Tiwlo cloud hosting and platform documentation',
+    description: documentationDescription,
+    keywords: 'Tiwlo documentation, cloud hosting docs, VPS documentation, DNS guide, API documentation, hosting support docs',
+    dateModified: '2026-06-14',
+    inLanguage: 'en',
+    isPartOf: { '@id': 'https://tiwlo.com/#website' },
+    publisher: { '@id': 'https://tiwlo.com/#organization' },
+    about: { '@id': 'https://tiwlo.com/#organization' },
+    breadcrumb: { '@id': 'https://tiwlo.com/documentation#breadcrumb' }
+  },
+  createTiwloBreadcrumbSchema(
+    [
+      { name: 'Home', item: '/' },
+      { name: 'Documentation', item: '/documentation' }
+    ],
+    'https://tiwlo.com/documentation#breadcrumb'
+  )
+];
 
 export default function Documentation() {
   const { money } = useCurrency({ scope: 'platform', scopeId: 'docs' });
@@ -490,6 +521,14 @@ export default function Documentation() {
   const currentSection = sections.find(s => s.id === activeSection) || sections[0];
 
   return (
+    <>
+    <Seo
+      title="Documentation - Tiwlo Cloud Hosting, API, DNS, and Billing Guides"
+      description={documentationDescription}
+      canonicalPath="/documentation"
+      keywords={['Tiwlo documentation', 'cloud hosting docs', 'VPS documentation', 'DNS guide', 'API documentation', 'hosting support docs']}
+      schema={documentationSchema}
+    />
     <div className="mx-auto max-w-[1220px] space-y-6 pb-32">
       {/* Header with Search */}
       <div className="relative rounded-md border-b border-white/5 bg-[#031b4e] px-6 py-10 text-white shadow-[0_12px_28px_rgba(3,27,78,0.15)] md:px-8">
@@ -601,5 +640,6 @@ export default function Documentation() {
         </div>
       </div>
     </div>
+    </>
   );
 }

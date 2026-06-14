@@ -80,6 +80,10 @@ app.get('/health', (_req, res) => {
   res.json({ ok: true, service: 'tiwlo-x-backend' });
 });
 
+app.get('/api', (_req, res) => {
+  res.redirect(301, '/developers');
+});
+
 const mailboxAddress = (value = '') => String(value || '').trim().toLowerCase();
 
 const mailboxInitialSvg = (address = '') => {

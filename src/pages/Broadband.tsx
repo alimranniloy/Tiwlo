@@ -2,6 +2,7 @@ import React from 'react';
 import Navbar from '../components/landing/Navbar';
 import Footer from '../components/landing/Footer';
 import { motion } from 'framer-motion';
+import Seo, { createTiwloBreadcrumbSchema, tiwloOrganizationSchema, tiwloWebsiteSchema } from '../components/Seo';
 import { 
   Wifi, 
   Satellite, 
@@ -42,9 +43,46 @@ const broadbandSolutions = [
   }
 ];
 
+const broadbandDescription =
+  'Tiwlo Broadband and tFiber workflows help operators manage connectivity services, subscriber records, routers, ISP billing, support, and network operations.';
+
+const broadbandSchema = [
+  tiwloOrganizationSchema,
+  tiwloWebsiteSchema,
+  {
+    '@type': 'WebPage',
+    '@id': 'https://tiwlo.com/broadband#webpage',
+    url: 'https://tiwlo.com/broadband',
+    name: 'Broadband - Tiwlo',
+    headline: 'Tiwlo Broadband and tFiber ISP operations',
+    description: broadbandDescription,
+    keywords: 'Tiwlo broadband, tFiber, ISP billing, broadband billing, router management, subscriber management, connectivity operations',
+    dateModified: '2026-06-14',
+    inLanguage: 'en',
+    isPartOf: { '@id': 'https://tiwlo.com/#website' },
+    about: { '@id': 'https://tiwlo.com/#organization' },
+    publisher: { '@id': 'https://tiwlo.com/#organization' },
+    breadcrumb: { '@id': 'https://tiwlo.com/broadband#breadcrumb' }
+  },
+  createTiwloBreadcrumbSchema(
+    [
+      { name: 'Home', item: '/' },
+      { name: 'Broadband', item: '/broadband' }
+    ],
+    'https://tiwlo.com/broadband#breadcrumb'
+  )
+];
+
 export default function BroadbandPage() {
   return (
     <div className="min-h-screen bg-white text-gray-900 font-sans selection:bg-blue-100">
+      <Seo
+        title="Broadband - Tiwlo tFiber ISP Billing and Connectivity Operations"
+        description={broadbandDescription}
+        canonicalPath="/broadband"
+        keywords={['Tiwlo broadband', 'tFiber', 'ISP billing', 'broadband billing', 'router management', 'subscriber management']}
+        schema={broadbandSchema}
+      />
       <Navbar />
       
       <main>

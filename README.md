@@ -211,6 +211,14 @@ server {
         proxy_pass http://127.0.0.1:4000;
     }
 
+    location = /api {
+        return 301 /developers;
+    }
+
+    location /api/ {
+        proxy_pass http://127.0.0.1:4000;
+    }
+
     location /automation {
         proxy_pass http://127.0.0.1:4000;
     }

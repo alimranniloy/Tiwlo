@@ -60,8 +60,14 @@ function createSchema(page: SeoTopicPageData) {
       itemListElement: page.featureCards.map((feature, index) => ({
         '@type': 'ListItem',
         position: index + 1,
-        name: feature.title,
-        description: feature.body
+        item: {
+          '@type': 'Service',
+          '@id': `${canonical}#feature-${index + 1}`,
+          name: feature.title,
+          description: feature.body,
+          provider: { '@id': 'https://tiwlo.com/#organization' },
+          areaServed: ['Bangladesh', 'United Kingdom', 'Worldwide']
+        }
       }))
     }
   ];

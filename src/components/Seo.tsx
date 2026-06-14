@@ -36,12 +36,36 @@ export const tiwloPostalAddressSchema = {
 };
 
 const tiwloServiceOffers = [
-  ['Cloud hosting and VPS', 'Cloud hosting, VPS hosting, web hosting, DNS, SSL, and infrastructure management.'],
-  ['tPanel hosting operations', 'Hosting account provisioning, package limits, file management, databases, domains, and support workflows.'],
-  ['tFiber internet infrastructure', 'Broadband-style service records, subscriber billing, router context, and connectivity support workflows.'],
-  ['Ecommerce and Cloud Store', 'Storefronts, products, orders, customers, checkout, and business automation.'],
-  ['Tiwlo Pay and billing', 'Digital payment workflows, invoices, merchant verification, credits, and payment review.'],
-  ['ISP billing and support', 'Subscriber management, packages, invoices, tickets, and account support for service providers.']
+  {
+    name: 'Cloud hosting and VPS',
+    description: 'Cloud hosting, VPS hosting, web hosting, DNS, SSL, and infrastructure management.',
+    url: 'https://tiwlo.com/products'
+  },
+  {
+    name: 'tPanel hosting operations',
+    description: 'Hosting account provisioning, package limits, file management, databases, domains, and support workflows.',
+    url: 'https://tiwlo.com/tpanel-hosting'
+  },
+  {
+    name: 'tFiber internet infrastructure',
+    description: 'Broadband-style service records, subscriber billing, router context, and connectivity support workflows.',
+    url: 'https://tiwlo.com/broadband'
+  },
+  {
+    name: 'Ecommerce and Cloud Store',
+    description: 'Storefronts, products, orders, customers, checkout, and business automation.',
+    url: 'https://tiwlo.com/commerce'
+  },
+  {
+    name: 'Tiwlo Pay and billing',
+    description: 'Digital payment workflows, invoices, merchant verification, credits, and payment review.',
+    url: 'https://tiwlo.com/pricing'
+  },
+  {
+    name: 'ISP billing and support',
+    description: 'Subscriber management, packages, invoices, tickets, and account support for service providers.',
+    url: 'https://tiwlo.com/services'
+  }
 ];
 
 export const tiwloOrganizationSchema = {
@@ -127,16 +151,25 @@ export const tiwloOrganizationSchema = {
   ],
   hasOfferCatalog: {
     '@type': 'OfferCatalog',
+    '@id': 'https://tiwlo.com/#service-catalog',
     name: 'Tiwlo service catalog',
-    itemListElement: tiwloServiceOffers.map(([name, description], index) => ({
-      '@type': 'Offer',
+    itemListElement: tiwloServiceOffers.map((service, index) => ({
+      '@type': 'ListItem',
       position: index + 1,
-      itemOffered: {
-        '@type': 'Service',
-        name,
-        description,
-        provider: { '@id': 'https://tiwlo.com/#organization' },
-        areaServed: ['Bangladesh', 'United Kingdom', 'Worldwide']
+      item: {
+        '@type': 'Offer',
+        '@id': `${service.url}#offer`,
+        name: service.name,
+        url: service.url,
+        itemOffered: {
+          '@type': 'Service',
+          '@id': `${service.url}#service`,
+          name: service.name,
+          description: service.description,
+          provider: { '@id': 'https://tiwlo.com/#organization' },
+          serviceType: service.name,
+          areaServed: ['Bangladesh', 'United Kingdom', 'Worldwide']
+        }
       }
     }))
   },
@@ -189,11 +222,14 @@ type SeoProps = {
   canonicalPath?: string;
   image?: string;
   keywords?: string[];
+  robots?: string;
   schema?: Record<string, unknown> | Record<string, unknown>[];
 };
 
 const setMeta = (selector: string, attribute: 'content' | 'href', value: string, create?: () => HTMLElement) => {
-  let node = document.head.querySelector(selector) as HTMLElement | null;
+  const nodes = Array.from(document.head.querySelectorAll(selector)) as HTMLElement[];
+  let node = nodes[0] || null;
+  nodes.slice(1).forEach((duplicate) => duplicate.remove());
   if (!node && create) {
     node = create();
     document.head.appendChild(node);
@@ -201,10 +237,17 @@ const setMeta = (selector: string, attribute: 'content' | 'href', value: string,
   node?.setAttribute(attribute, value);
 };
 
-export default function Seo({ title, description, canonicalPath = '/', image = TIWLO_SEO.logo, keywords, schema }: SeoProps) {
+const DEFAULT_ROBOTS = 'index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1';
+
+export default function Seo({ title, description, canonicalPath = '/', image = TIWLO_SEO.logo, keywords, robots = DEFAULT_ROBOTS, schema }: SeoProps) {
   React.useEffect(() => {
     const canonical = new URL(canonicalPath, TIWLO_SEO.url).toString();
     document.title = title;
+    setMeta('meta[name="robots"]', 'content', robots, () => {
+      const meta = document.createElement('meta');
+      meta.setAttribute('name', 'robots');
+      return meta;
+    });
     setMeta('meta[name="description"]', 'content', description, () => {
       const meta = document.createElement('meta');
       meta.setAttribute('name', 'description');
@@ -246,7 +289,7 @@ export default function Seo({ title, description, canonicalPath = '/', image = T
     return () => {
       document.getElementById(id)?.remove();
     };
-  }, [canonicalPath, description, image, keywords, schema, title]);
+  }, [canonicalPath, description, image, keywords, robots, schema, title]);
 
   return null;
 }

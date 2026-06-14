@@ -5,7 +5,7 @@ import { ChevronDown } from 'lucide-react';
 const navLinks = [
   { label: 'Products', to: '/products', menu: true },
   { label: 'Solutions', to: '/services', menu: true },
-  { label: 'Developers', to: '/api', menu: true },
+  { label: 'Developers', to: '/developers', menu: true },
   { label: 'Partners', to: '/partners', menu: true },
   { label: 'About', to: '/about' },
   { label: 'Pricing', to: '/pricing' }

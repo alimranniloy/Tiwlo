@@ -1,5 +1,5 @@
 import { lazy, Suspense } from 'react';
-import { Route, Routes } from 'react-router-dom';
+import { Navigate, Route, Routes } from 'react-router-dom';
 import type { User } from '../types';
 import TiwloRouteLoader from '../components/TiwloRouteLoader';
 
@@ -33,7 +33,8 @@ export default function PublicRoutes({ onLogin }: { onLogin: (user: User) => voi
       <Routes>
         <Route path="/services" element={<MarketingInfoPage variant="solutions" />} />
         <Route path="/products" element={<MarketingInfoPage variant="products" />} />
-        <Route path="/api" element={<MarketingInfoPage variant="developers" />} />
+        <Route path="/developers" element={<MarketingInfoPage variant="developers" />} />
+        <Route path="/api" element={<Navigate to="/developers" replace />} />
         <Route path="/partners" element={<MarketingInfoPage variant="partners" />} />
         <Route path="/pricing" element={<MarketingInfoPage variant="pricing" />} />
         <Route path="/support" element={<MarketingInfoPage variant="support" />} />

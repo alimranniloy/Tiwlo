@@ -96,7 +96,7 @@ export default function SettingsPage({ user, setUser }: SettingsProps) {
   const navSections = [
     { title: 'Team Access', description: 'Review account access options', icon: Users, path: '/team', color: 'text-blue-600', bg: 'bg-blue-50' },
     { title: 'Billing & Invoices', description: 'Payments and subscriptions', icon: CreditCard, path: '/billing', color: 'text-green-600', bg: 'bg-green-50' },
-    { title: 'API & Integration', description: 'Tokens and webhooks', icon: Key, path: '/api', color: 'text-purple-600', bg: 'bg-purple-50' }
+    { title: 'API & Integration', description: 'Tokens and webhooks', icon: Key, path: '/api-tokens', color: 'text-purple-600', bg: 'bg-purple-50' }
   ];
 
   const preferenceSections = [

@@ -620,7 +620,11 @@ server {
         proxy_pass http://127.0.0.1:${BACKEND_PORT};
     }
 
-    location /api {
+    location = /api {
+        return 301 /developers;
+    }
+
+    location /api/ {
         proxy_pass http://127.0.0.1:${BACKEND_PORT};
     }
 

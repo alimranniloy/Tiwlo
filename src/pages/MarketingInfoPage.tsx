@@ -27,6 +27,7 @@ import {
   Wifi,
   type LucideIcon
 } from 'lucide-react';
+import Seo, { createTiwloBreadcrumbSchema, tiwloOrganizationSchema, tiwloWebsiteSchema } from '../components/Seo';
 
 type MarketingVariant = 'products' | 'solutions' | 'developers' | 'partners' | 'pricing' | 'support';
 
@@ -118,10 +119,76 @@ const pageData: Record<MarketingVariant, {
 const navLinks = [
   { label: 'Products', to: '/products', menu: true },
   { label: 'Solutions', to: '/services', menu: true },
-  { label: 'Developers', to: '/api', menu: true },
+  { label: 'Developers', to: '/developers', menu: true },
   { label: 'Partners', to: '/partners', menu: true },
   { label: 'Pricing', to: '/pricing' }
 ];
+
+const canonicalPathByVariant: Record<MarketingVariant, string> = {
+  products: '/products',
+  solutions: '/services',
+  developers: '/developers',
+  partners: '/partners',
+  pricing: '/pricing',
+  support: '/support'
+};
+
+const keywordsByVariant: Record<MarketingVariant, string[]> = {
+  products: ['Tiwlo products', 'cloud hosting products', 'tPanel hosting', 'Tiwlo Pay', 'Cloud Store', 'ISP billing'],
+  solutions: ['Tiwlo solutions', 'hosting operations', 'business automation', 'cloud support', 'ecommerce operations', 'ISP billing'],
+  developers: ['Tiwlo developers', 'Tiwlo API', 'cloud API', 'hosting automation API', 'developer tools', 'webhooks'],
+  partners: ['Tiwlo partners', 'hosting partner', 'ISP partner', 'commerce partner', 'payment partner', 'support partner'],
+  pricing: ['Tiwlo pricing', 'cloud hosting pricing', 'hosting packages', 'Tiwlo Pay pricing', 'module pricing', 'billing credits'],
+  support: ['Tiwlo support', 'hosting support', 'cloud support', 'billing help', 'identity review', 'Discord tickets']
+};
+
+function createMarketingSchema(variant: MarketingVariant, data: (typeof pageData)[MarketingVariant]) {
+  const canonicalPath = canonicalPathByVariant[variant];
+  const canonical = `https://tiwlo.com${canonicalPath}`;
+  return [
+    tiwloOrganizationSchema,
+    tiwloWebsiteSchema,
+    {
+      '@type': 'WebPage',
+      '@id': `${canonical}#webpage`,
+      url: canonical,
+      name: `${data.eyebrow} - Tiwlo`,
+      headline: data.title,
+      description: data.copy,
+      keywords: keywordsByVariant[variant].join(', '),
+      dateModified: '2026-06-14',
+      inLanguage: 'en',
+      isPartOf: { '@id': 'https://tiwlo.com/#website' },
+      about: { '@id': 'https://tiwlo.com/#organization' },
+      publisher: { '@id': 'https://tiwlo.com/#organization' },
+      breadcrumb: { '@id': `${canonical}#breadcrumb` }
+    },
+    createTiwloBreadcrumbSchema(
+      [
+        { name: 'Home', item: '/' },
+        { name: data.eyebrow, item: canonicalPath }
+      ],
+      `${canonical}#breadcrumb`
+    ),
+    {
+      '@type': 'ItemList',
+      '@id': `${canonical}#modules`,
+      name: `${data.eyebrow} modules`,
+      itemListElement: data.cards.map((card, index) => ({
+        '@type': 'ListItem',
+        position: index + 1,
+        item: {
+          '@type': 'Service',
+          '@id': `${canonical}#module-${index + 1}`,
+          name: card.title,
+          description: card.body,
+          provider: { '@id': 'https://tiwlo.com/#organization' },
+          areaServed: ['Bangladesh', 'United Kingdom', 'Worldwide']
+        }
+      }))
+    }
+  ];
+}
 
 function Header() {
   const navigate = useNavigate();
@@ -198,9 +265,18 @@ export default function MarketingInfoPage({ variant }: MarketingInfoPageProps) {
   const data = pageData[variant];
   const navigate = useNavigate();
   const PageIcon = data.icon;
+  const canonicalPath = canonicalPathByVariant[variant];
+  const schema = React.useMemo(() => createMarketingSchema(variant, data), [data, variant]);
 
   return (
     <div className="min-h-screen bg-[#020707] text-white selection:bg-[#7cf4ff] selection:text-black">
+      <Seo
+        title={`${data.eyebrow} - Tiwlo`}
+        description={data.copy}
+        canonicalPath={canonicalPath}
+        keywords={keywordsByVariant[variant]}
+        schema={schema}
+      />
       <Header />
       <main>
         <section className="relative overflow-hidden px-4 py-16 md:px-8 md:py-24">

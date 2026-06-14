@@ -13,7 +13,7 @@ import {
   TerminalSquare,
   type LucideIcon
 } from 'lucide-react';
-import Seo, { TIWLO_SEO, TIWLO_SOCIAL_LINKS, createTiwloBreadcrumbSchema, tiwloOrganizationSchema, tiwloWebsiteSchema } from '../components/Seo';
+import Seo, { TIWLO_SEO, TIWLO_SOCIAL_LINKS, tiwloOrganizationSchema, tiwloWebsiteSchema } from '../components/Seo';
 import { SEO_TOPIC_LINKS } from '../lib/seoTopicPages';
 import SharedSiteHeader from '../components/landing/SiteHeader';
 import SharedSiteFooter from '../components/landing/SiteFooter';
@@ -49,7 +49,7 @@ const topLinks = [
 const navLinks = [
   { label: 'Products', to: '/products', menu: true },
   { label: 'Solutions', to: '/services', menu: true },
-  { label: 'Developers', to: '/api', menu: true },
+  { label: 'Developers', to: '/developers', menu: true },
   { label: 'Partners', to: '/partners', menu: true },
   { label: 'About', to: '/about' },
   { label: 'Pricing', to: '/pricing' }
@@ -204,7 +204,7 @@ const footerColumns = [
     title: 'Resources',
     links: [
       { label: 'Documentation', to: '/documentation' },
-      { label: 'API', to: '/api' },
+      { label: 'Developers', to: '/developers' },
       { label: '$100 Free Credit', to: '/hosting-free-credit' },
       { label: 'Hosting Features', to: '/hosting-features' },
       { label: 'Support', to: '/support' },
@@ -227,23 +227,16 @@ const landingSchema = [
   tiwloOrganizationSchema,
   tiwloWebsiteSchema,
   {
-    '@type': 'SoftwareApplication',
-    '@id': 'https://tiwlo.com/#software',
-    name: 'Tiwlo',
-    applicationCategory: 'BusinessApplication',
-    operatingSystem: 'Web',
+    '@type': 'Service',
+    '@id': 'https://tiwlo.com/#platform-service',
+    name: 'Tiwlo Operations Cloud',
+    serviceType: 'Cloud hosting, tPanel, ecommerce, ISP billing, payments, and business automation platform',
     url: TIWLO_SEO.url,
-    image: TIWLO_SEO.logo,
     description: TIWLO_SEO.description,
-    creator: { '@id': 'https://tiwlo.com/#organization' },
-    publisher: { '@id': 'https://tiwlo.com/#organization' },
-    offers: {
-      '@type': 'Offer',
-      availability: 'https://schema.org/InStock',
-      priceCurrency: 'USD',
-      url: 'https://tiwlo.com/pricing'
-    },
-    featureList: [
+    provider: { '@id': 'https://tiwlo.com/#organization' },
+    areaServed: ['Bangladesh', 'United Kingdom', 'Worldwide'],
+    hasOfferCatalog: { '@id': 'https://tiwlo.com/#service-catalog' },
+    serviceOutput: [
       'Cloud hosting',
       'tPanel hosting accounts',
       'Ecommerce storefronts',
@@ -263,13 +256,11 @@ const landingSchema = [
     description: TIWLO_SEO.description,
     isPartOf: { '@id': 'https://tiwlo.com/#website' },
     about: { '@id': 'https://tiwlo.com/#organization' },
-    breadcrumb: { '@id': 'https://tiwlo.com/#breadcrumb' },
     primaryImageOfPage: {
       '@type': 'ImageObject',
       url: TIWLO_SEO.logo
     }
   },
-  createTiwloBreadcrumbSchema([{ name: 'Home', item: '/' }], 'https://tiwlo.com/#breadcrumb'),
   {
     '@type': 'FAQPage',
     '@id': 'https://tiwlo.com/#faq',

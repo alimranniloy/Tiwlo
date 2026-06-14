@@ -188,7 +188,7 @@ export default function Sidebar({ user, isOpen, setIsOpen, onLogout }: SidebarPr
       items: [
         { name: 'Documentation', icon: Book, path: '/documentation' },
         { name: 'Marketplace', icon: ShoppingBag, path: '/marketplace' },
-        { name: 'API', icon: Terminal, path: isAdminUser ? '/management/api' : '/api' },
+        { name: 'API', icon: Terminal, path: isAdminUser ? '/management/api' : '/api-tokens' },
         ...(isAdminUser ? [
           { name: 'Backup', icon: Archive, path: '/management/backup' },
           { name: 'SSL', icon: Lock, path: '/management/ssl' },

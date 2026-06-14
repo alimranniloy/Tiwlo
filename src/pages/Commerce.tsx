@@ -2,6 +2,7 @@ import React from 'react';
 import Navbar from '../components/landing/Navbar';
 import Footer from '../components/landing/Footer';
 import { motion } from 'framer-motion';
+import Seo, { createTiwloBreadcrumbSchema, tiwloOrganizationSchema, tiwloWebsiteSchema } from '../components/Seo';
 import { 
   ShoppingBag, 
   CreditCard, 
@@ -42,9 +43,46 @@ const commerceFeatures = [
   }
 ];
 
+const commerceDescription =
+  'Tiwlo Commerce helps teams launch storefronts, products, orders, customers, checkout, inventory, analytics, and payment workflows from one connected cloud platform.';
+
+const commerceSchema = [
+  tiwloOrganizationSchema,
+  tiwloWebsiteSchema,
+  {
+    '@type': 'WebPage',
+    '@id': 'https://tiwlo.com/commerce#webpage',
+    url: 'https://tiwlo.com/commerce',
+    name: 'Commerce - Tiwlo',
+    headline: 'Tiwlo Commerce and Cloud Store',
+    description: commerceDescription,
+    keywords: 'Tiwlo commerce, Cloud Store, ecommerce platform, storefront builder, ecommerce checkout, inventory management, Tiwlo Pay',
+    dateModified: '2026-06-14',
+    inLanguage: 'en',
+    isPartOf: { '@id': 'https://tiwlo.com/#website' },
+    about: { '@id': 'https://tiwlo.com/#organization' },
+    publisher: { '@id': 'https://tiwlo.com/#organization' },
+    breadcrumb: { '@id': 'https://tiwlo.com/commerce#breadcrumb' }
+  },
+  createTiwloBreadcrumbSchema(
+    [
+      { name: 'Home', item: '/' },
+      { name: 'Commerce', item: '/commerce' }
+    ],
+    'https://tiwlo.com/commerce#breadcrumb'
+  )
+];
+
 export default function CommercePage() {
   return (
     <div className="min-h-screen bg-white text-gray-900 font-sans selection:bg-indigo-100">
+      <Seo
+        title="Commerce - Tiwlo Cloud Store, Checkout, Inventory, and Payments"
+        description={commerceDescription}
+        canonicalPath="/commerce"
+        keywords={['Tiwlo commerce', 'Cloud Store', 'ecommerce platform', 'storefront builder', 'Tiwlo Pay', 'inventory management']}
+        schema={commerceSchema}
+      />
       <Navbar />
       
       <main>
