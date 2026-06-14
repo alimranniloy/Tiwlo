@@ -161,6 +161,71 @@ const seoRoutes = {
   }
 };
 
+const organizationSameAs = [
+  'https://x.com/tiwlopx',
+  'https://www.facebook.com/tiwlopx',
+  'https://www.instagram.com/tiwlopx',
+  'https://www.linkedin.com/company/tiwlopx',
+  'https://www.youtube.com/@tiwlopx',
+  'https://github.com/tiwlopx',
+  'https://www.tiktok.com/@tiwlopx'
+];
+
+const coreOrganizationSchema = {
+  '@type': 'Organization',
+  '@id': 'https://tiwlo.com/#organization',
+  name: 'Tiwlo',
+  legalName: 'Tiwlo Company',
+  alternateName: ['Tiwlo Cloud', 'Tiwlo Platform', 'Tiwlo Hosting', 'Tiwlo tPanel', 'Tiwlo tFiber', 'Tiwlo Pay', 'tMail'],
+  description: 'Tiwlo is a technology company for cloud hosting, web hosting, VPS, tPanel software, business automation, ecommerce services, digital payments, tFiber internet infrastructure, domains, DNS, SSL, client dashboards, and infrastructure management.',
+  url: 'https://tiwlo.com/',
+  logo: {
+    '@type': 'ImageObject',
+    '@id': 'https://tiwlo.com/#logo',
+    url: 'https://tiwlo.com/brand/logo.png',
+    contentUrl: 'https://tiwlo.com/brand/logo.png',
+    width: 4688,
+    height: 1563,
+    caption: 'Tiwlo logo'
+  },
+  image: 'https://tiwlo.com/brand/logo.png',
+  foundingDate: '2020',
+  address: {
+    '@type': 'PostalAddress',
+    addressLocality: 'Dhaka',
+    addressRegion: 'Dhaka',
+    addressCountry: 'BD'
+  },
+  telephone: '+8801410014060',
+  email: 'support@tiwlo.com',
+  contactPoint: {
+    '@type': 'ContactPoint',
+    contactType: 'customer support',
+    telephone: '+8801410014060',
+    email: 'support@tiwlo.com',
+    url: 'https://tiwlo.com/support',
+    areaServed: ['BD', 'GB', 'Worldwide'],
+    availableLanguage: ['English', 'Bengali']
+  },
+  founder: {
+    '@type': 'Person',
+    '@id': 'https://tiwlo.com/#founder',
+    name: 'Al Imran Niloy',
+    url: 'https://tiwlo.com/about'
+  },
+  sameAs: organizationSameAs
+};
+
+const coreWebsiteSchema = {
+  '@type': 'WebSite',
+  '@id': 'https://tiwlo.com/#website',
+  name: 'Tiwlo',
+  alternateName: ['Tiwlo Cloud', 'Tiwlo Hosting', 'Tiwlo Platform'],
+  url: 'https://tiwlo.com/',
+  publisher: { '@id': 'https://tiwlo.com/#organization' },
+  inLanguage: 'en'
+};
+
 const privateSpaExactPaths = new Set([
   '/api-tokens',
   '/dashboard',
@@ -230,6 +295,53 @@ const replaceOrInsertHeadTag = (html, pattern, tag) => {
 
 const readIndexHtml = () => readFileSync(join(distDir, 'index.html'), 'utf8');
 
+const routeDisplayName = (route) => String(route?.title || 'Tiwlo').split(' - ')[0] || 'Tiwlo';
+
+const buildPublicPageSchema = (pathname, route) => {
+  const canonical = new URL(pathname, siteOrigin).toString();
+  const pageSchema = {
+    '@type': 'WebPage',
+    '@id': `${canonical}#webpage`,
+    url: canonical,
+    name: route.title,
+    description: route.description,
+    dateModified: '2026-06-14',
+    inLanguage: 'en',
+    isPartOf: { '@id': 'https://tiwlo.com/#website' },
+    publisher: { '@id': 'https://tiwlo.com/#organization' },
+    about: { '@id': 'https://tiwlo.com/#organization' }
+  };
+
+  const graph = [coreOrganizationSchema, coreWebsiteSchema, pageSchema];
+  if (pathname !== '/') {
+    const breadcrumbId = `${canonical}#breadcrumb`;
+    pageSchema.breadcrumb = { '@id': breadcrumbId };
+    graph.push({
+      '@type': 'BreadcrumbList',
+      '@id': breadcrumbId,
+      itemListElement: [
+        {
+          '@type': 'ListItem',
+          position: 1,
+          name: 'Home',
+          item: 'https://tiwlo.com/'
+        },
+        {
+          '@type': 'ListItem',
+          position: 2,
+          name: routeDisplayName(route),
+          item: canonical
+        }
+      ]
+    });
+  }
+
+  return JSON.stringify({
+    '@context': 'https://schema.org',
+    '@graph': graph
+  }).replace(/</g, '\\u003c');
+};
+
 const injectSeo = (html, pathname) => {
   const route = seoRoutes[pathname];
   if (!route) return html;
@@ -238,22 +350,7 @@ const injectSeo = (html, pathname) => {
   const title = escapeHtml(route.title);
   const description = escapeHtml(route.description);
   const keywords = escapeHtml(route.keywords);
-  const schema = JSON.stringify({
-    '@context': 'https://schema.org',
-    '@graph': [
-      {
-        '@type': 'WebPage',
-        '@id': `${canonical}#webpage`,
-        url: canonical,
-        name: route.title,
-        description: route.description,
-        dateModified: '2026-06-14',
-        inLanguage: 'en',
-        isPartOf: { '@id': 'https://tiwlo.com/#website' },
-        publisher: { '@id': 'https://tiwlo.com/#organization' }
-      }
-    ]
-  }).replace(/</g, '\\u003c');
+  const schema = buildPublicPageSchema(pathname, route);
 
   let next = html;
   next = replaceOrInsertHeadTag(next, /<title>[\s\S]*?<\/title>/i, `<title>${title}</title>`);

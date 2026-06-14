@@ -80,6 +80,8 @@ export const tiwloOrganizationSchema = {
     '@id': 'https://tiwlo.com/#logo',
     url: TIWLO_SEO.logo,
     contentUrl: TIWLO_SEO.logo,
+    width: 4688,
+    height: 1563,
     caption: 'Tiwlo logo'
   },
   image: TIWLO_SEO.logo,
@@ -180,17 +182,10 @@ export const tiwloWebsiteSchema = {
   '@type': 'WebSite',
   '@id': 'https://tiwlo.com/#website',
   name: TIWLO_SEO.name,
+  alternateName: ['Tiwlo Cloud', 'Tiwlo Hosting', 'Tiwlo Platform'],
   url: TIWLO_SEO.url,
   publisher: { '@id': 'https://tiwlo.com/#organization' },
-  inLanguage: 'en',
-  potentialAction: {
-    '@type': 'SearchAction',
-    target: {
-      '@type': 'EntryPoint',
-      urlTemplate: 'https://tiwlo.com/documentation?q={search_term_string}'
-    },
-    'query-input': 'required name=search_term_string'
-  }
+  inLanguage: 'en'
 };
 
 type BreadcrumbInput = {
