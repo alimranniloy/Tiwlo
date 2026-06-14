@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-DEPLOY_SCRIPT_VERSION="2026-06-08-frontend-server-js"
+DEPLOY_SCRIPT_VERSION="2026-06-14-frontend-seo-service"
 ROOT="${TIWLO_INSTALL_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 BRANCH="${TIWLO_GIT_BRANCH:-main}"
 REPO_URL="${TIWLO_REPO_URL:-}"
@@ -837,6 +837,80 @@ stop_readable_source_services() {
   fi
 }
 
+release_frontend_port() {
+  if have fuser; then
+    run_sudo fuser -k "${FRONTEND_PORT}/tcp" >/dev/null 2>&1 || true
+    sleep 1
+    return 0
+  fi
+  if have lsof; then
+    local pids
+    pids="$(lsof -ti "tcp:${FRONTEND_PORT}" 2>/dev/null || true)"
+    if [ -n "$pids" ]; then
+      # shellcheck disable=SC2086
+      run_sudo kill $pids >/dev/null 2>&1 || true
+      sleep 1
+    fi
+  fi
+}
+
+ensure_obfuscated_frontend_service() {
+  if [ "$RESTART_SYSTEMD_FRONTEND" != "1" ] || ! have systemctl; then
+    return 0
+  fi
+
+  local npm_bin
+  npm_bin="$(command -v npm || true)"
+  if [ -z "$npm_bin" ]; then
+    npm_bin="$(find "$ROOT/.tools/node" -path '*/bin/npm' -type f 2>/dev/null | sort | tail -n 1 || true)"
+  fi
+  if [ -z "$npm_bin" ]; then
+    echo "npm was not found; cannot repair tiwlo-frontend.service." >&2
+    return 1
+  fi
+
+  local node_bin_dir
+  local service_path
+  local service_file
+  local tmp_service
+  node_bin_dir="$(dirname "$npm_bin")"
+  service_path="${node_bin_dir}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+  service_file="/etc/systemd/system/tiwlo-frontend.service"
+  tmp_service="$(mktemp "$TMP_BASE/tiwlo-frontend-service.XXXXXX")"
+
+  cat >"$tmp_service" <<SERVICE
+[Unit]
+Description=Tiwlo Frontend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=$ROOT
+EnvironmentFile=-$ROOT/.env
+Environment=NODE_ENV=production
+Environment=PATH=$service_path
+Environment=FRONTEND_PORT=$FRONTEND_PORT
+Environment=BACKEND_URL=http://127.0.0.1:$BACKEND_PORT
+ExecStart=$npm_bin run start -- --port $FRONTEND_PORT
+ExecStartPost=/bin/bash -lc 'for i in \$(seq 1 45); do curl -fsS http://127.0.0.1:$FRONTEND_PORT >/dev/null 2>&1 && exit 0; sleep 1; done; echo "Tiwlo frontend did not become healthy on port $FRONTEND_PORT" >&2; exit 1'
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+SERVICE
+
+  step "Repairing frontend systemd service"
+  run_sudo systemctl stop tiwlo-frontend.service >/dev/null 2>&1 || true
+  release_frontend_port
+  run_sudo cp "$tmp_service" "$service_file"
+  rm -f "$tmp_service"
+  run_sudo systemctl daemon-reload
+  run_sudo systemctl enable tiwlo-frontend.service >/dev/null 2>&1 || true
+  run_sudo systemctl restart tiwlo-frontend.service
+}
+
 restart_obfuscated_backend() {
   step "Restarting backend from obfuscated code"
   if have pm2; then
@@ -853,26 +927,22 @@ restart_obfuscated_backend() {
   else
     if have systemctl && systemctl list-unit-files tiwlo-backend.service >/dev/null 2>&1; then
       run_sudo systemctl restart tiwlo-backend.service >/dev/null 2>&1 || true
-      return 0
+    else
+      local pid_file="$ROOT/.logs/${PM2_APP_NAME}.pid"
+      if [ -f "$pid_file" ]; then
+        local old_pid
+        old_pid="$(cat "$pid_file" 2>/dev/null || true)"
+        [ -n "$old_pid" ] && kill "$old_pid" >/dev/null 2>&1 || true
+        sleep 2
+      fi
+      PORT="$BACKEND_PORT" nohup node "$ROOT/x/src/server.js" \
+        >"$ROOT/.logs/${PM2_APP_NAME}.out.log" \
+        2>"$ROOT/.logs/${PM2_APP_NAME}.err.log" &
+      echo "$!" > "$pid_file"
     fi
-    local pid_file="$ROOT/.logs/${PM2_APP_NAME}.pid"
-    if [ -f "$pid_file" ]; then
-      local old_pid
-      old_pid="$(cat "$pid_file" 2>/dev/null || true)"
-      [ -n "$old_pid" ] && kill "$old_pid" >/dev/null 2>&1 || true
-      sleep 2
-    fi
-    PORT="$BACKEND_PORT" nohup node "$ROOT/x/src/server.js" \
-      >"$ROOT/.logs/${PM2_APP_NAME}.out.log" \
-      2>"$ROOT/.logs/${PM2_APP_NAME}.err.log" &
-    echo "$!" > "$pid_file"
   fi
 
-  if [ "$RESTART_SYSTEMD_FRONTEND" = "1" ] && have systemctl; then
-    if systemctl list-unit-files tiwlo-frontend.service >/dev/null 2>&1; then
-      run_sudo systemctl restart tiwlo-frontend.service >/dev/null 2>&1 || true
-    fi
-  fi
+  ensure_obfuscated_frontend_service
 }
 
 post_wipe_temporary_source() {
