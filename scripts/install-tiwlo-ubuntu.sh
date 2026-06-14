@@ -599,6 +599,10 @@ server {
     proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto \$scheme;
 
+    if (\$host = "www.${DOMAIN}") {
+        return 301 \$scheme://${DOMAIN}\$request_uri;
+    }
+
     location /graphql {
         proxy_pass http://127.0.0.1:${BACKEND_PORT};
         proxy_http_version 1.1;

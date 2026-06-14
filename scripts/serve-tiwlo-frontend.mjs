@@ -56,10 +56,12 @@ const immutableAssetPattern = /[/\\]assets[/\\].+\.(?:js|css|woff2?|png|jpe?g|we
 const publicAssetPattern = /[/\\](?:brand|media|uploads)[/\\].+\.(?:mp4|webm|png|jpe?g|webp|gif|svg|ico)$/i;
 const siteOrigin = 'https://tiwlo.com';
 const defaultRobots = 'index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1';
+const noIndexRobots = 'noindex, nofollow, noarchive, noimageindex';
 const frontendOnlyPaths = new Set(['/api']);
 const legacyRedirects = {
   '/api': '/developers'
 };
+const publicQueryAllowedPaths = new Set(['/documentation']);
 
 const seoRoutes = {
   '/': {
@@ -159,6 +161,52 @@ const seoRoutes = {
   }
 };
 
+const privateSpaExactPaths = new Set([
+  '/api-tokens',
+  '/dashboard',
+  '/droplets',
+  '/domains',
+  '/dns',
+  '/networking',
+  '/volumes',
+  '/databases',
+  '/invoices',
+  '/activity',
+  '/alerts',
+  '/firewalls',
+  '/apps',
+  '/functions',
+  '/marketplace',
+  '/kubernetes',
+  '/team',
+  '/billing',
+  '/settings',
+  '/login',
+  '/signup',
+  '/forgot-password',
+  '/reset-password',
+  '/verify-email',
+  '/id-verification',
+  '/blocked',
+  '/email',
+  '/tpanel'
+]);
+
+const privateSpaPrefixes = [
+  '/management/',
+  '/store/',
+  '/themes/',
+  '/isp-billing/',
+  '/tiwlo-pay/',
+  '/pay/',
+  '/droplets/create'
+];
+
+const isPrivateSpaPath = (pathname = '/') => (
+  privateSpaExactPaths.has(pathname) ||
+  privateSpaPrefixes.some((prefix) => pathname === prefix.slice(0, -1) || pathname.startsWith(prefix))
+);
+
 const serveInstallerFallback = (res) => {
   const fallback = join(distDir, 'tpanel', 'install.sh');
   if (!existsSync(fallback)) return false;
@@ -222,6 +270,39 @@ const injectSeo = (html, pathname) => {
   return next;
 };
 
+const injectNoIndex = (html, pathname, statusTitle = '404 | Tiwlo') => {
+  const canonical = new URL(pathname || '/', siteOrigin).toString();
+  const title = escapeHtml(statusTitle);
+  const description = 'This Tiwlo route is not intended for public search indexing.';
+  const schema = JSON.stringify({
+    '@context': 'https://schema.org',
+    '@graph': [
+      {
+        '@type': 'WebPage',
+        '@id': `${canonical}#webpage`,
+        url: canonical,
+        name: statusTitle,
+        description,
+        inLanguage: 'en',
+        isPartOf: { '@id': 'https://tiwlo.com/#website' }
+      }
+    ]
+  }).replace(/</g, '\\u003c');
+
+  let next = html;
+  next = replaceOrInsertHeadTag(next, /<title>[\s\S]*?<\/title>/i, `<title>${title}</title>`);
+  next = replaceOrInsertHeadTag(next, /<meta\s+name="description"[^>]*>/i, `<meta name="description" content="${escapeHtml(description)}" />`);
+  next = replaceOrInsertHeadTag(next, /<meta\s+name="robots"[^>]*>/i, `<meta name="robots" content="${noIndexRobots}" />`);
+  next = replaceOrInsertHeadTag(next, /<link\s+rel="canonical"[^>]*>/i, `<link rel="canonical" href="${canonical}" />`);
+  next = replaceOrInsertHeadTag(next, /<meta\s+property="og:title"[^>]*>/i, `<meta property="og:title" content="${title}" />`);
+  next = replaceOrInsertHeadTag(next, /<meta\s+property="og:description"[^>]*>/i, `<meta property="og:description" content="${escapeHtml(description)}" />`);
+  next = replaceOrInsertHeadTag(next, /<meta\s+property="og:url"[^>]*>/i, `<meta property="og:url" content="${canonical}" />`);
+  next = replaceOrInsertHeadTag(next, /<meta\s+name="twitter:title"[^>]*>/i, `<meta name="twitter:title" content="${title}" />`);
+  next = replaceOrInsertHeadTag(next, /<meta\s+name="twitter:description"[^>]*>/i, `<meta name="twitter:description" content="${escapeHtml(description)}" />`);
+  next = replaceOrInsertHeadTag(next, /<script\s+id="tiwlo-page-schema"\s+type="application\/ld\+json">[\s\S]*?<\/script>/i, `<script id="tiwlo-page-schema" type="application/ld+json">${schema}</script>`);
+  return next;
+};
+
 const proxyRequest = (req, res) => {
   const target = new URL(req.originalUrl || req.url, backendUrl);
   const transport = target.protocol === 'https:' ? https : http;
@@ -248,6 +329,16 @@ const proxyRequest = (req, res) => {
 };
 
 app.use((req, res, next) => {
+  const host = String(req.headers.host || '').toLowerCase();
+  if (host.startsWith('www.')) {
+    const protocol = String(req.headers['x-forwarded-proto'] || req.protocol || 'https').split(',')[0];
+    res.redirect(301, `${protocol}://${host.slice(4)}${req.originalUrl || req.url || '/'}`);
+    return;
+  }
+  next();
+});
+
+app.use((req, res, next) => {
   if (shouldProxy(req.originalUrl || req.url)) {
     proxyRequest(req, res);
     return;
@@ -262,6 +353,19 @@ app.use(compression({
     return compression.filter(req, res);
   }
 }));
+
+app.use((req, res, next) => {
+  if (!['GET', 'HEAD'].includes(req.method)) {
+    next();
+    return;
+  }
+  const url = new URL(req.originalUrl || req.url || '/', 'http://tiwlo.local');
+  if (seoRoutes[url.pathname] && url.search && !publicQueryAllowedPaths.has(url.pathname)) {
+    res.redirect(301, url.pathname);
+    return;
+  }
+  next();
+});
 
 app.use(express.static(distDir, {
   extensions: ['html'],
@@ -298,12 +402,23 @@ app.get('*', (req, res) => {
     res.redirect(301, `${url.pathname}${url.search}`);
     return;
   }
+  if (seoRoutes[url.pathname] && url.search && !publicQueryAllowedPaths.has(url.pathname)) {
+    res.redirect(301, url.pathname);
+    return;
+  }
   res.setHeader('Cache-Control', 'no-store');
   if (seoRoutes[url.pathname]) {
     res.type('html').send(injectSeo(readIndexHtml(), url.pathname));
     return;
   }
-  res.sendFile(join(distDir, 'index.html'));
+  if (isPrivateSpaPath(url.pathname)) {
+    res.setHeader('X-Robots-Tag', noIndexRobots);
+    res.type('html').send(injectNoIndex(readIndexHtml(), url.pathname, 'Tiwlo Console'));
+    return;
+  }
+  res.status(404);
+  res.setHeader('X-Robots-Tag', noIndexRobots);
+  res.type('html').send(injectNoIndex(readIndexHtml(), url.pathname, '404 | Tiwlo'));
 });
 
 app.listen(port, '0.0.0.0', () => {
