@@ -11,6 +11,8 @@ import {
   Copy,
   CreditCard,
   DollarSign,
+  Eye,
+  EyeOff,
   ExternalLink,
   FileDown,
   FileText,
@@ -19,6 +21,7 @@ import {
   Landmark,
   Link2,
   LockKeyhole,
+  Pencil,
   Plus,
   Receipt,
   RefreshCw,
@@ -29,6 +32,7 @@ import {
   ShieldCheck,
   SlidersHorizontal,
   Terminal,
+  Trash2,
   UserCheck,
   Wallet
 } from 'lucide-react';
@@ -79,6 +83,19 @@ const providerClass = (provider = '') => {
 const csvEscape = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`;
 
 const autoInvoiceId = () => `TWP-${Date.now().toString(36).toUpperCase()}`;
+
+const normalizeWhitelistDomain = (value = '') => {
+  let text = String(value || '').trim().toLowerCase();
+  if (!text) return '';
+  text = text.replace(/^https?:\/\//, '').split('/')[0].split('?')[0].split('#')[0].replace(/:\d+$/, '');
+  if (text.startsWith('*.')) {
+    const base = text.slice(2).replace(/^\.+|\.+$/g, '');
+    return base ? `*.${base}` : '';
+  }
+  return text.replace(/^\.+|\.+$/g, '');
+};
+
+const normalizeWhitelistIp = (value = '') => String(value || '').trim().replace(/\s+/g, '');
 
 function FieldLabel({ children }: { children: React.ReactNode }) {
   return <span className="text-[11px] font-bold uppercase text-[#6B7280]">{children}</span>;
@@ -307,9 +324,18 @@ export default function TiwloPay() {
   const [error, setError] = React.useState('');
   const [notice, setNotice] = React.useState('');
   const [lastSecret, setLastSecret] = React.useState('');
+  const [secretVisible, setSecretVisible] = React.useState(false);
   const [linkSearch, setLinkSearch] = React.useState('');
   const [statusFilter, setStatusFilter] = React.useState('all');
   const [selectedProviders, setSelectedProviders] = React.useState<string[]>([]);
+  const [apiAccessForm, setApiAccessForm] = React.useState({
+    allowedDomains: [] as string[],
+    allowedIps: [] as string[],
+    domainInput: '',
+    ipInput: '',
+    editingDomainIndex: null as number | null,
+    editingIpIndex: null as number | null
+  });
   const [profileForm, setProfileForm] = React.useState({
     displayName: '',
     companyName: '',
@@ -371,6 +397,7 @@ export default function TiwloPay() {
     try {
       const data = await fetchTiwloPayOverviewWithApi();
       const verification = data.profile?.settings?.verification || {};
+      const apiAccess = data.profile?.settings?.apiAccess || {};
       setOverview(data);
       setProfileForm({
         displayName: data.profile?.displayName || '',
@@ -395,6 +422,15 @@ export default function TiwloPay() {
         contactPhone: verification.contactPhone || '',
         taxId: verification.taxId || '',
         note: verification.note || ''
+      }));
+      setApiAccessForm((current) => ({
+        ...current,
+        allowedDomains: Array.isArray(apiAccess.allowedDomains) ? apiAccess.allowedDomains.filter(Boolean) : [],
+        allowedIps: Array.isArray(apiAccess.allowedIps) ? apiAccess.allowedIps.filter(Boolean) : [],
+        domainInput: '',
+        ipInput: '',
+        editingDomainIndex: null,
+        editingIpIndex: null
       }));
       setLinkForm((current) => ({
         ...current,
@@ -444,9 +480,10 @@ export default function TiwloPay() {
   })();
   const apiBaseUrl = `${origin}/api/tiwlo-pay/v1`;
   const docsPath = '/documentation?section=tiwlo-pay-api';
+  const secretForSnippet = lastSecret && secretVisible ? lastSecret : 'twsk_live_secret';
   const commandSnippet = [
     `curl -X POST ${apiBaseUrl}/payment-links`,
-    `  -H "Authorization: Bearer ${lastSecret || 'twsk_live_secret'}"`,
+    `  -H "Authorization: Bearer ${secretForSnippet}"`,
     `  -H "X-Tiwlo-Pay-Key: ${profile.apiKey || 'twpk_live_key'}"`,
     '  -H "Content-Type: application/json"',
     `  -d '{"amount":99,"currency":"USD","title":"Website invoice","customerEmail":"customer@example.com"}'`
@@ -504,13 +541,114 @@ export default function TiwloPay() {
         settings: {
           paymentLinkExpiryDays: Number(profileForm.paymentLinkExpiryDays || 14),
           feePercent: Number(profileForm.feePercent || 0),
-          feeFixed: Number(profileForm.feeFixed || 0)
+          feeFixed: Number(profileForm.feeFixed || 0),
+          apiAccess: {
+            allowedDomains: apiAccessForm.allowedDomains,
+            allowedIps: apiAccessForm.allowedIps
+          }
         }
       });
       setNotice('Tiwlo Pay settings saved');
       await loadOverview();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to save Tiwlo Pay settings');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const upsertDomainWhitelist = () => {
+    const value = normalizeWhitelistDomain(apiAccessForm.domainInput);
+    if (!value) return;
+    setApiAccessForm((current) => {
+      const next = [...current.allowedDomains];
+      if (current.editingDomainIndex === null) next.push(value);
+      else next[current.editingDomainIndex] = value;
+      return {
+        ...current,
+        allowedDomains: [...new Set(next.map(normalizeWhitelistDomain).filter(Boolean))],
+        domainInput: '',
+        editingDomainIndex: null
+      };
+    });
+  };
+
+  const upsertIpWhitelist = () => {
+    const value = normalizeWhitelistIp(apiAccessForm.ipInput);
+    if (!value) return;
+    setApiAccessForm((current) => {
+      const next = [...current.allowedIps];
+      if (current.editingIpIndex === null) next.push(value);
+      else next[current.editingIpIndex] = value;
+      return {
+        ...current,
+        allowedIps: [...new Set(next.map(normalizeWhitelistIp).filter(Boolean))],
+        ipInput: '',
+        editingIpIndex: null
+      };
+    });
+  };
+
+  const editDomainWhitelist = (index: number) => {
+    setApiAccessForm((current) => ({
+      ...current,
+      domainInput: current.allowedDomains[index] || '',
+      editingDomainIndex: index
+    }));
+  };
+
+  const editIpWhitelist = (index: number) => {
+    setApiAccessForm((current) => ({
+      ...current,
+      ipInput: current.allowedIps[index] || '',
+      editingIpIndex: index
+    }));
+  };
+
+  const deleteDomainWhitelist = (index: number) => {
+    setApiAccessForm((current) => ({
+      ...current,
+      allowedDomains: current.allowedDomains.filter((_, itemIndex) => itemIndex !== index),
+      domainInput: current.editingDomainIndex === index ? '' : current.domainInput,
+      editingDomainIndex: current.editingDomainIndex === index ? null : current.editingDomainIndex
+    }));
+  };
+
+  const deleteIpWhitelist = (index: number) => {
+    setApiAccessForm((current) => ({
+      ...current,
+      allowedIps: current.allowedIps.filter((_, itemIndex) => itemIndex !== index),
+      ipInput: current.editingIpIndex === index ? '' : current.ipInput,
+      editingIpIndex: current.editingIpIndex === index ? null : current.editingIpIndex
+    }));
+  };
+
+  const saveApiAccess = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setSaving(true);
+    setError('');
+    setNotice('');
+    try {
+      const allowedDomains = [...new Set(apiAccessForm.allowedDomains.map(normalizeWhitelistDomain).filter(Boolean))];
+      const allowedIps = [...new Set(apiAccessForm.allowedIps.map(normalizeWhitelistIp).filter(Boolean))];
+      await upsertTiwloPayProfileWithApi({
+        settings: {
+          apiAccess: { allowedDomains, allowedIps }
+        }
+      });
+      setApiAccessForm((current) => ({
+        ...current,
+        allowedDomains,
+        allowedIps,
+        domainInput: '',
+        ipInput: '',
+        editingDomainIndex: null,
+        editingIpIndex: null
+      }));
+      setNotice('API whitelist saved');
+      await loadOverview();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to save API whitelist');
     } finally {
       setSaving(false);
     }
@@ -600,7 +738,8 @@ export default function TiwloPay() {
     try {
       const result = await rotateTiwloPayKeysWithApi();
       setLastSecret(result.secretKey);
-      setNotice('API keys regenerated');
+      setSecretVisible(true);
+      setNotice('New API keys generated. Copy the secret key now; it is shown only once.');
       await loadOverview();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to rotate API keys');
@@ -1020,23 +1159,87 @@ export default function TiwloPay() {
     </div>
   );
 
+  const secretDisplay = secretVisible
+    ? lastSecret
+    : (lastSecret ? `${lastSecret.slice(0, 10)}...${lastSecret.slice(-6)}` : '');
+  const whitelistLocked = apiAccessForm.allowedDomains.length > 0 || apiAccessForm.allowedIps.length > 0;
+
   const settingsPage = (
-    <div className="grid grid-cols-1 gap-5 xl:grid-cols-[0.95fr_1.05fr]">
-      <form onSubmit={saveProfile} className="rounded border border-[#DDE3EA] bg-white p-5">
-        <SectionTitle title="Merchant profile" detail="These details appear on hosted checkout and receipts." icon={Settings} />
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          <input value={profileForm.displayName} onChange={(event) => setProfileForm((current) => ({ ...current, displayName: event.target.value }))} className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="Display name" />
-          <input value={profileForm.companyName} onChange={(event) => setProfileForm((current) => ({ ...current, companyName: event.target.value }))} className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="Company name" />
-          <input type="email" value={profileForm.supportEmail} onChange={(event) => setProfileForm((current) => ({ ...current, supportEmail: event.target.value }))} className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="Support email" />
-          <input value={profileForm.statementDescriptor} onChange={(event) => setProfileForm((current) => ({ ...current, statementDescriptor: event.target.value.toUpperCase() }))} className="rounded border border-[#DDE3EA] px-3 py-2 text-sm uppercase outline-none focus:border-blue-500" placeholder="Statement descriptor" />
-          <input type="number" value={profileForm.paymentLinkExpiryDays} onChange={(event) => setProfileForm((current) => ({ ...current, paymentLinkExpiryDays: event.target.value }))} className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="Default expiry days" />
-          <input type="number" step="0.01" value={profileForm.feePercent} onChange={(event) => setProfileForm((current) => ({ ...current, feePercent: event.target.value }))} className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="Fee percent" />
-          <input type="number" step="0.01" value={profileForm.feeFixed} onChange={(event) => setProfileForm((current) => ({ ...current, feeFixed: event.target.value }))} className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500 md:col-span-2" placeholder="Fixed fee" />
-        </div>
-        <button disabled={saving} className="mt-4 flex w-full items-center justify-center gap-2 rounded bg-[#111827] px-4 py-2.5 text-sm font-bold text-white hover:bg-black disabled:opacity-60">
-          <ShieldCheck className="h-4 w-4" /> Save settings
-        </button>
-      </form>
+    <div className="grid grid-cols-1 gap-5 xl:grid-cols-[0.9fr_1.1fr]">
+      <div className="space-y-5">
+        <form onSubmit={saveProfile} className="rounded border border-[#DDE3EA] bg-white p-5">
+          <SectionTitle title="Merchant profile" detail="These details appear on hosted checkout and receipts." icon={Settings} />
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <input value={profileForm.displayName} onChange={(event) => setProfileForm((current) => ({ ...current, displayName: event.target.value }))} className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="Display name" />
+            <input value={profileForm.companyName} onChange={(event) => setProfileForm((current) => ({ ...current, companyName: event.target.value }))} className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="Company name" />
+            <input type="email" value={profileForm.supportEmail} onChange={(event) => setProfileForm((current) => ({ ...current, supportEmail: event.target.value }))} className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="Support email" />
+            <input value={profileForm.statementDescriptor} onChange={(event) => setProfileForm((current) => ({ ...current, statementDescriptor: event.target.value.toUpperCase() }))} className="rounded border border-[#DDE3EA] px-3 py-2 text-sm uppercase outline-none focus:border-blue-500" placeholder="Statement descriptor" />
+            <input type="number" value={profileForm.paymentLinkExpiryDays} onChange={(event) => setProfileForm((current) => ({ ...current, paymentLinkExpiryDays: event.target.value }))} className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="Default expiry days" />
+            <input type="number" step="0.01" value={profileForm.feePercent} onChange={(event) => setProfileForm((current) => ({ ...current, feePercent: event.target.value }))} className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="Fee percent" />
+            <input type="number" step="0.01" value={profileForm.feeFixed} onChange={(event) => setProfileForm((current) => ({ ...current, feeFixed: event.target.value }))} className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500 md:col-span-2" placeholder="Fixed fee" />
+          </div>
+          <button disabled={saving} className="mt-4 flex w-full items-center justify-center gap-2 rounded bg-[#111827] px-4 py-2.5 text-sm font-bold text-white hover:bg-black disabled:opacity-60">
+            <ShieldCheck className="h-4 w-4" /> Save settings
+          </button>
+        </form>
+
+        <form onSubmit={saveApiAccess} className="rounded border border-[#DDE3EA] bg-white p-5">
+          <SectionTitle
+            title="API whitelist"
+            detail={whitelistLocked ? 'Only saved domains or IPs can call the merchant API.' : 'Add a domain or server IP to lock API requests to your website.'}
+            icon={LockKeyhole}
+            action={<StatusPill status={whitelistLocked ? 'locked' : 'open'} />}
+          />
+          <div className="space-y-4">
+            <div>
+              <FieldLabel>Allowed domains</FieldLabel>
+              <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+                <input value={apiAccessForm.domainInput} onChange={(event) => setApiAccessForm((current) => ({ ...current, domainInput: event.target.value }))} className="min-w-0 flex-1 rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="example.com or *.example.com" />
+                <button type="button" onClick={upsertDomainWhitelist} className="flex items-center justify-center gap-2 rounded border border-[#DDE3EA] px-3 py-2 text-[12px] font-bold text-[#374151] hover:border-blue-400">
+                  <Plus className="h-4 w-4" /> {apiAccessForm.editingDomainIndex === null ? 'Add' : 'Update'}
+                </button>
+              </div>
+              <div className="mt-2 space-y-2">
+                {apiAccessForm.allowedDomains.length === 0 && <p className="rounded border border-dashed border-[#DDE3EA] px-3 py-2 text-[12px] text-[#6B7280]">No domain saved yet.</p>}
+                {apiAccessForm.allowedDomains.map((domain, index) => (
+                  <div key={`${domain}-${index}`} className="flex items-center gap-2 rounded border border-[#E5E7EB] bg-[#F9FAFB] px-3 py-2">
+                    <code className="min-w-0 flex-1 break-all text-[12px] font-bold text-[#111827]">{domain}</code>
+                    <button type="button" onClick={() => editDomainWhitelist(index)} className="rounded border border-[#DDE3EA] bg-white p-2 text-[#4B5563]" title="Edit domain"><Pencil className="h-3.5 w-3.5" /></button>
+                    <button type="button" onClick={() => deleteDomainWhitelist(index)} className="rounded border border-rose-100 bg-white p-2 text-rose-600" title="Delete domain"><Trash2 className="h-3.5 w-3.5" /></button>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <FieldLabel>Allowed IP addresses</FieldLabel>
+              <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+                <input value={apiAccessForm.ipInput} onChange={(event) => setApiAccessForm((current) => ({ ...current, ipInput: event.target.value }))} className="min-w-0 flex-1 rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="203.0.113.10 or 203.0.113.*" />
+                <button type="button" onClick={upsertIpWhitelist} className="flex items-center justify-center gap-2 rounded border border-[#DDE3EA] px-3 py-2 text-[12px] font-bold text-[#374151] hover:border-blue-400">
+                  <Plus className="h-4 w-4" /> {apiAccessForm.editingIpIndex === null ? 'Add' : 'Update'}
+                </button>
+              </div>
+              <div className="mt-2 space-y-2">
+                {apiAccessForm.allowedIps.length === 0 && <p className="rounded border border-dashed border-[#DDE3EA] px-3 py-2 text-[12px] text-[#6B7280]">No IP saved yet.</p>}
+                {apiAccessForm.allowedIps.map((ip, index) => (
+                  <div key={`${ip}-${index}`} className="flex items-center gap-2 rounded border border-[#E5E7EB] bg-[#F9FAFB] px-3 py-2">
+                    <code className="min-w-0 flex-1 break-all text-[12px] font-bold text-[#111827]">{ip}</code>
+                    <button type="button" onClick={() => editIpWhitelist(index)} className="rounded border border-[#DDE3EA] bg-white p-2 text-[#4B5563]" title="Edit IP"><Pencil className="h-3.5 w-3.5" /></button>
+                    <button type="button" onClick={() => deleteIpWhitelist(index)} className="rounded border border-rose-100 bg-white p-2 text-rose-600" title="Delete IP"><Trash2 className="h-3.5 w-3.5" /></button>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="rounded border border-blue-100 bg-blue-50 p-3 text-[12px] leading-5 text-blue-900">
+              Browser requests are checked against Origin/Referer/Host. Server requests are checked against X-Forwarded-For, X-Real-IP, CF-Connecting-IP, and the socket IP.
+            </div>
+            <button disabled={saving} className="flex w-full items-center justify-center gap-2 rounded bg-[#0069ff] px-4 py-2.5 text-sm font-bold text-white hover:bg-[#0056cc] disabled:opacity-60">
+              <ShieldCheck className="h-4 w-4" /> Save whitelist
+            </button>
+          </div>
+        </form>
+      </div>
 
       <section className="rounded border border-[#DDE3EA] bg-white p-5">
         <SectionTitle
@@ -1049,7 +1252,7 @@ export default function TiwloPay() {
                 <FileText className="h-4 w-4" /> Docs
               </RouterLink>
               <button type="button" onClick={rotateKeys} disabled={!isLive || saving} className="flex items-center gap-2 rounded border border-[#DDE3EA] px-3 py-2 text-[12px] font-bold text-[#374151] hover:border-blue-400 disabled:opacity-50">
-                <RotateCw className="h-4 w-4" /> Rotate
+                <RotateCw className="h-4 w-4" /> Generate new key
               </button>
             </div>
           )}
@@ -1058,18 +1261,24 @@ export default function TiwloPay() {
         <div className="space-y-3">
           <div className="rounded border border-[#E5E7EB] bg-[#F9FAFB] p-3">
             <p className="text-[10px] font-bold uppercase text-[#6B7280]">Publishable key</p>
-            <div className="mt-2 flex items-center gap-2">
-              <code className="min-w-0 flex-1 truncate text-[12px] font-bold text-[#111827]">{profile.apiKey || 'Loading'}</code>
-              <button type="button" onClick={() => copyText(profile.apiKey, 'API key')} disabled={!isLive} className="rounded border border-[#DDE3EA] bg-white p-2 disabled:opacity-50"><Copy className="h-4 w-4" /></button>
+            <div className="mt-2 flex items-start gap-2">
+              <code className="min-w-0 flex-1 break-all text-[12px] font-bold leading-5 text-[#111827]">{profile.apiKey || 'Loading'}</code>
+              <button type="button" onClick={() => copyText(profile.apiKey, 'Publishable key')} disabled={!profile.apiKey} className="rounded border border-[#DDE3EA] bg-white p-2 disabled:opacity-50"><Copy className="h-4 w-4" /></button>
             </div>
           </div>
           <div className="rounded border border-[#E5E7EB] bg-[#F9FAFB] p-3">
             <p className="text-[10px] font-bold uppercase text-[#6B7280]">Secret key</p>
-            <p className="mt-2 text-[13px] font-bold text-[#111827]">{profile.secretPreview || 'Loading'}</p>
+            <p className="mt-2 break-all text-[13px] font-bold text-[#111827]">{profile.secretPreview || 'Loading'}</p>
+            <p className="mt-1 text-[12px] text-[#6B7280]">Full secret key is shown once after generating a new key.</p>
             {lastSecret && (
-              <div className="mt-3 flex items-center gap-2 rounded border border-amber-200 bg-amber-50 p-3">
-                <code className="min-w-0 flex-1 truncate text-[12px] font-bold text-amber-900">{lastSecret}</code>
-                <button type="button" onClick={() => copyText(lastSecret, 'Secret key')} className="rounded border border-amber-200 bg-white p-2 text-amber-900"><Copy className="h-4 w-4" /></button>
+              <div className="mt-3 rounded border border-amber-200 bg-amber-50 p-3">
+                <div className="flex items-start gap-2">
+                  <code className="min-w-0 flex-1 break-all text-[12px] font-bold leading-5 text-amber-900">{secretDisplay}</code>
+                  <button type="button" onClick={() => setSecretVisible((current) => !current)} className="rounded border border-amber-200 bg-white p-2 text-amber-900" title={secretVisible ? 'Hide secret key' : 'View secret key'}>
+                    {secretVisible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                  <button type="button" onClick={() => copyText(lastSecret, 'Secret key')} className="rounded border border-amber-200 bg-white p-2 text-amber-900"><Copy className="h-4 w-4" /></button>
+                </div>
               </div>
             )}
           </div>
@@ -1095,6 +1304,9 @@ export default function TiwloPay() {
                 <button type="button" onClick={() => copyText(`${apiBaseUrl}/payment-links`, 'Payment links endpoint')} className="rounded border border-[#DDE3EA] bg-white p-2"><Copy className="h-4 w-4" /></button>
               </div>
             </div>
+          </div>
+          <div className="rounded border border-emerald-100 bg-emerald-50 p-3 text-[12px] leading-5 text-emerald-900">
+            Your website/plugin should call <span className="font-mono font-bold">POST /payment-links</span>, save the returned <span className="font-mono font-bold">checkoutUrl</span>, then send the customer to that URL. The customer lands on the hosted Tiwlo Pay page, not localhost.
           </div>
         </div>
       </section>

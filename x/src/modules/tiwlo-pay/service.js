@@ -162,6 +162,10 @@ const defaultSettings = () => ({
   feePercent: 2.9,
   feeFixed: 0.3,
   withdrawalMethods: ['bank', 'bkash', 'nagad', 'manual'],
+  apiAccess: {
+    allowedDomains: [],
+    allowedIps: []
+  },
   verification: {
     status: 'not_submitted',
     legalName: '',
@@ -197,10 +201,19 @@ const settingsWithDefaults = (settings = {}) => {
   const capabilities = verification.capabilities && typeof verification.capabilities === 'object' && !Array.isArray(verification.capabilities)
     ? verification.capabilities
     : {};
+  const apiAccess = incoming.apiAccess && typeof incoming.apiAccess === 'object' && !Array.isArray(incoming.apiAccess)
+    ? incoming.apiAccess
+    : {};
 
   return {
     ...base,
     ...incoming,
+    apiAccess: {
+      ...base.apiAccess,
+      ...apiAccess,
+      allowedDomains: Array.isArray(apiAccess.allowedDomains) ? apiAccess.allowedDomains.filter(Boolean) : base.apiAccess.allowedDomains,
+      allowedIps: Array.isArray(apiAccess.allowedIps) ? apiAccess.allowedIps.filter(Boolean) : base.apiAccess.allowedIps
+    },
     verification: {
       ...base.verification,
       ...verification,
@@ -769,6 +782,95 @@ const merchantApiContext = (req, options = {}) => ({
   requestHeaders: req.headers || {}
 });
 
+const normalizeApiDomain = (value = '') => {
+  let text = cleanText(value).toLowerCase();
+  if (!text) return '';
+  if (/^https?:\/\//i.test(text)) {
+    text = originHost(text);
+  }
+  text = text.split('/')[0].split('?')[0].split('#')[0].replace(/:\d+$/, '').replace(/^\[|\]$/g, '');
+  if (text.startsWith('*.')) {
+    const base = text.slice(2).replace(/^\.+|\.+$/g, '');
+    return base ? `*.${base}` : '';
+  }
+  return text.replace(/^\.+|\.+$/g, '');
+};
+
+const hostFromHeader = (value = '') => normalizeApiDomain(splitFirst(firstHeaderValue(value)));
+
+const requestDomainsForApi = (req) => {
+  const headers = req.headers || {};
+  return [...new Set([
+    hostFromHeader(headers.origin),
+    hostFromHeader(headers.referer),
+    hostFromHeader(headers['x-forwarded-host']),
+    hostFromHeader(headers['x-original-host']),
+    hostFromHeader(headers.host)
+  ].filter(Boolean))];
+};
+
+const normalizeApiIp = (value = '') => {
+  let text = splitFirst(value).replace(/^::ffff:/, '').trim();
+  if (!text) return '';
+  if (text.startsWith('[') && text.includes(']')) return text.slice(1, text.indexOf(']'));
+  if (/^\d{1,3}(\.\d{1,3}){3}:\d+$/.test(text)) return text.replace(/:\d+$/, '');
+  return text;
+};
+
+const requestIpsForApi = (ctx, req) => {
+  const headers = req.headers || {};
+  return [...new Set([
+    normalizeApiIp(ctx.requestIp),
+    normalizeApiIp(headers['cf-connecting-ip']),
+    normalizeApiIp(headers['x-real-ip']),
+    normalizeApiIp(headers['x-forwarded-for']),
+    normalizeApiIp(req.ip),
+    normalizeApiIp(req.socket?.remoteAddress)
+  ].filter(Boolean))];
+};
+
+const escapeRegex = (value = '') => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const domainMatches = (pattern, domain) => {
+  const allowed = normalizeApiDomain(pattern);
+  const candidate = normalizeApiDomain(domain);
+  if (!allowed || !candidate) return false;
+  if (allowed.startsWith('*.')) {
+    const base = allowed.slice(2);
+    return candidate === base || candidate.endsWith(`.${base}`);
+  }
+  return candidate === allowed;
+};
+
+const ipMatches = (pattern, ip) => {
+  const allowed = cleanText(pattern);
+  const candidate = normalizeApiIp(ip);
+  if (!allowed || !candidate) return false;
+  if (!allowed.includes('*')) return allowed === candidate;
+  const regex = new RegExp(`^${allowed.split('*').map(escapeRegex).join('.*')}$`);
+  return regex.test(candidate);
+};
+
+const enforceMerchantApiWhitelist = (profile, ctx, req) => {
+  const apiAccess = settingsWithDefaults(profile.settings).apiAccess || {};
+  const allowedDomains = Array.isArray(apiAccess.allowedDomains)
+    ? [...new Set(apiAccess.allowedDomains.map(normalizeApiDomain).filter(Boolean))]
+    : [];
+  const allowedIps = Array.isArray(apiAccess.allowedIps)
+    ? [...new Set(apiAccess.allowedIps.map(normalizeApiIp).filter(Boolean))]
+    : [];
+
+  if (!allowedDomains.length && !allowedIps.length) return;
+
+  const requestDomains = requestDomainsForApi(req);
+  const requestIps = requestIpsForApi(ctx, req);
+  const domainAllowed = allowedDomains.some((pattern) => requestDomains.some((domain) => domainMatches(pattern, domain)));
+  const ipAllowed = allowedIps.some((pattern) => requestIps.some((ip) => ipMatches(pattern, ip)));
+  if (domainAllowed || ipAllowed) return;
+
+  throw new AppError('Tiwlo Pay API request blocked by merchant domain/IP whitelist', 'FORBIDDEN');
+};
+
 const authenticateMerchantApi = async (ctx, req) => {
   const apiKey = cleanText(req.headers['x-tiwlo-pay-key'] || req.body?.apiKey || req.query?.apiKey, '');
   const secretKey = cleanText(
@@ -791,6 +893,7 @@ const authenticateMerchantApi = async (ctx, req) => {
 
   const withDefaults = profileWithDefaults(profile);
   requireActiveProfile(withDefaults, 'merchant API');
+  enforceMerchantApiWhitelist(withDefaults, ctx, req);
   return withDefaults;
 };
 
@@ -941,6 +1044,7 @@ export const registerTiwloPayApiRoutes = (app, options = {}) => {
       statementDescriptor: profile.statementDescriptor,
       status: profile.status,
       capabilities: verificationFor(profile).capabilities,
+      apiAccess: settingsWithDefaults(profile.settings).apiAccess,
       apiKey: profile.apiKey,
       createdAt: toApi(profile.createdAt),
       updatedAt: toApi(profile.updatedAt)
