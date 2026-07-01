@@ -208,7 +208,7 @@ export default function AdminRecordsPage({
       <div className="overflow-hidden rounded-md border border-[#e5e8ed] bg-white">
         <div className="border-b border-[#f3f5f9] bg-[#f8f9fa] px-6 py-4">
           <h2 className="text-[14px] font-bold uppercase tracking-wide text-[#2e3d49]">{recordLabel} Registry</h2>
-          <p className="text-[11px] font-medium text-gray-400">Stored in the database through the admin settings API.</p>
+          <p className="text-[11px] font-medium text-gray-400">Stored in the database through the Tiwlo Team settings API.</p>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left">

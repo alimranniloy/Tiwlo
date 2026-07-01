@@ -1314,7 +1314,7 @@ export const registerSystemToolRoutes = (app, { prisma, userFromRequest, rootDir
     try {
       const user = await userFromRequest(req);
       if (!user || !ADMIN_ROLES.has(user.role)) {
-        res.status(user ? 403 : 401).json({ error: user ? 'Admin access required' : 'Authentication required' });
+        res.status(user ? 403 : 401).json({ error: user ? 'Tiwlo Team access required' : 'Authentication required' });
         return;
       }
       req.tiwloUser = user;

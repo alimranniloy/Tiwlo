@@ -298,7 +298,7 @@ export default function IdentityVerification({ user, onLogout }: Props) {
                 {[
                   ['1', 'Capture document', `${requiredDocs.length} item${requiredDocs.length === 1 ? '' : 's'}`],
                   ['2', 'Take a selfie', 'Live camera'],
-                  ['3', 'Submit for review', 'Administrator approval']
+                  ['3', 'Submit for review', 'Tiwlo Team approval']
                 ].map(([number, label, detail]) => (
                   <div key={number} className="flex gap-4">
                     <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#111827] text-sm font-black text-white">{number}</span>
@@ -373,7 +373,7 @@ export default function IdentityVerification({ user, onLogout }: Props) {
             <CheckCircle2 className={`h-16 w-16 ${approved ? 'text-emerald-600' : 'text-[#0069ff]'}`} />
             <h1 className="mt-6 text-3xl font-black">{approved ? 'Verified' : 'Submitted'}</h1>
             <p className="mt-3 max-w-xs text-sm font-medium leading-6 text-[#4B5563]">
-              {approved ? 'Your identity verification is approved.' : 'Your documents are waiting for administrator review.'}
+              {approved ? 'Your identity verification is approved.' : 'Your documents are waiting for Tiwlo Team review.'}
             </p>
             <button onClick={() => navigate(request.flow === 'tiwlo_pay' ? '/tiwlo-pay' : '/')} className="mt-8 rounded-md bg-[#0069ff] px-5 py-3 text-sm font-black text-white">
               Done

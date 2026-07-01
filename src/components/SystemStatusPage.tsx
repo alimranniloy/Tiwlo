@@ -25,7 +25,7 @@ const copyByVariant: Record<SystemStatusVariant, { label: string; heading: strin
   maintenance: {
     label: 'Maintenance',
     heading: 'Website under maintenance',
-    description: 'Only administrators can sign in while maintenance mode is active.'
+    description: 'Only Tiwlo Team can sign in while maintenance mode is active.'
   },
   'not-found': {
     label: 'Error 404',

@@ -7,7 +7,7 @@ const configs = {
   compute: {
     type: 'system_server',
     title: 'Compute Nodes',
-    description: 'Admin-owned infrastructure nodes and imported control panel servers.',
+    description: 'Tiwlo Team-owned infrastructure nodes and imported control panel servers.',
     createLabel: 'Add Compute Node',
     emptyTitle: 'No compute nodes found',
     emptyDescription: 'Connect or create a compute node to manage platform infrastructure.',
@@ -29,7 +29,7 @@ const configs = {
   database: {
     type: 'database',
     title: 'Data Instances',
-    description: 'Managed database instances visible to platform administrators.',
+    description: 'Managed database instances visible to Tiwlo Team.',
     createLabel: 'Create Data Instance',
     emptyTitle: 'No data instances found',
     emptyDescription: 'Provision a database record for PostgreSQL, MySQL, Redis, or analytics workloads.',

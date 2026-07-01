@@ -26,13 +26,13 @@ const legalContent: Record<'terms' | 'privacy', LegalContent> = {
     label: 'Terms of Service',
     eyebrow: 'Tiwlo legal agreement',
     intro:
-      'These terms explain how customers, administrators, staff members, and integrations may use Tiwlo cloud hosting, tPanel, ecommerce, ISP billing, domains, DNS, SSL, payment, support, and automation services.',
+      'These terms explain how customers, Tiwlo Team, staff members, and integrations may use Tiwlo cloud hosting, tPanel, ecommerce, ISP billing, domains, DNS, SSL, payment, support, and automation services.',
     canonicalPath: '/terms',
     updated: 'June 9, 2026',
     icon: FileText,
     highlights: [
       'Use Tiwlo services only for lawful cloud, hosting, commerce, billing, and support operations.',
-      'Protect account credentials, API keys, webhook secrets, bot tokens, and administrator access.',
+      'Protect account credentials, API keys, webhook secrets, bot tokens, and Tiwlo Team access.',
       'Fraud, abuse, payment manipulation, spam, malware, or unsafe automation can lead to review, suspension, or blocking.'
     ],
     sections: [
@@ -61,20 +61,20 @@ const legalContent: Record<'terms' | 'privacy', LegalContent> = {
         title: '4. Acceptable use',
         body: [
           'You may not use Tiwlo to host malware, phishing pages, spam systems, credential theft pages, illegal content, copyright-infringing content, network attacks, crypto abuse, deceptive payment flows, or services designed to bypass another platform.',
-          'You may not attempt to bypass rate limits, security checks, fraud checks, identity verification, payment review, module permissions, or administrator access controls.'
+          'You may not attempt to bypass rate limits, security checks, fraud checks, identity verification, payment review, module permissions, or Tiwlo Team access controls.'
         ]
       },
       {
         title: '5. Billing, credits, holds, refunds, and verification',
         body: [
-          'Promotional credits, account credits, payment verification, balance holds, refund decisions, and invoice status may depend on the account settings and risk controls configured by Tiwlo administrators.',
+          'Promotional credits, account credits, payment verification, balance holds, refund decisions, and invoice status may depend on the account settings and risk controls configured by Tiwlo Team.',
           'Credits have no cash value unless Tiwlo explicitly states otherwise. Suspicious payments, chargebacks, duplicate proof uploads, or mismatched account information may be reviewed before service activation.'
         ]
       },
       {
-        title: '6. Administrators, staff, and integrations',
+        title: '6. Tiwlo Team, staff, and integrations',
         body: [
-          'Admin actions, support staff actions, Discord bot actions, webhook activity, email events, WhatsApp verification events, and service provisioning events may be logged for security, audit, and support purposes.',
+          'Tiwlo Team actions, support staff actions, Discord bot actions, webhook activity, email events, WhatsApp verification events, and service provisioning events may be logged for security, audit, and support purposes.',
           'You are responsible for choosing safe staff permissions and protecting connected third-party accounts used with Tiwlo.'
         ]
       },
@@ -98,7 +98,7 @@ const legalContent: Record<'terms' | 'privacy', LegalContent> = {
     highlights: [
       'Tiwlo processes data needed to run accounts, services, billing, support, verification, and security.',
       'Security logs and fraud signals help protect customers and the platform from abuse.',
-      'Administrators can use retention, access control, and audit workflows to manage sensitive operational records.'
+      'Tiwlo Team can use retention, access control, and audit workflows to manage sensitive operational records.'
     ],
     sections: [
       {
@@ -119,7 +119,7 @@ const legalContent: Record<'terms' | 'privacy', LegalContent> = {
         title: '3. Discord, WhatsApp, email, and support integrations',
         body: [
           'When enabled, integrations may receive or store ticket events, live chat events, invoice proof events, verification review events, staff actions, channel IDs, role IDs, message IDs, webhook events, email delivery status, and message metadata needed to run automation.',
-          'Tiwlo only needs these integration details to operate configured workflows, route support, notify administrators, and keep audit context.'
+          'Tiwlo only needs these integration details to operate configured workflows, route support, notify Tiwlo Team, and keep audit context.'
         ]
       },
       {

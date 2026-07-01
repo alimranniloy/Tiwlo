@@ -49,7 +49,7 @@ export default function IspDashboard() {
     <div className="space-y-6">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 border-b border-gray-100 pb-6">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900 tracking-tight">SaaS ISP Administrator</h1>
+          <h1 className="text-2xl font-bold text-gray-900 tracking-tight">SaaS ISP Tiwlo Team</h1>
           <p className="text-gray-500 text-sm mt-1">ISP sites, routers, packages, and billing from the GraphQL API.</p>
         </div>
         <div className="flex items-center gap-3">

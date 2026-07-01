@@ -1492,7 +1492,7 @@ export default function AdminTPanel() {
               <Rocket className="h-5 w-5 text-blue-600" />
               <div>
                 <h2 className="text-sm font-bold uppercase text-[#111827]">Force Update</h2>
-                <p className="text-[12px] text-[#6B7280]">Published releases appear in licensed tPanel admins.</p>
+                <p className="text-[12px] text-[#6B7280]">Published releases appear in licensed tPanel Tiwlo Team accounts.</p>
               </div>
             </div>
             <div className="grid grid-cols-1 gap-3">

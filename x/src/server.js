@@ -428,7 +428,7 @@ app.post('/ai/support/stream', async (req, res) => {
 app.post('/ai/model/stream', async (req, res) => {
   const user = await userFromRequest(req);
   if (!user || !['super_admin', 'admin'].includes(user.role)) {
-    res.status(user ? 403 : 401).json({ error: user ? 'Admin access required' : 'Authentication required' });
+    res.status(user ? 403 : 401).json({ error: user ? 'Tiwlo Team access required' : 'Authentication required' });
     return;
   }
 

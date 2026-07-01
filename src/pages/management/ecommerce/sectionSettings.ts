@@ -1,7 +1,7 @@
 const settings = (...items: string[]) => items;
 
 const SECTION_SETTINGS: Record<string, string[]> = {
-  'ecommerce.global-insight': settings('Show cross-tenant revenue signals', 'Flag stores with falling GMV', 'Include risk and support signals', 'Require admin review before executive export', 'Sync dashboard to merchant health'),
+  'ecommerce.global-insight': settings('Show cross-tenant revenue signals', 'Flag stores with falling GMV', 'Include risk and support signals', 'Require Tiwlo Team review before executive export', 'Sync dashboard to merchant health'),
   'ecommerce.live-traffic': settings('Enable live checkout stream', 'Auto-throttle suspicious spikes', 'Alert on payment failure bursts', 'Group traffic by store owner', 'Keep raw event samples for audit'),
   'ecommerce.health': settings('Monitor store jobs and queues', 'Auto-create incident records', 'Escalate degraded integrations', 'Require recovery owner', 'Attach runbook to failed checks'),
   'ecommerce.performance': settings('Track tenant storefront vitals', 'Auto-suggest CDN purges', 'Flag slow checkout routes', 'Apply image optimization defaults', 'Notify owners for repeated slowdowns'),
@@ -10,7 +10,7 @@ const SECTION_SETTINGS: Record<string, string[]> = {
   'ecommerce.stores': settings('Allow tenant store suspension', 'Require owner review for transfers', 'Auto-check DNS and SSL', 'Pause checkout on empty credit', 'Keep deployment audit trail'),
   'ecommerce.kyc': settings('Require identity review before payouts', 'Escalate high-risk documents', 'Lock store transfer during review', 'Notify risk team on rejection', 'Keep KYC evidence history'),
   'ecommerce.segments': settings('Sync segments to campaigns', 'Include churn-risk merchants', 'Refresh cohorts daily', 'Allow manual segment overrides', 'Audit audience exports'),
-  'ecommerce.groups': settings('Share billing across group stores', 'Restrict owner-level changes', 'Apply group policy to new stores', 'Require admin approval for merges', 'Show group hierarchy in records'),
+  'ecommerce.groups': settings('Share billing across group stores', 'Restrict owner-level changes', 'Apply group policy to new stores', 'Require Tiwlo Team approval for merges', 'Show group hierarchy in records'),
   'ecommerce.partners': settings('Enable partner portal access', 'Track referral links and webhooks', 'Hold payout until approval', 'Rotate partner keys on demand', 'Audit commission rule changes'),
   'ecommerce.revenue': settings('Show subscription and fee revenue', 'Hold suspicious settlements', 'Group revenue by merchant/store', 'Export finance-ready records', 'Audit payout changes'),
   'ecommerce.plans': settings('Publish plan changes to stores', 'Require approval for price changes', 'Enforce product and staff limits', 'Allow grandfathered plans', 'Audit feature limit edits'),
@@ -49,7 +49,7 @@ export function getSectionSettings(sectionKey: string, noun: string) {
   return SECTION_SETTINGS[sectionKey] || settings(
     `Enable ${noun.toLowerCase()} automation`,
     'Require approval before destructive changes',
-    'Notify admins on high-risk changes',
+    'Notify Tiwlo Team on high-risk changes',
     `Keep audit trail for ${noun.toLowerCase()} edits`,
     'Sync changes to tenant modules'
   );

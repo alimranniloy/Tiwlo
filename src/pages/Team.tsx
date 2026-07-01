@@ -117,7 +117,7 @@ export default function TeamPage({ user }: TeamPageProps) {
       <div className="mx-auto max-w-[1220px] space-y-8 pb-12">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-[#031b4e] md:text-3xl">Team Access</h1>
-          <p className="mt-1 text-sm font-medium text-[#52637a]">Your user dashboard does not include administrator user-management controls.</p>
+          <p className="mt-1 text-sm font-medium text-[#52637a]">Your user dashboard does not include Tiwlo Team user-management controls.</p>
         </div>
 
         <div className="grid grid-cols-1 gap-6 md:grid-cols-3">

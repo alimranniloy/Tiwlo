@@ -89,7 +89,7 @@ export default function Header({ user, onLogout, isSidebarOpen, setIsSidebarOpen
     : money(creditBalance, 'USD');
   const isCreditEmpty = creditBalance !== null && creditBalance <= 0;
   const roleLabel = ['admin', 'super_admin'].includes(user.role)
-    ? 'Administrator'
+    ? 'Tiwlo Team'
     : user.role.split('_').map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(' ');
 
   const notificationRoute = (notification: any) => {

@@ -61,7 +61,7 @@ const storeScope = field('storeScope', 'Store scope', 'All stores, selected tena
 const owner = field('owner', 'Owner / team', 'ops@tiwlo.test or Platform Ops');
 const region = field('region', 'Region', 'Global, APAC, EU, US-East');
 const priority = field('priority', 'Priority', 'low', 'select', ['low', 'normal', 'high', 'urgent']);
-const notes = field('notes', 'Admin notes', 'Internal note for this control record', 'textarea', undefined, 'full');
+const notes = field('notes', 'Tiwlo Team notes', 'Internal note for this control record', 'textarea', undefined, 'full');
 
 export const CONTROL_RECORD_TEMPLATES: Record<string, ControlRecordTemplate> = {
   'ecommerce.global-insight': template('Insight', 'Add Insight Signal', 'Executive platform signal for merchant SaaS decisions.', [

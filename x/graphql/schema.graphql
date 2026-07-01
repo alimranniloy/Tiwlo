@@ -618,7 +618,9 @@ type TiwloPayTransaction {
 type TiwloPayWithdrawal {
   id: ID!
   profileId: String!
+  profile: TiwloPayProfile
   ownerId: String!
+  owner: User
   amount: Float!
   currency: String!
   method: String!
@@ -1996,6 +1998,27 @@ input RequestTiwloPayWithdrawalInput {
   metadata: JSON
 }
 
+input TiwloPayAutoWithdrawalInput {
+  enabled: Boolean!
+  currency: String
+  method: String
+  accountName: String
+  accountNumber: String
+  bankName: String
+  branchName: String
+  routingNumber: String
+  walletNumber: String
+  note: String
+  minimumAmount: Float
+}
+
+input AdminAdjustTiwloPayBalanceInput {
+  profileId: ID!
+  amount: Float!
+  currency: String
+  reason: String
+}
+
 input UpsertIntegrationInput {
   key: String!
   group: String!
@@ -2804,8 +2827,10 @@ type Mutation {
   createTiwloPayLink(input: CreateTiwloPayLinkInput!): TiwloPayLink!
   payTiwloPayLink(input: PayTiwloPayLinkInput!): TiwloPayPaymentResult!
   requestTiwloPayWithdrawal(input: RequestTiwloPayWithdrawalInput!): TiwloPayWithdrawal!
+  setTiwloPayAutoWithdrawal(input: TiwloPayAutoWithdrawalInput!): TiwloPayProfile!
   adminUpdateTiwloPayProfileStatus(id: ID!, status: String!): TiwloPayProfile!
   adminUpdateTiwloPayWithdrawalStatus(id: ID!, status: String!): TiwloPayWithdrawal!
+  adminAdjustTiwloPayBalance(input: AdminAdjustTiwloPayBalanceInput!): TiwloPayTransaction!
   upsertIntegration(input: UpsertIntegrationInput!): Integration!
   createApiCredential(input: CreateApiCredentialInput!): ApiCredential!
   revokeApiCredential(id: ID!): ApiCredential!

@@ -260,7 +260,7 @@ export default function AdminSecurity() {
 
               {[
                 ['enabled', 'tSecurity enabled'],
-                ['adminBypass', 'Never block admins'],
+                ['adminBypass', 'Never block Tiwlo Team'],
                 ['blockOnLogin', 'Hard block risky login'],
                 ['blockOnSignupAvailability', 'Hard block email checks'],
                 ['blockKnownUsersOnLogin', 'Block user status on login hit'],

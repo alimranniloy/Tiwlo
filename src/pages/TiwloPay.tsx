@@ -42,6 +42,7 @@ import {
   fetchTiwloPayOverviewWithApi,
   requestTiwloPayWithdrawalWithApi,
   rotateTiwloPayKeysWithApi,
+  setTiwloPayAutoWithdrawalWithApi,
   upsertTiwloPayProfileWithApi
 } from '../lib/tiwloApi';
 import { useCurrency } from '../lib/useCurrency';
@@ -459,6 +460,8 @@ export default function TiwloPay() {
 
   const profile = overview?.profile || {};
   const verification = profile.settings?.verification || {};
+  const autoWithdrawal = profile.settings?.autoWithdrawal || {};
+  const payoutDestination = profile.settings?.payoutDestination || {};
   const verificationStatus = verification.status || 'not_submitted';
   const isLive = profile.status === 'active' && verificationStatus === 'approved';
   const summary = overview?.summary || {};
@@ -731,6 +734,34 @@ export default function TiwloPay() {
     }
   };
 
+  const toggleAutoWithdrawal = async () => {
+    setSaving(true);
+    setError('');
+    setNotice('');
+    try {
+      const enable = !autoWithdrawal.enabled;
+      await setTiwloPayAutoWithdrawalWithApi({
+        enabled: enable,
+        minimumAmount: 50,
+        currency: withdrawalForm.currency || payoutDestination.currency || autoWithdrawal.currency || 'BDT',
+        method: withdrawalForm.method || payoutDestination.method || autoWithdrawal.method || 'bank',
+        accountName: withdrawalForm.accountName || payoutDestination.destination?.accountName || autoWithdrawal.destination?.accountName || '',
+        accountNumber: withdrawalForm.accountNumber || payoutDestination.destination?.accountNumber || autoWithdrawal.destination?.accountNumber || '',
+        bankName: withdrawalForm.bankName || payoutDestination.destination?.bankName || autoWithdrawal.destination?.bankName || '',
+        branchName: withdrawalForm.branchName || payoutDestination.destination?.branchName || autoWithdrawal.destination?.branchName || '',
+        routingNumber: withdrawalForm.routingNumber || payoutDestination.destination?.routingNumber || autoWithdrawal.destination?.routingNumber || '',
+        walletNumber: withdrawalForm.walletNumber || payoutDestination.destination?.walletNumber || autoWithdrawal.destination?.walletNumber || '',
+        note: withdrawalForm.note || payoutDestination.destination?.note || autoWithdrawal.destination?.note || ''
+      });
+      setNotice(enable ? 'Auto withdrawal enabled' : 'Auto withdrawal disabled');
+      await loadOverview();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to update auto withdrawal');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const rotateKeys = async () => {
     setSaving(true);
     setError('');
@@ -901,7 +932,7 @@ export default function TiwloPay() {
             <SectionTitle title="Gateway Routing" detail="Main server payment methods available to Tiwlo Pay checkout." icon={Link2} />
           </div>
           <div className="divide-y divide-[#edf1f7]">
-            {gateways.length === 0 && <EmptyState icon={CreditCard} title="No gateway enabled" detail="Enable Stripe, PayPal, bKash, or another provider from admin payment settings." />}
+            {gateways.length === 0 && <EmptyState icon={CreditCard} title="No gateway enabled" detail="Enable Stripe, PayPal, bKash, or another provider from Tiwlo Team payment settings." />}
             {gateways.map((gateway: any) => (
               <div key={gateway.id} className="flex items-center justify-between gap-3 px-5 py-3.5">
                 <div className="flex min-w-0 items-center gap-3">
@@ -1037,7 +1068,7 @@ export default function TiwloPay() {
                 </button>
               );
             })}
-            {gateways.length === 0 && <EmptyState icon={CreditCard} title="No payment method ready" detail="Admin must enable payment gateways before merchants can create live links." />}
+            {gateways.length === 0 && <EmptyState icon={CreditCard} title="No payment method ready" detail="Tiwlo Team must enable payment gateways before merchants can create live links." />}
           </div>
         </section>
 
@@ -1121,7 +1152,7 @@ export default function TiwloPay() {
         <SectionTitle title="Request payout" detail={`${money(summary.availableForWithdrawal, currency)} available`} icon={Landmark} action={<StatusPill status={isLive ? 'active' : 'inactive'} />} />
         {!isLive && <div className="mb-4"><VerificationNotice isLive={isLive} status={profile.status || 'inactive'} verificationStatus={verificationStatus} /></div>}
         <fieldset disabled={!isLive || saving} className="grid grid-cols-1 gap-3 sm:grid-cols-2 disabled:opacity-60">
-          <input required type="number" min="1" step="0.01" value={withdrawalForm.amount} onChange={(event) => setWithdrawalForm((current) => ({ ...current, amount: event.target.value }))} className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="Amount" />
+          <input required type="number" min="50" step="0.01" value={withdrawalForm.amount} onChange={(event) => setWithdrawalForm((current) => ({ ...current, amount: event.target.value }))} className="rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" placeholder="Amount (minimum 50)" />
           <select value={withdrawalForm.method} onChange={(event) => setWithdrawalForm((current) => ({ ...current, method: event.target.value }))} className="rounded border border-[#DDE3EA] px-3 py-2 text-sm font-bold outline-none focus:border-blue-500">
             {['bank', 'bkash', 'nagad', 'manual'].map((method) => <option key={method} value={method}>{method.toUpperCase()}</option>)}
           </select>
@@ -1136,11 +1167,25 @@ export default function TiwloPay() {
             <Wallet className="h-4 w-4" /> Submit payout request
           </button>
         </fieldset>
+        <div className="mt-4 rounded border border-blue-100 bg-blue-50 p-3">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-[12px] font-bold uppercase text-blue-900">Auto withdrawal</p>
+              <p className="mt-1 text-[12px] leading-5 text-blue-800">
+                After 12:00 AM, if available balance is at least {money(50, withdrawalForm.currency || 'BDT')}, Tiwlo Pay will request the full available amount using saved payout details.
+              </p>
+            </div>
+            <button type="button" onClick={toggleAutoWithdrawal} disabled={!isLive || saving} className="flex shrink-0 items-center justify-center gap-2 rounded bg-[#111827] px-3 py-2 text-[12px] font-bold text-white hover:bg-black disabled:opacity-60">
+              <RefreshCw className="h-4 w-4" /> {autoWithdrawal.enabled ? 'Disable auto withdrawal' : 'Auto withdrawal'}
+            </button>
+          </div>
+          <p className="mt-2 text-[11px] font-bold uppercase text-blue-700">Status: {autoWithdrawal.enabled ? 'Enabled' : 'Disabled'}{payoutDestination?.updatedAt ? ` / Details saved ${dateLabel(payoutDestination.updatedAt)}` : ''}</p>
+        </div>
       </form>
 
       <section className="overflow-hidden rounded border border-[#DDE3EA] bg-white">
         <div className="border-b border-[#E5E7EB] p-5">
-          <SectionTitle title="Payout ledger" detail="Admin-reviewed withdrawal requests." icon={Wallet} />
+          <SectionTitle title="Payout ledger" detail="Tiwlo Team-reviewed withdrawal requests." icon={Wallet} />
         </div>
         <div className="divide-y divide-[#EEF2F7]">
           {withdrawals.length === 0 && <EmptyState icon={Landmark} title="No payout requests" detail="Payout requests will appear here after the account is verified and has available balance." />}
@@ -1244,7 +1289,7 @@ export default function TiwloPay() {
       <section className="rounded border border-[#DDE3EA] bg-white p-5">
         <SectionTitle
           title="API keys"
-          detail={isLive ? 'Live REST API access is available for verified merchants.' : 'API access is locked until admin approves ID verification.'}
+          detail={isLive ? 'Live REST API access is available for verified merchants.' : 'API access is locked until Tiwlo Team approves ID verification.'}
           icon={KeyRound}
           action={(
             <div className="flex flex-wrap items-center gap-2">
@@ -1316,13 +1361,13 @@ export default function TiwloPay() {
   const verifyPage = (
     <div className="grid grid-cols-1 gap-5 xl:grid-cols-[0.85fr_1.15fr]">
       <section className="rounded border border-[#DDE3EA] bg-white p-5">
-        <SectionTitle title="Verification status" detail="Admin approval activates payment links, API access, and payouts." icon={UserCheck} action={<StatusPill status={verificationStatus} />} />
+        <SectionTitle title="Verification status" detail="Tiwlo Team approval activates payment links, API access, and payouts." icon={UserCheck} action={<StatusPill status={verificationStatus} />} />
         <div className="space-y-3">
           {[
             { label: 'Merchant status', value: profile.status || 'inactive', icon: Building2 },
             { label: 'Verification', value: verificationStatus, icon: ShieldCheck },
             { label: 'Submitted', value: verification.submittedAt ? timeLabel(verification.submittedAt) : 'Not submitted', icon: Clock3 },
-            { label: 'Reviewed', value: verification.reviewedAt ? timeLabel(verification.reviewedAt) : 'Waiting for admin', icon: UserCheck },
+            { label: 'Reviewed', value: verification.reviewedAt ? timeLabel(verification.reviewedAt) : 'Waiting for Tiwlo Team', icon: UserCheck },
             { label: 'Payment links', value: isLive ? 'enabled' : 'locked', icon: Link2 },
             { label: 'Payouts', value: isLive ? 'enabled' : 'locked', icon: Landmark }
           ].map((item) => {
@@ -1345,7 +1390,7 @@ export default function TiwloPay() {
         <div className="rounded border border-blue-100 bg-blue-50 p-5">
           <UserCheck className="h-8 w-8 text-[#0069ff]" />
           <h3 className="mt-4 text-lg font-black text-[#111827]">Open mobile verification</h3>
-          <p className="mt-2 text-sm font-medium leading-6 text-[#4B5563]">Tiwlo Pay stays inactive until an administrator approves the submitted documents.</p>
+          <p className="mt-2 text-sm font-medium leading-6 text-[#4B5563]">Tiwlo Pay stays inactive until Tiwlo Team approves the submitted documents.</p>
         </div>
         <button className="mt-4 flex w-full items-center justify-center gap-2 rounded bg-[#0069ff] px-4 py-3 text-sm font-bold text-white hover:bg-[#0056cc]">
           <UserCheck className="h-4 w-4" /> Start ID verification

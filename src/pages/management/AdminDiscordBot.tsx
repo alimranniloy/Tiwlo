@@ -166,7 +166,7 @@ const defaultConfig = {
 };
 
 const roleFields = [
-  { key: 'adminRoleId', label: 'Admin role ID', placeholder: 'Discord admin role ID', icon: Users },
+  { key: 'adminRoleId', label: 'Tiwlo Team role ID', placeholder: 'Discord Tiwlo Team role ID', icon: Users },
   { key: 'supportRoleId', label: 'Support role ID', placeholder: 'Support agent role ID', icon: LifeBuoy },
   { key: 'billingRoleId', label: 'Billing role ID', placeholder: 'Billing team role ID', icon: Receipt },
   { key: 'identityRoleId', label: 'Identity role ID', placeholder: 'KYC/ID review role ID', icon: ClipboardCheck },
@@ -229,7 +229,7 @@ const automationGroups = [
     icon: ShieldAlert,
     items: [
       ['slashCommands', 'Slash commands', '/ticket, /live, /assign, /solved, /invoice, /idreview, and /broadcast are enabled.'],
-      ['postAuditEmbeds', 'Audit embeds', 'Admin actions and bot actions are posted to the log channel.'],
+      ['postAuditEmbeds', 'Audit embeds', 'Tiwlo Team actions and bot actions are posted to the log channel.'],
       ['mirrorAdminActions', 'Mirror admin actions', 'Actions from the web admin panel are mirrored back to Discord.'],
       ['rateLimitUsers', 'Rate limit users', 'Throttle users who exceed the message window.'],
       ['blockSpamLinks', 'Block spam links', 'Flag suspicious links and keep them out of customer replies.'],
@@ -261,9 +261,9 @@ const automationGroups = [
       ['routeByProductArea', 'Route by product area', 'Send cloud, billing, tPanel, ISP, email, and store issues to matching roles.'],
       ['routeByCustomerTier', 'Route by customer tier', 'VIP, enterprise, and overdue customers follow separate routing rules.'],
       ['routeByTimezone', 'Route by timezone', 'Prefer staff whose local time is inside working hours.'],
-      ['onCallRotation', 'On-call rotation', 'Rotate urgent after-hours pings across configured admin/support roles.'],
+      ['onCallRotation', 'On-call rotation', 'Rotate urgent after-hours pings across configured Tiwlo Team/support roles.'],
       ['afterHoursAutoResponder', 'After-hours responder', 'Send a customer-safe response when no staff is online.'],
-      ['emergencyPageAdmin', 'Emergency page admin', 'Page admin role when outage, fraud, or security keywords appear.'],
+      ['emergencyPageAdmin', 'Emergency page owner', 'Tiwlo Team role when outage, fraud, or security keywords appear.'],
       ['queueLoadBalancing', 'Queue load balancing', 'Avoid assigning new cases to overloaded staff.'],
       ['cannedReplyLibrary', 'Canned reply library', 'Expose approved reply templates in Discord actions.']
     ]
@@ -272,7 +272,7 @@ const automationGroups = [
     title: 'Billing, Fraud, and KYC Guardrails',
     icon: Receipt,
     items: [
-      ['requireTwoPersonApproval', 'Two-person approval', 'Require second admin approval for risky refunds, KYC, or payment changes.'],
+      ['requireTwoPersonApproval', 'Two-person approval', 'Require second Tiwlo Team approval for risky refunds, KYC, or payment changes.'],
       ['paymentFraudScoring', 'Payment fraud scoring', 'Score suspicious invoice proof, repeated failures, and mismatched payer data.'],
       ['invoiceDunningAlerts', 'Invoice dunning alerts', 'Post overdue, failed retry, and grace-period warnings to invoice channel.'],
       ['refundApprovalFlow', 'Refund approval flow', 'Create refund review cards with approve, reject, and request-info actions.'],
@@ -280,7 +280,7 @@ const automationGroups = [
       ['kycExpiryReminder', 'KYC expiry reminders', 'Warn identity channel before document evidence expires.'],
       ['kycResubmissionFlow', 'KYC resubmission flow', 'Ask users for missing or rejected documents after decline.'],
       ['documentBlurDetection', 'Document blur signal', 'Flag unreadable document images for manual review.'],
-      ['documentTamperSignal', 'Document tamper signal', 'Flag suspicious document metadata or edits for admin review.']
+      ['documentTamperSignal', 'Document tamper signal', 'Flag suspicious document metadata or edits for Tiwlo Team review.']
     ]
   },
   {
@@ -297,7 +297,7 @@ const automationGroups = [
       ['transcriptExportPdf', 'PDF transcript export', 'Allow PDF transcript export for compliance evidence.'],
       ['fileVirusScanGate', 'Attachment scan gate', 'Hold risky attachments until scanner or staff approval passes.'],
       ['attachmentSizeGuard', 'Attachment size guard', 'Block oversized files before they reach Discord threads.'],
-      ['piiExportApproval', 'PII export approval', 'Require admin approval before exporting sensitive customer evidence.'],
+      ['piiExportApproval', 'PII export approval', 'Require Tiwlo Team approval before exporting sensitive customer evidence.'],
       ['retentionAutoPurge', 'Retention auto purge', 'Purge old transcripts and attachments after retention period.'],
       ['csatSurveyAfterClose', 'CSAT after close', 'Ask customer for satisfaction after solved ticket or live chat.'],
       ['staffPerformanceDigest', 'Staff performance digest', 'Summarize response time, solved count, and overdue cases by staff.'],
@@ -307,7 +307,7 @@ const automationGroups = [
 ];
 
 const workflowPreview = [
-  { title: 'New ticket', detail: 'Create thread, red dot, ticket number, role mention, admin link.', icon: Ticket },
+  { title: 'New ticket', detail: 'Create thread, red dot, ticket number, role mention, Tiwlo Team link.', icon: Ticket },
   { title: 'Live chat', detail: 'Open live thread, show typing state, route to online staff.', icon: Radio },
   { title: 'ID verification', detail: 'Post user, email, submitted docs, image metadata, approve/decline buttons.', icon: ClipboardCheck },
   { title: 'Invoice proof', detail: 'Post paid/non-paid proof, payment actions, dispute ticket option.', icon: Receipt },

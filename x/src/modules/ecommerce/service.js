@@ -1551,7 +1551,7 @@ const baseControlSchemaFields = [
   { key: 'storeScope', label: 'Store scope', type: 'text' },
   { key: 'owner', label: 'Owner/team', type: 'text' },
   { key: 'priority', label: 'Priority', type: 'select', options: ['low', 'normal', 'high', 'urgent'] },
-  { key: 'notes', label: 'Admin notes', type: 'textarea' }
+  { key: 'notes', label: 'Tiwlo Team notes', type: 'textarea' }
 ];
 
 const controlSchemaFieldsBySource = {

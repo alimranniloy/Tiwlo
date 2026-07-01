@@ -994,7 +994,7 @@ export const updateTPanelLicense = async (ctx, input) => {
     ));
     if (!nextPackage || nextPackage.status !== 'active') throw new AppError('Selected tPanel package is not available', 'BAD_USER_INPUT');
     if (!isAdmin(actor) && current.status !== 'pending_payment') {
-      throw new AppError('Only an administrator can change the package after a license has been paid', 'FORBIDDEN');
+      throw new AppError('Only Tiwlo Team can change the package after a license has been paid', 'FORBIDDEN');
     }
   }
   const serverChanged = nextServerIp !== current.serverIp;
@@ -1808,7 +1808,7 @@ export const verifyTPanelLicense = async (ctx, input) => {
     } else if (BLOCKED_STATUSES.has(license.status)) {
       message = `License is ${license.status}.`;
     } else {
-      message = 'License is waiting for payment or admin approval.';
+      message = 'License is waiting for payment or Tiwlo Team approval.';
     }
 
     await upsertNode(ctx, license, { ...input, serverIp, fingerprint }, ok ? 'online' : 'blocked', message);

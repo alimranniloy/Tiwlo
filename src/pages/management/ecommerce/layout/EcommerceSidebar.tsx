@@ -35,7 +35,7 @@ export default function EcommerceSidebar({ isOpen, onToggle }: EcommerceSidebarP
             {isOpen && (
               <div className="flex min-w-0 flex-col">
                 <span className="truncate text-sm font-bold leading-none text-slate-800">Commerce Suite</span>
-                <span className="mt-1 text-[11px] font-medium text-indigo-600">Admin Management</span>
+                <span className="mt-1 text-[11px] font-medium text-indigo-600">Tiwlo Team Management</span>
               </div>
             )}
           </div>

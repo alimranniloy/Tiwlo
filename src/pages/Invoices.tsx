@@ -270,7 +270,7 @@ export default function Invoices({ adminMode = false }: InvoicesProps) {
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-[#031b4e] md:text-3xl">Billing & Invoices</h1>
           <p className="mt-1 text-[13px] font-medium text-[#52637a]">
-            {adminMode ? 'Administrator invoice records and manual actions.' : 'Your invoices, checkout links, and payment history from the billing API.'}
+            {adminMode ? 'Tiwlo Team invoice records and manual actions.' : 'Your invoices, checkout links, and payment history from the billing API.'}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -312,7 +312,7 @@ export default function Invoices({ adminMode = false }: InvoicesProps) {
         <div className="flex flex-col gap-4 border-b border-[#e4e9f1] bg-[#f7f9fc] px-6 py-5 md:flex-row md:items-center md:justify-between">
           <div>
             <h2 className="text-[14px] font-bold uppercase tracking-wide text-[#2e3d49]">Invoice List</h2>
-            <p className="text-[11px] font-medium text-gray-400">{adminMode ? 'Admin controls are available only on this management route.' : 'Manual admin controls are hidden on the user dashboard.'}</p>
+            <p className="text-[11px] font-medium text-gray-400">{adminMode ? 'Tiwlo Team controls are available only on this management route.' : 'Manual Tiwlo Team controls are hidden on the user dashboard.'}</p>
           </div>
           <div className="flex items-center gap-3">
             <div className="relative flex-1">

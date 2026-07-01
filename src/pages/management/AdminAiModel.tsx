@@ -260,7 +260,7 @@ export default function AdminAiModel() {
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-[#2e3d49]">AI Model</h1>
-          <p className="mt-1 text-[13px] text-[#4a4a4a]">Local node-llama-cpp runtime with Qwen GGUF chat for administrators.</p>
+          <p className="mt-1 text-[13px] text-[#4a4a4a]">Local node-llama-cpp runtime with Qwen GGUF chat for Tiwlo Team.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button onClick={() => load()} className="flex items-center gap-2 rounded border border-[#d7e3ff] bg-white px-3 py-2 text-[12px] font-bold text-[#0069ff] hover:bg-blue-50">

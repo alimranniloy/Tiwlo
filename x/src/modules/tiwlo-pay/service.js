@@ -12,6 +12,10 @@ const profileStatuses = new Set(['active', 'inactive', 'suspended']);
 const withdrawalStatuses = new Set(['pending', 'processing', 'paid', 'completed', 'rejected', 'cancelled']);
 
 const localHostnames = new Set(['localhost', '127.0.0.1', '0.0.0.0', '::1']);
+const openWithdrawalStatuses = new Set(['pending', 'processing']);
+const terminalWithdrawalStatuses = new Set(['paid', 'completed', 'rejected', 'cancelled']);
+const minimumAutoWithdrawalAmount = 50;
+let autoWithdrawalTimer = null;
 
 const firstHeaderValue = (value) => (Array.isArray(value) ? value[0] : value || '');
 
@@ -132,7 +136,7 @@ const resolveGateway = async (ctx, provider, allowedProviders = []) => {
   const gateway = gateways.find((item) => (
     normalizeProvider(item.provider) === normalized || normalizeProvider(item.key) === normalized
   ));
-  if (!gateway) throw new AppError('Payment gateway is not enabled by the platform admin', 'PAYMENT_CONFIGURATION_REQUIRED');
+  if (!gateway) throw new AppError('Payment gateway is not enabled by Tiwlo Team', 'PAYMENT_CONFIGURATION_REQUIRED');
 
   const allowed = Array.isArray(allowedProviders) ? allowedProviders.map(normalizeProvider).filter(Boolean) : [];
   if (allowed.length && !allowed.includes(normalizeProvider(gateway.provider))) {
@@ -162,6 +166,17 @@ const defaultSettings = () => ({
   feePercent: 2.9,
   feeFixed: 0.3,
   withdrawalMethods: ['bank', 'bkash', 'nagad', 'manual'],
+  payoutDestination: null,
+  autoWithdrawal: {
+    enabled: false,
+    minimumAmount: minimumAutoWithdrawalAmount,
+    currency: 'BDT',
+    method: '',
+    destination: null,
+    lastRunDate: '',
+    lastRequestedAt: null,
+    updatedAt: null
+  },
   apiAccess: {
     allowedDomains: [],
     allowedIps: []
@@ -204,10 +219,19 @@ const settingsWithDefaults = (settings = {}) => {
   const apiAccess = incoming.apiAccess && typeof incoming.apiAccess === 'object' && !Array.isArray(incoming.apiAccess)
     ? incoming.apiAccess
     : {};
+  const autoWithdrawal = incoming.autoWithdrawal && typeof incoming.autoWithdrawal === 'object' && !Array.isArray(incoming.autoWithdrawal)
+    ? incoming.autoWithdrawal
+    : {};
 
   return {
     ...base,
     ...incoming,
+    payoutDestination: incoming.payoutDestination === undefined ? base.payoutDestination : incoming.payoutDestination,
+    autoWithdrawal: {
+      ...base.autoWithdrawal,
+      ...autoWithdrawal,
+      minimumAmount: Number(autoWithdrawal.minimumAmount || base.autoWithdrawal.minimumAmount)
+    },
     apiAccess: {
       ...base.apiAccess,
       ...apiAccess,
@@ -285,18 +309,21 @@ const sumBy = (items, key, filter = () => true) => (
 );
 
 const buildSummary = ({ links, transactions, withdrawals, merchants = 1 }) => {
+  const isAdjustment = (item) => item.provider === 'tiwlo_team_adjustment' || item.metadata?.type === 'wallet_adjustment';
   const succeeded = (item) => item.status === 'succeeded';
+  const revenue = (item) => succeeded(item) && !isAdjustment(item);
+  const ledger = (item) => succeeded(item) || isAdjustment(item);
   const pendingWithdrawal = (item) => ['pending', 'processing'].includes(item.status);
   const withdrawn = (item) => ['paid', 'completed'].includes(item.status);
   const reserved = (item) => ['pending', 'processing', 'paid', 'completed'].includes(item.status);
-  const net = sumBy(transactions, 'netAmount', succeeded);
+  const net = sumBy(transactions, 'netAmount', ledger);
   const reservedWithdrawal = sumBy(withdrawals, 'amount', reserved);
 
   return {
     balance: roundMoney(net - sumBy(withdrawals, 'amount', withdrawn)),
-    grossVolume: sumBy(transactions, 'amount'),
-    paidVolume: sumBy(transactions, 'amount', succeeded),
-    fees: sumBy(transactions, 'fee', succeeded),
+    grossVolume: sumBy(transactions, 'amount', revenue),
+    paidVolume: sumBy(transactions, 'amount', revenue),
+    fees: sumBy(transactions, 'fee', revenue),
     availableForWithdrawal: Math.max(0, roundMoney(net - reservedWithdrawal)),
     pendingWithdrawal: sumBy(withdrawals, 'amount', pendingWithdrawal),
     totalWithdrawn: sumBy(withdrawals, 'amount', withdrawn),
@@ -359,6 +386,12 @@ const fetchScopedRecords = async (ctx, ownerId) => {
     }),
     ctx.prisma.tiwloPayWithdrawal.findMany({
       where: ownerId ? { ownerId } : {},
+      include: {
+        owner: true,
+        profile: {
+          include: profileInclude
+        }
+      },
       orderBy: { requestedAt: 'desc' },
       take: ownerId ? 100 : 250
     })
@@ -370,6 +403,7 @@ export const tiwloPayOverview = async (ctx) => {
   const actor = await requireAuth(ctx);
   const profile = await ensureProfile(ctx, actor);
   await expireLinks(ctx, actor.id);
+  await processTiwloPayAutoWithdrawals(ctx, { ownerId: actor.id });
   const [{ links, transactions, withdrawals }, gateways] = await Promise.all([
     fetchScopedRecords(ctx, actor.id),
     listEnabledGateways(ctx)
@@ -390,6 +424,7 @@ export const tiwloPayOverview = async (ctx) => {
 export const adminTiwloPayOverview = async (ctx) => {
   await requireAdmin(ctx);
   await expireLinks(ctx);
+  await processTiwloPayAutoWithdrawals(ctx);
   const [profileCount, profiles, records, gateways] = await Promise.all([
     ctx.prisma.tiwloPayProfile.count(),
     ctx.prisma.tiwloPayProfile.findMany({
@@ -503,7 +538,7 @@ export const requestTiwloPayVerification = async (ctx, input = {}) => {
 
   return toApi({
     profile: profileWithDefaults(updated),
-    message: 'ID verification submitted. Admin approval is required before Tiwlo Pay becomes active.'
+    message: 'ID verification submitted. Tiwlo Team approval is required before Tiwlo Pay becomes active.'
   });
 };
 
@@ -723,41 +758,206 @@ export const payTiwloPayLink = async (ctx, input = {}) => {
   });
 };
 
-export const requestTiwloPayWithdrawal = async (ctx, input = {}) => {
-  const actor = await requireAuth(ctx);
-  const profile = await ensureProfile(ctx, actor);
-  requireActiveProfile(profile, 'payouts');
+const withdrawalDestinationFromInput = (input = {}, fallback = {}) => ({
+  accountName: cleanText(input.accountName, fallback.accountName || ''),
+  accountNumber: cleanText(input.accountNumber, fallback.accountNumber || ''),
+  bankName: cleanText(input.bankName, fallback.bankName || ''),
+  branchName: cleanText(input.branchName, fallback.branchName || ''),
+  routingNumber: cleanText(input.routingNumber, fallback.routingNumber || ''),
+  walletNumber: cleanText(input.walletNumber, fallback.walletNumber || ''),
+  note: cleanText(input.note, fallback.note || '')
+});
+
+const hasWithdrawalDestination = (destination = {}) => Boolean(
+  cleanText(destination.accountNumber) ||
+  cleanText(destination.walletNumber) ||
+  cleanText(destination.bankName) ||
+  cleanText(destination.accountName)
+);
+
+const savePayoutDestination = async (ctx, profile, { method, currency, destination, autoWithdrawal }) => {
+  const settings = settingsWithDefaults(profile.settings);
+  const payoutDestination = {
+    method,
+    currency,
+    destination,
+    updatedAt: new Date().toISOString()
+  };
+  const nextSettings = {
+    ...settings,
+    payoutDestination,
+    autoWithdrawal: autoWithdrawal
+      ? {
+        ...settings.autoWithdrawal,
+        ...autoWithdrawal
+      }
+      : settings.autoWithdrawal
+  };
+
+  return ctx.prisma.tiwloPayProfile.update({
+    where: { id: profile.id },
+    data: { settings: nextSettings },
+    include: profileInclude
+  });
+};
+
+const createWithdrawalForProfile = async (ctx, profile, actor, input = {}, options = {}) => {
+  const metadata = input.metadata && typeof input.metadata === 'object' && !Array.isArray(input.metadata)
+    ? input.metadata
+    : {};
   const amount = Number(input.amount || 0);
   if (!Number.isFinite(amount) || amount <= 0) throw new AppError('Withdrawal amount must be greater than 0', 'BAD_USER_INPUT');
+  if (amount < minimumAutoWithdrawalAmount) {
+    throw new AppError(`Minimum withdrawal amount is ${minimumAutoWithdrawalAmount}`, 'BAD_USER_INPUT');
+  }
+
+  const method = normalizeProvider(input.method);
+  if (!method) throw new AppError('Withdrawal method is required', 'BAD_USER_INPUT');
+  const currency = normalizeCurrency(input.currency);
+  const destination = withdrawalDestinationFromInput(input);
+  if (!hasWithdrawalDestination(destination)) throw new AppError('Withdrawal destination is required', 'BAD_USER_INPUT');
 
   const records = await fetchScopedRecords(ctx, actor.id);
+  const openWithdrawal = records.withdrawals.find((withdrawal) => openWithdrawalStatuses.has(withdrawal.status));
+  if (openWithdrawal) {
+    throw new AppError('A withdrawal request is already pending. Wait for Tiwlo Team to complete or cancel it before sending another request.', 'CONFLICT');
+  }
+
   const summary = buildSummary(records);
   if (amount > summary.availableForWithdrawal) {
     throw new AppError('Withdrawal amount is higher than the available Tiwlo Pay balance', 'BAD_USER_INPUT');
   }
 
-  const method = normalizeProvider(input.method);
   const withdrawal = await ctx.prisma.tiwloPayWithdrawal.create({
     data: {
       profileId: profile.id,
       ownerId: actor.id,
       amount: roundMoney(amount),
-      currency: normalizeCurrency(input.currency),
+      currency,
       method,
-      destination: {
-        accountName: cleanText(input.accountName, ''),
-        accountNumber: cleanText(input.accountNumber, ''),
-        bankName: cleanText(input.bankName, ''),
-        branchName: cleanText(input.branchName, ''),
-        routingNumber: cleanText(input.routingNumber, ''),
-        walletNumber: cleanText(input.walletNumber, ''),
-        note: cleanText(input.note, '')
-      },
-      metadata: input.metadata || {}
+      destination,
+      metadata: {
+        ...metadata,
+        source: options.source || metadata.source || 'manual_withdrawal',
+        requestedBy: options.requestedBy || actor.id
+      }
+    },
+    include: {
+      owner: true,
+      profile: {
+        include: profileInclude
+      }
     }
   });
 
+  await savePayoutDestination(ctx, profile, {
+    method,
+    currency,
+    destination,
+    autoWithdrawal: options.autoWithdrawal
+  });
+
+  return withdrawal;
+};
+
+export const requestTiwloPayWithdrawal = async (ctx, input = {}) => {
+  const actor = await requireAuth(ctx);
+  const profile = await ensureProfile(ctx, actor);
+  requireActiveProfile(profile, 'payouts');
+  const withdrawal = await createWithdrawalForProfile(ctx, profile, actor, input);
   return toApi(withdrawal);
+};
+
+export const setTiwloPayAutoWithdrawal = async (ctx, input = {}) => {
+  const actor = await requireAuth(ctx);
+  const profile = await ensureProfile(ctx, actor);
+  requireActiveProfile(profile, 'auto withdrawals');
+  const settings = settingsWithDefaults(profile.settings);
+  const fallback = settings.payoutDestination || {};
+  const enabled = Boolean(input.enabled);
+  const method = normalizeProvider(input.method || fallback.method || settings.autoWithdrawal.method);
+  const currency = normalizeCurrency(input.currency || fallback.currency || settings.autoWithdrawal.currency || 'BDT');
+  const destination = withdrawalDestinationFromInput(input, fallback.destination || settings.autoWithdrawal.destination || {});
+  const minimumAmount = Math.max(minimumAutoWithdrawalAmount, Number(input.minimumAmount || settings.autoWithdrawal.minimumAmount || minimumAutoWithdrawalAmount));
+
+  if (enabled) {
+    if (!method) throw new AppError('Choose a withdrawal method before enabling auto withdrawal', 'BAD_USER_INPUT');
+    if (!hasWithdrawalDestination(destination)) throw new AppError('Save withdrawal destination details before enabling auto withdrawal', 'BAD_USER_INPUT');
+  }
+
+  const updated = await savePayoutDestination(ctx, profile, {
+    method,
+    currency,
+    destination,
+    autoWithdrawal: {
+      ...settings.autoWithdrawal,
+      enabled,
+      method,
+      currency,
+      destination,
+      minimumAmount,
+      updatedAt: new Date().toISOString()
+    }
+  });
+
+  return toApi(profileWithDefaults(updated));
+};
+
+const autoRunDateKey = (date = new Date()) => date.toISOString().slice(0, 10);
+
+export const processTiwloPayAutoWithdrawals = async (ctx, options = {}) => {
+  const ownerId = cleanText(options.ownerId, '');
+  const profiles = await ctx.prisma.tiwloPayProfile.findMany({
+    where: {
+      ...(ownerId ? { ownerId } : {}),
+      status: 'active'
+    },
+    include: profileInclude,
+    take: ownerId ? 1 : 250
+  });
+  const today = autoRunDateKey();
+  const results = [];
+
+  for (const profile of profiles) {
+    const settings = settingsWithDefaults(profile.settings);
+    const auto = settings.autoWithdrawal || {};
+    if (!auto.enabled || auto.lastRunDate === today) continue;
+    if (!auto.method || !hasWithdrawalDestination(auto.destination || {})) continue;
+
+    const records = await fetchScopedRecords(ctx, profile.ownerId);
+    if (records.withdrawals.some((withdrawal) => openWithdrawalStatuses.has(withdrawal.status))) continue;
+
+    const summary = buildSummary(records);
+    const minimumAmount = Math.max(minimumAutoWithdrawalAmount, Number(auto.minimumAmount || minimumAutoWithdrawalAmount));
+    const amount = roundMoney(summary.availableForWithdrawal);
+    if (amount < minimumAmount) continue;
+
+    try {
+      const withdrawal = await createWithdrawalForProfile(ctx, profileWithDefaults(profile), profile.owner, {
+        amount,
+        currency: auto.currency || records.transactions[0]?.currency || 'BDT',
+        method: auto.method,
+        ...(auto.destination || {}),
+        metadata: {
+          source: 'auto_withdrawal',
+          autoRunDate: today
+        }
+      }, {
+        source: 'auto_withdrawal',
+        requestedBy: 'tiwlo_auto_withdrawal',
+        autoWithdrawal: {
+          ...auto,
+          lastRunDate: today,
+          lastRequestedAt: new Date().toISOString()
+        }
+      });
+      results.push(withdrawal);
+    } catch (error) {
+      console.warn('[tiwlo-pay] auto withdrawal skipped:', error?.message || error);
+    }
+  }
+
+  return toApi(results);
 };
 
 const readBearerToken = (authorization = '') => {
@@ -1016,6 +1216,15 @@ const asyncApiRoute = (handler) => async (req, res) => {
 };
 
 export const registerTiwloPayApiRoutes = (app, options = {}) => {
+  if (!autoWithdrawalTimer && options.prisma) {
+    autoWithdrawalTimer = setInterval(() => {
+      processTiwloPayAutoWithdrawals({ prisma: options.prisma }).catch((error) => {
+        console.warn('[tiwlo-pay] auto withdrawal job failed:', error?.message || error);
+      });
+    }, 60 * 60 * 1000);
+    autoWithdrawalTimer.unref?.();
+  }
+
   app.get('/api/tiwlo-pay/v1', (_req, res) => {
     res.setHeader('Cache-Control', 'public, max-age=300');
     res.json({
@@ -1135,14 +1344,84 @@ export const adminUpdateTiwloPayProfileStatus = async (ctx, id, status) => {
 };
 
 export const adminUpdateTiwloPayWithdrawalStatus = async (ctx, id, status) => {
-  await requireAdmin(ctx);
+  const actor = await requireAdmin(ctx);
   if (!withdrawalStatuses.has(status)) throw new AppError('Invalid withdrawal status', 'BAD_USER_INPUT');
+  const existing = await ctx.prisma.tiwloPayWithdrawal.findUnique({ where: { id } });
+  if (!existing) notFound('Tiwlo Pay withdrawal');
+  if (terminalWithdrawalStatuses.has(existing.status) && existing.status !== status) {
+    throw new AppError('This withdrawal request is already closed', 'CONFLICT');
+  }
+  if (['paid', 'completed', 'cancelled', 'rejected'].includes(status) && !openWithdrawalStatuses.has(existing.status) && existing.status !== status) {
+    throw new AppError('Only pending or processing withdrawals can be closed', 'CONFLICT');
+  }
   const withdrawal = await ctx.prisma.tiwloPayWithdrawal.update({
     where: { id },
     data: {
       status,
-      processedAt: ['paid', 'completed', 'rejected', 'cancelled'].includes(status) ? new Date() : null
+      processedAt: terminalWithdrawalStatuses.has(status) ? new Date() : null,
+      metadata: {
+        ...(existing.metadata && typeof existing.metadata === 'object' && !Array.isArray(existing.metadata) ? existing.metadata : {}),
+        reviewedBy: actor.id,
+        reviewedAt: new Date().toISOString()
+      }
+    },
+    include: {
+      owner: true,
+      profile: {
+        include: profileInclude
+      }
     }
   });
+  await writeAudit(ctx, 'admin_update_tiwlo_pay_withdrawal_status', 'tiwloPayWithdrawal', id, { status });
   return toApi(withdrawal);
+};
+
+export const adminAdjustTiwloPayBalance = async (ctx, input = {}) => {
+  const actor = await requireAdmin(ctx);
+  const profileId = cleanText(input.profileId, '');
+  const amount = roundMoney(Number(input.amount || 0));
+  if (!profileId) throw new AppError('Merchant profile is required', 'BAD_USER_INPUT');
+  if (!Number.isFinite(amount) || amount === 0) throw new AppError('Adjustment amount must not be zero', 'BAD_USER_INPUT');
+
+  const profile = await ctx.prisma.tiwloPayProfile.findUnique({
+    where: { id: profileId },
+    include: profileInclude
+  });
+  if (!profile) notFound('Tiwlo Pay profile');
+
+  if (amount < 0) {
+    const records = await fetchScopedRecords(ctx, profile.ownerId);
+    const summary = buildSummary(records);
+    if (Math.abs(amount) > summary.availableForWithdrawal) {
+      throw new AppError('Debit amount is higher than the merchant available balance', 'BAD_USER_INPUT');
+    }
+  }
+
+  const direction = amount > 0 ? 'credit' : 'debit';
+  const transaction = await ctx.prisma.tiwloPayTransaction.create({
+    data: {
+      profileId: profile.id,
+      ownerId: profile.ownerId,
+      amount,
+      fee: 0,
+      netAmount: amount,
+      currency: normalizeCurrency(input.currency || 'BDT'),
+      provider: 'tiwlo_team_adjustment',
+      status: 'succeeded',
+      reference: `TWT-${direction.toUpperCase()}-${Date.now().toString(36).toUpperCase()}`,
+      customerName: profile.companyName || profile.displayName,
+      customerEmail: profile.supportEmail || profile.owner?.email || '',
+      metadata: {
+        type: 'wallet_adjustment',
+        direction,
+        reason: cleanText(input.reason, 'Tiwlo Team balance adjustment'),
+        adjustedBy: actor.id,
+        adjustedAt: new Date().toISOString()
+      }
+    },
+    include: { link: true }
+  });
+
+  await writeAudit(ctx, 'admin_adjust_tiwlo_pay_balance', 'tiwloPayProfile', profile.id, { amount, direction });
+  return toApi(transaction);
 };

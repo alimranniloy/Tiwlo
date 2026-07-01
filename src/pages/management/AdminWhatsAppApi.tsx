@@ -173,7 +173,7 @@ export default function AdminWhatsAppApi() {
     <div className="mx-auto max-w-6xl space-y-6">
       <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div>
-          <p className="text-xs font-black uppercase tracking-[0.2em] text-[#128c7e]">Administrator</p>
+          <p className="text-xs font-black uppercase tracking-[0.2em] text-[#128c7e]">Tiwlo Team</p>
           <h1 className="mt-2 text-2xl font-black text-[#111827]">WhatsApp API</h1>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-[#4B5563]">
             Connect Meta WhatsApp Cloud API templates for signup OTP, invoices, password reset, and security alerts.
@@ -240,7 +240,7 @@ export default function AdminWhatsAppApi() {
             <Field label="Business ID">
               <input value={config.businessId} onChange={(event) => setValue('businessId', event.target.value)} placeholder="Meta business ID" className="w-full rounded border border-[#D1D5DB] px-4 py-3 text-sm outline-none focus:border-[#128c7e]" />
             </Field>
-            <Field label="WhatsApp Number" hint="Optional visible sender number for admin reference.">
+            <Field label="WhatsApp Number" hint="Optional visible sender number for Tiwlo Team reference.">
               <input value={config.fromNumber} onChange={(event) => setValue('fromNumber', event.target.value)} placeholder="+880..." className="w-full rounded border border-[#D1D5DB] px-4 py-3 text-sm outline-none focus:border-[#128c7e]" />
             </Field>
             <Field label="Graph API Version">

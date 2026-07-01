@@ -57,7 +57,7 @@ const pageData: Record<MarketingVariant, {
   solutions: {
     eyebrow: 'Solutions',
     title: 'Operational workflows for teams that sell and support infrastructure.',
-    copy: 'Tiwlo keeps billing, hosting, identity review, support, and admin controls connected from signup to renewal.',
+    copy: 'Tiwlo keeps billing, hosting, identity review, support, and Tiwlo Team controls connected from signup to renewal.',
     icon: Network,
     cards: [
       { title: 'Website hosting', body: 'Provision domains, SSL, PHP, Node, databases, and file manager access per account.', icon: Globe },

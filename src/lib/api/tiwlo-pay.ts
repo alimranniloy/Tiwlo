@@ -92,7 +92,21 @@ const transactionFields = `
 const withdrawalFields = `
   id
   profileId
+  profile {
+    id
+    displayName
+    companyName
+    supportEmail
+    status
+  }
   ownerId
+  owner {
+    id
+    email
+    name
+    role
+    status
+  }
   amount
   currency
   method
@@ -301,6 +315,19 @@ export async function requestTiwloPayWithdrawalWithApi(input: Record<string, unk
   return data.requestTiwloPayWithdrawal;
 }
 
+export async function setTiwloPayAutoWithdrawalWithApi(input: Record<string, unknown>) {
+  const data = await graphQL<{ setTiwloPayAutoWithdrawal: any }>(
+    `mutation SetTiwloPayAutoWithdrawal($input: TiwloPayAutoWithdrawalInput!) {
+      setTiwloPayAutoWithdrawal(input: $input) {
+        ${profileFields}
+      }
+    }`,
+    { input }
+  );
+
+  return data.setTiwloPayAutoWithdrawal;
+}
+
 export async function adminUpdateTiwloPayProfileStatusWithApi(id: string, status: string) {
   const data = await graphQL<{ adminUpdateTiwloPayProfileStatus: any }>(
     `mutation AdminUpdateTiwloPayProfileStatus($id: ID!, $status: String!) {
@@ -325,4 +352,17 @@ export async function adminUpdateTiwloPayWithdrawalStatusWithApi(id: string, sta
   );
 
   return data.adminUpdateTiwloPayWithdrawalStatus;
+}
+
+export async function adminAdjustTiwloPayBalanceWithApi(input: Record<string, unknown>) {
+  const data = await graphQL<{ adminAdjustTiwloPayBalance: any }>(
+    `mutation AdminAdjustTiwloPayBalance($input: AdminAdjustTiwloPayBalanceInput!) {
+      adminAdjustTiwloPayBalance(input: $input) {
+        ${transactionFields}
+      }
+    }`,
+    { input }
+  );
+
+  return data.adminAdjustTiwloPayBalance;
 }

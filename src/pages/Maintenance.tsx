@@ -16,7 +16,7 @@ export default function MaintenancePage({ user, loginHref = '/login', onLogout }
       }}
       className="rounded-md border border-[#111827] bg-[#111827] px-4 py-2 text-[13px] font-bold text-white"
     >
-      Admin Login
+      Tiwlo Team Login
     </button>
   ) : (
     <a

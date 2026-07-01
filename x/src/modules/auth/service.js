@@ -173,7 +173,7 @@ export const signup = async (ctx, input) => {
   const existing = await ctx.prisma.user.findUnique({ where: { email } });
   if (existing) throw new AppError('Account already exists', 'BAD_USER_INPUT');
   if (['admin@tiwlo.app', 'admin@tiwlo.com'].includes(email)) {
-    throw new AppError('Administrator accounts cannot be created from public signup', 'FORBIDDEN');
+    throw new AppError('Tiwlo Team accounts cannot be created from public signup', 'FORBIDDEN');
   }
 
   const passwordHash = await bcrypt.hash(input.password, 10);

@@ -29,7 +29,7 @@ export const updateUser = async (ctx, actor, input) => {
 
   const normalizedEmail = email === undefined ? undefined : normalizeEmail(email);
   if (normalizedEmail === 'admin@tiwlo.app' && existing.email !== 'admin@tiwlo.app') {
-    throw new AppError('This email is reserved for the administrator account', 'BAD_USER_INPUT');
+    throw new AppError('This email is reserved for the Tiwlo Team account', 'BAD_USER_INPUT');
   }
 
   const user = await ctx.prisma.user.update({

@@ -35,7 +35,7 @@ export default function PageCommands({
         <div>
           <h2 className="text-sm font-bold text-slate-900">{workspace.title}</h2>
           <p className="mt-0.5 text-[12px] text-slate-500">
-            SaaS admin controls for user stores, merchant accounts, billing, policy, and tenant operations.
+            SaaS Tiwlo Team controls for user stores, merchant accounts, billing, policy, and tenant operations.
           </p>
         </div>
 

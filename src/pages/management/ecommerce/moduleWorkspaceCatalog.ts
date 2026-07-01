@@ -85,7 +85,7 @@ const workspace = (
 const functionCatalogZone = zone(
   'functionCatalog',
   'Function and Settings Catalog',
-  'Admin actions, settings, policy controls, and tenant-safe operations exposed by GraphQL.',
+  'Tiwlo Team actions, settings, policy controls, and tenant-safe operations exposed by GraphQL.',
   'full'
 );
 
@@ -153,7 +153,7 @@ export const MODULE_WORKSPACES: Record<string, ModuleWorkspaceConfig> = {
   ], zones(
     zone('entityGrid', 'Merchant Cards', 'Merchant accounts with ban, activate, and edit controls.', 'wide'),
     zone('kanban', 'Lifecycle Lanes', 'Merchants grouped by account status.', 'side'),
-    zone('ledger', 'Merchant Admin Ledger', 'Full merchant record management.', 'full')
+    zone('ledger', 'Merchant Tiwlo Team Ledger', 'Full merchant record management.', 'full')
   )),
   'ecommerce.stores': workspace('Store Deployment Operations', 'deployment', 'Store', [
     ...commonOps('Store'),

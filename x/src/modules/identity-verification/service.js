@@ -126,7 +126,7 @@ const createReviewTicket = async (ctx, request) => {
       category: 'id-verification',
       priority: 'high',
       status: 'open',
-      message: `${flowLabel} verification was submitted and is waiting for administrator review.`,
+      message: `${flowLabel} verification was submitted and is waiting for Tiwlo Team review.`,
       metadata: {
         source: 'identity-verification',
         label: 'id verification',
@@ -303,7 +303,7 @@ export const submitIdentityVerification = async (ctx, input = {}) => {
 
   return toApi({
     request: publicIdentityVerification(linked, { origin: await identityAppOriginFor(ctx.prisma) }),
-    message: 'ID verification submitted. An administrator will review it shortly.'
+    message: 'ID verification submitted. Tiwlo Team will review it shortly.'
   });
 };
 

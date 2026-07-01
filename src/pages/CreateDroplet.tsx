@@ -329,11 +329,11 @@ export default function CreateDroplet() {
 
   const handleCreate = async () => {
     if (!selectedPlanRecord) {
-      setError('No active cloud package is configured. Ask administrator to add a cloud plan first.');
+      setError('No active cloud package is configured. Ask Tiwlo Team to add a cloud plan first.');
       return;
     }
     if (!selectedNode) {
-      setError('No active deployment server is configured. Ask administrator to connect a tPanel server first.');
+      setError('No active deployment server is configured. Ask Tiwlo Team to connect a tPanel server first.');
       return;
     }
     if (domainRequired && !hostname.trim()) {
@@ -700,7 +700,7 @@ export default function CreateDroplet() {
                 );})}
               </div>
               <div className="mb-8 border border-[#a58cff] bg-[#f7f4ff] px-4 py-4 text-[13px] leading-5 text-[#031b4e]">
-                <span className="font-bold">{planFamilyLabel(selectedPlanFamily)} - {cpuCategoryLabel(selectedCpuCategory)}</span> packages are loaded from administrator size packages.
+                <span className="font-bold">{planFamilyLabel(selectedPlanFamily)} - {cpuCategoryLabel(selectedCpuCategory)}</span> packages are loaded from Tiwlo Team size packages.
               </div>
 
               <p className="mb-3 text-[13px] font-bold text-[#031b4e]">Select a Plan</p>
@@ -708,7 +708,7 @@ export default function CreateDroplet() {
                 {plansLoading ? (
                   <EmptyRow text="Loading active cloud packages..." />
                 ) : modulePlans.length === 0 ? (
-                  <EmptyRow text="No active cloud package is configured. Add cloud plans from Administrator Plans first." warning />
+                  <EmptyRow text="No active cloud package is configured. Add cloud plans from Tiwlo Team Plans first." warning />
                 ) : categoryPlans.length === 0 ? (
                   <UnavailableBox title="Package unavailable" text={`${planFamilyLabel(selectedPlanFamily)} / ${cpuCategoryLabel(selectedCpuCategory)} has no active package for ${moduleLabel(selectedModule)}.`} />
                 ) : (

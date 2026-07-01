@@ -13,7 +13,9 @@ export const tiwloPayResolvers = {
     createTiwloPayLink: async (_, { input }, ctx) => service.createTiwloPayLink(ctx, input),
     payTiwloPayLink: async (_, { input }, ctx) => service.payTiwloPayLink(ctx, input),
     requestTiwloPayWithdrawal: async (_, { input }, ctx) => service.requestTiwloPayWithdrawal(ctx, input),
+    setTiwloPayAutoWithdrawal: async (_, { input }, ctx) => service.setTiwloPayAutoWithdrawal(ctx, input),
     adminUpdateTiwloPayProfileStatus: async (_, { id, status }, ctx) => service.adminUpdateTiwloPayProfileStatus(ctx, id, status),
-    adminUpdateTiwloPayWithdrawalStatus: async (_, { id, status }, ctx) => service.adminUpdateTiwloPayWithdrawalStatus(ctx, id, status)
+    adminUpdateTiwloPayWithdrawalStatus: async (_, { id, status }, ctx) => service.adminUpdateTiwloPayWithdrawalStatus(ctx, id, status),
+    adminAdjustTiwloPayBalance: async (_, { input }, ctx) => service.adminAdjustTiwloPayBalance(ctx, input)
   }
 };

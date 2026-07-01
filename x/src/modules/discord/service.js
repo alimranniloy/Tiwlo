@@ -69,7 +69,7 @@ const privacyHtml = () => html('Privacy Policy', `
   <h2>Discord bot data</h2>
   <p>When enabled, the Discord bot may receive ticket events, live chat events, invoice proof events, verification review events, staff actions, channel IDs, role IDs, and message metadata needed to run automation.</p>
   <h2>Security and retention</h2>
-  <p>Access controls, audit logs, masking, retention settings, and administrator approvals help protect sensitive records. Retention depends on your configured policies and legal requirements.</p>
+  <p>Access controls, audit logs, masking, retention settings, and Tiwlo Team approvals help protect sensitive records. Retention depends on your configured policies and legal requirements.</p>
   <h2>Contact</h2>
   <p>For privacy questions, contact <a href="mailto:support@tiwlo.com">support@tiwlo.com</a>.</p>
 `);
@@ -988,7 +988,7 @@ const ensureTextChannel = async (token, guildId, channels, { name, parentId, top
 const provisionDiscordServer = async ({ prisma, userFromRequest }, req, res) => {
   const user = await userFromRequest(req);
   if (!user || !['super_admin', 'admin'].includes(user.role)) {
-    res.status(user ? 403 : 401).json({ error: user ? 'Admin access required' : 'Authentication required' });
+    res.status(user ? 403 : 401).json({ error: user ? 'Tiwlo Team access required' : 'Authentication required' });
     return;
   }
 

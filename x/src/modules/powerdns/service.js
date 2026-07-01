@@ -659,7 +659,7 @@ const applyPrimaryDomainToIsp = async (ctx, actor, config) => {
 };
 
 export const updatePowerDnsConfig = async (ctx, actor, input) => {
-  if (!isAdmin(actor)) throw new AppError('Admin access required', 'FORBIDDEN');
+  if (!isAdmin(actor)) throw new AppError('Tiwlo Team access required', 'FORBIDDEN');
   const previous = await getPowerDnsConfig(ctx);
   const next = defaultPowerDnsConfig(ctx, {
     ...previous,

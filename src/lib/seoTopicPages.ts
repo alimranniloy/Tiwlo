@@ -94,7 +94,7 @@ export const SEO_TOPIC_PAGES: Record<SeoTopicKey, SeoTopicPageData> = {
       {
         question: 'Can new users get $100 free credit?',
         answer:
-          'Tiwlo can show a $100 free credit offer for eligible new users when the platform credit system is enabled by administrators.'
+          'Tiwlo can show a $100 free credit offer for eligible new users when the platform credit system is enabled by Tiwlo Team.'
       }
     ]
   },
@@ -208,7 +208,7 @@ export const SEO_TOPIC_PAGES: Record<SeoTopicKey, SeoTopicPageData> = {
       {
         title: 'Operator-first hosting language',
         body:
-          'The page describes how administrators can manage hosting services, customers, billing, support, security, and service status without needing a separate marketing claim on the home page.'
+          'The page describes how Tiwlo Team can manage hosting services, customers, billing, support, security, and service status without needing a separate marketing claim on the home page.'
       }
     ],
     featureCards: [
@@ -280,8 +280,8 @@ export const SEO_TOPIC_PAGES: Record<SeoTopicKey, SeoTopicPageData> = {
       }
     ],
     featureCards: [
-      { title: 'Tiwlo portal', body: 'Tiwlo can present customer portal and admin workflows without depending on WHMCS pages.' },
-      { title: 'Credit system', body: 'The $100 free credit message can be connected to signup, verification, payment rules, and admin settings.' },
+      { title: 'Tiwlo portal', body: 'Tiwlo can present customer portal and Tiwlo Team workflows without depending on WHMCS pages.' },
+      { title: 'Credit system', body: 'The $100 free credit message can be connected to signup, verification, payment rules, and Tiwlo Team settings.' },
       { title: 'Unified support', body: 'Tickets, Discord alerts, live chat, payment proof events, and verification review can stay connected.' }
     ],
     faqs: [
@@ -308,7 +308,7 @@ export const SEO_TOPIC_PAGES: Record<SeoTopicKey, SeoTopicPageData> = {
     eyebrow: 'Signup credit and trial',
     title: 'Get $100 free credit for eligible new users on Tiwlo hosting and cloud workflows',
     description:
-      'Tiwlo can offer $100 free credit for eligible new users, with admin-controlled verification, payment, credit, and account review settings.',
+      'Tiwlo can offer $100 free credit for eligible new users, with Tiwlo Team-controlled verification, payment, credit, and account review settings.',
     intro:
       'Users who want free hosting credit, cloud hosting trial credit, VPS credit, hosting credit BD, or Tiwlo free credit get a clear explanation of the offer without crowding the home page.',
     heroMetric: '$100 new-user credit',
@@ -339,29 +339,29 @@ export const SEO_TOPIC_PAGES: Record<SeoTopicKey, SeoTopicPageData> = {
       {
         title: 'Why the credit offer is explained clearly',
         body:
-          'The offer is explained separately so users can understand eligibility, verification, payment rules, and admin-controlled credit behavior before signup.'
+          'The offer is explained separately so users can understand eligibility, verification, payment rules, and Tiwlo Team-controlled credit behavior before signup.'
       },
       {
         title: 'Credit and security can work together',
         body:
-          'Promotional credits can be connected to account verification, payment settings, tSecurity checks, support review, and admin controls to reduce abuse.'
+          'Promotional credits can be connected to account verification, payment settings, tSecurity checks, support review, and Tiwlo Team controls to reduce abuse.'
       }
     ],
     featureCards: [
       { title: 'Signup clarity', body: 'The offer is explained in plain language before users create an account.' },
-      { title: 'Admin controlled', body: 'Credit amount, payment verification, hold rules, and on/off behavior can be controlled from settings.' },
+      { title: 'Tiwlo Team controlled', body: 'Credit amount, payment verification, hold rules, and on/off behavior can be controlled from settings.' },
       { title: 'Abuse aware', body: 'Credit workflows can respect fraud checks and verification without showing sensitive block details to users.' }
     ],
     faqs: [
       {
         question: 'Do all Tiwlo users get $100 free credit?',
         answer:
-          'The page describes the public offer, but eligibility depends on current Tiwlo settings, verification rules, region, account status, and admin configuration.'
+          'The page describes the public offer, but eligibility depends on current Tiwlo settings, verification rules, region, account status, and Tiwlo Team configuration.'
       },
       {
         question: 'Will users need payment verification?',
         answer:
-          'Payment verification can be required or skipped depending on the credit system settings configured by administrators.'
+          'Payment verification can be required or skipped depending on the credit system settings configured by Tiwlo Team.'
       },
       {
         question: 'Does the credit page replace the signup page?',
@@ -407,7 +407,7 @@ export const SEO_TOPIC_PAGES: Record<SeoTopicKey, SeoTopicPageData> = {
       {
         title: 'Designed for operations, not only marketing',
         body:
-          'The platform language focuses on real workflows: packages, account status, service creation, payment proof review, ticket routing, verification, and admin control.'
+          'The platform language focuses on real workflows: packages, account status, service creation, payment proof review, ticket routing, verification, and Tiwlo Team control.'
       },
       {
         title: 'Useful for product understanding',

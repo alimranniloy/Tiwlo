@@ -523,7 +523,7 @@ export default function UserManagement() {
       <div className="bg-white border border-[#e5e8ed] rounded-lg overflow-hidden shadow-sm">
         <div className="grid gap-3 border-b border-[#f3f5f9] bg-white p-4 sm:grid-cols-3">
           {[
-            ['Administrators', administratorCount],
+            ['Tiwlo Team', administratorCount],
             ['Tracked devices', mappedUsers.reduce((sum, user) => sum + Number(user.securitySummary?.deviceCount || 0), 0)],
             ['Unusual activity', unusualUsers]
           ].map(([label, value]) => (

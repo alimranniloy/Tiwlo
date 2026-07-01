@@ -262,9 +262,9 @@ export const reviewIdentityVerificationRequest = async (prisma, id, status, acto
       status: nextStatus,
       review: {
         status: nextStatus,
-        reason: clean(reason, nextStatus === 'approved' ? 'Verified by administrator.' : 'ID verification was not approved.'),
+        reason: clean(reason, nextStatus === 'approved' ? 'Verified by Tiwlo Team.' : 'ID verification was not approved.'),
         reviewedById: actor?.id || null,
-        reviewedByName: actor?.name || actor?.email || 'Administrator',
+        reviewedByName: actor?.name || actor?.email || 'Tiwlo Team',
         reviewedAt: now.toISOString()
       },
       reviewedAt: now

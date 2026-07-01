@@ -345,7 +345,7 @@ export default function AdminCore() {
 
               <div className="flex items-start gap-2 rounded-sm border border-blue-100 bg-blue-50 px-3 py-2 text-[12px] font-semibold text-blue-700">
                 <AlertCircle className="mt-0.5 h-4 w-4" />
-                <span>Only clean tracking IDs are loaded on the public site; pasted scripts are saved for admin reference.</span>
+                <span>Only clean tracking IDs are loaded on the public site; pasted scripts are saved for Tiwlo Team reference.</span>
               </div>
             </div>
           )}
@@ -356,7 +356,7 @@ export default function AdminCore() {
               <div className="flex flex-col gap-3 rounded-sm border border-[#e5e8ed] p-4 md:flex-row md:items-center md:justify-between">
                 <div>
                   <p className="text-sm font-black text-[#2e3d49]">Maintenance Mode</p>
-                  <p className="text-xs font-semibold text-[#64748b]">When active, the full website shows maintenance mode and only admins can log in.</p>
+                  <p className="text-xs font-semibold text-[#64748b]">When active, the full website shows maintenance mode and only Tiwlo Team can log in.</p>
                 </div>
                 <button onClick={() => setMaintenanceMode((value) => !value)} className={`relative h-7 w-12 rounded-full ${maintenanceMode ? 'bg-[#0069ff]' : 'bg-gray-200'}`}>
                   <span className={`absolute top-1 h-5 w-5 rounded-full bg-white transition-all ${maintenanceMode ? 'right-1' : 'left-1'}`}></span>

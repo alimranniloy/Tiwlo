@@ -255,7 +255,7 @@ export default function CloudStore() {
           </div>
           <div className="flex flex-wrap gap-2">
             <button onClick={() => navigate(adminPath)} disabled={!store} className="inline-flex items-center gap-1.5 rounded-sm bg-slate-900 px-3 py-2 text-[10px] font-bold uppercase text-white transition-all hover:bg-black disabled:cursor-not-allowed disabled:bg-slate-200">
-              <Lock className="h-3 w-3" /> Admin Panel
+              <Lock className="h-3 w-3" /> Tiwlo Team Panel
             </button>
             <button onClick={() => navigate(previewPath)} disabled={!store} className="inline-flex items-center gap-1.5 rounded-sm bg-blue-600 px-3 py-2 text-[10px] font-bold uppercase text-white transition-all hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-slate-200">
               <User className="h-3 w-3" /> Customer View

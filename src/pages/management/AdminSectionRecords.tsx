@@ -7,7 +7,7 @@ const configs = {
     description: 'Group customers, staff, vendors, and notification audiences with database-backed records.',
     recordLabel: 'Group',
     fields: [
-      { key: 'audience', label: 'Audience', type: 'select' as const, options: ['customers', 'staff', 'vendors', 'admins', 'partners'] },
+      { key: 'audience', label: 'Audience', type: 'select' as const, options: ['customers', 'staff', 'vendors', 'tiwlo_team', 'partners'] },
       { key: 'channel', label: 'Channel', type: 'select' as const, options: ['email', 'sms', 'whatsapp', 'push', 'internal'] },
       { key: 'owner', label: 'Owner', placeholder: 'Team owner' },
       { key: 'rules', label: 'Rules', type: 'textarea' as const, placeholder: 'Segment rules or sync notes' }

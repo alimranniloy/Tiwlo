@@ -77,7 +77,7 @@ export default function AdminIdentityVerification() {
       const updated = await reviewIdentityVerificationWithApi(
         selected.id,
         nextStatus,
-        nextStatus === 'approved' ? 'Verified by administrator.' : 'Your ID was not verified. Try again.'
+        nextStatus === 'approved' ? 'Verified by Tiwlo Team.' : 'Your ID was not verified. Try again.'
       );
       setSelected(updated);
       setRecords((current) => current.map((item) => item.id === updated.id ? updated : item));
