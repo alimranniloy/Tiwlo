@@ -178,6 +178,14 @@
 .eplaza-theme h6 {
   font-family: "Lexend Deca", ui-sans-serif, system-ui, sans-serif;
 }
+
+@media (max-width: 640px) {
+  .tiwlo-pay-surface input,
+  .tiwlo-pay-surface select,
+  .tiwlo-pay-surface textarea {
+    font-size: 16px;
+  }
+}
 .page-transition-enter {
   opacity: 0;
   transform: translateY(10px);

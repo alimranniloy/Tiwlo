@@ -97,7 +97,7 @@ export const createCorsOptionsDelegate = (env = process.env) => (req, callback) 
     origin: isCorsOriginAllowed(origin, req, env),
     credentials: true,
     methods: ['GET', 'POST', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Automation-Token', 'Apollo-Require-Preflight', 'X-Requested-With'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Automation-Token', 'X-Tiwlo-Pay-Key', 'X-Tiwlo-Pay-Secret', 'Idempotency-Key', 'Apollo-Require-Preflight', 'X-Requested-With'],
     maxAge: 86400
   });
 };

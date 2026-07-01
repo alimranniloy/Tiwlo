@@ -25,6 +25,7 @@ import { initializeAiModelRuntime, streamAiModelChat } from './modules/ai-model/
 import { streamSupportAiReply } from './modules/support/service.js';
 import { registerSystemToolRoutes, startBackupAutomation, startSslAutomation } from './modules/system-tools/service.js';
 import { registerTPanelRoutes } from './modules/tpanel/service.js';
+import { registerTiwloPayApiRoutes } from './modules/tiwlo-pay/service.js';
 import { startPowerDnsAutomation } from './modules/powerdns/service.js';
 import { registerDiscordRoutes } from './modules/discord/service.js';
 import { ensureWhatsAppAuthSchema, publicWhatsAppStatus } from './modules/whatsapp/service.js';
@@ -351,6 +352,8 @@ registerDiscordRoutes(app, { prisma, userFromRequest });
 app.use(express.json({ limit: '20mb' }));
 
 registerTSecurity(app, { prisma, requestIp, userFromRequest });
+
+registerTiwloPayApiRoutes(app, { prisma, requestIp });
 
 const writeSse = (res, event) => {
   res.write(`data: ${JSON.stringify(event)}\n\n`);

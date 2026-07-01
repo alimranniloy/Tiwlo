@@ -140,7 +140,7 @@ export default function TiwloPayCheckout() {
   const merchantReady = profile?.status === 'active' && gateways.length > 0;
 
   return (
-    <div className="min-h-screen bg-[#F3F5F9] px-4 py-6 text-[#111827] md:py-10">
+    <div className="tiwlo-pay-surface min-h-screen bg-[#F3F5F9] px-4 py-6 text-[#111827] md:py-10">
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-5">
         <header className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <a href="/" className="flex w-fit items-center gap-2 rounded border border-[#DDE3EA] bg-white px-3 py-2 text-[12px] font-bold text-[#374151] hover:border-blue-400">

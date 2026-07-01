@@ -11,9 +11,54 @@ const enabledGatewayStatuses = ['enabled', 'active'];
 const profileStatuses = new Set(['active', 'inactive', 'suspended']);
 const withdrawalStatuses = new Set(['pending', 'processing', 'paid', 'completed', 'rejected', 'cancelled']);
 
-const publicBaseUrl = () => String(process.env.FRONTEND_ORIGIN || 'http://localhost:3000').replace(/\/$/, '');
+const localHostnames = new Set(['localhost', '127.0.0.1', '0.0.0.0', '::1']);
 
-const publicUrlFor = (link) => (link?.slug ? `${publicBaseUrl()}/pay/${link.slug}` : null);
+const firstHeaderValue = (value) => (Array.isArray(value) ? value[0] : value || '');
+
+const splitFirst = (value = '') => String(value || '').split(',')[0]?.trim() || '';
+
+const originHost = (value = '') => {
+  try {
+    return new URL(value).hostname.toLowerCase();
+  } catch {
+    return '';
+  }
+};
+
+const isLocalUrl = (value = '') => {
+  const hostname = originHost(value);
+  return hostname ? localHostnames.has(hostname) : false;
+};
+
+const cleanBaseUrl = (value = '') => String(value || '').trim().replace(/\/+$/, '');
+
+const publicBaseUrl = (ctx = {}) => {
+  const configured = cleanBaseUrl(
+    process.env.PUBLIC_APP_URL ||
+    process.env.FRONTEND_ORIGIN ||
+    process.env.APP_URL
+  );
+  if (configured && !isLocalUrl(configured)) return configured;
+
+  const headers = ctx.requestHeaders || {};
+  const origin = cleanBaseUrl(splitFirst(firstHeaderValue(headers.origin)));
+  if (origin && !isLocalUrl(origin)) return origin;
+
+  const host = splitFirst(
+    firstHeaderValue(headers['x-forwarded-host']) ||
+    firstHeaderValue(headers['x-original-host']) ||
+    firstHeaderValue(headers.host)
+  );
+  const hostname = host.replace(/:\d+$/, '').replace(/^\[|\]$/g, '').toLowerCase();
+  if (host && !localHostnames.has(hostname)) {
+    const proto = splitFirst(firstHeaderValue(headers['x-forwarded-proto'])) || 'https';
+    return `${proto}://${host}`.replace(/\/+$/, '');
+  }
+
+  return 'https://tiwlo.com';
+};
+
+const publicUrlFor = (link, ctx) => (link?.slug ? `${publicBaseUrl(ctx)}/pay/${link.slug}` : null);
 
 const cleanText = (value, fallback = '') => {
   const text = String(value ?? '').trim();
@@ -50,9 +95,9 @@ const gatewayWhere = {
 
 const gatewayToApi = (gateway) => toApi({ ...gateway, credentials: null });
 
-const linkToApi = (link) => toApi({ ...link, publicUrl: publicUrlFor(link) });
+const linkToApi = (link, ctx) => toApi({ ...link, publicUrl: publicUrlFor(link, ctx) });
 
-const mapLinks = (links) => links.map(linkToApi);
+const mapLinks = (links, ctx) => links.map((link) => linkToApi(link, ctx));
 
 const listEnabledGateways = async (ctx) => {
   await ensureDefaultPaymentGateways(ctx);
@@ -320,7 +365,7 @@ export const tiwloPayOverview = async (ctx) => {
   return toApi({
     profile: profileWithDefaults(profile),
     summary: buildSummary({ links, transactions, withdrawals }),
-    paymentLinks: mapLinks(links),
+    paymentLinks: mapLinks(links, ctx),
     transactions,
     withdrawals,
     gateways,
@@ -346,7 +391,7 @@ export const adminTiwloPayOverview = async (ctx) => {
   return toApi({
     summary: buildSummary({ ...records, merchants: profileCount }),
     profiles: profiles.map(profileWithDefaults),
-    paymentLinks: mapLinks(records.links),
+    paymentLinks: mapLinks(records.links, ctx),
     transactions: records.transactions,
     withdrawals: records.withdrawals,
     gateways,
@@ -459,9 +504,7 @@ const uniqueLinkSlug = async (ctx, invoiceId, title) => {
   return `${base}-${Date.now().toString(36)}`;
 };
 
-export const createTiwloPayLink = async (ctx, input = {}) => {
-  const actor = await requireAuth(ctx);
-  const profile = await ensureProfile(ctx, actor);
+const createTiwloPayLinkForProfile = async (ctx, actor, profile, input = {}) => {
   requireActiveProfile(profile, 'payment links');
 
   const amount = Number(input.amount || 0);
@@ -490,7 +533,13 @@ export const createTiwloPayLink = async (ctx, input = {}) => {
     }
   });
 
-  return linkToApi(link);
+  return linkToApi(link, ctx);
+};
+
+export const createTiwloPayLink = async (ctx, input = {}) => {
+  const actor = await requireAuth(ctx);
+  const profile = await ensureProfile(ctx, actor);
+  return createTiwloPayLinkForProfile(ctx, actor, profile, input);
 };
 
 export const publicTiwloPayLink = async (ctx, slug) => {
@@ -520,7 +569,7 @@ export const publicTiwloPayLink = async (ctx, slug) => {
 
   return toApi({
     profile: profileWithDefaults(currentLink.profile),
-    link: linkToApi(currentLink),
+    link: linkToApi(currentLink, ctx),
     gateways: isProfileLive(currentLink.profile) ? gateways : []
   });
 };
@@ -535,7 +584,7 @@ export const payTiwloPayLink = async (ctx, input = {}) => {
     return toApi({
       status: 'paid',
       message: 'Payment was already completed',
-      link: linkToApi(link),
+      link: linkToApi(link, ctx),
       transaction: null,
       provider: '',
       paymentUrl: null,
@@ -548,7 +597,7 @@ export const payTiwloPayLink = async (ctx, input = {}) => {
     return toApi({
       status: 'expired',
       message: 'Payment link has expired',
-      link: linkToApi(expired),
+      link: linkToApi(expired, ctx),
       transaction: null,
       provider: '',
       paymentUrl: null,
@@ -653,7 +702,7 @@ export const payTiwloPayLink = async (ctx, input = {}) => {
   return toApi({
     status: 'redirect',
     message: `Redirecting to ${gateway.name || gateway.provider}.`,
-    link: linkToApi(result.updatedLink),
+    link: linkToApi(result.updatedLink, ctx),
     transaction: result.transaction,
     provider: gateway.provider,
     paymentUrl: session.paymentUrl,
@@ -696,6 +745,252 @@ export const requestTiwloPayWithdrawal = async (ctx, input = {}) => {
   });
 
   return toApi(withdrawal);
+};
+
+const readBearerToken = (authorization = '') => {
+  const value = String(authorization || '').trim();
+  return value.toLowerCase().startsWith('bearer ') ? value.slice(7).trim() : '';
+};
+
+const apiErrorStatus = (error) => {
+  const code = error?.extensions?.code || error?.code || '';
+  if (code === 'UNAUTHENTICATED') return 401;
+  if (code === 'FORBIDDEN') return 403;
+  if (code === 'NOT_FOUND') return 404;
+  if (code === 'CONFLICT') return 409;
+  if (code === 'PAYMENT_CONFIGURATION_REQUIRED') return 409;
+  return 400;
+};
+
+const merchantApiContext = (req, options = {}) => ({
+  prisma: options.prisma,
+  requestIp: typeof options.requestIp === 'function' ? options.requestIp(req) : '',
+  userAgent: req.headers['user-agent'] || '',
+  requestHeaders: req.headers || {}
+});
+
+const authenticateMerchantApi = async (ctx, req) => {
+  const apiKey = cleanText(req.headers['x-tiwlo-pay-key'] || req.body?.apiKey || req.query?.apiKey, '');
+  const secretKey = cleanText(
+    readBearerToken(req.headers.authorization) ||
+    req.headers['x-tiwlo-pay-secret'] ||
+    req.body?.secretKey,
+    ''
+  );
+  if (!apiKey) throw new AppError('X-Tiwlo-Pay-Key header is required', 'UNAUTHENTICATED');
+  if (!secretKey) throw new AppError('Bearer secret key is required', 'UNAUTHENTICATED');
+
+  const profile = await ctx.prisma.tiwloPayProfile.findUnique({
+    where: { apiKey },
+    include: profileInclude
+  });
+  if (!profile) throw new AppError('Invalid Tiwlo Pay API key', 'UNAUTHENTICATED');
+
+  const secretMatches = await bcrypt.compare(secretKey, profile.secretHash);
+  if (!secretMatches) throw new AppError('Invalid Tiwlo Pay secret key', 'UNAUTHENTICATED');
+
+  const withDefaults = profileWithDefaults(profile);
+  requireActiveProfile(withDefaults, 'merchant API');
+  return withDefaults;
+};
+
+const apiLinkPayload = (link) => ({
+  object: 'tiwlo_pay.payment_link',
+  id: link.id,
+  slug: link.slug,
+  invoiceId: link.invoiceId,
+  title: link.title,
+  description: link.description,
+  amount: link.amount,
+  currency: link.currency,
+  status: link.status,
+  customerName: link.customerName,
+  customerEmail: link.customerEmail,
+  allowedProviders: link.allowedProviders || [],
+  metadata: link.metadata || {},
+  checkoutUrl: link.publicUrl,
+  publicUrl: link.publicUrl,
+  expiresAt: link.expiresAt,
+  paidAt: link.paidAt,
+  createdAt: link.createdAt,
+  updatedAt: link.updatedAt
+});
+
+const apiTransactionPayload = (transaction) => ({
+  object: 'tiwlo_pay.transaction',
+  id: transaction.id,
+  linkId: transaction.linkId,
+  amount: transaction.amount,
+  fee: transaction.fee,
+  netAmount: transaction.netAmount,
+  currency: transaction.currency,
+  provider: transaction.provider,
+  status: transaction.status,
+  reference: transaction.reference,
+  customerName: transaction.customerName,
+  customerEmail: transaction.customerEmail,
+  metadata: transaction.metadata || {},
+  createdAt: transaction.createdAt,
+  updatedAt: transaction.updatedAt
+});
+
+const findMerchantLink = async (ctx, profile, idOrSlug) => {
+  const lookup = cleanText(idOrSlug, '');
+  if (!lookup) throw new AppError('Payment link id, slug, or invoiceId is required', 'BAD_USER_INPUT');
+  const link = await ctx.prisma.tiwloPayLink.findFirst({
+    where: {
+      ownerId: profile.ownerId,
+      OR: [
+        { id: lookup },
+        { slug: lookup },
+        { invoiceId: lookup }
+      ]
+    },
+    orderBy: { createdAt: 'desc' }
+  });
+  if (!link) notFound('Payment link');
+  if (link.status === 'unpaid' && link.expiresAt && link.expiresAt < new Date()) {
+    return ctx.prisma.tiwloPayLink.update({
+      where: { id: link.id },
+      data: { status: 'expired' }
+    });
+  }
+  return link;
+};
+
+const merchantApiCreatePaymentLink = async (ctx, profile, input = {}) => {
+  const actor = profile.owner || await ctx.prisma.user.findUnique({ where: { id: profile.ownerId } });
+  const metadata = input.metadata && typeof input.metadata === 'object' && !Array.isArray(input.metadata)
+    ? input.metadata
+    : {};
+  return createTiwloPayLinkForProfile(ctx, actor, profile, {
+    ...input,
+    metadata: {
+      ...metadata,
+      source: metadata.source || 'merchant_api',
+      successUrl: cleanText(input.successUrl, metadata.successUrl || ''),
+      cancelUrl: cleanText(input.cancelUrl, metadata.cancelUrl || ''),
+      webhookUrl: cleanText(input.webhookUrl, metadata.webhookUrl || ''),
+      idempotencyKey: cleanText(input.idempotencyKey || ctx.requestHeaders?.['idempotency-key'], metadata.idempotencyKey || '')
+    }
+  });
+};
+
+const merchantApiCreateCheckout = async (ctx, profile, input = {}) => {
+  const link = await findMerchantLink(ctx, profile, input.linkId || input.slug || input.invoiceId);
+  const allowed = Array.isArray(link.allowedProviders) ? link.allowedProviders.filter(Boolean) : [];
+  const provider = normalizeProvider(input.provider || allowed[0]);
+  if (!provider) throw new AppError('Provider is required for checkout session creation', 'BAD_USER_INPUT');
+  return payTiwloPayLink(ctx, {
+    slug: link.slug,
+    provider,
+    customerName: cleanText(input.customerName, link.customerName || ''),
+    customerEmail: cleanText(input.customerEmail, link.customerEmail || ''),
+    metadata: {
+      ...(input.metadata || {}),
+      source: 'merchant_api_checkout'
+    }
+  });
+};
+
+const sendApiError = (res, error) => {
+  const status = apiErrorStatus(error);
+  res.status(status).json({
+    error: {
+      message: error?.message || 'Tiwlo Pay API request failed',
+      code: error?.extensions?.code || error?.code || 'BAD_REQUEST'
+    }
+  });
+};
+
+const asyncApiRoute = (handler) => async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store, private, max-age=0');
+  try {
+    await handler(req, res);
+  } catch (error) {
+    sendApiError(res, error);
+  }
+};
+
+export const registerTiwloPayApiRoutes = (app, options = {}) => {
+  app.get('/api/tiwlo-pay/v1', (_req, res) => {
+    res.setHeader('Cache-Control', 'public, max-age=300');
+    res.json({
+      service: 'Tiwlo Pay Merchant API',
+      version: 'v1',
+      status: 'available',
+      documentation: '/documentation?section=tiwlo-pay-api',
+      endpoints: {
+        createPaymentLink: 'POST /api/tiwlo-pay/v1/payment-links',
+        getPaymentLink: 'GET /api/tiwlo-pay/v1/payment-links/{idOrSlug}',
+        createCheckoutSession: 'POST /api/tiwlo-pay/v1/checkout-sessions',
+        listTransactions: 'GET /api/tiwlo-pay/v1/transactions'
+      }
+    });
+  });
+
+  app.get('/api/tiwlo-pay/v1/me', asyncApiRoute(async (req, res) => {
+    const ctx = merchantApiContext(req, options);
+    const profile = await authenticateMerchantApi(ctx, req);
+    res.json({
+      object: 'tiwlo_pay.merchant',
+      id: profile.id,
+      displayName: profile.displayName,
+      companyName: profile.companyName,
+      supportEmail: profile.supportEmail,
+      statementDescriptor: profile.statementDescriptor,
+      status: profile.status,
+      capabilities: verificationFor(profile).capabilities,
+      apiKey: profile.apiKey,
+      createdAt: toApi(profile.createdAt),
+      updatedAt: toApi(profile.updatedAt)
+    });
+  }));
+
+  app.post('/api/tiwlo-pay/v1/payment-links', asyncApiRoute(async (req, res) => {
+    const ctx = merchantApiContext(req, options);
+    const profile = await authenticateMerchantApi(ctx, req);
+    const link = await merchantApiCreatePaymentLink(ctx, profile, req.body || {});
+    res.status(201).json(apiLinkPayload(link));
+  }));
+
+  app.get('/api/tiwlo-pay/v1/payment-links/:idOrSlug', asyncApiRoute(async (req, res) => {
+    const ctx = merchantApiContext(req, options);
+    const profile = await authenticateMerchantApi(ctx, req);
+    const link = await findMerchantLink(ctx, profile, req.params.idOrSlug);
+    res.json(apiLinkPayload(linkToApi(link, ctx)));
+  }));
+
+  app.post('/api/tiwlo-pay/v1/checkout-sessions', asyncApiRoute(async (req, res) => {
+    const ctx = merchantApiContext(req, options);
+    const profile = await authenticateMerchantApi(ctx, req);
+    const checkout = await merchantApiCreateCheckout(ctx, profile, req.body || {});
+    res.status(201).json({
+      object: 'tiwlo_pay.checkout_session',
+      status: checkout.status,
+      provider: checkout.provider,
+      paymentUrl: checkout.paymentUrl,
+      reference: checkout.reference,
+      message: checkout.message,
+      link: apiLinkPayload(checkout.link),
+      transaction: checkout.transaction ? apiTransactionPayload(checkout.transaction) : null
+    });
+  }));
+
+  app.get('/api/tiwlo-pay/v1/transactions', asyncApiRoute(async (req, res) => {
+    const ctx = merchantApiContext(req, options);
+    const profile = await authenticateMerchantApi(ctx, req);
+    const limit = Math.min(Math.max(Number(req.query.limit || 50), 1), 100);
+    const transactions = await ctx.prisma.tiwloPayTransaction.findMany({
+      where: { profileId: profile.id },
+      orderBy: { createdAt: 'desc' },
+      take: limit
+    });
+    res.json({
+      object: 'list',
+      data: transactions.map((transaction) => apiTransactionPayload(toApi(transaction)))
+    });
+  }));
 };
 
 export const adminUpdateTiwloPayProfileStatus = async (ctx, id, status) => {

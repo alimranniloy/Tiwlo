@@ -761,17 +761,43 @@ const failTiwloPayInvoice = async (ctx, invoice, { provider, reference, message 
   });
 };
 
+const safeMerchantReturnUrl = (value) => {
+  try {
+    const url = new URL(String(value || '').trim());
+    if (!['https:', 'http:'].includes(url.protocol)) return null;
+    return url;
+  } catch {
+    return null;
+  }
+};
+
+const tiwloPayRedirectUrl = (link, { status, provider, invoiceId, message }) => {
+  const metadata = link?.metadata || {};
+  const merchantTarget = status === 'success'
+    ? metadata.successUrl
+    : metadata.cancelUrl || metadata.successUrl;
+  const url = safeMerchantReturnUrl(merchantTarget) || new URL(`/pay/${link.slug}`, frontendBaseUrl());
+  url.searchParams.set('payment', status);
+  url.searchParams.set('provider', provider);
+  url.searchParams.set('invoice', invoiceId);
+  url.searchParams.set('tiwloPayLink', link.id);
+  url.searchParams.set('slug', link.slug);
+  if (message) url.searchParams.set('message', message);
+  return url.toString();
+};
+
 const providerReturnPayload = async (ctx, { invoiceId, status, provider, message }) => {
   const invoice = invoiceId ? await ctx.prisma.invoice.findUnique({ where: { id: invoiceId } }) : null;
   if (invoice?.scope === 'tiwlo_pay' && invoice.scopeId) {
     const link = await ctx.prisma.tiwloPayLink.findUnique({ where: { id: invoice.scopeId } });
     if (link?.slug) {
-      const url = new URL(`/pay/${link.slug}`, frontendBaseUrl());
-      url.searchParams.set('payment', status);
-      url.searchParams.set('provider', provider);
-      url.searchParams.set('invoice', invoice.id);
-      if (message) url.searchParams.set('message', message);
-      return { status, invoiceId: invoice.id, provider, message, redirectUrl: url.toString() };
+      return {
+        status,
+        invoiceId: invoice.id,
+        provider,
+        message,
+        redirectUrl: tiwloPayRedirectUrl(link, { status, provider, invoiceId: invoice.id, message })
+      };
     }
   }
   return { status, invoiceId, provider, message };

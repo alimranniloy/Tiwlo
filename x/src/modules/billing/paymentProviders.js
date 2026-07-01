@@ -57,17 +57,31 @@ export const roundMoney = (value) => Math.round((Number(value || 0) + Number.EPS
 
 export const hourlyRateFor = (monthlyCost) => roundMoney(Number(monthlyCost || 0) / HOURS_PER_MONTH);
 
-export const apiBaseUrl = () => (
-  process.env.API_BASE_URL ||
-  process.env.APP_URL ||
-  `http://localhost:${process.env.PORT || 4000}`
-).replace(/\/+$/, '');
+const publicUrlFrom = (...values) => {
+  const urls = values.map((value) => String(value || '').trim().replace(/\/+$/, '')).filter(Boolean);
+  const publicUrl = urls.find((value) => {
+    try {
+      const { hostname } = new URL(value);
+      return !['localhost', '127.0.0.1', '0.0.0.0', '::1'].includes(hostname.toLowerCase());
+    } catch {
+      return false;
+    }
+  });
+  return publicUrl || 'https://tiwlo.com';
+};
 
-export const frontendBaseUrl = () => (
-  process.env.FRONTEND_ORIGIN ||
-  process.env.APP_URL ||
-  'http://localhost:3000'
-).replace(/\/+$/, '');
+export const apiBaseUrl = () => publicUrlFrom(
+  process.env.API_BASE_URL,
+  process.env.PUBLIC_API_URL,
+  process.env.APP_URL,
+  process.env.FRONTEND_ORIGIN
+);
+
+export const frontendBaseUrl = () => publicUrlFrom(
+  process.env.PUBLIC_APP_URL,
+  process.env.FRONTEND_ORIGIN,
+  process.env.APP_URL
+);
 
 export const paymentResultUrl = (status, invoiceId, provider, message) => {
   const url = new URL('/invoices', frontendBaseUrl());

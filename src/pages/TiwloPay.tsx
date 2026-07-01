@@ -437,8 +437,20 @@ export default function TiwloPay() {
   const conversionRate = totalLinks ? Math.round((paidLinks / totalLinks) * 100) : 0;
   const averageTicket = transactions.length ? Number(summary.paidVolume || 0) / transactions.length : 0;
   const nextInvoiceId = linkForm.invoiceId || autoInvoiceId();
-  const origin = typeof window === 'undefined' ? 'http://localhost:3000' : window.location.origin;
-  const commandSnippet = `curl -X POST ${origin}/pay/${latestLink?.slug || 'invoice-slug'}`;
+  const origin = (() => {
+    if (typeof window === 'undefined') return 'https://tiwlo.com';
+    const localHostnames = new Set(['localhost', '127.0.0.1', '0.0.0.0', '::1']);
+    return localHostnames.has(window.location.hostname) ? 'https://tiwlo.com' : window.location.origin;
+  })();
+  const apiBaseUrl = `${origin}/api/tiwlo-pay/v1`;
+  const docsPath = '/documentation?section=tiwlo-pay-api';
+  const commandSnippet = [
+    `curl -X POST ${apiBaseUrl}/payment-links`,
+    `  -H "Authorization: Bearer ${lastSecret || 'twsk_live_secret'}"`,
+    `  -H "X-Tiwlo-Pay-Key: ${profile.apiKey || 'twpk_live_key'}"`,
+    '  -H "Content-Type: application/json"',
+    `  -d '{"amount":99,"currency":"USD","title":"Website invoice","customerEmail":"customer@example.com"}'`
+  ].join('\n');
   const linkSearchValue = linkSearch.trim().toLowerCase();
   const filteredLinks = links.filter((link: any) => {
     const matchesStatus = statusFilter === 'all' || link.status === statusFilter;
@@ -609,7 +621,7 @@ export default function TiwloPay() {
     ? overview.chartData
     : ['May 28', 'May 29', 'May 30', 'May 31', 'Jun 1', 'Jun 2', 'Jun 3', 'Jun 4'].map((name) => ({ name, volume: 0, fees: 0 }));
 
-  const OverviewPage = () => (
+  const overviewPage = (
     <div className="space-y-4">
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1fr_360px]">
         <section className={`${pageCard} relative min-h-[250px] overflow-hidden bg-[#fbfaff] p-6 sm:p-7`}>
@@ -632,7 +644,7 @@ export default function TiwloPay() {
               <NavLink to="/tiwlo-pay/links" className="inline-flex h-10 items-center justify-center gap-2 rounded-[7px] bg-[#4f32f5] px-5 text-[12px] font-extrabold text-white hover:bg-[#4328df]">
                 Create Payment Link <ChevronRight className="h-4 w-4" />
               </NavLink>
-              <RouterLink to="/documentation" className="inline-flex h-10 items-center justify-center gap-2 rounded-[7px] border border-[#dbe3ef] bg-white px-5 text-[12px] font-extrabold text-[#334155] hover:border-[#b9c7d9]">
+              <RouterLink to={docsPath} className="inline-flex h-10 items-center justify-center gap-2 rounded-[7px] border border-[#dbe3ef] bg-white px-5 text-[12px] font-extrabold text-[#334155] hover:border-[#b9c7d9]">
                 View Documentation <ExternalLink className="h-4 w-4" />
               </RouterLink>
             </div>
@@ -772,7 +784,7 @@ export default function TiwloPay() {
     </div>
   );
 
-  const LinksPage = () => (
+  const linksPage = (
     <div className="grid grid-cols-1 gap-5 xl:grid-cols-[1.1fr_0.9fr]">
       <form onSubmit={createLink} className="rounded border border-[#DDE3EA] bg-white p-5">
         <SectionTitle
@@ -892,7 +904,7 @@ export default function TiwloPay() {
 
         <section className="rounded border border-[#111827] bg-[#111827] p-5 text-white">
           <SectionTitle title="Command link" detail="Copy a checkout command or open the latest hosted link." icon={Terminal} action={<button type="button" onClick={() => copyText(commandSnippet, 'Command')} className="rounded border border-white/20 p-2 text-white hover:bg-white/10"><Copy className="h-4 w-4" /></button>} />
-          <code className="block overflow-hidden text-ellipsis whitespace-nowrap rounded border border-white/10 bg-white/5 px-3 py-2 text-[12px] text-green-200">{commandSnippet}</code>
+          <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded border border-white/10 bg-white/5 px-3 py-2 text-[12px] leading-5 text-green-200"><code>{commandSnippet}</code></pre>
           <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
             <button type="button" onClick={() => latestLink?.publicUrl && copyText(latestLink.publicUrl, 'Latest payment link')} disabled={!latestLink?.publicUrl} className="flex items-center justify-center gap-2 rounded border border-white/20 px-3 py-2 text-[12px] font-bold text-white hover:bg-white/10 disabled:opacity-50">
               <Copy className="h-4 w-4" /> Copy latest
@@ -906,7 +918,7 @@ export default function TiwloPay() {
     </div>
   );
 
-  const InvoicesPage = () => (
+  const invoicesPage = (
     <section className="overflow-hidden rounded border border-[#DDE3EA] bg-white">
       <div className="border-b border-[#E5E7EB] p-5">
         <SectionTitle
@@ -964,7 +976,7 @@ export default function TiwloPay() {
     </section>
   );
 
-  const PayoutsPage = () => (
+  const payoutsPage = (
     <div className="grid grid-cols-1 gap-5 xl:grid-cols-[0.85fr_1.15fr]">
       <form onSubmit={requestWithdrawal} className="rounded border border-[#DDE3EA] bg-white p-5">
         <SectionTitle title="Request payout" detail={`${money(summary.availableForWithdrawal, currency)} available`} icon={Landmark} action={<StatusPill status={isLive ? 'active' : 'inactive'} />} />
@@ -1008,7 +1020,7 @@ export default function TiwloPay() {
     </div>
   );
 
-  const SettingsPage = () => (
+  const settingsPage = (
     <div className="grid grid-cols-1 gap-5 xl:grid-cols-[0.95fr_1.05fr]">
       <form onSubmit={saveProfile} className="rounded border border-[#DDE3EA] bg-white p-5">
         <SectionTitle title="Merchant profile" detail="These details appear on hosted checkout and receipts." icon={Settings} />
@@ -1029,9 +1041,18 @@ export default function TiwloPay() {
       <section className="rounded border border-[#DDE3EA] bg-white p-5">
         <SectionTitle
           title="API keys"
-          detail={isLive ? 'Live API access is available for verified merchants.' : 'API access is locked until admin approves ID verification.'}
+          detail={isLive ? 'Live REST API access is available for verified merchants.' : 'API access is locked until admin approves ID verification.'}
           icon={KeyRound}
-          action={<button type="button" onClick={rotateKeys} disabled={!isLive || saving} className="flex items-center gap-2 rounded border border-[#DDE3EA] px-3 py-2 text-[12px] font-bold text-[#374151] hover:border-blue-400 disabled:opacity-50"><RotateCw className="h-4 w-4" /> Rotate</button>}
+          action={(
+            <div className="flex flex-wrap items-center gap-2">
+              <RouterLink to={docsPath} className="flex items-center gap-2 rounded border border-[#DDE3EA] px-3 py-2 text-[12px] font-bold text-[#374151] hover:border-blue-400">
+                <FileText className="h-4 w-4" /> Docs
+              </RouterLink>
+              <button type="button" onClick={rotateKeys} disabled={!isLive || saving} className="flex items-center gap-2 rounded border border-[#DDE3EA] px-3 py-2 text-[12px] font-bold text-[#374151] hover:border-blue-400 disabled:opacity-50">
+                <RotateCw className="h-4 w-4" /> Rotate
+              </button>
+            </div>
+          )}
         />
         {!isLive && <div className="mb-4"><VerificationNotice isLive={isLive} status={profile.status || 'inactive'} verificationStatus={verificationStatus} /></div>}
         <div className="space-y-3">
@@ -1054,17 +1075,33 @@ export default function TiwloPay() {
           </div>
           <div className="rounded border border-[#111827] bg-[#111827] p-3 text-white">
             <div className="mb-2 flex items-center justify-between">
-              <p className="text-[10px] font-bold uppercase text-blue-200">Checkout command</p>
+              <p className="text-[10px] font-bold uppercase text-blue-200">Create link API command</p>
               <button type="button" onClick={() => copyText(commandSnippet, 'Command')} className="rounded border border-white/20 p-1.5 text-white hover:bg-white/10"><Copy className="h-3.5 w-3.5" /></button>
             </div>
-            <code className="block overflow-hidden text-ellipsis whitespace-nowrap text-[11px] text-green-200">{commandSnippet}</code>
+            <pre className="overflow-x-auto whitespace-pre-wrap break-words text-[11px] leading-5 text-green-200"><code>{commandSnippet}</code></pre>
+          </div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="rounded border border-[#E5E7EB] bg-[#F9FAFB] p-3">
+              <p className="text-[10px] font-bold uppercase text-[#6B7280]">API base URL</p>
+              <div className="mt-2 flex items-center gap-2">
+                <code className="min-w-0 flex-1 break-all text-[12px] font-bold text-[#111827]">{apiBaseUrl}</code>
+                <button type="button" onClick={() => copyText(apiBaseUrl, 'API base URL')} className="rounded border border-[#DDE3EA] bg-white p-2"><Copy className="h-4 w-4" /></button>
+              </div>
+            </div>
+            <div className="rounded border border-[#E5E7EB] bg-[#F9FAFB] p-3">
+              <p className="text-[10px] font-bold uppercase text-[#6B7280]">Primary endpoint</p>
+              <div className="mt-2 flex items-center gap-2">
+                <code className="min-w-0 flex-1 break-all text-[12px] font-bold text-[#111827]">POST /payment-links</code>
+                <button type="button" onClick={() => copyText(`${apiBaseUrl}/payment-links`, 'Payment links endpoint')} className="rounded border border-[#DDE3EA] bg-white p-2"><Copy className="h-4 w-4" /></button>
+              </div>
+            </div>
           </div>
         </div>
       </section>
     </div>
   );
 
-  const VerifyPage = () => (
+  const verifyPage = (
     <div className="grid grid-cols-1 gap-5 xl:grid-cols-[0.85fr_1.15fr]">
       <section className="rounded border border-[#DDE3EA] bg-white p-5">
         <SectionTitle title="Verification status" detail="Admin approval activates payment links, API access, and payouts." icon={UserCheck} action={<StatusPill status={verificationStatus} />} />
@@ -1114,7 +1151,7 @@ export default function TiwloPay() {
   }
 
   return (
-    <div className="mx-auto max-w-[1220px] space-y-4 pb-12">
+    <div className="tiwlo-pay-surface mx-auto max-w-[1220px] space-y-4 pb-12">
       {(error || notice) && (
         <div className={`flex items-center gap-2 rounded border px-4 py-3 text-[13px] font-bold ${error ? 'border-red-100 bg-red-50 text-red-700' : 'border-emerald-100 bg-emerald-50 text-emerald-700'}`}>
           {error ? <AlertCircle className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
@@ -1124,12 +1161,12 @@ export default function TiwloPay() {
 
       <Routes>
         <Route index element={<Navigate to="overview" replace />} />
-        <Route path="overview" element={<OverviewPage />} />
-        <Route path="links" element={<LinksPage />} />
-        <Route path="invoices" element={<InvoicesPage />} />
-        <Route path="payouts" element={<PayoutsPage />} />
-        <Route path="settings" element={<SettingsPage />} />
-        <Route path="verify" element={<VerifyPage />} />
+        <Route path="overview" element={overviewPage} />
+        <Route path="links" element={linksPage} />
+        <Route path="invoices" element={invoicesPage} />
+        <Route path="payouts" element={payoutsPage} />
+        <Route path="settings" element={settingsPage} />
+        <Route path="verify" element={verifyPage} />
         <Route path="*" element={<Navigate to="overview" replace />} />
       </Routes>
     </div>

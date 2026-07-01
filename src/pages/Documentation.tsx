@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import { 
   Book, 
   Search, 
@@ -64,13 +65,30 @@ const documentationSchema = [
 
 export default function Documentation() {
   const { money } = useCurrency({ scope: 'platform', scopeId: 'docs' });
-  const [activeSection, setActiveSection] = useState('Introduction');
+  const docsSectionFromSearch = (search = '') => {
+    const params = new URLSearchParams(search);
+    const section = String(params.get('section') || '').toLowerCase();
+    if (['tiwlo-pay-api', 'tiwlo-pay', 'payments'].includes(section)) return 'Tiwlo-Pay-API';
+    return 'Introduction';
+  };
+  const location = useLocation();
+  const [activeSection, setActiveSection] = useState(() => docsSectionFromSearch(location.search));
   const [searchQuery, setSearchQuery] = useState(() => {
     if (typeof window === 'undefined') return '';
     const params = new URLSearchParams(window.location.search);
     return params.get('q') || params.get('search') || '';
   });
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const docsOrigin = (() => {
+    if (typeof window === 'undefined') return 'https://tiwlo.com';
+    const localHostnames = new Set(['localhost', '127.0.0.1', '0.0.0.0', '::1']);
+    return localHostnames.has(window.location.hostname) ? 'https://tiwlo.com' : window.location.origin;
+  })();
+  const tiwloPayApiBase = `${docsOrigin}/api/tiwlo-pay/v1`;
+
+  React.useEffect(() => {
+    setActiveSection(docsSectionFromSearch(location.search));
+  }, [location.search]);
 
   const sections = [
     { 
@@ -440,7 +458,127 @@ export default function Documentation() {
         </div>
       )
     },
-    { 
+    {
+      id: 'Tiwlo-Pay-API',
+      title: 'Tiwlo Pay API',
+      icon: CreditCard,
+      content: (
+        <div className="space-y-8">
+          <div>
+            <h2 className="text-2xl font-bold text-[#2e3d49] mb-4">Merchant payment gateway API</h2>
+            <p className="text-[#4a4a4a] leading-relaxed">
+              Verified Tiwlo Pay merchants can create hosted checkout links from their own website, ecommerce plugin, billing panel, or backend. The API returns a stable checkout URL that customers can pay through the enabled Tiwlo Pay gateways.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {[
+              { title: 'Base URL', value: tiwloPayApiBase },
+              { title: 'Create payment link', value: 'POST /payment-links' },
+              { title: 'Create checkout session', value: 'POST /checkout-sessions' },
+              { title: 'Read payment status', value: 'GET /payment-links/{idOrSlug}' }
+            ].map((item) => (
+              <div key={item.title} className="rounded-lg border border-gray-100 bg-gray-50 p-4">
+                <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-gray-400">{item.title}</p>
+                <p className="mt-2 break-all font-mono text-[12px] font-bold text-[#2e3d49]">{item.value}</p>
+              </div>
+            ))}
+          </div>
+
+          <div className="space-y-4">
+            <h3 className="font-bold text-[#2e3d49]">Authentication</h3>
+            <p className="text-sm text-[#4a4a4a]">
+              Open Tiwlo Pay, go to API Settings, rotate keys once, then store the secret key only on your server. Send both headers with every server-side request.
+            </p>
+            <div className="rounded-lg border border-emerald-900 bg-gray-900 p-4 font-mono text-[12px] leading-6 text-emerald-300">
+              <div>Authorization: Bearer twsk_live_secret</div>
+              <div>X-Tiwlo-Pay-Key: twpk_live_key</div>
+              <div>Content-Type: application/json</div>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <div className="flex items-center justify-between gap-4">
+              <h3 className="font-bold text-[#2e3d49]">Create a hosted payment link</h3>
+              <button
+                onClick={() => handleCopy('tiwlo-pay-create-link', `curl -X POST ${tiwloPayApiBase}/payment-links\n  -H "Authorization: Bearer twsk_live_secret"\n  -H "X-Tiwlo-Pay-Key: twpk_live_key"\n  -H "Content-Type: application/json"\n  -d '{"amount":99,"currency":"USD","title":"Website invoice","customerEmail":"customer@example.com"}'`)}
+                className="rounded border border-gray-200 p-2 text-gray-500 hover:text-blue-600"
+              >
+                {copiedId === 'tiwlo-pay-create-link' ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
+              </button>
+            </div>
+            <pre className="overflow-x-auto whitespace-pre-wrap rounded-lg bg-gray-900 p-4 text-[12px] leading-6 text-emerald-300"><code>{`curl -X POST ${tiwloPayApiBase}/payment-links
+  -H "Authorization: Bearer twsk_live_secret"
+  -H "X-Tiwlo-Pay-Key: twpk_live_key"
+  -H "Content-Type: application/json"
+  -d '{
+    "amount": 99,
+    "currency": "USD",
+    "title": "Website invoice",
+    "description": "Order #10021",
+    "customerName": "Customer Name",
+    "customerEmail": "customer@example.com",
+    "successUrl": "https://your-site.com/payment/success",
+    "cancelUrl": "https://your-site.com/payment/cancel",
+    "webhookUrl": "https://your-site.com/webhooks/tiwlo-pay",
+    "metadata": {
+      "orderId": "10021"
+    }
+  }'`}</code></pre>
+            <div className="rounded-lg border border-blue-100 bg-blue-50 p-4 text-sm text-blue-900">
+              The response includes <span className="font-mono font-bold">checkoutUrl</span>. Redirect the customer to that URL or show it inside your invoice page.
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <h3 className="font-bold text-[#2e3d49]">Plugin and website flow</h3>
+            <div className="space-y-3">
+              {[
+                'Save twpk and twsk in your plugin/server settings. Never expose twsk in browser JavaScript.',
+                'When an order is placed, call POST /payment-links with amount, currency, customer, return URLs, and your orderId in metadata.',
+                'Store the returned id, slug, and checkoutUrl with your local order.',
+                'Redirect the customer to checkoutUrl. Tiwlo Pay handles Stripe, PayPal, bKash, or any enabled platform gateway.',
+                'After return, call GET /payment-links/{idOrSlug} or GET /transactions to confirm paid status before marking the local order complete.'
+              ].map((step, index) => (
+                <div key={step} className="flex gap-4 rounded-lg border border-gray-100 bg-gray-50 p-4">
+                  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded bg-blue-600 text-[11px] font-black text-white">{index + 1}</div>
+                  <p className="text-sm leading-6 text-[#4a4a4a]">{step}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <h3 className="font-bold text-[#2e3d49]">Response fields</h3>
+            <div className="overflow-x-auto rounded-lg border border-gray-100">
+              <table className="w-full text-left text-sm">
+                <thead className="bg-gray-50 text-[11px] uppercase tracking-wider text-gray-400">
+                  <tr>
+                    <th className="px-4 py-3">Field</th>
+                    <th className="px-4 py-3">Meaning</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {[
+                    ['id / slug', 'Stable identifiers for lookup and checkout routing.'],
+                    ['checkoutUrl', 'Hosted payment page URL for the customer.'],
+                    ['status', 'unpaid, paid, expired, or payment_failed.'],
+                    ['allowedProviders', 'Gateways enabled for this invoice.'],
+                    ['metadata', 'Your orderId, plugin name, webhook URL, and custom references.']
+                  ].map(([field, meaning]) => (
+                    <tr key={field}>
+                      <td className="px-4 py-3 font-mono font-bold text-[#2e3d49]">{field}</td>
+                      <td className="px-4 py-3 text-[#4a4a4a]">{meaning}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )
+    },
+    {
       id: 'Billing', 
       title: 'Billing & Account', 
       icon: CreditCard,
