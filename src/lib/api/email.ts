@@ -44,6 +44,7 @@ export async function testSystemEmailWithApi(input: Record<string, unknown>) {
         secure
         requireTLS
         smtpMode
+        ipv4Only
         requiredPorts
         allowlist
         diagnostic

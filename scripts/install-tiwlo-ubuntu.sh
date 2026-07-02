@@ -86,6 +86,8 @@ configure_postfix_delivery_safety() {
   postconf -e "non_smtpd_milters =" || true
   postconf -e "content_filter =" || true
   postconf -e "smtpd_proxy_filter =" || true
+  postconf -e "inet_protocols = ipv4" || true
+  postconf -e "smtp_address_preference = ipv4" || true
   postconf -e "smtpd_client_restrictions = permit_mynetworks,permit_sasl_authenticated" || true
   postconf -e "smtpd_helo_restrictions =" || true
   postconf -e "smtpd_sender_restrictions =" || true
@@ -219,7 +221,7 @@ configure_system_email_services() {
   postconf -e "mydomain = ${MAIL_DOMAIN}" || true
   postconf -e "myorigin = /etc/mailname" || true
   postconf -e "inet_interfaces = all" || true
-  postconf -e "inet_protocols = all" || true
+  postconf -e "inet_protocols = ipv4" || true
   postconf -e "mynetworks = 127.0.0.0/8 [::1]/128" || true
   postconf -e "home_mailbox = Maildir/" || true
   postconf -e "smtpd_tls_cert_file = ${CERT_FILE}" || true
@@ -398,10 +400,14 @@ SMTP_PUBLIC_HOST=${MAIL_HOSTNAME}
 SMTP_TLS_SERVERNAME=${MAIL_HOSTNAME}
 SMTP_PORT=465
 SMTP_SECURE=true
+SMTP_FORCE_IPV4=true
 SMTP_USER=${local_user}
 SMTP_PASS=${smtp_pass}
 MAIL_FROM=${local_user}@${MAIL_DOMAIN}
 MAIL_REPLY_TO=${local_user}@${MAIL_DOMAIN}
+MAIL_DISABLE_IPV6=true
+MAIL_IPV4=${PUBLIC_IP:-}
+MAIL_IPV6=
 MAILENV
   chmod 600 /etc/tiwlo-mail/system-smtp.env >/dev/null 2>&1 || true
 }
@@ -552,6 +558,7 @@ mkdir -p x
   echo "SMTP_TLS_SERVERNAME=\"${MAIL_HOSTNAME}\""
   echo "SMTP_PORT=\"465\""
   echo "SMTP_SECURE=\"true\""
+  echo "SMTP_FORCE_IPV4=\"true\""
   echo "SMTP_TLS_REJECT_UNAUTHORIZED=\"false\""
   echo "SMTP_USER=\"noreply\""
   echo "SMTP_PASS=\"${SMTP_PASSWORD}\""
@@ -559,6 +566,9 @@ mkdir -p x
   echo "MAIL_INLINE_LOGO=\"false\""
   echo "MAIL_FROM_NAME=\"Tiwlo\""
   echo "MAIL_REPLY_TO=\"noreply@${MAIL_DOMAIN}\""
+  echo "MAIL_DISABLE_IPV6=\"true\""
+  echo "MAIL_IPV4=\"${PUBLIC_IP:-}\""
+  echo "MAIL_IPV6=\"\""
   echo "TIWLO_DKIM_SELECTOR=\"${TIWLO_DKIM_SELECTOR:-tiwlo}\""
   echo "TIWLO_DKIM_DOMAIN=\"${MAIL_DOMAIN}\""
   echo "TIWLO_DKIM_PRIVATE_KEY_PATH=\"/etc/opendkim/keys/${MAIL_DOMAIN}/${TIWLO_DKIM_SELECTOR:-tiwlo}.private\""

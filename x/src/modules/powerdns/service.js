@@ -57,6 +57,63 @@ const fqdnRecordName = (recordName, zoneName) => {
 const addressRecordTypeFor = (ipAddress) => (isIP(text(ipAddress)) === 6 ? 'AAAA' : 'A');
 const dkimPublicKey = () => text(process.env.TIWLO_DKIM_PUBLIC_KEY || process.env.DKIM_PUBLIC_KEY).replace(/^"|"$/g, '').replace(/\s+/g, '');
 const dkimSelector = () => cleanHost(process.env.TIWLO_DKIM_SELECTOR || process.env.DKIM_SELECTOR || 'tiwlo').split('.')[0] || 'tiwlo';
+const GOOGLE_EMAIL_SENDER_GUIDELINES_URL = 'https://support.google.com/mail/answer/81126';
+const SERVICE_MAIL_HOSTS = ['mail', 'tmail', 'email', 'smtp', 'imap', 'pop', 'webmail'];
+
+const uniqueIps = (items = []) => Array.from(new Set(items.map((item) => text(item)).filter((item) => isIP(item))));
+const FALSE_VALUES = new Set(['0', 'false', 'no', 'off', 'unchecked']);
+
+const booleanValue = (value, fallback = false) => {
+  if (value === undefined || value === null || value === '') return fallback;
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value !== 0;
+  return !FALSE_VALUES.has(String(value).trim().toLowerCase());
+};
+
+const mailIpv4Only = (config = {}, input = {}) => booleanValue(
+  input.forceIpv4 ?? input.ipv4Only ?? input.disableIpv6 ??
+    config.forceIpv4 ?? config.ipv4Only ?? config.disableMailIpv6 ??
+    process.env.SMTP_FORCE_IPV4 ?? process.env.MAIL_FORCE_IPV4 ??
+    process.env.TIWLO_MAIL_IPV4_ONLY ?? process.env.MAIL_DISABLE_IPV6,
+  false
+);
+
+const extractIpsFromText = (...values) => {
+  const source = values.map((value) => text(value)).filter(Boolean).join(' ');
+  if (!source) return [];
+  const matches = source.match(/\b(?:\d{1,3}\.){3}\d{1,3}\b|(?<![a-f0-9:])(?:[a-f0-9]{0,4}:){2,7}[a-f0-9]{0,4}(?![a-f0-9:])/gi) || [];
+  return uniqueIps(matches.map((item) => item.replace(/^\[|\]$/g, '')));
+};
+
+const mailIpCandidatesFor = (config = {}, input = {}) => {
+  const detectedRaw = extractIpsFromText(
+    input.bounceText,
+    input.errorText,
+    input.smtpError,
+    input.ip,
+    input.ipAddress,
+    input.ipv4,
+    input.ipv6,
+    config.serverIp,
+    config.mailIpv4,
+    config.mailIpv6,
+    process.env.MAIL_IPV4,
+    process.env.MAIL_IPV6,
+    process.env.SMTP_IPV4,
+    process.env.SMTP_IPV6,
+    process.env.SERVER_IPV4,
+    process.env.SERVER_IPV6,
+    process.env.PUBLIC_IPV4,
+    process.env.PUBLIC_IPV6
+  );
+  const ipv4Only = mailIpv4Only(config, input);
+  const ignoredIpv6 = detectedRaw.filter((item) => isIP(item) === 6);
+  const detected = ipv4Only ? detectedRaw.filter((item) => isIP(item) !== 6) : detectedRaw;
+  const ipv4 = detected.filter((item) => isIP(item) === 4);
+  const ipv6 = detected.filter((item) => isIP(item) === 6);
+  return { all: detected, ipv4, ipv6, ignoredIpv6: ipv4Only ? ignoredIpv6 : [], ipv4Only };
+};
+
 const bimiRecordValue = (domainName) => {
   const domain = cleanHost(domainName || DEFAULT_DOMAIN);
   const logo = text(process.env.TIWLO_BIMI_LOGO_URL || process.env.BIMI_LOGO_URL || `https://${domain}/brand/bimi.svg`);
@@ -65,22 +122,34 @@ const bimiRecordValue = (domainName) => {
   return `v=BIMI1; l=${logo}${authority ? `; a=${authority}` : ''}`;
 };
 
-const mailDnsDefaultsFor = (domainName, config) => {
+const mailDnsDefaultsFor = (domainName, config, input = {}) => {
   const domain = cleanHost(domainName || config.primaryDomain);
-  const serverIp = text(config.serverIp);
-  const addressType = addressRecordTypeFor(serverIp);
-  const spfIp = isIP(serverIp) === 6 ? `ip6:${serverIp}` : `ip4:${serverIp}`;
+  const { all, ipv4, ipv6 } = mailIpCandidatesFor(config, input);
+  if (!all.length) return [];
   const postmaster = `postmaster@${domain}`;
+  const legacySingleIpv6 = ipv4.length === 0 && ipv6.length === 1;
+  const addressRecords = SERVICE_MAIL_HOSTS.flatMap((host) => [
+    ...ipv4.map((ipAddress, index) => ({
+      id: `${host}_a${index ? `_${index + 1}` : ''}`,
+      type: 'A',
+      name: host,
+      value: ipAddress
+    })),
+    ...ipv6.map((ipAddress, index) => ({
+      id: legacySingleIpv6 && index === 0 ? `${host}_a` : `${host}_aaaa${index ? `_${index + 1}` : ''}`,
+      type: 'AAAA',
+      name: host,
+      value: ipAddress
+    }))
+  ]);
+  const spfIpParts = [
+    ...ipv4.map((ipAddress) => `ip4:${ipAddress}`),
+    ...ipv6.map((ipAddress) => `ip6:${ipAddress}`)
+  ];
   const records = [
-    { id: 'mail_a', type: addressType, name: 'mail', value: serverIp },
-    { id: 'tmail_a', type: addressType, name: 'tmail', value: serverIp },
-    { id: 'email_a', type: addressType, name: 'email', value: serverIp },
-    { id: 'smtp_a', type: addressType, name: 'smtp', value: serverIp },
-    { id: 'imap_a', type: addressType, name: 'imap', value: serverIp },
-    { id: 'pop_a', type: addressType, name: 'pop', value: serverIp },
-    { id: 'webmail_a', type: addressType, name: 'webmail', value: serverIp },
+    ...addressRecords,
     { id: 'root_mx', type: 'MX', name: '@', value: `mail.${domain}`, priority: 10 },
-    { id: 'root_spf', type: 'TXT', name: '@', value: `v=spf1 mx a ${spfIp} ~all` },
+    { id: 'root_spf', type: 'TXT', name: '@', value: `v=spf1 mx a ${spfIpParts.join(' ')} ~all` },
     { id: 'dmarc_txt', type: 'TXT', name: '_dmarc', value: `v=DMARC1; p=quarantine; pct=100; rua=mailto:${postmaster}; ruf=mailto:${postmaster}; fo=1` },
     { id: 'dkim_txt', type: 'TXT', name: `${dkimSelector()}._domainkey`, value: dkimPublicKey() ? `v=DKIM1; h=sha256; k=rsa; p=${dkimPublicKey()}` : '' },
     { id: 'bimi_txt', type: 'TXT', name: 'default._bimi', value: bimiRecordValue(domain) },
@@ -535,6 +604,198 @@ const upsertCoreZoneRecords = async (ctx, actor, config) => {
   await syncPowerDnsDomain(ctx, domain.id);
 };
 
+const managedMailRecordSources = new Set(['powerdns_core', 'mail_delivery_repair', 'auto_dns_defaults']);
+
+const recordMetadata = (record) => (record?.metadata && typeof record.metadata === 'object' ? record.metadata : {});
+
+const upsertMailDeliveryRecord = async (ctx, domain, record) => {
+  const deterministicId = `powerdns_${domain.name}_${record.id}`;
+  const existingById = await ctx.prisma.dnsRecord.findUnique({ where: { id: deterministicId } }).catch(() => null);
+  const existingRows = await ctx.prisma.dnsRecord.findMany({
+    where: {
+      domainId: domain.id,
+      type: record.type,
+      name: record.name
+    }
+  });
+  const existing = existingRows.find((row) => {
+    if (row.id === deterministicId) return true;
+    if (['A', 'AAAA'].includes(record.type)) return row.value === record.value;
+    if (record.type === 'TXT' && record.name === '@') return /^v=spf1\b/i.test(row.value || '');
+    return true;
+  });
+
+  const data = {
+    domainId: domain.id,
+    type: record.type,
+    name: record.name,
+    value: record.value,
+    ttl: 300,
+    priority: record.priority == null ? null : Number(record.priority),
+    status: 'active',
+    metadata: {
+      ...recordMetadata(existing),
+      source: 'mail_delivery_repair',
+      provider: 'powerdns',
+      managed: true,
+      updatedAt: new Date().toISOString()
+    }
+  };
+
+  if (existingById || existing) {
+    await ctx.prisma.dnsRecord.update({
+      where: { id: (existingById || existing).id },
+      data
+    });
+    return (existingById || existing).id;
+  }
+
+  await ctx.prisma.dnsRecord.create({
+    data: {
+      id: deterministicId,
+      ...data
+    }
+  });
+  return deterministicId;
+};
+
+const removeStaleManagedMailAddressRecords = async (ctx, domain, expectedRecords) => {
+  const expectedAddressKeys = new Set(expectedRecords
+    .filter((record) => ['A', 'AAAA'].includes(record.type))
+    .map((record) => `${record.type}:${record.name}:${record.value}`.toLowerCase()));
+  const rows = await ctx.prisma.dnsRecord.findMany({
+    where: {
+      domainId: domain.id,
+      type: { in: ['A', 'AAAA'] },
+      name: { in: SERVICE_MAIL_HOSTS }
+    }
+  });
+  for (const row of rows) {
+    const key = `${row.type}:${row.name}:${row.value}`.toLowerCase();
+    if (expectedAddressKeys.has(key)) continue;
+    const source = text(recordMetadata(row).source);
+    if (!managedMailRecordSources.has(source)) continue;
+    await ctx.prisma.dnsRecord.delete({ where: { id: row.id } }).catch(() => {});
+  }
+};
+
+const ptrDiagnosticsFor = async (ips, domainName) => {
+  const recommendedHost = `mail.${cleanHost(domainName || DEFAULT_DOMAIN)}`;
+  const checks = [];
+  for (const ipAddress of uniqueIps(ips)) {
+    const family = isIP(ipAddress);
+    let ptrHosts = [];
+    let reverseError = '';
+    try {
+      ptrHosts = (await dns.reverse(ipAddress)).map((host) => cleanHost(host)).filter(Boolean);
+    } catch (error) {
+      reverseError = error?.code || error?.message || 'PTR_LOOKUP_FAILED';
+    }
+
+    const forwardAddresses = [];
+    for (const ptrHost of ptrHosts) {
+      const resolved = await dns.lookup(ptrHost, { all: true }).catch(() => []);
+      forwardAddresses.push(...resolved.map((item) => item.address));
+    }
+
+    const forwardConfirmed = forwardAddresses.includes(ipAddress);
+    const recommendedAligned = ptrHosts.includes(recommendedHost);
+    const ok = ptrHosts.length > 0 && forwardConfirmed;
+    checks.push({
+      ip: ipAddress,
+      family,
+      ptrHosts,
+      reverseError,
+      forwardAddresses: uniqueIps(forwardAddresses),
+      forwardConfirmed,
+      recommendedHost,
+      recommendedAligned,
+      ok,
+      requiredAction: ok
+        ? (recommendedAligned ? 'PTR and forward DNS are aligned.' : `PTR works, but ${recommendedHost} is recommended for sender reputation.`)
+        : `Set provider reverse DNS/PTR for ${ipAddress} to ${recommendedHost}, then make ${recommendedHost} resolve back to ${ipAddress}.`
+    });
+  }
+  return checks;
+};
+
+export const repairMailDeliveryDns = async (ctx, actor, input = {}) => {
+  if (!isAdmin(actor)) throw new AppError('Tiwlo Team access required', 'FORBIDDEN');
+  const config = await getPowerDnsConfig(ctx);
+  const domainName = cleanHost(input.domain || input.domainName || config.primaryDomain, config.primaryDomain || DEFAULT_DOMAIN);
+  const ips = mailIpCandidatesFor(config, input);
+  if (!ips.all.length) {
+    throw new AppError(
+      ips.ipv4Only
+        ? 'Add the public mail server IPv4 address first. IPv6 is disabled for Tiwlo mail delivery.'
+        : 'Add the public mail server IPv4 or IPv6 address first. Paste the Gmail bounce text here if the IPv6 is only visible in the bounce.',
+      'BAD_USER_INPUT'
+    );
+  }
+
+  const domain = await ctx.prisma.domain.upsert({
+    where: { name: domainName },
+    create: {
+      ownerId: actor.id,
+      name: domainName,
+      dns: config.nameservers,
+      status: 'active',
+      records: []
+    },
+    update: {
+      dns: config.nameservers,
+      status: 'active'
+    }
+  });
+
+  const records = mailDnsDefaultsFor(domainName, config, input);
+  for (const record of records) {
+    await upsertMailDeliveryRecord(ctx, domain, record);
+  }
+  await removeStaleManagedMailAddressRecords(ctx, domain, records);
+  const sync = await syncPowerDnsDomain(ctx, domain.id);
+  const ptrChecks = await ptrDiagnosticsFor(ips.all, domainName);
+  const ptrIssues = ptrChecks.filter((check) => !check.ok);
+  const ipv6Issues = ptrIssues.filter((check) => check.family === 6);
+  const details = {
+    domain: domainName,
+    mailHost: `mail.${domainName}`,
+    portalHost: `tmail.${domainName}`,
+    ipv4: ips.ipv4,
+    ipv6: ips.ipv6,
+    ignoredIpv6: ips.ignoredIpv6,
+    ipv4Only: ips.ipv4Only,
+    expectedRecords: records.map((record) => ({
+      type: record.type,
+      name: record.name,
+      value: record.value,
+      priority: record.priority ?? null
+    })),
+    ptrChecks,
+    googleGuidelinesUrl: GOOGLE_EMAIL_SENDER_GUIDELINES_URL,
+    gmailIpv6Error: !ips.ipv4Only && ipv6Issues.length > 0,
+    providerAction: ptrIssues.map((check) => check.requiredAction),
+    postfixIpv4Workaround: 'sudo postconf -e "smtp_address_preference = ipv4" && sudo systemctl reload postfix',
+    note: ips.ipv4Only
+      ? 'IPv6 is disabled for Tiwlo mail delivery; managed AAAA mail records are removed. PTR/rDNS is controlled by the VPS/provider unless reverse DNS is delegated to this PowerDNS server.'
+      : 'PTR/rDNS is controlled by the VPS/provider unless reverse DNS is delegated to this PowerDNS server.'
+  };
+  const ok = ptrIssues.length === 0;
+  const message = ok
+    ? (ips.ipv4Only
+      ? `IPv4-only mail DNS for ${domainName} is repaired and PTR checks are aligned.`
+      : `Mail DNS for ${domainName} is repaired and PTR checks are aligned.`)
+    : `Mail DNS for ${domainName} is repaired, but provider PTR/rDNS still needs action for ${ptrIssues.map((item) => item.ip).join(', ')}.`;
+  await writeAudit(ctx, 'repair_mail_delivery_dns', 'powerdns', domainName, { ok, ips: ips.all, ptrIssues: ptrIssues.length, sync }).catch(() => {});
+  return {
+    ok,
+    zones: 1,
+    records: Number(sync.records || records.length),
+    message,
+    details
+  };
+};
+
 const updateSslConfigForDomain = async (ctx, config) => {
   const domainsText = [
     config.primaryDomain,
@@ -696,12 +957,16 @@ export const powerDnsStatus = async (ctx) => {
   const mailHost = `mail.${config.primaryDomain}`;
   const mailAddresses = await dns.lookup(mailHost, { all: true }).then((items) => items.map((item) => item.address)).catch(() => []);
   const serverIp = text(config.serverIp);
+  const mailIps = mailIpCandidatesFor(config);
+  const ptrChecks = await ptrDiagnosticsFor(mailIps.all, config.primaryDomain);
+  const ptrIssues = ptrChecks.filter((check) => !check.ok);
   const missingExpectedNs = expectedNameservers.filter((ns) => !publicNameservers.includes(ns));
   const nameserverAligned = expectedNameservers.length > 0 && missingExpectedNs.length === 0;
   const mailAligned = !serverIp || serverIp === 'SERVER_IP' || mailAddresses.includes(serverIp);
   const issues = [
     ...(nameserverAligned ? [] : [`Parent registry still shows ${publicNameservers.join(', ') || 'no nameservers'} instead of ${expectedNameservers.join(', ')}.`]),
-    ...(mailAligned ? [] : [`${mailHost} does not resolve to ${serverIp}.`])
+    ...(mailAligned ? [] : [`${mailHost} does not resolve to ${serverIp}.`]),
+    ...ptrIssues.map((check) => `PTR/rDNS for ${check.ip} is not aligned. ${check.requiredAction}`)
   ];
   return {
     ok: issues.length === 0,
@@ -718,6 +983,10 @@ export const powerDnsStatus = async (ctx) => {
       mailHost,
       mailAddresses,
       mailAligned,
+      ipv4Only: mailIps.ipv4Only,
+      ignoredIpv6: mailIps.ignoredIpv6,
+      ptrChecks,
+      googleGuidelinesUrl: GOOGLE_EMAIL_SENDER_GUIDELINES_URL,
       requiredPorts: ['53/tcp', '53/udp', '25/tcp', '465/tcp', '587/tcp', '993/tcp', '995/tcp']
     }
   };

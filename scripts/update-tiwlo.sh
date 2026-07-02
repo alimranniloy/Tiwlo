@@ -139,6 +139,8 @@ configure_postfix_delivery_safety() {
   run_sudo postconf -e "non_smtpd_milters =" || true
   run_sudo postconf -e "content_filter =" || true
   run_sudo postconf -e "smtpd_proxy_filter =" || true
+  run_sudo postconf -e "inet_protocols = ipv4" || true
+  run_sudo postconf -e "smtp_address_preference = ipv4" || true
   run_sudo postconf -e "smtpd_client_restrictions = permit_mynetworks,permit_sasl_authenticated" || true
   run_sudo postconf -e "smtpd_helo_restrictions =" || true
   run_sudo postconf -e "smtpd_sender_restrictions =" || true
@@ -256,7 +258,7 @@ configure_postfix_dovecot() {
   run_sudo postconf -e "myorigin = /etc/mailname" || true
   run_sudo postconf -e "mydestination = \$myhostname, localhost.\$mydomain, localhost, \$mydomain" || true
   run_sudo postconf -e "inet_interfaces = all" || true
-  run_sudo postconf -e "inet_protocols = all" || true
+  run_sudo postconf -e "inet_protocols = ipv4" || true
   run_sudo postconf -e "mynetworks = 127.0.0.0/8 [::1]/128" || true
   run_sudo postconf -e "home_mailbox = Maildir/" || true
   run_sudo postconf -e "smtpd_tls_cert_file = ${cert_file}" || true
@@ -432,10 +434,14 @@ SMTP_PUBLIC_HOST=mail.${mail_domain}
 SMTP_TLS_SERVERNAME=mail.${mail_domain}
 SMTP_PORT=465
 SMTP_SECURE=true
+SMTP_FORCE_IPV4=true
 SMTP_USER=${local_user}
 SMTP_PASS=${smtp_pass}
 MAIL_FROM=${local_user}@${mail_domain}
 MAIL_REPLY_TO=${local_user}@${mail_domain}
+MAIL_DISABLE_IPV6=true
+MAIL_IPV4=${MAIL_IPV4:-}
+MAIL_IPV6=
 MAILENV
   run_sudo chmod 600 /etc/tiwlo-mail/system-smtp.env >/dev/null 2>&1 || true
 }
@@ -802,6 +808,7 @@ set_env_value "$ROOT/x/.env" SMTP_SECURE "true"
 set_env_value "$ROOT/x/.env" SMTP_TLS_REJECT_UNAUTHORIZED "false"
 MAIL_DOMAIN="$(clean_domain "${TIWLO_MAIL_DOMAIN:-${APP_DOMAIN:-${TIWLO_DOMAIN:-tiwlo.com}}}")"
 MAIL_DOMAIN="${MAIL_DOMAIN:-tiwlo.com}"
+MAIL_IPV4="$(detect_public_ipv4 || true)"
 SYSTEM_SMTP_USER="$(get_env_value "$ROOT/x/.env" SMTP_USER)"
 SYSTEM_SMTP_USER="${SYSTEM_SMTP_USER:-noreply@${MAIL_DOMAIN}}"
 SYSTEM_SMTP_USER="${SYSTEM_SMTP_USER%@*}"
@@ -811,11 +818,15 @@ DKIM_PUBLIC_KEY="$(configure_opendkim "$MAIL_DOMAIN" || true)"
 set_env_value "$ROOT/x/.env" SMTP_HOST "127.0.0.1"
 set_env_value "$ROOT/x/.env" SMTP_PUBLIC_HOST "mail.${MAIL_DOMAIN}"
 set_env_value "$ROOT/x/.env" SMTP_TLS_SERVERNAME "mail.${MAIL_DOMAIN}"
+set_env_value "$ROOT/x/.env" SMTP_FORCE_IPV4 "true"
 set_env_value "$ROOT/x/.env" SMTP_USER "$SYSTEM_SMTP_USER"
 set_env_value "$ROOT/x/.env" SMTP_PASS "$SYSTEM_SMTP_PASS"
 set_env_value "$ROOT/x/.env" TIWLO_MAILBOX_HELPER "/usr/local/sbin/tiwlo-mailbox-provision"
 set_env_value "$ROOT/x/.env" MAIL_FROM "${SYSTEM_SMTP_USER}@${MAIL_DOMAIN}"
 set_env_value "$ROOT/x/.env" MAIL_INLINE_LOGO "false"
+set_env_value "$ROOT/x/.env" MAIL_DISABLE_IPV6 "true"
+set_env_value "$ROOT/x/.env" MAIL_IPV4 "$MAIL_IPV4"
+set_env_value "$ROOT/x/.env" MAIL_IPV6 ""
 set_env_value_if_missing "$ROOT/x/.env" MAIL_FROM_NAME "Tiwlo"
 set_env_value_if_missing "$ROOT/x/.env" MAIL_REPLY_TO "${SYSTEM_SMTP_USER}@${MAIL_DOMAIN}"
 provision_system_mailbox "$MAIL_DOMAIN" "$SYSTEM_SMTP_USER" "$SYSTEM_SMTP_PASS"

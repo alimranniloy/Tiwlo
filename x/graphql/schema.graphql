@@ -497,6 +497,7 @@ type EmailTestResult {
   secure: Boolean
   requireTLS: Boolean
   smtpMode: String
+  ipv4Only: Boolean
   requiredPorts: [Int!]!
   allowlist: [String!]!
   diagnostic: JSON
@@ -1867,6 +1868,17 @@ input PowerDnsHostnameInput {
   notes: String
 }
 
+input MailDnsRepairInput {
+  domain: String
+  mailHost: String
+  ipv4: String
+  ipv6: String
+  forceIpv4: Boolean
+  disableIpv6: Boolean
+  bounceText: String
+  errorText: String
+}
+
 input CreateSupportTicketInput {
   subject: String!
   category: String!
@@ -2827,6 +2839,7 @@ type Mutation {
   upsertPowerDnsHostname(input: PowerDnsHostnameInput!): PowerDnsHostname!
   deletePowerDnsHostname(id: ID!): Boolean!
   syncPowerDns: PowerDnsSyncResult!
+  repairMailDeliveryDns(input: MailDnsRepairInput): PowerDnsSyncResult!
   createSupportTicket(input: CreateSupportTicketInput!): SupportTicket!
   replySupportTicket(id: ID!, input: SupportTicketReplyInput!): SupportTicketMessage!
   assignSupportTicket(id: ID!, assigneeId: ID): SupportTicket!

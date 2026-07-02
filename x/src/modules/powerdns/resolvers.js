@@ -20,6 +20,7 @@ export const powerDnsResolvers = {
     updatePowerDnsConfig: async (_, { input }, ctx) => service.updatePowerDnsConfig(ctx, await requireAdmin(ctx), input),
     upsertPowerDnsHostname: async (_, { input }, ctx) => service.upsertPowerDnsHostname(ctx, await requireAdmin(ctx), input),
     deletePowerDnsHostname: async (_, { id }, ctx) => service.deletePowerDnsHostname(ctx, id),
-    syncPowerDns: async (_, _args, ctx) => service.syncAllPowerDns(ctx, await requireAdmin(ctx))
+    syncPowerDns: async (_, _args, ctx) => service.syncAllPowerDns(ctx, await requireAdmin(ctx)),
+    repairMailDeliveryDns: async (_, { input }, ctx) => service.repairMailDeliveryDns(ctx, await requireAdmin(ctx), input || {})
   }
 };

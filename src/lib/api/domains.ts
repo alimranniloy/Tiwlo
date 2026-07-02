@@ -221,6 +221,32 @@ export async function syncPowerDnsWithApi() {
   return data.syncPowerDns;
 }
 
+export async function repairMailDeliveryDnsWithApi(input: {
+  domain?: string;
+  mailHost?: string;
+  ipv4?: string;
+  ipv6?: string;
+  forceIpv4?: boolean;
+  disableIpv6?: boolean;
+  bounceText?: string;
+  errorText?: string;
+} = {}) {
+  const data = await graphQL<{ repairMailDeliveryDns: any }>(
+    `mutation RepairMailDeliveryDns($input: MailDnsRepairInput) {
+      repairMailDeliveryDns(input: $input) {
+        ok
+        zones
+        records
+        message
+        details
+      }
+    }`,
+    { input }
+  );
+
+  return data.repairMailDeliveryDns;
+}
+
 export async function fetchPowerDnsHostnamesWithApi(search?: string) {
   const data = await graphQL<{ powerDnsHostnames: any[] }>(
     `query PowerDnsHostnames($search: String) {

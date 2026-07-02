@@ -1,5 +1,5 @@
 import React from 'react';
-import { AlertCircle, CheckCircle2, Copy, Mail, Plus, Save, Send, Server, Settings, ShieldCheck, Trash2 } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Copy, ExternalLink, Mail, Plus, Save, Send, Server, Settings, ShieldCheck, Trash2, Wrench } from 'lucide-react';
 import {
   addDnsRecordWithApi,
   deleteMainAdminRecordWithApi,
@@ -9,6 +9,7 @@ import {
   fetchMainAdminRecordsWithApi,
   fetchPowerDnsConfigWithApi,
   fetchSettingsWithApi,
+  repairMailDeliveryDnsWithApi,
   testSystemEmailWithApi,
   updateDnsRecordWithApi,
   upsertMainAdminRecordWithApi,
@@ -70,9 +71,12 @@ export default function AdminEmail() {
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
   const [testing, setTesting] = React.useState(false);
+  const [repairingDns, setRepairingDns] = React.useState(false);
   const [bimiWorkingId, setBimiWorkingId] = React.useState('');
   const [testRecipient, setTestRecipient] = React.useState('');
   const [testResult, setTestResult] = React.useState<any | null>(null);
+  const [dnsRepairResult, setDnsRepairResult] = React.useState<any | null>(null);
+  const [gmailBounceText, setGmailBounceText] = React.useState('');
   const [lastProvisioned, setLastProvisioned] = React.useState<any | null>(null);
   const [error, setError] = React.useState('');
   const [notice, setNotice] = React.useState('');
@@ -156,6 +160,8 @@ export default function AdminEmail() {
       fromEmail,
       fromName: String(systemForm.fromName || 'Tiwlo').trim(),
       replyTo,
+      forceIpv4: true,
+      disableIpv6: true,
       domain: mailBaseDomain(systemForm.domain),
       bimi: {
         logoUrl: systemForm.bimiLogoUrl.trim(),
@@ -339,6 +345,39 @@ export default function AdminEmail() {
     }
   };
 
+  const repairMailDns = async (silent = false) => {
+    setRepairingDns(true);
+    if (!silent) {
+      setError('');
+      setNotice('');
+    }
+    try {
+      const result = await repairMailDeliveryDnsWithApi({
+        domain: systemDomain,
+        mailHost: publicMailHost,
+        forceIpv4: true,
+        disableIpv6: true,
+        bounceText: gmailBounceText.trim() || undefined
+      });
+      setDnsRepairResult(result);
+      if (!silent) {
+        if (result.ok) {
+          setNotice(result.message || 'Mail delivery DNS repaired.');
+        } else {
+          setError(result.message || 'Mail delivery DNS was repaired, but PTR/rDNS still needs provider action.');
+        }
+      }
+      return result;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unable to repair mail delivery DNS';
+      setDnsRepairResult({ ok: false, message, details: null });
+      if (!silent) setError(message);
+      throw err;
+    } finally {
+      setRepairingDns(false);
+    }
+  };
+
   const saveSystemEmail = async (event: React.FormEvent) => {
     event.preventDefault();
     setSaving(true);
@@ -373,7 +412,14 @@ export default function AdminEmail() {
           }
         });
       }
-      setNotice(enabledBimiAccounts.length ? 'System email saved and BIMI DNS refreshed.' : 'System email configuration saved.');
+      let mailDnsMessage = '';
+      try {
+        const repairResult = await repairMailDns(true);
+        mailDnsMessage = repairResult?.message || 'Mail delivery DNS repaired and synced.';
+      } catch (dnsErr) {
+        mailDnsMessage = `System email saved, but mail DNS repair needs attention: ${dnsErr instanceof Error ? dnsErr.message : 'unable to repair DNS automatically'}`;
+      }
+      setNotice(enabledBimiAccounts.length ? `${mailDnsMessage} BIMI DNS refreshed.` : mailDnsMessage || 'System email configuration saved.');
       await loadEmail();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to save system email');
@@ -594,12 +640,76 @@ export default function AdminEmail() {
                     <span>code: {testResult.code || '-'}</span>
                     <span>host: {testResult.diagnostic?.host || testResult.host || '127.0.0.1'}:{testResult.diagnostic?.port || testResult.port || 465}</span>
                     <span>mode: {testResult.smtpMode || (testResult.diagnostic?.requireTLS ? '587 STARTTLS' : testResult.diagnostic?.secure ? '465 SSL' : '-')}</span>
+                    <span>ipv4: {testResult.diagnostic?.ipv4Only || testResult.ipv4Only ? 'forced' : 'auto'}</span>
                     <span>tcp: {testResult.diagnostic?.tcpOk ? 'reachable' : testResult.diagnostic?.tcpError || '-'}</span>
                     <span className="sm:col-span-2">dns: {(testResult.diagnostic?.resolvedAddresses || []).join(', ') || '-'}</span>
                     {testResult.diagnostic?.authSource && <span className="sm:col-span-2">source: {testResult.diagnostic.authSource}</span>}
                     {testResult.diagnostic?.rawMessage && <span className="sm:col-span-2 break-words">smtp: {testResult.diagnostic.rawMessage}</span>}
                     {testResult.diagnostic?.fallback && <span className="sm:col-span-2">fallback: {testResult.diagnostic.fallback.host} / {testResult.diagnostic.fallback.code}</span>}
                   </div>
+                </div>
+              )}
+            </div>
+            <div className="rounded border border-amber-100 bg-amber-50 p-3 md:col-span-2">
+              <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-center gap-2 text-amber-900">
+                  <Wrench className="h-4 w-4" />
+                  <div>
+                    <p className="text-[12px] font-black uppercase">Gmail Delivery DNS Repair</p>
+                    <p className="text-[11px] font-semibold text-amber-800">Paste the returned Gmail bounce here; Tiwlo will repair IPv4 MX/SPF/DKIM/DMARC/A records and show PTR action.</p>
+                  </div>
+                </div>
+                <a href="https://support.google.com/mail/answer/81126" target="_blank" rel="noreferrer" className="inline-flex items-center justify-center gap-2 rounded border border-amber-200 bg-white px-3 py-2 text-[12px] font-bold text-amber-800 hover:border-amber-400">
+                  <ExternalLink className="h-4 w-4" /> Gmail Rules
+                </a>
+              </div>
+              <textarea
+                value={gmailBounceText}
+                onChange={(event) => setGmailBounceText(event.target.value)}
+                rows={4}
+                placeholder="Paste Gmail 550-5.7.1 IPv6AuthError / PTR bounce text here"
+                className="w-full rounded border border-amber-200 bg-white px-3 py-2 font-mono text-[12px] outline-none focus:border-amber-500"
+              />
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button type="button" onClick={() => repairMailDns(false)} disabled={repairingDns} className="inline-flex items-center justify-center gap-2 rounded bg-amber-600 px-4 py-2 text-[12px] font-black text-white hover:bg-amber-700 disabled:opacity-60">
+                  <Wrench className="h-4 w-4" /> {repairingDns ? 'Repairing...' : 'Repair Mail DNS'}
+                </button>
+                {dnsRepairResult?.details?.postfixIpv4Workaround && (
+                  <button type="button" onClick={() => copyValue(dnsRepairResult.details.postfixIpv4Workaround)} className="inline-flex items-center justify-center gap-2 rounded border border-amber-200 bg-white px-3 py-2 text-[12px] font-bold text-amber-800 hover:border-amber-400">
+                    <Copy className="h-4 w-4" /> Copy IPv4 Workaround
+                  </button>
+                )}
+              </div>
+              {dnsRepairResult && (
+                <div className={`mt-3 rounded border px-3 py-3 text-[12px] ${dnsRepairResult.ok ? 'border-emerald-200 bg-white text-emerald-800' : 'border-red-100 bg-red-50 text-red-700'}`}>
+                  <p className="font-black">{dnsRepairResult.message}</p>
+                  <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
+                    {[
+                      ['Mail host', dnsRepairResult.details?.mailHost || publicMailHost],
+                      ['IPv4', (dnsRepairResult.details?.ipv4 || []).join(', ') || '-'],
+                      ['IPv6', (dnsRepairResult.details?.ipv6 || []).join(', ') || '-']
+                    ].map(([label, value]) => (
+                      <button key={label} type="button" onClick={() => copyValue(String(value))} className="rounded border border-current/10 bg-white p-2 text-left">
+                        <span className="block text-[9px] font-black uppercase opacity-70">{label}</span>
+                        <span className="mt-1 block break-all font-mono text-[11px] font-bold">{value}</span>
+                      </button>
+                    ))}
+                  </div>
+                  {Array.isArray(dnsRepairResult.details?.ptrChecks) && dnsRepairResult.details.ptrChecks.length > 0 && (
+                    <div className="mt-3 grid grid-cols-1 gap-2">
+                      {dnsRepairResult.details.ptrChecks.map((check: any) => (
+                        <div key={check.ip} className={`rounded border p-2 ${check.ok ? 'border-emerald-100 bg-emerald-50 text-emerald-800' : 'border-red-100 bg-white text-red-700'}`}>
+                          <p className="font-black">PTR {check.ip}: {check.ok ? 'aligned' : 'provider action required'}</p>
+                          <p className="mt-1 break-words font-semibold opacity-80">{check.requiredAction}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {Array.isArray(dnsRepairResult.details?.expectedRecords) && (
+                    <p className="mt-3 text-[11px] font-semibold opacity-80">
+                      Published {dnsRepairResult.details.expectedRecords.length} mail DNS record(s): MX, SPF, DMARC, DKIM when configured, BIMI, and mail service IPv4 A hostnames.
+                    </p>
+                  )}
                 </div>
               )}
             </div>

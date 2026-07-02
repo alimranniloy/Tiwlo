@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 const DEFAULT_FROM = 'noreply@tiwlo.com';
 const SMTP_TIMEOUT_MS = Number(process.env.SMTP_TIMEOUT_MS || 8000);
 export const REQUIRED_EMAIL_PORTS = [25, 465, 587, 993, 995];
+const GOOGLE_EMAIL_SENDER_GUIDELINES_URL = 'https://support.google.com/mail/answer/81126';
 const FALSE_VALUES = new Set(['0', 'false', 'no', 'off', 'unchecked']);
 const LOCAL_SMTP_HOSTS = new Set(['127.0.0.1', 'localhost', '::1']);
 const EMAIL_LOGO_CID = 'tiwlo-favicon@tiwlo';
@@ -19,6 +20,15 @@ function booleanValue(value, fallback = false) {
   if (typeof value === 'boolean') return value;
   if (typeof value === 'number') return value !== 0;
   return !FALSE_VALUES.has(String(value).trim().toLowerCase());
+}
+
+function smtpIpv4Only(config = {}) {
+  return booleanValue(
+    config.forceIpv4 ?? config.ipv4Only ?? config.disableIpv6 ??
+      process.env.SMTP_FORCE_IPV4 ?? process.env.MAIL_FORCE_IPV4 ??
+      process.env.TIWLO_MAIL_IPV4_ONLY ?? process.env.MAIL_DISABLE_IPV6,
+    false
+  );
 }
 
 function cleanHost(value = '') {
@@ -93,6 +103,32 @@ const isTemporaryMessagePolicyFailure = (errorOrResult = {}) => {
   const responseCode = Number(errorOrResult.responseCode || 0);
   return errorOrResult.code === 'EMESSAGE' && responseCode >= 400 && responseCode < 500;
 };
+
+const isGmailIpv6AuthError = (value = '') => /IPv6AuthError|IPv6 sending guidelines|PTR records and authentication/i.test(String(value || ''));
+
+function gmailDeliveryAdvice(config = {}) {
+  const domain = domainFromMailConfig(config);
+  const mailHost = cleanHost(config.publicHost || process.env.SMTP_PUBLIC_HOST || `mail.${domain}`);
+  const ipv4Only = smtpIpv4Only(config);
+  return {
+    googleGuidelinesUrl: GOOGLE_EMAIL_SENDER_GUIDELINES_URL,
+    mailHost,
+    domain,
+    ipv4Only,
+    requiredDns: [
+      `MX ${domain} -> ${mailHost}`,
+      ipv4Only ? `A ${mailHost} -> sending server IPv4` : `A/AAAA ${mailHost} -> sending server IP`,
+      `TXT ${domain} SPF includes every ${ipv4Only ? 'IPv4' : 'IPv4/IPv6'} sender`,
+      `TXT ${process.env.TIWLO_DKIM_SELECTOR || process.env.DKIM_SELECTOR || 'tiwlo'}._domainkey.${domain} when DKIM is configured`,
+      `TXT _dmarc.${domain} with DMARC policy`
+    ],
+    providerPtrAction: `Set VPS/provider reverse DNS/PTR for each active sending IP to ${mailHost}; the hostname must resolve back to the same IP.`,
+    postfixIpv4Workaround: 'sudo postconf -e "smtp_address_preference = ipv4" && sudo systemctl reload postfix',
+    message: ipv4Only
+      ? 'Gmail requires SPF or DKIM, valid IPv4 forward and reverse DNS/PTR, and TLS. IPv6 is disabled for Tiwlo mail delivery.'
+      : 'Gmail requires SPF or DKIM, valid forward and reverse DNS/PTR, and TLS. IPv6 sends also need PTR/rDNS for the IPv6 address.'
+  };
+}
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -287,7 +323,9 @@ export async function systemEmailConfig(prisma, override = {}) {
     password: source.password || process.env.SMTP_PASS,
     fromEmail,
     fromName: source.fromName || process.env.MAIL_FROM_NAME || 'Tiwlo.com',
-    replyTo: sourceReplyTo || fromEmail || process.env.MAIL_REPLY_TO || DEFAULT_FROM
+    replyTo: sourceReplyTo || fromEmail || process.env.MAIL_REPLY_TO || DEFAULT_FROM,
+    forceIpv4: smtpIpv4Only(source),
+    disableIpv6: smtpIpv4Only(source)
   };
 }
 
@@ -320,9 +358,11 @@ export function emailServerAdvice(config = {}) {
     secure: mode.secure,
     requireTLS: mode.requireTLS,
     smtpMode: mode.label,
+    ipv4Only: smtpIpv4Only(config),
     requiredPorts: REQUIRED_EMAIL_PORTS,
     allowlist: REQUIRED_EMAIL_PORTS.map((item) => `${item}/tcp`),
-    message: `Allow SMTP/IMAP ports ${REQUIRED_EMAIL_PORTS.join(', ')} on the mail server firewall. Use ${mode.label} for authenticated outgoing mail.`
+    message: `Allow SMTP/IMAP ports ${REQUIRED_EMAIL_PORTS.join(', ')} on the mail server firewall. Use ${mode.label} for authenticated outgoing mail.`,
+    deliveryAdvice: gmailDeliveryAdvice(config)
   };
 }
 
@@ -344,6 +384,32 @@ function createTransporter(config) {
     socketTimeout: SMTP_TIMEOUT_MS,
     ...dkimTransportOptions(config)
   });
+}
+
+async function lookupSmtpAddresses(host, forceIpv4 = false) {
+  if (!host) return [];
+  const family = net.isIP(host);
+  if (family) return [{ address: host, family }];
+  return dns.lookup(host, { all: true, ...(forceIpv4 ? { family: 4 } : {}) });
+}
+
+async function smtpConnectionConfig(config = {}) {
+  const host = cleanHost(config.host || '');
+  const forceIpv4 = smtpIpv4Only(config);
+  if (!forceIpv4 || !host || net.isIP(host)) {
+    return { ...config, host, forceIpv4 };
+  }
+  const addresses = await lookupSmtpAddresses(host, true);
+  const ipv4 = addresses.find((item) => item.family === 4 || net.isIP(item.address) === 4);
+  if (!ipv4?.address) return { ...config, host, forceIpv4 };
+  return {
+    ...config,
+    host: ipv4.address,
+    originalHost: host,
+    connectHost: ipv4.address,
+    tlsServername: cleanHost(config.tlsServername || host),
+    forceIpv4
+  };
 }
 
 function dkimPrivateKeyFromEnv() {
@@ -511,6 +577,7 @@ async function checkSmtpHandshake(config) {
 export async function diagnoseSmtpConfig(config = {}) {
   const host = cleanHost(config.host || '');
   const mode = smtpModeForPort(config.port || 465, config.secureSSL ?? config.secure);
+  const forceIpv4 = smtpIpv4Only(config);
   const diagnostic = {
     host,
     port: mode.port,
@@ -518,6 +585,8 @@ export async function diagnoseSmtpConfig(config = {}) {
     requireTLS: mode.requireTLS,
     smtpMode: mode.label,
     tlsServername: cleanHost(config.tlsServername || host),
+    ipv4Only: forceIpv4,
+    connectHost: '',
     resolvedAddresses: [],
     dnsOk: false,
     tcpOk: false,
@@ -531,7 +600,7 @@ export async function diagnoseSmtpConfig(config = {}) {
   }
 
   try {
-    const addresses = await dns.lookup(host, { all: true });
+    const addresses = await lookupSmtpAddresses(host, forceIpv4);
     diagnostic.resolvedAddresses = addresses.map((item) => item.address);
     diagnostic.dnsOk = diagnostic.resolvedAddresses.length > 0;
   } catch (error) {
@@ -544,7 +613,9 @@ export async function diagnoseSmtpConfig(config = {}) {
     };
   }
 
-  const tcp = await checkTcpPort(host, mode.port);
+  const connectionConfig = await smtpConnectionConfig({ ...config, host });
+  diagnostic.connectHost = connectionConfig.connectHost || connectionConfig.host || host;
+  const tcp = await checkTcpPort(connectionConfig.host || host, mode.port);
   diagnostic.tcpOk = Boolean(tcp.ok);
   diagnostic.tcpError = tcp.error;
   diagnostic.tcpCode = tcp.code;
@@ -560,7 +631,7 @@ export async function diagnoseSmtpConfig(config = {}) {
 
   const smtp = await checkSmtpHandshake({
     ...config,
-    host,
+    ...connectionConfig,
     port: mode.port,
     secure: mode.secure,
     secureSSL: mode.secure,
@@ -596,6 +667,10 @@ function smtpErrorMessage(error, config, diagnostic = {}) {
   const responseCode = Number(error?.responseCode || 0);
   const raw = error?.message || 'Unable to send test email.';
 
+  if (isGmailIpv6AuthError(raw)) {
+    const advice = gmailDeliveryAdvice(config);
+    return `${raw} Gmail is rejecting the outbound IPv6 path. Repair DNS for ${advice.domain}, then set provider PTR/rDNS for the IPv6 address to ${advice.mailHost}; until PTR is fixed, force Postfix outbound delivery to IPv4 with: ${advice.postfixIpv4Workaround}`;
+  }
   if (code === 'EAUTH' || [454, 530, 534, 535, 538].includes(responseCode)) {
     return `SMTP authentication failed for ${config.username || 'the configured user'}. Check the mailbox exists on the mail server and the SMTP password is correct.`;
   }
@@ -645,7 +720,7 @@ async function deliverEmail(config, message) {
   if (!config.host || !config.username || !config.password) {
     return { sent: false, reason: 'not-configured', advice: emailServerAdvice(config) };
   }
-  const transporter = createTransporter(config);
+  const transporter = createTransporter(await smtpConnectionConfig(config));
   const logo = emailLogoAttachment();
   const attachments = [
     ...(Array.isArray(message.attachments) ? message.attachments : []),
