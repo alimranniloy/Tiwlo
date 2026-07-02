@@ -11,7 +11,6 @@ export const authResolvers = {
     signup: (_, { input }, ctx) => service.signup(ctx, input),
     verifySignupWhatsAppOtp: (_, { challengeId, code }, ctx) => service.verifySignupWhatsAppOtp(ctx, challengeId, code),
     updateProfile: async (_, { input }, ctx) => service.updateProfile(ctx, await requireAuth(ctx), input),
-    requestPasswordReset: (_, args, ctx) => service.requestPasswordReset(ctx, args),
     startPasswordResetWhatsAppOtp: (_, args, ctx) => service.startPasswordResetWhatsAppOtp(ctx, args),
     resendPasswordResetWhatsAppOtp: (_, { challengeId }, ctx) => service.resendPasswordResetWhatsAppOtp(ctx, challengeId),
     verifyPasswordResetWhatsAppOtp: (_, { challengeId, code }, ctx) => service.verifyPasswordResetWhatsAppOtp(ctx, challengeId, code),

@@ -126,6 +126,8 @@ type WhatsAppOtpPayload {
   phoneE164: String
   expiresAt: String!
   resendAvailableAt: String!
+  deliveryId: String
+  deliveryStatus: String
   message: String!
 }
 
@@ -2775,7 +2777,6 @@ type Mutation {
   startWhatsAppVerification(input: WhatsAppPhoneInput): WhatsAppOtpPayload!
   verifyWhatsAppOtp(challengeId: ID!, code: String!): AuthPayload!
   updateProfile(input: UpdateProfileInput!): User!
-  requestPasswordReset(email: String, identifier: String, phone: String, mobileCountryCode: String, country: String): Boolean!
   startPasswordResetWhatsAppOtp(email: String, identifier: String, phone: String, mobileCountryCode: String, country: String): WhatsAppOtpPayload!
   resendPasswordResetWhatsAppOtp(challengeId: ID!): WhatsAppOtpPayload!
   verifyPasswordResetWhatsAppOtp(challengeId: ID!, code: String!): PasswordResetOtpVerificationPayload!

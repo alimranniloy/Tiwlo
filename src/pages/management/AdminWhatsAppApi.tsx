@@ -6,7 +6,7 @@ const SETTING_SCOPE = 'admin';
 const SETTING_SCOPE_ID = 'main-admin';
 const SETTING_KEY = 'mainAdmin:whatsappApi';
 
-type TemplateKey = 'otp' | 'invoice' | 'forgotPassword' | 'security';
+type TemplateKey = 'otp' | 'invoice' | 'security';
 
 type WhatsAppTemplate = {
   name: string;
@@ -42,7 +42,6 @@ const defaultConfig = (): WhatsAppConfig => ({
   templates: {
     otp: defaultTemplate(),
     invoice: defaultTemplate(),
-    forgotPassword: defaultTemplate(),
     security: defaultTemplate()
   }
 });
@@ -50,7 +49,6 @@ const defaultConfig = (): WhatsAppConfig => ({
 const templateRows: Array<{ key: TemplateKey; label: string; description: string }> = [
   { key: 'otp', label: 'OTP Template', description: 'Signup, WhatsApp verification, and password recovery codes.' },
   { key: 'invoice', label: 'Invoice Template', description: 'Invoice alerts with the invoice page button.' },
-  { key: 'forgotPassword', label: 'Forgot Password Template', description: 'Password reset links with secure button.' },
   { key: 'security', label: 'Security Template', description: 'New login, unusual login, and password change alerts.' }
 ];
 
@@ -66,9 +64,8 @@ const mergeConfig = (value: Partial<WhatsAppConfig> = {}): WhatsAppConfig => {
     businessId: value.businessId || '',
     fromNumber: value.fromNumber || '',
     templates: {
-      otp: { ...base.templates.otp, ...(value.templates?.otp || {}) },
+      otp: { ...base.templates.otp, ...(value.templates?.otp || {}), button: true, buttonType: 'auto' },
       invoice: { ...base.templates.invoice, ...(value.templates?.invoice || {}) },
-      forgotPassword: { ...base.templates.forgotPassword, ...(value.templates?.forgotPassword || {}) },
       security: { ...base.templates.security, ...(value.templates?.security || {}) }
     }
   };
@@ -292,11 +289,12 @@ export default function AdminWhatsAppApi() {
                   <label className="inline-flex items-center gap-2 text-xs font-black text-[#374151]">
                     <input
                       type="checkbox"
-                      checked={template.button !== false}
+                      checked={row.key === 'otp' || template.button !== false}
+                      disabled={row.key === 'otp'}
                       onChange={(event) => setTemplateValue(row.key, 'button', event.target.checked)}
-                      className="h-4 w-4 accent-[#128c7e]"
+                      className="h-4 w-4 accent-[#128c7e] disabled:cursor-not-allowed"
                     />
-                    Send Button Param
+                    {row.key === 'otp' ? 'Required OTP Param' : 'Send Button Param'}
                   </label>
                 </div>
               );

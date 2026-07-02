@@ -174,18 +174,6 @@ export async function verifyCurrentPasswordWithApi(password: string) {
   return data.verifyPassword;
 }
 
-export async function requestPasswordResetWithApi(input: string | { email?: string; identifier?: string; phone?: string; mobileCountryCode?: string; country?: string }) {
-  const variables = typeof input === 'string' ? { email: input } : input;
-  const data = await graphQL<{ requestPasswordReset: boolean }>(
-    `mutation RequestPasswordReset($email: String, $identifier: String, $phone: String, $mobileCountryCode: String, $country: String) {
-      requestPasswordReset(email: $email, identifier: $identifier, phone: $phone, mobileCountryCode: $mobileCountryCode, country: $country)
-    }`,
-    variables
-  );
-
-  return data.requestPasswordReset;
-}
-
 type PasswordResetIdentifier = {
   email?: string;
   identifier?: string;
@@ -204,6 +192,8 @@ export async function startPasswordResetWhatsAppOtpWithApi(input: PasswordResetI
         phoneE164
         expiresAt
         resendAvailableAt
+        deliveryId
+        deliveryStatus
         message
       }
     }`,
@@ -222,6 +212,8 @@ export async function resendPasswordResetWhatsAppOtpWithApi(challengeId: string)
         phoneE164
         expiresAt
         resendAvailableAt
+        deliveryId
+        deliveryStatus
         message
       }
     }`,

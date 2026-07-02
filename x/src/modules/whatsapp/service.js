@@ -50,7 +50,6 @@ export const defaultWhatsAppConfig = () => ({
   templates: {
     otp: { name: '', language: 'en_US', button: true, buttonType: 'auto' },
     invoice: { name: '', language: 'en_US', button: true, buttonType: 'auto' },
-    forgotPassword: { name: '', language: 'en_US', button: true, buttonType: 'auto' },
     security: { name: '', language: 'en_US', button: true, buttonType: 'auto' }
   }
 });
@@ -67,9 +66,8 @@ const normalizeConfig = (value = {}) => {
     businessId: clean(value.businessId),
     fromNumber: clean(value.fromNumber),
     templates: {
-      otp: { ...base.templates.otp, ...(value.templates?.otp || {}) },
+      otp: { ...base.templates.otp, ...(value.templates?.otp || {}), button: true, buttonType: 'auto' },
       invoice: { ...base.templates.invoice, ...(value.templates?.invoice || {}) },
-      forgotPassword: { ...base.templates.forgotPassword, ...(value.templates?.forgotPassword || value.templates?.password || {}) },
       security: { ...base.templates.security, ...(value.templates?.security || value.templates?.loginAlert || {}) }
     }
   };
@@ -264,26 +262,35 @@ const inferTemplateShape = (definition, kind, template) => {
     const type = String(button.type || '').toUpperCase();
     const otpType = String(button.otp_type || button.otpType || '').toLowerCase();
     if (type === 'OTP' || otpType.includes('copy')) {
-      inferredButtons.push({ index, subType: 'copy_code', count: 1 });
+      inferredButtons.push({ index, subType: 'url', count: 1, parameterType: 'text' });
     } else if (type === 'URL') {
       const count = placeholderCount(button.url || button.text || '');
-      if (count > 0) inferredButtons.push({ index, subType: 'url', count });
+      if (count > 0 || kind === 'otp') inferredButtons.push({ index, subType: 'url', count: Math.max(1, count), parameterType: 'text' });
     } else if (type === 'COPY_CODE') {
-      inferredButtons.push({ index, subType: 'copy_code', count: 1 });
+      inferredButtons.push(kind === 'otp'
+        ? { index, subType: 'url', count: 1, parameterType: 'text' }
+        : { index, subType: 'copy_code', count: 1, parameterType: 'coupon_code' });
     }
   }
 
-  if (!definition && template.button !== false) {
-    const rawButtonType = clean(template.buttonType).toLowerCase();
-    const selected = !rawButtonType || rawButtonType === 'auto' ? (kind === 'otp' ? 'copy_code' : 'url') : rawButtonType;
-    inferredButtons.push({ index: 0, subType: selected === 'copy_code' ? 'copy_code' : 'url', count: 1 });
+  if (kind === 'otp' && inferredButtons.length === 0) {
+    inferredButtons.push({ index: 0, subType: 'url', count: 1, parameterType: 'text' });
   }
-  const fallbackButtonType = clean(template.buttonType).toLowerCase();
-  const fallbackOtpCopyCode = kind === 'otp' && (!fallbackButtonType || fallbackButtonType === 'auto' || fallbackButtonType === 'copy_code');
+
+  if (!definition && kind !== 'otp' && template.button !== false) {
+    const rawButtonType = clean(template.buttonType).toLowerCase();
+    const selected = kind === 'otp' ? 'url' : (!rawButtonType || rawButtonType === 'auto' ? 'url' : rawButtonType);
+    inferredButtons.push({
+      index: 0,
+      subType: selected === 'copy_code' ? 'copy_code' : 'url',
+      count: 1,
+      parameterType: selected === 'copy_code' ? 'coupon_code' : 'text'
+    });
+  }
 
   return {
     headerTextCount: String(header?.format || '').toUpperCase() === 'TEXT' ? placeholderCount(header?.text || '') : 0,
-    bodyCount: definition ? placeholderCount(body?.text || '') : (fallbackOtpCopyCode ? 0 : null),
+    bodyCount: kind === 'otp' ? Math.max(1, placeholderCount(body?.text || '')) : (definition ? placeholderCount(body?.text || '') : null),
     buttons: inferredButtons
   };
 };
@@ -312,13 +319,13 @@ const buildTemplateComponents = async (config, kind, template, bodyParams, butto
   }
 
   for (const button of shape.buttons) {
-    if (template.button === false || button.count <= 0) continue;
+    if ((template.button === false && kind !== 'otp') || button.count <= 0) continue;
     const buttonValue = String(buttonParams[0] ?? bodyParams[0] ?? fallback ?? '');
     components.push({
       type: 'button',
       sub_type: button.subType,
       index: String(button.index || 0),
-      parameters: button.subType === 'copy_code'
+      parameters: button.parameterType === 'coupon_code'
         ? [{ type: 'coupon_code', coupon_code: buttonValue.slice(0, 15) }]
         : exactTextParams(buttonParams, button.count, buttonValue)
     });
@@ -329,7 +336,7 @@ const buildTemplateComponents = async (config, kind, template, bodyParams, butto
 
 const sendTemplate = async (ctx, kind, toPhoneE164, { bodyParams = [], buttonParams = [] } = {}) => {
   const config = await getWhatsAppConfig(ctx.prisma);
-  if (!config.enabled) return { sent: false, reason: 'disabled' };
+  if (!config.enabled) throw new AppError('WhatsApp API is disabled.', 'WHATSAPP_DISABLED');
   if (!config.accessToken || !config.phoneNumberId) {
     throw new AppError('WhatsApp API is enabled but access token or phone number ID is missing.', 'WHATSAPP_CONFIGURATION_REQUIRED');
   }
@@ -361,8 +368,20 @@ const sendTemplate = async (ctx, kind, toPhoneE164, { bodyParams = [], buttonPar
     const details = payload?.error?.error_data?.details || payload?.error?.message || 'WhatsApp API message failed.';
     throw new AppError(details, 'WHATSAPP_SEND_FAILED');
   }
-  return { sent: true, payload };
+  const message = Array.isArray(payload?.messages) ? payload.messages[0] : null;
+  if (!message?.id) {
+    throw new AppError('Meta accepted no WhatsApp message. Check the OTP template and sender configuration.', 'WHATSAPP_SEND_FAILED');
+  }
+  return {
+    sent: true,
+    messageId: message.id,
+    status: message.message_status || 'accepted'
+  };
 };
+
+export const sendWhatsAppOtp = async (ctx, phoneE164, code) => (
+  sendTemplate(ctx, 'otp', phoneE164, { bodyParams: [code], buttonParams: [code] })
+);
 
 const createOtpChallenge = async (ctx, { purpose, userId = null, email = null, phone, mobileCountryCode, country, payload = {} }) => {
   await ensureWhatsAppAuthSchema(ctx.prisma);
@@ -383,7 +402,28 @@ const createOtpChallenge = async (ctx, { purpose, userId = null, email = null, p
     VALUES ($1, $2, 'pending', $3, $4, $5, $6, $7, $8, $9, CAST($10 AS jsonb), $11, $12, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
   `, id, purpose, userId, email, normalized.localPhone, normalized.dialCode, normalized.country, normalized.phoneE164, codeHash(id, code), json(payload), expiresAt, resendAvailableAt);
 
-  await sendTemplate(ctx, 'otp', normalized.phoneE164, { bodyParams: [code], buttonParams: [code] });
+  let delivery;
+  try {
+    delivery = await sendWhatsAppOtp(ctx, normalized.phoneE164, code);
+  } catch (error) {
+    await ctx.prisma.$executeRawUnsafe(`
+      UPDATE "WhatsAppOtpChallenge"
+      SET "status" = 'send_failed',
+          "payload" = COALESCE("payload", '{}'::jsonb) || CAST($2 AS jsonb),
+          "updatedAt" = CURRENT_TIMESTAMP
+      WHERE "id" = $1
+    `, id, json({ whatsappDelivery: { sent: false, error: error?.message || String(error) } }));
+    throw error;
+  }
+  await ctx.prisma.$executeRawUnsafe(`
+    UPDATE "WhatsAppOtpChallenge"
+    SET "payload" = COALESCE("payload", '{}'::jsonb) || CAST($2 AS jsonb),
+        "updatedAt" = CURRENT_TIMESTAMP
+    WHERE "id" = $1
+  `, id, json({ whatsappDelivery: delivery }));
+  if (userId) {
+    await ctx.prisma.$executeRawUnsafe('UPDATE "User" SET "whatsappLastOtpSentAt" = CURRENT_TIMESTAMP, "updatedAt" = CURRENT_TIMESTAMP WHERE "id" = $1', userId);
+  }
   return {
     ok: true,
     challengeId: id,
@@ -391,6 +431,8 @@ const createOtpChallenge = async (ctx, { purpose, userId = null, email = null, p
     phoneE164: normalized.phoneE164,
     expiresAt: expiresAt.toISOString(),
     resendAvailableAt: resendAvailableAt.toISOString(),
+    deliveryId: delivery.messageId,
+    deliveryStatus: delivery.status,
     message: 'A 6 digit OTP was sent to WhatsApp.'
   };
 };
@@ -492,7 +534,28 @@ export const resendOtpChallenge = async (ctx, challengeId, purpose) => {
     SET "codeHash" = $2, "expiresAt" = $3, "resendAvailableAt" = $4, "attempts" = 0, "updatedAt" = CURRENT_TIMESTAMP
     WHERE "id" = $1
   `, challenge.id, codeHash(challenge.id, code), expiresAt, resendAvailableAt);
-  await sendTemplate(ctx, 'otp', challenge.phoneE164, { bodyParams: [code], buttonParams: [code] });
+  let delivery;
+  try {
+    delivery = await sendWhatsAppOtp(ctx, challenge.phoneE164, code);
+  } catch (error) {
+    await ctx.prisma.$executeRawUnsafe(`
+      UPDATE "WhatsAppOtpChallenge"
+      SET "resendAvailableAt" = CURRENT_TIMESTAMP,
+          "payload" = COALESCE("payload", '{}'::jsonb) || CAST($2 AS jsonb),
+          "updatedAt" = CURRENT_TIMESTAMP
+      WHERE "id" = $1
+    `, challenge.id, json({ whatsappDelivery: { sent: false, error: error?.message || String(error) } }));
+    throw error;
+  }
+  await ctx.prisma.$executeRawUnsafe(`
+    UPDATE "WhatsAppOtpChallenge"
+    SET "payload" = COALESCE("payload", '{}'::jsonb) || CAST($2 AS jsonb),
+        "updatedAt" = CURRENT_TIMESTAMP
+    WHERE "id" = $1
+  `, challenge.id, json({ whatsappDelivery: delivery }));
+  if (challenge.userId) {
+    await ctx.prisma.$executeRawUnsafe('UPDATE "User" SET "whatsappLastOtpSentAt" = CURRENT_TIMESTAMP, "updatedAt" = CURRENT_TIMESTAMP WHERE "id" = $1', challenge.userId);
+  }
   return {
     ok: true,
     challengeId: challenge.id,
@@ -500,6 +563,8 @@ export const resendOtpChallenge = async (ctx, challengeId, purpose) => {
     phoneE164: challenge.phoneE164,
     expiresAt: expiresAt.toISOString(),
     resendAvailableAt: resendAvailableAt.toISOString(),
+    deliveryId: delivery.messageId,
+    deliveryStatus: delivery.status,
     message: 'A new WhatsApp OTP was sent.'
   };
 };
@@ -580,19 +645,6 @@ export const whatsAppVerificationRequiredFor = async (prisma, user) => {
   if (!status.enabled) return false;
   const enriched = user.whatsappVerifiedAt !== undefined ? user : await attachWhatsAppState(prisma, user);
   return !enriched.whatsappVerifiedAt;
-};
-
-export const sendForgotPasswordWhatsApp = async (ctx, user, resetLink) => {
-  const enriched = await attachWhatsAppState(ctx.prisma, user);
-  const normalized = enriched.whatsappVerifiedPhone || normalizeWhatsAppPhone(enriched).phoneE164;
-  if (!normalized) return { sent: false, reason: 'no-phone' };
-  return sendTemplate(ctx, 'forgotPassword', normalized, {
-    bodyParams: [user.name || 'there', resetLink],
-    buttonParams: [resetLink]
-  }).catch((error) => {
-    console.warn('[whatsapp] forgot password send failed:', error?.message || error);
-    return { sent: false, reason: 'send-failed', message: error?.message || String(error) };
-  });
 };
 
 export const sendInvoiceWhatsApp = async (ctx, invoice, owner, message, path = '/invoices') => {

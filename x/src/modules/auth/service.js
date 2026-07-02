@@ -15,7 +15,6 @@ import {
   isWhatsAppEnabled,
   normalizeWhatsAppPhone,
   resendPasswordResetOtpChallenge,
-  sendForgotPasswordWhatsApp,
   sendSecurityWhatsApp,
   signupAvailability,
   verifyPasswordResetOtpChallenge,
@@ -353,34 +352,6 @@ const findPasswordResetUser = async (ctx, input = {}) => {
   return { user, auditIdentifier: target };
 };
 
-export const requestPasswordReset = async (ctx, input) => {
-  const { user, auditIdentifier } = await findPasswordResetUser(ctx, input);
-  if (!user) return true;
-  const token = randomToken();
-  await ctx.prisma.user.update({
-    where: { id: user.id },
-    data: {
-      passwordResetTokenHash: tokenHash(token),
-      passwordResetExpires: addHours(2)
-    }
-  });
-  const link = `${appOrigin().replace(/\/$/, '')}/reset-password?token=${token}`;
-  queueAuthEmail(ctx, {
-    to: user.email,
-    subject: 'Reset your Tiwlo password',
-    title: 'Reset your password',
-    preview: 'Use this secure link to choose a new Tiwlo password.',
-    html: [
-      paragraph(`Hi ${user.name || 'there'},`),
-      paragraph('We received a request to reset your Tiwlo password. This link expires in 2 hours.'),
-      cta('Reset Password', link)
-    ].join('')
-  });
-  await sendForgotPasswordWhatsApp(ctx, user, link);
-  await writeAudit({ ...ctx, user }, 'request_password_reset', 'user', user.id, { identifier: auditIdentifier });
-  return true;
-};
-
 export const startPasswordResetWhatsAppOtp = async (ctx, input) => {
   const { user, auditIdentifier } = await findPasswordResetUser(ctx, input);
   if (!user) {
@@ -390,7 +361,9 @@ export const startPasswordResetWhatsAppOtp = async (ctx, input) => {
   const challenge = await createPasswordResetOtpChallenge(ctx, user);
   await writeAudit({ ...ctx, user }, 'request_password_reset_otp', 'user', user.id, {
     identifier: auditIdentifier,
-    challengeId: challenge.challengeId
+    challengeId: challenge.challengeId,
+    deliveryId: challenge.deliveryId,
+    deliveryStatus: challenge.deliveryStatus
   });
   return challenge;
 };
