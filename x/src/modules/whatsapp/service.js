@@ -9,6 +9,7 @@ const SETTING_SCOPE_ID = 'main-admin';
 const SETTING_KEY = 'mainAdmin:whatsappApi';
 const OTP_PURPOSE_SIGNUP = 'signup';
 const OTP_PURPOSE_USER_PHONE = 'user_phone';
+const OTP_PURPOSE_PASSWORD_RESET = 'password_reset';
 const OTP_TTL_MINUTES = 10;
 const RESEND_SECONDS = 60;
 
@@ -407,6 +408,61 @@ export const createSignupOtpChallenge = async (ctx, input, payload) => {
     payload
   });
 };
+
+export const createPasswordResetOtpChallenge = async (ctx, user) => {
+  const config = await getWhatsAppConfig(ctx.prisma);
+  if (!config.enabled) {
+    throw new AppError('WhatsApp password recovery is currently unavailable.', 'WHATSAPP_DISABLED');
+  }
+
+  const enriched = await attachWhatsAppState(ctx.prisma, user);
+  const phone = enriched.whatsappVerifiedPhone || enriched.phone;
+  const normalized = normalizeWhatsAppPhone({
+    phone,
+    mobileCountryCode: enriched.mobileCountryCode,
+    country: enriched.country
+  });
+  if (!normalized.phoneE164) {
+    throw new AppError('This account does not have a valid WhatsApp number.', 'BAD_USER_INPUT');
+  }
+
+  await ensureWhatsAppAuthSchema(ctx.prisma);
+  const recentRows = await ctx.prisma.$queryRawUnsafe(`
+    SELECT *
+    FROM "WhatsAppOtpChallenge"
+    WHERE "purpose" = $1 AND "userId" = $2 AND "status" = 'pending'
+    ORDER BY "createdAt" DESC
+    LIMIT 1
+  `, OTP_PURPOSE_PASSWORD_RESET, enriched.id);
+  const recent = challengePayload(recentRows?.[0]);
+  if (recent?.resendAvailableAt && new Date(recent.resendAvailableAt).getTime() > Date.now()) {
+    throw new AppError('Please wait 60 seconds before sending another OTP.', 'BAD_USER_INPUT');
+  }
+
+  await ctx.prisma.$executeRawUnsafe(`
+    UPDATE "WhatsAppOtpChallenge"
+    SET "status" = 'superseded', "updatedAt" = CURRENT_TIMESTAMP
+    WHERE "purpose" = $1 AND "userId" = $2 AND "status" = 'pending'
+  `, OTP_PURPOSE_PASSWORD_RESET, enriched.id);
+
+  return createOtpChallenge(ctx, {
+    purpose: OTP_PURPOSE_PASSWORD_RESET,
+    userId: enriched.id,
+    email: enriched.email,
+    phone: normalized.phoneE164,
+    mobileCountryCode: normalized.dialCode,
+    country: normalized.country,
+    payload: { recovery: 'password' }
+  });
+};
+
+export const resendPasswordResetOtpChallenge = async (ctx, challengeId) => (
+  resendOtpChallenge(ctx, challengeId, OTP_PURPOSE_PASSWORD_RESET)
+);
+
+export const verifyPasswordResetOtpChallenge = async (ctx, challengeId, code) => (
+  verifyOtpChallenge(ctx, challengeId, code, OTP_PURPOSE_PASSWORD_RESET)
+);
 
 export const verifyOtpChallenge = async (ctx, challengeId, code, purpose) => {
   await ensureWhatsAppAuthSchema(ctx.prisma);

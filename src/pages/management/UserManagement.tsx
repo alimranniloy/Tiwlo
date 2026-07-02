@@ -6,6 +6,7 @@ import {
   Edit3,
   Eye,
   Fingerprint,
+  LogIn,
   Mail,
   MapPin,
   Monitor,
@@ -23,6 +24,7 @@ import {
   fetchStoreCustomerGroupsWithApi,
   fetchStoreCustomersForAdmin,
   fetchUsersForAdmin,
+  impersonateUserWithApi,
   updateStoreCustomerWithApi,
   updateUserWithApi
 } from '../../lib/tiwloApi';
@@ -74,6 +76,7 @@ export default function UserManagement() {
   const [loading, setLoading] = useState(true);
   const [clientLoading, setClientLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [impersonatingId, setImpersonatingId] = useState('');
   const [error, setError] = useState('');
   const [editing, setEditing] = useState<any | null>(null);
   const [editingCustomer, setEditingCustomer] = useState<any | null>(null);
@@ -273,6 +276,25 @@ export default function UserManagement() {
       setUsers((current) => current.filter((user) => user.id !== id));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to delete user');
+    }
+  };
+
+  const handleImpersonate = async (user: any) => {
+    const confirmed = await confirmEdit({
+      title: 'Log in as this user?',
+      message: 'You will enter this account with Tiwlo Team access. Use Back to admin from the profile menu when finished.',
+      resourceName: user.email || user.name
+    });
+    if (!confirmed) return;
+
+    setImpersonatingId(user.id);
+    setError('');
+    try {
+      await impersonateUserWithApi(user.id);
+      window.location.assign('/');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to log in as this user');
+      setImpersonatingId('');
     }
   };
 
@@ -630,6 +652,18 @@ export default function UserManagement() {
                   </td>
                   <td className="px-6 py-4">
                     <div className="flex items-center justify-end gap-2">
+                      {!['admin', 'super_admin'].includes(String(u.role || '').toLowerCase()) && (
+                        <button
+                          type="button"
+                          onClick={() => handleImpersonate(u)}
+                          disabled={Boolean(impersonatingId)}
+                          className="rounded p-2 text-gray-400 transition-colors hover:bg-emerald-50 hover:text-emerald-600 disabled:cursor-wait disabled:opacity-50"
+                          title={impersonatingId === u.id ? 'Opening user account...' : 'Log in as user'}
+                          aria-label={`Log in as ${u.name || u.email}`}
+                        >
+                          <LogIn className={`h-4 w-4 ${impersonatingId === u.id ? 'animate-pulse' : ''}`} />
+                        </button>
+                      )}
                       <button onClick={() => setDetailsUser(u)} className="p-2 hover:bg-slate-50 rounded transition-colors text-gray-400 hover:text-[#2e3d49]" title="View security details">
                         <Eye className="h-4 w-4" />
                       </button>

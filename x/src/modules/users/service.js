@@ -1,4 +1,4 @@
-import { isAdmin } from '../../core/auth.js';
+import { createImpersonationToken, isAdmin } from '../../core/auth.js';
 import { normalizeEmail, removeUndefined, toApi } from '../../core/format.js';
 import { AppError, notFound } from '../../core/errors.js';
 import { pagination, searchWhere } from '../../core/validation.js';
@@ -65,6 +65,25 @@ export const deleteUser = async (ctx, actor, id) => {
   await ctx.prisma.user.delete({ where: { id } });
   await writeAudit(ctx, 'delete_user', 'user', id, { email: existing.email, actorRole: actor.role });
   return true;
+};
+
+export const impersonateUser = async (ctx, actor, id) => {
+  const user = await ctx.prisma.user.findUnique({ where: { id } });
+  if (!user) notFound('User');
+  if (isAdmin(user)) {
+    throw new AppError('Tiwlo Team accounts cannot be opened through user impersonation.', 'BAD_USER_INPUT');
+  }
+
+  await writeAudit(ctx, 'impersonate_user', 'user', user.id, {
+    targetEmail: user.email,
+    targetRole: user.role,
+    actorRole: actor.role
+  });
+
+  return {
+    token: createImpersonationToken(user, actor),
+    user: toApi(user)
+  };
 };
 
 export const scopedUserWhere = (actor) => (isAdmin(actor) ? {} : { id: actor.id });

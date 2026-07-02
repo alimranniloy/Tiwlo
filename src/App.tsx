@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Route, Routes, useLocation } from 'react-route
 import LandingPage from './pages/LandingPage';
 import type { Domain, Droplet, User } from './types';
 import { clearAuthToken, fetchConsoleData, fetchCurrentUserWithApi, fetchPlatformStatusWithApi, getAuthToken } from './lib/api/appBootstrap';
+import { clearAdminImpersonation, restoreAdminImpersonation } from './lib/api/client';
 import { getStorefrontHostContext } from './lib/storefrontHost';
 import { isProfileComplete } from './lib/profileCompletion';
 import { clearTSecurityClientState } from '../tSecurity/client/tSecurityClient';
@@ -271,6 +272,7 @@ export default function App() {
   };
 
   const handleLogin = (authenticatedUser: User) => {
+    clearAdminImpersonation();
     if (!isRestrictedUser(authenticatedUser)) void loadConsoleRoutes();
     localStorage.setItem('tiwlo_user', JSON.stringify(authenticatedUser));
     startTransition(() => {
@@ -280,6 +282,18 @@ export default function App() {
   };
 
   const handleLogout = () => {
+    const adminSession = restoreAdminImpersonation();
+    if (adminSession) {
+      clearTSecurityClientState();
+      void loadConsoleRoutes();
+      startTransition(() => {
+        setUser(adminSession.user);
+        resetAppRoute(adminSession.returnPath || '/management/users');
+      });
+      return;
+    }
+
+    clearAdminImpersonation();
     clearAuthToken();
     clearTSecurityClientState();
     localStorage.removeItem('tiwlo_user');
@@ -287,7 +301,7 @@ export default function App() {
       setUser(null);
       resetAppRoute('/');
     });
-  }
+  };
 
   if (platformStatus.maintenance && !isAdminRole(user)) {
     const maintenanceLoginHref = storefrontHost

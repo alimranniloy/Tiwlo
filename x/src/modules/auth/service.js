@@ -10,12 +10,15 @@ import { appOrigin, cta, paragraph, sendTiwloEmail } from '../../core/email.js';
 import { consumeSensitivePayload, recordAuthDeviceSession } from '../../../../tSecurity/index.js';
 import {
   attachWhatsAppState,
+  createPasswordResetOtpChallenge,
   createSignupOtpChallenge,
   isWhatsAppEnabled,
   normalizeWhatsAppPhone,
+  resendPasswordResetOtpChallenge,
   sendForgotPasswordWhatsApp,
   sendSecurityWhatsApp,
   signupAvailability,
+  verifyPasswordResetOtpChallenge,
   verifyOtpChallenge
 } from '../whatsapp/service.js';
 
@@ -376,6 +379,54 @@ export const requestPasswordReset = async (ctx, input) => {
   await sendForgotPasswordWhatsApp(ctx, user, link);
   await writeAudit({ ...ctx, user }, 'request_password_reset', 'user', user.id, { identifier: auditIdentifier });
   return true;
+};
+
+export const startPasswordResetWhatsAppOtp = async (ctx, input) => {
+  const { user, auditIdentifier } = await findPasswordResetUser(ctx, input);
+  if (!user) {
+    throw new AppError('No Tiwlo account matches that email address or mobile number.', 'BAD_USER_INPUT');
+  }
+
+  const challenge = await createPasswordResetOtpChallenge(ctx, user);
+  await writeAudit({ ...ctx, user }, 'request_password_reset_otp', 'user', user.id, {
+    identifier: auditIdentifier,
+    challengeId: challenge.challengeId
+  });
+  return challenge;
+};
+
+export const resendPasswordResetWhatsAppOtp = async (ctx, challengeId) => (
+  resendPasswordResetOtpChallenge(ctx, challengeId)
+);
+
+export const verifyPasswordResetWhatsAppOtp = async (ctx, challengeId, code) => {
+  const challenge = await verifyPasswordResetOtpChallenge(ctx, challengeId, code);
+  if (!challenge.userId) {
+    throw new AppError('Password recovery session is invalid.', 'BAD_USER_INPUT');
+  }
+
+  const user = await ctx.prisma.user.findUnique({ where: { id: challenge.userId } });
+  if (!user) throw new AppError('Password recovery session is invalid.', 'BAD_USER_INPUT');
+
+  const resetToken = randomToken();
+  const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+  await ctx.prisma.user.update({
+    where: { id: user.id },
+    data: {
+      passwordResetTokenHash: tokenHash(resetToken),
+      passwordResetExpires: expiresAt
+    }
+  });
+  await writeAudit({ ...ctx, user }, 'verify_password_reset_otp', 'user', user.id, {
+    challengeId: challenge.id
+  });
+
+  return {
+    ok: true,
+    resetToken,
+    expiresAt: expiresAt.toISOString(),
+    message: 'WhatsApp code verified. Choose a new password now.'
+  };
 };
 
 export const resetPassword = async (ctx, token, password) => {

@@ -27,6 +27,7 @@ export const userResolvers = {
   Mutation: {
     updateUserRole: async (_, { id, role }, ctx) => service.updateUserRole(ctx, await requireAdmin(ctx), id, role),
     updateUser: async (_, { input }, ctx) => service.updateUser(ctx, await requireAdmin(ctx), input),
-    deleteUser: async (_, { id }, ctx) => service.deleteUser(ctx, await requireAdmin(ctx), id)
+    deleteUser: async (_, { id }, ctx) => service.deleteUser(ctx, await requireAdmin(ctx), id),
+    impersonateUser: async (_, { id }, ctx) => service.impersonateUser(ctx, await requireAdmin(ctx), id)
   }
 };

@@ -129,6 +129,13 @@ type WhatsAppOtpPayload {
   message: String!
 }
 
+type PasswordResetOtpVerificationPayload {
+  ok: Boolean!
+  resetToken: String!
+  expiresAt: String!
+  message: String!
+}
+
 type WhatsAppVerificationStatus {
   enabled: Boolean!
   required: Boolean!
@@ -2769,6 +2776,9 @@ type Mutation {
   verifyWhatsAppOtp(challengeId: ID!, code: String!): AuthPayload!
   updateProfile(input: UpdateProfileInput!): User!
   requestPasswordReset(email: String, identifier: String, phone: String, mobileCountryCode: String, country: String): Boolean!
+  startPasswordResetWhatsAppOtp(email: String, identifier: String, phone: String, mobileCountryCode: String, country: String): WhatsAppOtpPayload!
+  resendPasswordResetWhatsAppOtp(challengeId: ID!): WhatsAppOtpPayload!
+  verifyPasswordResetWhatsAppOtp(challengeId: ID!, code: String!): PasswordResetOtpVerificationPayload!
   resetPassword(token: String!, password: String!): AuthPayload!
   resendEmailVerification: Boolean!
   verifyEmail(token: String!): AuthPayload!
@@ -2784,6 +2794,7 @@ type Mutation {
   updateUserRole(id: ID!, role: String!): User!
   updateUser(input: UpdateUserInput!): User!
   deleteUser(id: ID!): Boolean!
+  impersonateUser(id: ID!): AuthPayload!
 
   createCloudResource(input: CreateCloudResourceInput!): CloudResource!
   createCloudResourceOrder(input: CreateCloudResourceOrderInput!): CheckoutSession!

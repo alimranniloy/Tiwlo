@@ -1,7 +1,14 @@
-import { Domain, Droplet } from '../../types';
+import { Domain, Droplet, User } from '../../types';
 
 export const GRAPHQL_URL = (import.meta as any).env?.VITE_GRAPHQL_URL || '/graphql';
 export const TOKEN_KEY = 'tiwlo_auth_token';
+const ADMIN_IMPERSONATION_KEY = 'tiwlo_admin_impersonation';
+
+type AdminImpersonationSession = {
+  token: string;
+  user: User;
+  returnPath: string;
+};
 
 type GraphQLResponse<T> = {
   data?: T;
@@ -100,6 +107,63 @@ export function setAuthToken(token?: string) {
 
 export function clearAuthToken() {
   localStorage.removeItem(TOKEN_KEY);
+}
+
+export function beginAdminImpersonation(token: string, user: User) {
+  const adminToken = getAuthToken();
+  const savedAdmin = localStorage.getItem('tiwlo_user');
+  if (!adminToken || !savedAdmin) throw new Error('Tiwlo Team session was not found. Sign in again.');
+
+  let adminUser: User;
+  try {
+    adminUser = JSON.parse(savedAdmin) as User;
+  } catch {
+    throw new Error('Tiwlo Team session is invalid. Sign in again.');
+  }
+  if (!['admin', 'super_admin'].includes(String(adminUser.role || '').toLowerCase())) {
+    throw new Error('Only Tiwlo Team accounts can log in as a user.');
+  }
+
+  const session: AdminImpersonationSession = {
+    token: adminToken,
+    user: adminUser,
+    returnPath: `${window.location.pathname}${window.location.search}`
+  };
+  sessionStorage.setItem(ADMIN_IMPERSONATION_KEY, JSON.stringify(session));
+  setAuthToken(token);
+  localStorage.setItem('tiwlo_user', JSON.stringify(user));
+}
+
+export function getAdminImpersonationSession(): AdminImpersonationSession | null {
+  const saved = sessionStorage.getItem(ADMIN_IMPERSONATION_KEY);
+  if (!saved) return null;
+  try {
+    const session = JSON.parse(saved) as AdminImpersonationSession;
+    if (!session.token || !session.user || !['admin', 'super_admin'].includes(String(session.user.role || '').toLowerCase())) {
+      throw new Error('Invalid impersonation session');
+    }
+    return session;
+  } catch {
+    sessionStorage.removeItem(ADMIN_IMPERSONATION_KEY);
+    return null;
+  }
+}
+
+export function isAdminImpersonating() {
+  return Boolean(getAdminImpersonationSession());
+}
+
+export function restoreAdminImpersonation() {
+  const session = getAdminImpersonationSession();
+  if (!session) return null;
+  setAuthToken(session.token);
+  localStorage.setItem('tiwlo_user', JSON.stringify(session.user));
+  sessionStorage.removeItem(ADMIN_IMPERSONATION_KEY);
+  return session;
+}
+
+export function clearAdminImpersonation() {
+  sessionStorage.removeItem(ADMIN_IMPERSONATION_KEY);
 }
 
 export async function graphQL<T>(query: string, variables?: Record<string, unknown>): Promise<T> {

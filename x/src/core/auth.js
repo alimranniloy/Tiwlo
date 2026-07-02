@@ -11,6 +11,15 @@ export const createToken = (user) => (
   jwt.sign({ sub: user.id, role: user.role }, JWT_SECRET, { expiresIn: '7d' })
 );
 
+export const createImpersonationToken = (user, actor) => (
+  jwt.sign({
+    sub: user.id,
+    role: user.role,
+    kind: 'admin_impersonation',
+    impersonatedBy: actor.id
+  }, JWT_SECRET, { expiresIn: '2h' })
+);
+
 export const getActor = async (ctx) => {
   if (ctx.user) return ctx.user;
   return null;

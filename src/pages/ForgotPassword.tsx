@@ -1,48 +1,121 @@
 import React from 'react';
-import { AlertCircle, ArrowLeft, CheckCircle2 } from 'lucide-react';
-import { Link } from 'react-router-dom';
-import { requestPasswordResetWithApi } from '../lib/tiwloApi';
+import { AlertCircle, ArrowLeft, KeyRound, RefreshCw } from 'lucide-react';
+import { Link, useNavigate } from 'react-router-dom';
+import {
+  resendPasswordResetWhatsAppOtpWithApi,
+  startPasswordResetWhatsAppOtpWithApi,
+  verifyPasswordResetWhatsAppOtpWithApi
+} from '../lib/tiwloApi';
 import { COUNTRIES, countryByCode, detectBrowserCountryCode, normalizePhoneForCountry } from '../lib/countries';
 import { TiwloAuthButton, TiwloAuthInput, TiwloAuthLogo, TiwloAuthShell } from '../components/TiwloAuth';
 
 type RecoveryMode = 'email' | 'phone';
 
+type PasswordResetChallenge = {
+  challengeId: string;
+  phoneE164?: string;
+  expiresAt: string;
+  resendAvailableAt: string;
+  message: string;
+};
+
+const maskedPhone = (value = '') => {
+  const digits = value.replace(/\D/g, '');
+  if (digits.length < 5) return 'your saved WhatsApp number';
+  return `+${digits.slice(0, Math.min(3, digits.length - 4))}${'*'.repeat(Math.max(3, digits.length - 7))}${digits.slice(-4)}`;
+};
+
 export default function ForgotPassword() {
+  const navigate = useNavigate();
   const [mode, setMode] = React.useState<RecoveryMode>('email');
   const [email, setEmail] = React.useState('');
   const [country, setCountry] = React.useState(() => detectBrowserCountryCode('BD'));
   const [phone, setPhone] = React.useState('');
   const [sending, setSending] = React.useState(false);
-  const [sent, setSent] = React.useState(false);
+  const [challenge, setChallenge] = React.useState<PasswordResetChallenge | null>(null);
+  const [otp, setOtp] = React.useState('');
+  const [resending, setResending] = React.useState(false);
+  const [now, setNow] = React.useState(Date.now());
   const [error, setError] = React.useState('');
   const selectedCountry = countryByCode(country);
   const normalizedPhone = normalizePhoneForCountry(country, phone);
+
+  React.useEffect(() => {
+    if (!challenge) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [challenge]);
+
+  const resetInput = () => {
+    if (mode === 'email') {
+      const nextEmail = email.trim().toLowerCase();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(nextEmail)) throw new Error('Enter a valid email address.');
+      return { email: nextEmail, identifier: nextEmail };
+    }
+    if (!normalizedPhone.localDigits) throw new Error('Enter your mobile number.');
+    return {
+      identifier: normalizedPhone.e164,
+      phone: normalizedPhone.localDigits,
+      mobileCountryCode: selectedCountry.dialCode,
+      country: selectedCountry.code
+    };
+  };
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     setSending(true);
     setError('');
     try {
-      if (mode === 'email') {
-        const nextEmail = email.trim().toLowerCase();
-        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(nextEmail)) throw new Error('Enter a valid email address.');
-        await requestPasswordResetWithApi({ email: nextEmail, identifier: nextEmail });
-      } else {
-        if (!normalizedPhone.localDigits) throw new Error('Enter your mobile number.');
-        await requestPasswordResetWithApi({
-          identifier: normalizedPhone.e164,
-          phone: normalizedPhone.localDigits,
-          mobileCountryCode: selectedCountry.dialCode,
-          country: selectedCountry.code
-        });
-      }
-      setSent(true);
+      const next = await startPasswordResetWhatsAppOtpWithApi(resetInput());
+      setChallenge(next);
+      setOtp('');
+      setNow(Date.now());
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to send reset instructions.');
+      setError(err instanceof Error ? err.message : 'Unable to send the WhatsApp code.');
     } finally {
       setSending(false);
     }
   };
+
+  const verifyOtp = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!challenge) return;
+    if (!/^\d{6}$/.test(otp.trim())) {
+      setError('Enter the 6 digit WhatsApp code.');
+      return;
+    }
+
+    setSending(true);
+    setError('');
+    try {
+      const result = await verifyPasswordResetWhatsAppOtpWithApi(challenge.challengeId, otp.trim());
+      navigate(`/reset-password?token=${encodeURIComponent(result.resetToken)}`, { replace: true });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to verify the WhatsApp code.');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const resendOtp = async () => {
+    if (!challenge) return;
+    setResending(true);
+    setError('');
+    try {
+      const next = await resendPasswordResetWhatsAppOtpWithApi(challenge.challengeId);
+      setChallenge(next);
+      setOtp('');
+      setNow(Date.now());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to resend the WhatsApp code.');
+    } finally {
+      setResending(false);
+    }
+  };
+
+  const resendSeconds = challenge
+    ? Math.max(0, Math.ceil((new Date(challenge.resendAvailableAt).getTime() - now) / 1000))
+    : 0;
 
   return (
     <TiwloAuthShell>
@@ -50,15 +123,39 @@ export default function ForgotPassword() {
       <section className="w-full">
         <h1 className="text-center text-[30px] font-semibold tracking-normal">Reset password</h1>
         <p className="mx-auto mt-3 max-w-[320px] text-center text-[14px] leading-6 text-[#555]">
-          Choose email or mobile. We will send a secure reset link if the account exists.
+          Choose email or mobile. We will send a 6 digit code to the account's saved WhatsApp number.
         </p>
 
-        {sent ? (
-          <div className="mt-8 rounded-[22px] border border-emerald-100 bg-emerald-50 px-5 py-5 text-center">
-            <CheckCircle2 className="mx-auto h-8 w-8 text-emerald-600" />
-            <p className="mt-3 text-[15px] font-semibold text-emerald-900">Reset link sent successfully.</p>
-            <p className="mt-1 text-[13px] leading-5 text-emerald-700">Check your inbox or WhatsApp.</p>
-          </div>
+        {challenge ? (
+          <form onSubmit={verifyOtp} className="mt-8 space-y-5">
+            <div className="rounded-[22px] border border-emerald-100 bg-emerald-50 px-5 py-5 text-center">
+              <KeyRound className="mx-auto h-8 w-8 text-emerald-600" />
+              <p className="mt-3 text-[15px] font-semibold text-emerald-900">WhatsApp code sent</p>
+              <p className="mt-1 text-[13px] leading-5 text-emerald-700">Enter the code sent to {maskedPhone(challenge.phoneE164)}.</p>
+            </div>
+
+            <TiwloAuthInput
+              label="6 digit WhatsApp code"
+              value={otp}
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              maxLength={6}
+              onChange={(event) => setOtp(event.target.value.replace(/\D/g, '').slice(0, 6))}
+            />
+
+            {error && <AuthError message={error} />}
+            <TiwloAuthButton disabled={sending || otp.length !== 6}>{sending ? 'Verifying...' : 'Verify code'}</TiwloAuthButton>
+
+            <div className="flex items-center justify-between gap-3 text-[13px] font-semibold">
+              <button type="button" onClick={() => { setChallenge(null); setOtp(''); setError(''); }} className="text-[#555] hover:text-[#111] hover:underline">
+                Change account
+              </button>
+              <button type="button" onClick={resendOtp} disabled={resending || resendSeconds > 0} className="inline-flex items-center gap-1.5 text-[#2563ff] hover:underline disabled:cursor-not-allowed disabled:text-[#999] disabled:no-underline">
+                <RefreshCw className={`h-3.5 w-3.5 ${resending ? 'animate-spin' : ''}`} />
+                {resendSeconds > 0 ? `Resend in ${resendSeconds}s` : resending ? 'Sending...' : 'Resend code'}
+              </button>
+            </div>
+          </form>
         ) : (
           <form onSubmit={submit} className="mt-7 space-y-5">
             <div className="grid grid-cols-2 rounded-[22px] border border-[#d8d8d8] p-1 text-[13px] font-semibold">
@@ -82,7 +179,7 @@ export default function ForgotPassword() {
             )}
 
             {error && <AuthError message={error} />}
-            <TiwloAuthButton disabled={sending}>{sending ? 'Sending...' : 'Send reset link'}</TiwloAuthButton>
+            <TiwloAuthButton disabled={sending}>{sending ? 'Sending...' : 'Send WhatsApp code'}</TiwloAuthButton>
           </form>
         )}
 

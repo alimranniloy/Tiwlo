@@ -1,4 +1,4 @@
-import { graphQL, moduleFields } from './client';
+import { beginAdminImpersonation, graphQL, moduleFields, userFields } from './client';
 
 export type MainAdminRecord = {
   id: string;
@@ -202,6 +202,21 @@ export async function deleteUserWithApi(id: string) {
   );
 
   return data.deleteUser;
+}
+
+export async function impersonateUserWithApi(id: string) {
+  const data = await graphQL<{ impersonateUser: { token: string; user: any } }>(
+    `mutation ImpersonateUser($id: ID!) {
+      impersonateUser(id: $id) {
+        token
+        user { ${userFields} }
+      }
+    }`,
+    { id }
+  );
+
+  beginAdminImpersonation(data.impersonateUser.token, data.impersonateUser.user);
+  return data.impersonateUser;
 }
 
 export async function fetchRolesWithApi() {

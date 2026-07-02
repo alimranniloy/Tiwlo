@@ -48,7 +48,7 @@ const defaultConfig = (): WhatsAppConfig => ({
 });
 
 const templateRows: Array<{ key: TemplateKey; label: string; description: string }> = [
-  { key: 'otp', label: 'OTP Template', description: 'Signup and WhatsApp number verification codes.' },
+  { key: 'otp', label: 'OTP Template', description: 'Signup, WhatsApp verification, and password recovery codes.' },
   { key: 'invoice', label: 'Invoice Template', description: 'Invoice alerts with the invoice page button.' },
   { key: 'forgotPassword', label: 'Forgot Password Template', description: 'Password reset links with secure button.' },
   { key: 'security', label: 'Security Template', description: 'New login, unusual login, and password change alerts.' }

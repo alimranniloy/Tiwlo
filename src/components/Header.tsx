@@ -1,4 +1,5 @@
 import { 
+  ArrowLeft,
   AlertTriangle,
   Bell, 
   Search, 
@@ -15,6 +16,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   fetchBillingOverviewWithApi,
   fetchNotificationsWithApi,
+  isAdminImpersonating,
   markNotificationReadWithApi
 } from '../lib/tiwloApi';
 import CurrencySwitcher from './CurrencySwitcher';
@@ -91,6 +93,7 @@ export default function Header({ user, onLogout, isSidebarOpen, setIsSidebarOpen
   const roleLabel = ['admin', 'super_admin'].includes(user.role)
     ? 'Tiwlo Team'
     : user.role.split('_').map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(' ');
+  const impersonating = isAdminImpersonating();
 
   const notificationRoute = (notification: any) => {
     const metadata = notification?.metadata || {};
@@ -314,9 +317,10 @@ export default function Header({ user, onLogout, isSidebarOpen, setIsSidebarOpen
                            setIsUserMenuOpen(false);
                            onLogout();
                          }}
-                         className="w-full flex items-center gap-3 px-3 py-2 text-[13px] font-bold text-red-500 hover:bg-white border border-transparent hover:border-red-100 rounded transition-colors"
+                         className={`w-full flex items-center gap-3 rounded border border-transparent px-3 py-2 text-[13px] font-bold transition-colors hover:bg-white ${impersonating ? 'text-[#0069ff] hover:border-blue-100' : 'text-red-500 hover:border-red-100'}`}
                        >
-                          <LogOut className="h-4 w-4" /> Sign Out
+                          {impersonating ? <ArrowLeft className="h-4 w-4" /> : <LogOut className="h-4 w-4" />}
+                          {impersonating ? 'Back to admin' : 'Sign Out'}
                        </button>
                     </div>
                   </div>

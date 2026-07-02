@@ -186,6 +186,65 @@ export async function requestPasswordResetWithApi(input: string | { email?: stri
   return data.requestPasswordReset;
 }
 
+type PasswordResetIdentifier = {
+  email?: string;
+  identifier?: string;
+  phone?: string;
+  mobileCountryCode?: string;
+  country?: string;
+};
+
+export async function startPasswordResetWhatsAppOtpWithApi(input: PasswordResetIdentifier) {
+  const data = await graphQL<{ startPasswordResetWhatsAppOtp: any }>(
+    `mutation StartPasswordResetWhatsAppOtp($email: String, $identifier: String, $phone: String, $mobileCountryCode: String, $country: String) {
+      startPasswordResetWhatsAppOtp(email: $email, identifier: $identifier, phone: $phone, mobileCountryCode: $mobileCountryCode, country: $country) {
+        ok
+        challengeId
+        phone
+        phoneE164
+        expiresAt
+        resendAvailableAt
+        message
+      }
+    }`,
+    input
+  );
+  return data.startPasswordResetWhatsAppOtp;
+}
+
+export async function resendPasswordResetWhatsAppOtpWithApi(challengeId: string) {
+  const data = await graphQL<{ resendPasswordResetWhatsAppOtp: any }>(
+    `mutation ResendPasswordResetWhatsAppOtp($challengeId: ID!) {
+      resendPasswordResetWhatsAppOtp(challengeId: $challengeId) {
+        ok
+        challengeId
+        phone
+        phoneE164
+        expiresAt
+        resendAvailableAt
+        message
+      }
+    }`,
+    { challengeId }
+  );
+  return data.resendPasswordResetWhatsAppOtp;
+}
+
+export async function verifyPasswordResetWhatsAppOtpWithApi(challengeId: string, code: string) {
+  const data = await graphQL<{ verifyPasswordResetWhatsAppOtp: { ok: boolean; resetToken: string; expiresAt: string; message: string } }>(
+    `mutation VerifyPasswordResetWhatsAppOtp($challengeId: ID!, $code: String!) {
+      verifyPasswordResetWhatsAppOtp(challengeId: $challengeId, code: $code) {
+        ok
+        resetToken
+        expiresAt
+        message
+      }
+    }`,
+    { challengeId, code }
+  );
+  return data.verifyPasswordResetWhatsAppOtp;
+}
+
 export async function resetPasswordWithApi(token: string, password: string) {
   const data = await graphQL<{ resetPassword: { token: string; user: User } }>(
     `mutation ResetPassword($token: String!, $password: String!) {
