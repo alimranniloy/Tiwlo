@@ -64,6 +64,8 @@ model User {
   tiwloPayWithdrawals      TiwloPayWithdrawal[]
   deviceSessions           UserDeviceSession[]
   identityVerifications    IdentityVerification[]
+  whatsAppOtps             WhatsAppOtpChallenge[]
+  passwordResetOtps        PasswordResetOtpChallenge[]
 }
 
 model WhatsAppOtpChallenge {
@@ -71,6 +73,7 @@ model WhatsAppOtpChallenge {
   purpose             String
   status              String    @default("pending")
   userId              String?
+  user                User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
   email               String?
   phone               String
   mobileCountryCode   String?
@@ -88,6 +91,25 @@ model WhatsAppOtpChallenge {
   @@index([purpose, status, createdAt])
   @@index([userId, status])
   @@index([phoneE164, status])
+}
+
+model PasswordResetOtpChallenge {
+  id                String    @id
+  userId            String
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  channel           String
+  destination       String
+  codeHash          String
+  status            String    @default("pending")
+  attempts          Int       @default(0)
+  delivery          Json?     @default("{}")
+  expiresAt         DateTime
+  resendAvailableAt DateTime
+  verifiedAt        DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([userId, channel, status])
 }
 
 model IdentityVerification {
