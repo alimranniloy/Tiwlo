@@ -37,6 +37,185 @@ function addDays(days) {
   return new Date(Date.now() + days * 24 * 60 * 60 * 1000);
 }
 
+const PASSWORD_RESET_EMAIL_PREFIX = 'email_reset_';
+const PASSWORD_RESET_OTP_TTL_MS = 10 * 60 * 1000;
+const PASSWORD_RESET_OTP_RESEND_MS = 60 * 1000;
+const PASSWORD_RESET_OTP_MAX_ATTEMPTS = 6;
+
+const passwordResetOtpHash = (challengeId, code) => crypto
+  .createHmac('sha256', process.env.JWT_SECRET || 'dev-secret')
+  .update(`${challengeId}:${String(code || '').trim()}`)
+  .digest('hex');
+
+const passwordResetOtpCode = () => String(crypto.randomInt(0, 1000000)).padStart(6, '0');
+const resetJson = (value) => JSON.stringify(value ?? {});
+
+const maskEmailAddress = (value = '') => {
+  const [local = '', domain = ''] = String(value || '').trim().split('@');
+  if (!local || !domain) return 'your email address';
+  return `${local.slice(0, 1)}${'*'.repeat(Math.max(3, local.length - 1))}@${domain}`;
+};
+
+const maskWhatsAppNumber = (value = '') => {
+  const digits = String(value || '').replace(/\D/g, '');
+  if (digits.length < 5) return 'your WhatsApp number';
+  return `+${digits.slice(0, Math.min(3, digits.length - 4))}${'*'.repeat(Math.max(3, digits.length - 7))}${digits.slice(-4)}`;
+};
+
+const ensurePasswordResetEmailOtpSchema = async (prisma) => {
+  await prisma.$executeRawUnsafe(`
+    CREATE TABLE IF NOT EXISTS "PasswordResetOtpChallenge" (
+      "id" TEXT PRIMARY KEY,
+      "userId" TEXT NOT NULL,
+      "channel" TEXT NOT NULL,
+      "destination" TEXT NOT NULL,
+      "codeHash" TEXT NOT NULL,
+      "status" TEXT NOT NULL DEFAULT 'pending',
+      "attempts" INTEGER NOT NULL DEFAULT 0,
+      "delivery" JSONB DEFAULT '{}'::jsonb,
+      "expiresAt" TIMESTAMP(3) NOT NULL,
+      "resendAvailableAt" TIMESTAMP(3) NOT NULL,
+      "verifiedAt" TIMESTAMP(3),
+      "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT "PasswordResetOtpChallenge_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE
+    )
+  `);
+  await prisma.$executeRawUnsafe('CREATE INDEX IF NOT EXISTS "PasswordResetOtpChallenge_userId_channel_status_idx" ON "PasswordResetOtpChallenge" ("userId", "channel", "status")');
+};
+
+const getPasswordResetEmailChallenge = async (prisma, challengeId) => {
+  await ensurePasswordResetEmailOtpSchema(prisma);
+  const rows = await prisma.$queryRawUnsafe('SELECT * FROM "PasswordResetOtpChallenge" WHERE "id" = $1 LIMIT 1', challengeId);
+  return toApi(rows?.[0] || null);
+};
+
+const sendPasswordResetEmailOtp = async (ctx, user, code) => {
+  const result = await sendTiwloEmail(ctx, {
+    to: user.email,
+    subject: 'Your Tiwlo password reset code',
+    title: 'Reset your password',
+    preview: `Your Tiwlo password reset code is ${code}`,
+    text: `Your Tiwlo password reset code is ${code}. This code expires in 10 minutes.`,
+    html: [
+      paragraph(`Hi ${user.name || 'there'},`),
+      paragraph('Use this code to reset your Tiwlo password.'),
+      `<div style="margin:22px 0;padding:16px 20px;border-radius:10px;background:#eef4ff;border:1px solid #cfe0ff;font-size:28px;letter-spacing:6px;font-weight:800;text-align:center;color:#0b63f6;">${code}</div>`,
+      paragraph('This code expires in 10 minutes. If you did not request it, you can safely ignore this email.')
+    ].join('')
+  });
+  if (!result?.sent) {
+    throw new AppError(`Password reset email could not be sent. ${result?.message || result?.reason || 'Check SMTP delivery.'}`, 'EMAIL_SEND_FAILED');
+  }
+  return { sent: true, status: 'sent' };
+};
+
+const emailResetPayload = (challenge, delivery = {}) => ({
+  ok: true,
+  challengeId: challenge.id,
+  channel: 'email',
+  destination: maskEmailAddress(challenge.destination),
+  expiresAt: new Date(challenge.expiresAt).toISOString(),
+  resendAvailableAt: new Date(challenge.resendAvailableAt).toISOString(),
+  deliveryId: delivery.messageId || null,
+  deliveryStatus: delivery.status || 'sent',
+  message: 'A 6 digit password reset code was sent to your email.'
+});
+
+const createPasswordResetEmailChallenge = async (ctx, user) => {
+  await ensurePasswordResetEmailOtpSchema(ctx.prisma);
+  const recentRows = await ctx.prisma.$queryRawUnsafe(`
+    SELECT * FROM "PasswordResetOtpChallenge"
+    WHERE "userId" = $1 AND "channel" = 'email' AND "status" = 'pending'
+    ORDER BY "createdAt" DESC LIMIT 1
+  `, user.id);
+  const recent = toApi(recentRows?.[0] || null);
+  if (recent?.resendAvailableAt && new Date(recent.resendAvailableAt).getTime() > Date.now()) {
+    throw new AppError('Please wait 60 seconds before sending another email code.', 'BAD_USER_INPUT');
+  }
+
+  await ctx.prisma.$executeRawUnsafe(`
+    UPDATE "PasswordResetOtpChallenge"
+    SET "status" = 'superseded', "updatedAt" = CURRENT_TIMESTAMP
+    WHERE "userId" = $1 AND "channel" = 'email' AND "status" = 'pending'
+  `, user.id);
+
+  const id = `${PASSWORD_RESET_EMAIL_PREFIX}${crypto.randomUUID()}`;
+  const code = passwordResetOtpCode();
+  const expiresAt = new Date(Date.now() + PASSWORD_RESET_OTP_TTL_MS);
+  const resendAvailableAt = new Date(Date.now() + PASSWORD_RESET_OTP_RESEND_MS);
+  await ctx.prisma.$executeRawUnsafe(`
+    INSERT INTO "PasswordResetOtpChallenge" (
+      "id", "userId", "channel", "destination", "codeHash", "status", "attempts",
+      "expiresAt", "resendAvailableAt", "createdAt", "updatedAt"
+    ) VALUES ($1, $2, 'email', $3, $4, 'pending', 0, $5, $6, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+  `, id, user.id, user.email, passwordResetOtpHash(id, code), expiresAt, resendAvailableAt);
+
+  let delivery;
+  try {
+    delivery = await sendPasswordResetEmailOtp(ctx, user, code);
+  } catch (error) {
+    await ctx.prisma.$executeRawUnsafe(`
+      UPDATE "PasswordResetOtpChallenge"
+      SET "status" = 'send_failed', "delivery" = CAST($2 AS jsonb), "updatedAt" = CURRENT_TIMESTAMP
+      WHERE "id" = $1
+    `, id, resetJson({ sent: false, error: error?.message || String(error) }));
+    throw error;
+  }
+  await ctx.prisma.$executeRawUnsafe('UPDATE "PasswordResetOtpChallenge" SET "delivery" = CAST($2 AS jsonb), "updatedAt" = CURRENT_TIMESTAMP WHERE "id" = $1', id, resetJson(delivery));
+  return emailResetPayload({ id, destination: user.email, expiresAt, resendAvailableAt }, delivery);
+};
+
+const resendPasswordResetEmailChallenge = async (ctx, challengeId) => {
+  const challenge = await getPasswordResetEmailChallenge(ctx.prisma, challengeId);
+  if (!challenge || challenge.channel !== 'email') throw new AppError('Password recovery session was not found.', 'BAD_USER_INPUT');
+  if (challenge.status !== 'pending') throw new AppError('This password recovery session is already closed.', 'BAD_USER_INPUT');
+  if (new Date(challenge.resendAvailableAt).getTime() > Date.now()) throw new AppError('Please wait 60 seconds before sending another email code.', 'BAD_USER_INPUT');
+
+  const user = await ctx.prisma.user.findUnique({ where: { id: challenge.userId } });
+  if (!user) throw new AppError('Password recovery session is invalid.', 'BAD_USER_INPUT');
+  const code = passwordResetOtpCode();
+  const expiresAt = new Date(Date.now() + PASSWORD_RESET_OTP_TTL_MS);
+  const resendAvailableAt = new Date(Date.now() + PASSWORD_RESET_OTP_RESEND_MS);
+  await ctx.prisma.$executeRawUnsafe(`
+    UPDATE "PasswordResetOtpChallenge"
+    SET "codeHash" = $2, "attempts" = 0, "expiresAt" = $3, "resendAvailableAt" = $4, "updatedAt" = CURRENT_TIMESTAMP
+    WHERE "id" = $1
+  `, challenge.id, passwordResetOtpHash(challenge.id, code), expiresAt, resendAvailableAt);
+
+  let delivery;
+  try {
+    delivery = await sendPasswordResetEmailOtp(ctx, user, code);
+  } catch (error) {
+    await ctx.prisma.$executeRawUnsafe(`
+      UPDATE "PasswordResetOtpChallenge"
+      SET "resendAvailableAt" = CURRENT_TIMESTAMP, "delivery" = CAST($2 AS jsonb), "updatedAt" = CURRENT_TIMESTAMP
+      WHERE "id" = $1
+    `, challenge.id, resetJson({ sent: false, error: error?.message || String(error) }));
+    throw error;
+  }
+  await ctx.prisma.$executeRawUnsafe('UPDATE "PasswordResetOtpChallenge" SET "delivery" = CAST($2 AS jsonb), "updatedAt" = CURRENT_TIMESTAMP WHERE "id" = $1', challenge.id, resetJson(delivery));
+  return emailResetPayload({ ...challenge, expiresAt, resendAvailableAt }, delivery);
+};
+
+const verifyPasswordResetEmailChallenge = async (ctx, challengeId, code) => {
+  const challenge = await getPasswordResetEmailChallenge(ctx.prisma, challengeId);
+  if (!challenge || challenge.channel !== 'email') throw new AppError('Password recovery session was not found.', 'BAD_USER_INPUT');
+  if (challenge.status !== 'pending') throw new AppError('This password recovery session is already closed.', 'BAD_USER_INPUT');
+  if (new Date(challenge.expiresAt).getTime() < Date.now()) throw new AppError('Email code expired. Send a new code.', 'BAD_USER_INPUT');
+  if (Number(challenge.attempts || 0) >= PASSWORD_RESET_OTP_MAX_ATTEMPTS) throw new AppError('Too many code attempts. Send a new code.', 'BAD_USER_INPUT');
+
+  const valid = challenge.codeHash === passwordResetOtpHash(challenge.id, code);
+  await ctx.prisma.$executeRawUnsafe('UPDATE "PasswordResetOtpChallenge" SET "attempts" = "attempts" + 1, "updatedAt" = CURRENT_TIMESTAMP WHERE "id" = $1', challenge.id);
+  if (!valid) throw new AppError('Incorrect email password reset code.', 'BAD_USER_INPUT');
+  await ctx.prisma.$executeRawUnsafe(`
+    UPDATE "PasswordResetOtpChallenge"
+    SET "status" = 'verified', "verifiedAt" = CURRENT_TIMESTAMP, "updatedAt" = CURRENT_TIMESTAMP
+    WHERE "id" = $1
+  `, challenge.id);
+  return challenge;
+};
+
 const signupPromoProviders = new Set(['bkash', 'stripe', 'paypal']);
 
 const normalizeSignupPromoProvider = (value) => {
@@ -325,7 +504,8 @@ const findPasswordResetUser = async (ctx, input = {}) => {
   const email = String(identifier || '').includes('@') ? normalizeEmail(identifier) : normalizeEmail(input.email || '');
   if (email) {
     const user = await ctx.prisma.user.findUnique({ where: { email } }).catch(() => null);
-    if (user) return { user, auditIdentifier: email };
+    if (user) return { user, channel: 'email', auditIdentifier: email };
+    return { user: null, channel: 'email', auditIdentifier: email };
   }
 
   const phoneInput = typeof input === 'string' ? identifier : (input.phone || identifier);
@@ -334,7 +514,7 @@ const findPasswordResetUser = async (ctx, input = {}) => {
     mobileCountryCode: input.mobileCountryCode,
     country: input.country
   }).phoneE164;
-  if (!target) return { user: null, auditIdentifier: identifier };
+  if (!target) return { user: null, channel: 'whatsapp', auditIdentifier: identifier };
 
   const users = await ctx.prisma.$queryRawUnsafe(`
     SELECT "id", "email", "passwordHash", "name", "phone", "mobileCountryCode", "country", "whatsappVerifiedPhone"
@@ -349,31 +529,59 @@ const findPasswordResetUser = async (ctx, input = {}) => {
       country: candidate.country
     }).phoneE164 === target;
   }) || null;
-  return { user, auditIdentifier: target };
+  return {
+    user,
+    channel: 'whatsapp',
+    auditIdentifier: target,
+    phoneInput: {
+      phone: target,
+      mobileCountryCode: input.mobileCountryCode,
+      country: input.country
+    }
+  };
 };
 
-export const startPasswordResetWhatsAppOtp = async (ctx, input) => {
-  const { user, auditIdentifier } = await findPasswordResetUser(ctx, input);
+export const startPasswordResetOtp = async (ctx, input) => {
+  const { user, channel, auditIdentifier, phoneInput } = await findPasswordResetUser(ctx, input);
   if (!user) {
     throw new AppError('No Tiwlo account matches that email address or mobile number.', 'BAD_USER_INPUT');
   }
 
-  const challenge = await createPasswordResetOtpChallenge(ctx, user);
+  const challenge = channel === 'email'
+    ? await createPasswordResetEmailChallenge(ctx, user)
+    : await createPasswordResetOtpChallenge(ctx, user, phoneInput);
+  const response = channel === 'email' ? challenge : {
+    ...challenge,
+    channel: 'whatsapp',
+    destination: maskWhatsAppNumber(challenge.phoneE164)
+  };
   await writeAudit({ ...ctx, user }, 'request_password_reset_otp', 'user', user.id, {
+    channel,
     identifier: auditIdentifier,
-    challengeId: challenge.challengeId,
-    deliveryId: challenge.deliveryId,
-    deliveryStatus: challenge.deliveryStatus
+    challengeId: response.challengeId,
+    deliveryId: response.deliveryId,
+    deliveryStatus: response.deliveryStatus
   });
-  return challenge;
+  return response;
 };
 
-export const resendPasswordResetWhatsAppOtp = async (ctx, challengeId) => (
-  resendPasswordResetOtpChallenge(ctx, challengeId)
-);
+export const resendPasswordResetOtp = async (ctx, challengeId) => {
+  if (String(challengeId || '').startsWith(PASSWORD_RESET_EMAIL_PREFIX)) {
+    return resendPasswordResetEmailChallenge(ctx, challengeId);
+  }
+  const challenge = await resendPasswordResetOtpChallenge(ctx, challengeId);
+  return {
+    ...challenge,
+    channel: 'whatsapp',
+    destination: maskWhatsAppNumber(challenge.phoneE164)
+  };
+};
 
-export const verifyPasswordResetWhatsAppOtp = async (ctx, challengeId, code) => {
-  const challenge = await verifyPasswordResetOtpChallenge(ctx, challengeId, code);
+export const verifyPasswordResetOtp = async (ctx, challengeId, code) => {
+  const channel = String(challengeId || '').startsWith(PASSWORD_RESET_EMAIL_PREFIX) ? 'email' : 'whatsapp';
+  const challenge = channel === 'email'
+    ? await verifyPasswordResetEmailChallenge(ctx, challengeId, code)
+    : await verifyPasswordResetOtpChallenge(ctx, challengeId, code);
   if (!challenge.userId) {
     throw new AppError('Password recovery session is invalid.', 'BAD_USER_INPUT');
   }
@@ -391,14 +599,15 @@ export const verifyPasswordResetWhatsAppOtp = async (ctx, challengeId, code) => 
     }
   });
   await writeAudit({ ...ctx, user }, 'verify_password_reset_otp', 'user', user.id, {
-    challengeId: challenge.id
+    challengeId: challenge.id,
+    channel
   });
 
   return {
     ok: true,
     resetToken,
     expiresAt: expiresAt.toISOString(),
-    message: 'WhatsApp code verified. Choose a new password now.'
+    message: `${channel === 'email' ? 'Email' : 'WhatsApp'} code verified. Choose a new password now.`
   };
 };
 

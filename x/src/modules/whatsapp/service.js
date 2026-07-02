@@ -451,18 +451,18 @@ export const createSignupOtpChallenge = async (ctx, input, payload) => {
   });
 };
 
-export const createPasswordResetOtpChallenge = async (ctx, user) => {
+export const createPasswordResetOtpChallenge = async (ctx, user, input = {}) => {
   const config = await getWhatsAppConfig(ctx.prisma);
   if (!config.enabled) {
     throw new AppError('WhatsApp password recovery is currently unavailable.', 'WHATSAPP_DISABLED');
   }
 
   const enriched = await attachWhatsAppState(ctx.prisma, user);
-  const phone = enriched.whatsappVerifiedPhone || enriched.phone;
+  const phone = input.phone || enriched.whatsappVerifiedPhone || enriched.phone;
   const normalized = normalizeWhatsAppPhone({
     phone,
-    mobileCountryCode: enriched.mobileCountryCode,
-    country: enriched.country
+    mobileCountryCode: input.mobileCountryCode || enriched.mobileCountryCode,
+    country: input.country || enriched.country
   });
   if (!normalized.phoneE164) {
     throw new AppError('This account does not have a valid WhatsApp number.', 'BAD_USER_INPUT');
