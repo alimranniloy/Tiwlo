@@ -139,7 +139,19 @@ function localMailFallbackConfigs(config = {}) {
   const currentPort = Number(config.port || process.env.SMTP_PORT || 465);
   const currentMode = smtpModeForPort(currentPort, config.secureSSL ?? config.secure ?? process.env.SMTP_SECURE);
   const localUsername = smtpAuthUsernameForHost(config.username, localHost);
+  const publicHost = cleanHost(config.publicHost || process.env.SMTP_PUBLIC_HOST || '');
   const candidates = [
+    ...(publicHost && publicHost !== currentHost ? [{
+      ...config,
+      host: publicHost,
+      username: smtpAuthUsernameForHost(config.username, publicHost),
+      port: currentMode.port,
+      secureSSL: currentMode.secure,
+      secure: currentMode.secure,
+      requireTLS: currentMode.requireTLS,
+      tlsServername: cleanHost(config.tlsServername || publicHost),
+      authSource: 'public-host-fallback'
+    }] : []),
     {
       ...config,
       host: localHost,
@@ -263,6 +275,7 @@ export async function systemEmailConfig(prisma, override = {}) {
     : '';
   return {
     host,
+    publicHost: cleanHost(source.publicHost || process.env.SMTP_PUBLIC_HOST || ''),
     port: mode.port,
     secure: mode.secure,
     secureSSL: mode.secure,
@@ -275,6 +288,27 @@ export async function systemEmailConfig(prisma, override = {}) {
     fromEmail,
     fromName: source.fromName || process.env.MAIL_FROM_NAME || 'Tiwlo.com',
     replyTo: sourceReplyTo || fromEmail || process.env.MAIL_REPLY_TO || DEFAULT_FROM
+  };
+}
+
+function acceptedEmailResult(info = {}, config = {}) {
+  const accepted = Array.isArray(info.accepted) ? info.accepted.map(String) : [];
+  const rejected = Array.isArray(info.rejected) ? info.rejected.map(String) : [];
+  if (accepted.length === 0) {
+    const error = new Error(rejected.length
+      ? `SMTP rejected recipient: ${rejected.join(', ')}`
+      : 'SMTP did not accept the recipient address.');
+    error.code = 'EENVELOPE';
+    error.responseCode = 550;
+    throw error;
+  }
+  return {
+    sent: true,
+    messageId: info.messageId || null,
+    response: info.response || '',
+    accepted,
+    rejected,
+    advice: emailServerAdvice(config)
   };
 }
 
@@ -626,7 +660,8 @@ async function deliverEmail(config, message) {
   try {
     const preparedMessage = { ...message, headers, attachments };
     try {
-      await transporter.sendMail(deliveryMessage(config, preparedMessage));
+      const info = await transporter.sendMail(deliveryMessage(config, preparedMessage));
+      return acceptedEmailResult(info, config);
     } catch (error) {
       const envelopeFrom = smtpEnvelopeFrom(config);
       const requestedFrom = extractEmailAddress(message.from || config.fromEmail || '');
@@ -647,8 +682,8 @@ async function deliverEmail(config, message) {
       }
       for (const retryMessage of retryMessages) {
         try {
-          await transporter.sendMail(deliveryMessage(config, retryMessage, { forceSafeFrom: true }));
-          return { sent: true, advice: emailServerAdvice(config) };
+          const info = await transporter.sendMail(deliveryMessage(config, retryMessage, { forceSafeFrom: true }));
+          return acceptedEmailResult(info, config);
         } catch (retryError) {
           lastError = retryError;
           if (!isMessagePolicyFailure(retryError)) throw retryError;
@@ -660,7 +695,6 @@ async function deliverEmail(config, message) {
   } finally {
     transporter.close();
   }
-  return { sent: true, advice: emailServerAdvice(config) };
 }
 
 export async function testTiwloEmail(ctxOrPrisma, input = {}) {

@@ -27,6 +27,8 @@ const emptyAccount = {
 const emptySystemEmail = {
   domain: 'tiwlo.com',
   sender: 'noreply',
+  smtpHost: '127.0.0.1',
+  smtpUsername: 'noreply',
   smtpMode: '465',
   password: '',
   fromName: 'Tiwlo',
@@ -97,6 +99,8 @@ export default function AdminEmail() {
           ...emptySystemEmail,
           domain,
           sender,
+          smtpHost: systemEmail.host || systemEmail.publicHost || hostForDomain(domain),
+          smtpUsername: systemEmail.username || systemEmail.fromEmail || fromEmail,
           smtpMode,
           password: systemEmail.password || '',
           fromName: systemEmail.fromName || 'Tiwlo',
@@ -138,14 +142,16 @@ export default function AdminEmail() {
     const fromEmail = `${localPart(systemForm.sender)}@${mailBaseDomain(systemForm.domain)}`;
     const replyTo = isEmailAddress(systemForm.replyTo) && !isLegacySupportReplyTo(systemForm.replyTo, fromEmail) ? cleanEmail(systemForm.replyTo) : fromEmail;
     return {
-      host: '127.0.0.1',
+      host: String(systemForm.smtpHost || '').trim() || hostForDomain(mailBaseDomain(systemForm.domain)),
       publicHost: hostForDomain(mailBaseDomain(systemForm.domain)),
-      tlsServername: hostForDomain(mailBaseDomain(systemForm.domain)),
+      tlsServername: String(systemForm.smtpHost || '').trim() === '127.0.0.1'
+        ? hostForDomain(mailBaseDomain(systemForm.domain))
+        : String(systemForm.smtpHost || '').trim() || hostForDomain(mailBaseDomain(systemForm.domain)),
       port,
       secureSSL: port === 465,
       requireTLS: port === 587,
       tlsRejectUnauthorized: false,
-      username: localPart(systemForm.sender),
+      username: String(systemForm.smtpUsername || '').trim() || fromEmail,
       password: String(systemForm.password || '').trim(),
       fromEmail,
       fromName: String(systemForm.fromName || 'Tiwlo').trim(),
@@ -339,6 +345,9 @@ export default function AdminEmail() {
     setError('');
     setNotice('');
     try {
+      if (!systemForm.smtpHost.trim()) throw new Error('SMTP host is required.');
+      if (!systemForm.smtpUsername.trim()) throw new Error('SMTP username is required.');
+      if (!systemForm.password.trim()) throw new Error('SMTP password is required.');
       await upsertSettingWithApi({
         scope: 'platform',
         scopeId: '',
@@ -483,7 +492,7 @@ export default function AdminEmail() {
             <Settings className="h-4 w-4 text-blue-600" />
             <div>
               <h2 className="text-sm font-black uppercase text-[#111827]">Configure Sender</h2>
-              <p className="mt-1 text-[12px] text-[#6B7280]">Tiwlo uses the local mail listener for backend delivery and keeps public mail details ready for users.</p>
+              <p className="mt-1 text-[12px] text-[#6B7280]">Configure the exact SMTP server and login used for transactional email delivery.</p>
             </div>
           </div>
           <form onSubmit={saveSystemEmail} className="grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -507,8 +516,16 @@ export default function AdminEmail() {
               </div>
             </label>
             <label className="space-y-1">
+              <span className="text-[10px] font-black uppercase text-[#6B7280]">SMTP Host</span>
+              <input value={systemForm.smtpHost} onChange={(event) => setSystemForm({ ...systemForm, smtpHost: event.target.value })} placeholder={publicMailHost} className="w-full rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" />
+            </label>
+            <label className="space-y-1">
+              <span className="text-[10px] font-black uppercase text-[#6B7280]">SMTP Username</span>
+              <input value={systemForm.smtpUsername} onChange={(event) => setSystemForm({ ...systemForm, smtpUsername: event.target.value })} placeholder={systemAddress} autoComplete="username" className="w-full rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" />
+            </label>
+            <label className="space-y-1">
               <span className="text-[10px] font-black uppercase text-[#6B7280]">SMTP Password</span>
-              <input type="password" value={systemForm.password} onChange={(event) => setSystemForm({ ...systemForm, password: event.target.value })} placeholder="Mailbox password" className="w-full rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" />
+              <input type="password" value={systemForm.password} onChange={(event) => setSystemForm({ ...systemForm, password: event.target.value })} placeholder="SMTP password" autoComplete="current-password" className="w-full rounded border border-[#DDE3EA] px-3 py-2 text-sm outline-none focus:border-blue-500" />
             </label>
             <label className="space-y-1">
               <span className="text-[10px] font-black uppercase text-[#6B7280]">SSL/TLS Port</span>
@@ -550,7 +567,7 @@ export default function AdminEmail() {
             </div>
             <div className="grid grid-cols-1 gap-3 md:col-span-2 sm:grid-cols-3">
               {[
-                ['Backend SMTP', `127.0.0.1 : ${selectedSmtpMode}`],
+                ['Backend SMTP', `${systemForm.smtpHost || '-'} : ${selectedSmtpMode}`],
                 ['Public Host', `${publicMailHost} : ${selectedSmtpMode}`],
                 ['From Email', systemAddress]
               ].map(([label, value]) => (

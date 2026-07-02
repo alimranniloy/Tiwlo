@@ -107,7 +107,7 @@ const sendPasswordResetEmailOtp = async (ctx, user, code) => {
   if (!result?.sent) {
     throw new AppError(`Password reset email could not be sent. ${result?.message || result?.reason || 'Check SMTP delivery.'}`, 'EMAIL_SEND_FAILED');
   }
-  return { sent: true, status: 'sent' };
+  return { sent: true, status: 'accepted', messageId: result.messageId || null };
 };
 
 const emailResetPayload = (challenge, delivery = {}) => ({
