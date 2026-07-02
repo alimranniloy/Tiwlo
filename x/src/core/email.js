@@ -57,6 +57,11 @@ function hasEmailAddress(value = '') {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(extractEmailAddress(value));
 }
 
+function emailDomain(value = '') {
+  const address = extractEmailAddress(value);
+  return address.includes('@') ? cleanMailBaseDomain(address.split('@').pop()) : '';
+}
+
 function isLegacySupportReplyTo(replyTo = '', fromEmail = '') {
   const replyAddress = extractEmailAddress(replyTo);
   const fromAddress = extractEmailAddress(fromEmail);
@@ -555,6 +560,75 @@ async function checkTcpPort(host, port) {
   });
 }
 
+async function recipientMxHosts(recipient) {
+  const domain = emailDomain(recipient);
+  if (!domain) return [];
+  const records = await dns.resolveMx(domain).catch(() => []);
+  return records
+    .map((record) => ({ exchange: cleanHost(record.exchange), priority: Number(record.priority || 0) }))
+    .filter((record) => record.exchange)
+    .sort((left, right) => left.priority - right.priority)
+    .map((record) => record.exchange);
+}
+
+async function outboundAddressCandidates(host, forceIpv4) {
+  if (forceIpv4) {
+    return (await dns.resolve4(host).catch(() => [])).map((address) => ({ address, family: 4 }));
+  }
+  return lookupSmtpAddresses(host, false).catch(() => []);
+}
+
+async function checkOutboundMxPath(recipient, config = {}) {
+  const domain = emailDomain(recipient);
+  const forceIpv4 = smtpIpv4Only(config);
+  const mxHosts = await recipientMxHosts(recipient);
+  const attempts = [];
+  if (!domain || !mxHosts.length) {
+    return {
+      ok: false,
+      domain,
+      ipv4Only: forceIpv4,
+      attempts,
+      message: `Could not resolve MX records for ${domain || recipient}.`
+    };
+  }
+
+  for (const mxHost of mxHosts.slice(0, 5)) {
+    const addresses = await outboundAddressCandidates(mxHost, forceIpv4);
+    for (const item of addresses.slice(0, 2)) {
+      const tcp = await checkTcpPort(item.address, 25);
+      const attempt = {
+        mxHost,
+        address: item.address,
+        family: item.family || net.isIP(item.address),
+        ok: Boolean(tcp.ok),
+        error: tcp.error,
+        code: tcp.code
+      };
+      attempts.push(attempt);
+      if (attempt.ok) {
+        return {
+          ok: true,
+          domain,
+          ipv4Only: forceIpv4,
+          attempts,
+          message: `Backend can reach ${mxHost} on port 25 for ${domain}.`
+        };
+      }
+    }
+  }
+
+  return {
+    ok: false,
+    domain,
+    ipv4Only: forceIpv4,
+    attempts,
+    message: forceIpv4
+      ? `Backend cannot reach any ${domain} MX server on IPv4 port 25. The VPS/provider is likely blocking outbound SMTP/25; ask the provider to unblock outbound port 25 or use an authenticated SMTP relay.`
+      : `Backend cannot reach any ${domain} MX server on port 25. Check provider outbound SMTP policy, firewall, or IPv6/PTR configuration.`
+  };
+}
+
 async function checkSmtpHandshake(config) {
   const transporter = createTransporter(config);
   try {
@@ -835,6 +909,23 @@ export async function testTiwloEmail(ctxOrPrisma, input = {}) {
       to,
       fromEmail: config.fromEmail,
       diagnostic,
+      ...emailServerAdvice(config)
+    };
+  }
+
+  const outboundPath = await checkOutboundMxPath(to, config);
+  if (!outboundPath.ok) {
+    return {
+      ok: false,
+      stage: 'outbound-mx',
+      code: 'OUTBOUND_SMTP_BLOCKED',
+      message: outboundPath.message,
+      to,
+      fromEmail: config.fromEmail,
+      diagnostic: {
+        ...diagnostic,
+        outboundPath
+      },
       ...emailServerAdvice(config)
     };
   }
