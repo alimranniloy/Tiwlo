@@ -850,17 +850,17 @@ export async function testTiwloEmail(ctxOrPrisma, input = {}) {
   const prisma = getPrisma(ctxOrPrisma);
   let config = await systemEmailConfig(prisma, input.config || input);
   const to = input.to || input.recipient;
-  if (!to) return { ok: false, message: 'Test recipient email is required.', ...emailServerAdvice(config) };
+  if (!to) return { ok: false, ...emailServerAdvice(config), message: 'Test recipient email is required.' };
   if (!config.host || !config.username || !config.password) {
     return {
       ok: false,
+      ...emailServerAdvice(config),
       stage: 'config',
       code: 'NOT_CONFIGURED',
       message: 'SMTP host, username, and password are required before Tiwlo can send email.',
       to,
       fromEmail: config.fromEmail,
-      diagnostic: { host: config.host || '', port: config.port, secure: config.secure },
-      ...emailServerAdvice(config)
+      diagnostic: { host: config.host || '', port: config.port, secure: config.secure }
     };
   }
 
@@ -903,13 +903,13 @@ export async function testTiwloEmail(ctxOrPrisma, input = {}) {
   if (!diagnostic.ok) {
     return {
       ok: false,
+      ...emailServerAdvice(config),
       stage: diagnostic.stage,
       code: diagnostic.code,
       message: diagnostic.message,
       to,
       fromEmail: config.fromEmail,
-      diagnostic,
-      ...emailServerAdvice(config)
+      diagnostic
     };
   }
 
@@ -917,6 +917,7 @@ export async function testTiwloEmail(ctxOrPrisma, input = {}) {
   if (!outboundPath.ok) {
     return {
       ok: false,
+      ...emailServerAdvice(config),
       stage: 'outbound-mx',
       code: 'OUTBOUND_SMTP_BLOCKED',
       message: outboundPath.message,
@@ -925,8 +926,7 @@ export async function testTiwloEmail(ctxOrPrisma, input = {}) {
       diagnostic: {
         ...diagnostic,
         outboundPath
-      },
-      ...emailServerAdvice(config)
+      }
     };
   }
 
@@ -949,24 +949,24 @@ export async function testTiwloEmail(ctxOrPrisma, input = {}) {
     if (!result.sent) {
       return {
         ok: false,
+        ...result.advice,
         stage: 'config',
         code: result.reason || 'SEND_FAILED',
         message: result.reason === 'not-configured' ? 'SMTP is not configured.' : 'SMTP send failed.',
         to,
         fromEmail: config.fromEmail,
-        diagnostic,
-        ...result.advice
+        diagnostic
       };
     }
     return {
       ok: true,
+      ...result.advice,
       stage: 'sent',
       code: 'OK',
       message: `Nodemailer sent a real test email to ${to}.`,
       to,
       fromEmail: config.fromEmail,
-      diagnostic,
-      ...result.advice
+      diagnostic
     };
   } catch (error) {
     if ((isConnectionOrHandshakeFailure(error) || isTemporaryMessagePolicyFailure(error)) && config) {
@@ -993,13 +993,13 @@ export async function testTiwloEmail(ctxOrPrisma, input = {}) {
             if (retryResult.sent) {
               return {
                 ok: true,
+                ...retryResult.advice,
                 stage: 'sent',
                 code: 'OK',
                 message: `Nodemailer sent a real test email to ${to}.`,
                 to,
                 fromEmail: fallbackConfig.fromEmail,
-                diagnostic: { ...retryDiagnostic, authSource: fallbackConfig.authSource },
-                ...retryResult.advice
+                diagnostic: { ...retryDiagnostic, authSource: fallbackConfig.authSource }
               };
             }
           }
@@ -1032,13 +1032,13 @@ export async function testTiwloEmail(ctxOrPrisma, input = {}) {
             if (retryResult.sent) {
               return {
                 ok: true,
+                ...retryResult.advice,
                 stage: 'sent',
                 code: 'OK',
                 message: `Nodemailer sent a real test email to ${to}.`,
                 to,
                 fromEmail: fallbackConfig.fromEmail,
-                diagnostic: { ...retryDiagnostic, authSource: 'env-fallback' },
-                ...retryResult.advice
+                diagnostic: { ...retryDiagnostic, authSource: 'env-fallback' }
               };
             }
           }
@@ -1050,6 +1050,7 @@ export async function testTiwloEmail(ctxOrPrisma, input = {}) {
     const advice = emailServerAdvice(config);
     return {
       ok: false,
+      ...advice,
       stage: 'smtp-send',
       code: error?.code || String(error?.responseCode || 'SEND_FAILED'),
       message: smtpErrorMessage(error, config, diagnostic),
@@ -1060,8 +1061,7 @@ export async function testTiwloEmail(ctxOrPrisma, input = {}) {
         responseCode: error?.responseCode || null,
         command: error?.command || null,
         rawMessage: error?.message || null
-      },
-      ...advice
+      }
     };
   }
 }
