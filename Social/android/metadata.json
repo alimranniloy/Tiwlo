@@ -1,0 +1,6 @@
+{
+  "name": "Tiwi",
+  "description": "A hybrid social media experience blending the best of Facebook, Instagram, and Twitter, featuring a sleek modern UI with reels and a unified feed.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

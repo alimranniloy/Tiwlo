@@ -12,6 +12,13 @@ posts, messages, calls or streams are seeded.
 - Admin console: `src/pages/management/AdminSocial.tsx`
 - Per-user uploads: `public/uploads/social/<user-id>/`
 - Android API origin: `https://tiwlo.com/`
+- Android source: `Social/android/`
+
+The Android project keeps the original Tiwi Compose UI and binds it to the
+real Social API. Profile, feed, reels and chats are persisted locally and shown
+cache-first while fresh data syncs in the background. WebRTC signaling uses the
+same authenticated GraphQL API and reads STUN/TURN configuration from Social
+settings.
 
 Uploaded media is served through `/api/social/media/files/`. Video uploads are
 transcoded asynchronously by FFmpeg to 360p, 480p and 720p HLS renditions, with
