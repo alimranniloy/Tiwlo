@@ -1037,7 +1037,7 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
         Box(modifier = Modifier.padding(innerPadding)) {
             when {
                 selectedEditPostId != null -> posts.firstOrNull { it.id == selectedEditPostId }?.let { editing -> EditPostPage(repository, editing, onBack = { selectedEditPostId = null }) } ?: run { selectedEditPostId = null }
-                selectedPostId != null -> PostDetailScreen(repository, selectedPostId!!, onBack = { selectedPostId = null }, onProfileClick = { selectedProfileUserId = it; selectedPostId = null }, onShare = { sharedPost = it }, onEdit = { selectedEditPostId = it })
+                selectedPostId != null -> PostDetailScreen(repository, selectedPostId!!, onBack = { selectedPostId = null }, onProfileClick = { selectedProfileUserId = it; selectedPostId = null }, onShare = { sharedPost = it }, onEdit = { selectedEditPostId = it }, onLinkedPost = { selectedPostId = it })
                 selectedProfileUserId != null -> ProfileScreen(
                     repository, posts.filter { it.authorId == selectedProfileUserId }, reels.filter { it.authorId == selectedProfileUserId }, userId = selectedProfileUserId,
                     onBack = { selectedProfileUserId = null }, onPostClick = { selectedPostId = it }, onShare = { sharedPost = it }, onMessage = { id -> scope.launch { selectedChat = repository.createConversation(id); selectedProfileUserId = null } }, onEditPost = { selectedEditPostId = it }
@@ -1158,7 +1158,7 @@ fun HomeFeed(
             item { ReelsSection(reels) }
             posts.forEachIndexed { index, post ->
                 item(key = post.id) {
-                    PostCard(post, repository, { onShareClick(post) }, { onAuthorClick(post.authorId) }, { onPostClick(post.id) }, onEditRequest = { onEditPost(it.id) })
+                    PostCard(post, repository, { onShareClick(post) }, { onAuthorClick(post.authorId) }, { onPostClick(post.id) }, onEditRequest = { onEditPost(it.id) }, onOpenLinkedPost = onPostClick)
                 }
                 if (suggestions.isNotEmpty() && index % 2 == 1) item(key = "suggest-$index") {
                     SuggestedFriendsSection(suggestions, repository, onAuthorClick) { updated ->
@@ -1285,7 +1285,7 @@ fun ReelItem(reel: Reel) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun PostCard(post: Post, repository: SocialRepository, onShareClick: () -> Unit = {}, onAuthorClick: () -> Unit = {}, onOpen: () -> Unit = {}, onEditRequest: ((Post) -> Unit)? = null) {
+fun PostCard(post: Post, repository: SocialRepository, onShareClick: () -> Unit = {}, onAuthorClick: () -> Unit = {}, onOpen: () -> Unit = {}, onEditRequest: ((Post) -> Unit)? = null, onOpenLinkedPost: ((String) -> Unit)? = null) {
     var isExpanded by remember { mutableStateOf(false) }
     var showMenu by remember { mutableStateOf(false) }
     var showEdit by remember { mutableStateOf(false) }
@@ -1372,7 +1372,7 @@ fun PostCard(post: Post, repository: SocialRepository, onShareClick: () -> Unit 
             }
         }
 
-        PostMediaGrid(post.media, onOpen)
+        PostMediaGrid(post.media, onOpen) { linkedId -> onOpenLinkedPost?.invoke(linkedId) ?: onOpen() }
 
         if (post.likes + post.comments + post.shares + post.views > 0) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1536,10 +1536,11 @@ private fun ChoiceDialog(title: String, options: List<Pair<String, String>>, sel
 }
 
 @Composable
-private fun PostMediaGrid(media: List<SocialMedia>, onOpen: () -> Unit) {
+private fun PostMediaGrid(media: List<SocialMedia>, onOpen: () -> Unit, onOpenLinkedPost: (String) -> Unit) {
     if (media.isEmpty()) return
     if (media.size == 1 && media.first().type == "shared_post") {
-        SharedPostCard(media.first(), onOpen)
+        val shared = media.first()
+        SharedPostCard(shared) { shared.sharedPostId?.let(onOpenLinkedPost) ?: onOpen() }
         return
     }
     val visible = media.take(4)
@@ -1617,7 +1618,7 @@ private fun VerifiedInfoSheet(name: String, avatar: String?, badgeType: String =
 }
 
 @Composable
-private fun PostDetailScreen(repository: SocialRepository, postId: String, onBack: () -> Unit, onProfileClick: (String) -> Unit, onShare: (Post) -> Unit, onEdit: (String) -> Unit = {}) {
+private fun PostDetailScreen(repository: SocialRepository, postId: String, onBack: () -> Unit, onProfileClick: (String) -> Unit, onShare: (Post) -> Unit, onEdit: (String) -> Unit = {}, onLinkedPost: (String) -> Unit = {}) {
     val feed by repository.feed.collectAsState()
     val commentsByPost by repository.comments.collectAsState()
     val post = feed.firstOrNull { it.id == postId }?.let(::toUiPost)
@@ -1649,7 +1650,7 @@ private fun PostDetailScreen(repository: SocialRepository, postId: String, onBac
         }
         HorizontalDivider(thickness = .5.dp)
         LazyColumn(Modifier.weight(1f)) {
-            post?.let { item { PostCard(it, repository, onShareClick = { onShare(it) }, onAuthorClick = { onProfileClick(it.authorId) }, onOpen = { showMediaViewer = true }, onEditRequest = { value -> onEdit(value.id) }) } }
+            post?.let { item { PostCard(it, repository, onShareClick = { onShare(it) }, onAuthorClick = { onProfileClick(it.authorId) }, onOpen = { showMediaViewer = true }, onEditRequest = { value -> onEdit(value.id) }, onOpenLinkedPost = onLinkedPost) } }
             item { Text("Comments", modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp), fontWeight = FontWeight.Bold) }
             if (comments.isEmpty()) item { Text("Be the first to comment", color = Color.Gray, modifier = Modifier.padding(24.dp).fillMaxWidth(), textAlign = TextAlign.Center) }
             val byId = comments.associateBy { it.id }
@@ -3668,7 +3669,7 @@ fun ProfileScreen(
                 }
             }
             when (selectedTab) {
-                0 -> items(posts, key = { it.id }) { post -> PostCard(post, repository, onShareClick = { onShare(post) }, onOpen = { onPostClick(post.id) }, onEditRequest = { onEditPost(it.id) }) }
+                0 -> items(posts, key = { it.id }) { post -> PostCard(post, repository, onShareClick = { onShare(post) }, onOpen = { onPostClick(post.id) }, onEditRequest = { onEditPost(it.id) }, onOpenLinkedPost = onPostClick) }
                 1 -> item { LazyRow(contentPadding = PaddingValues(4.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) { items(reels) { ReelItem(it) } } }
                 else -> item {
                     Column(Modifier.padding(14.dp)) {
