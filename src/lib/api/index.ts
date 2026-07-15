@@ -16,3 +16,4 @@ export * from './tiwlo-pay';
 export * from './tpanel';
 export * from './email';
 export * from './system-tools';
+export * from './social';

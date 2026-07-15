@@ -47,10 +47,10 @@ model User {
   domains                  Domain[]
   invoices                 Invoice[]
   supportTickets           SupportTicket[]
-  assignedSupportTickets   SupportTicket[]        @relation("SupportTicketAssignee")
+  assignedSupportTickets   SupportTicket[]             @relation("SupportTicketAssignee")
   supportTicketMessages    SupportTicketMessage[]
   liveChatSessions         LiveChatSession[]
-  assignedLiveChatSessions LiveChatSession[]      @relation("LiveChatAssignee")
+  assignedLiveChatSessions LiveChatSession[]           @relation("LiveChatAssignee")
   liveChatMessages         LiveChatMessage[]
   stores                   Store[]
   ispSites                 IspSite[]
@@ -66,27 +66,40 @@ model User {
   identityVerifications    IdentityVerification[]
   whatsAppOtps             WhatsAppOtpChallenge[]
   passwordResetOtps        PasswordResetOtpChallenge[]
+  socialProfile            SocialProfile?
+  socialPosts              SocialPost[]                @relation("SocialPostAuthor")
+  socialComments           SocialComment[]             @relation("SocialCommentAuthor")
+  socialPostReactions      SocialPostReaction[]
+  socialFollowers          SocialFollow[]              @relation("SocialFollowTarget")
+  socialFollowing          SocialFollow[]              @relation("SocialFollowFollower")
+  socialConversationLinks  SocialConversationMember[]
+  socialMessages           SocialMessage[]             @relation("SocialMessageSender")
+  socialMessageReactions   SocialMessageReaction[]
+  socialMessageDeletions   SocialMessageDeletion[]
+  socialCallsPlaced        SocialCallSession[]         @relation("SocialCallCaller")
+  socialCallsReceived      SocialCallSession[]         @relation("SocialCallCallee")
+  socialLiveStreams        SocialLiveStream[]          @relation("SocialLiveHost")
 }
 
 model WhatsAppOtpChallenge {
-  id                  String    @id @default(cuid())
-  purpose             String
-  status              String    @default("pending")
-  userId              String?
-  user                User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  email               String?
-  phone               String
-  mobileCountryCode   String?
-  country             String?
-  phoneE164           String
-  codeHash            String
-  payload             Json?
-  attempts            Int       @default(0)
-  expiresAt           DateTime
-  resendAvailableAt   DateTime
-  verifiedAt          DateTime?
-  createdAt           DateTime  @default(now())
-  updatedAt           DateTime  @updatedAt
+  id                String    @id @default(cuid())
+  purpose           String
+  status            String    @default("pending")
+  userId            String?
+  user              User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  email             String?
+  phone             String
+  mobileCountryCode String?
+  country           String?
+  phoneE164         String
+  codeHash          String
+  payload           Json?
+  attempts          Int       @default(0)
+  expiresAt         DateTime
+  resendAvailableAt DateTime
+  verifiedAt        DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
   @@index([purpose, status, createdAt])
   @@index([userId, status])
@@ -1375,4 +1388,235 @@ model DdosBlockRule {
   @@index([sourceIp, status])
   @@index([assetId, status])
   @@index([expiresAt])
+}
+
+// Tiwlo Social reuses the platform User identity and authentication tables.
+// User-owned media files are stored under public/uploads/social/<userId>/.
+model SocialProfile {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  username    String   @unique
+  bio         String?
+  about       String?
+  category    String?
+  website     String?
+  location    String?
+  coverUrl    String?
+  verified    Boolean  @default(false)
+  privacy     Json     @default("{\"profileVisibility\":\"public\",\"messagePermission\":\"everyone\",\"showActivityStatus\":true,\"allowCalls\":true}")
+  preferences Json     @default("{\"autoplay\":true,\"dataSaver\":false,\"videoQuality\":\"auto\",\"notifications\":true}")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model SocialFollow {
+  id          String   @id @default(cuid())
+  followerId  String
+  follower    User     @relation("SocialFollowFollower", fields: [followerId], references: [id], onDelete: Cascade)
+  followingId String
+  following   User     @relation("SocialFollowTarget", fields: [followingId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+
+  @@unique([followerId, followingId])
+  @@index([followingId, createdAt])
+}
+
+model SocialPost {
+  id               String               @id @default(cuid())
+  authorId         String
+  author           User                 @relation("SocialPostAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+  type             String               @default("post")
+  body             String?
+  media            Json                 @default("[]")
+  thumbnailUrl     String?
+  hlsUrl           String?
+  processingStatus String               @default("ready")
+  visibility       String               @default("public")
+  status           String               @default("published")
+  location         String?
+  durationSeconds  Int?
+  aspectRatio      Float?
+  viewCount        Int                  @default(0)
+  shareCount       Int                  @default(0)
+  publishedAt      DateTime             @default(now())
+  deletedAt        DateTime?
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+  comments         SocialComment[]
+  reactions        SocialPostReaction[]
+  reports          SocialReport[]
+
+  @@index([status, type, publishedAt])
+  @@index([authorId, status, publishedAt])
+}
+
+model SocialPostReaction {
+  id        String     @id @default(cuid())
+  postId    String
+  post      SocialPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind      String     @default("like")
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  @@unique([postId, userId])
+  @@index([userId, createdAt])
+}
+
+model SocialComment {
+  id        String     @id @default(cuid())
+  postId    String
+  post      SocialPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  authorId  String
+  author    User       @relation("SocialCommentAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+  replyToId String?
+  body      String
+  status    String     @default("published")
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  @@index([postId, status, createdAt])
+}
+
+model SocialConversation {
+  id        String                     @id @default(cuid())
+  type      String                     @default("direct")
+  title     String?
+  avatarUrl String?
+  createdAt DateTime                   @default(now())
+  updatedAt DateTime                   @updatedAt
+  members   SocialConversationMember[]
+  messages  SocialMessage[]
+  calls     SocialCallSession[]
+}
+
+model SocialConversationMember {
+  id             String             @id @default(cuid())
+  conversationId String
+  conversation   SocialConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role           String             @default("member")
+  muted          Boolean            @default(false)
+  archived       Boolean            @default(false)
+  lastReadAt     DateTime?
+  joinedAt       DateTime           @default(now())
+
+  @@unique([conversationId, userId])
+  @@index([userId, archived])
+}
+
+model SocialMessage {
+  id             String                  @id @default(cuid())
+  conversationId String
+  conversation   SocialConversation      @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  senderId       String
+  sender         User                    @relation("SocialMessageSender", fields: [senderId], references: [id], onDelete: Cascade)
+  type           String                  @default("text")
+  body           String?
+  media          Json                    @default("[]")
+  replyToId      String?
+  deliveryStatus String                  @default("sent")
+  sentAt         DateTime                @default(now())
+  deliveredAt    DateTime?
+  readAt         DateTime?
+  editedAt       DateTime?
+  unsentAt       DateTime?
+  deletedAt      DateTime?
+  createdAt      DateTime                @default(now())
+  updatedAt      DateTime                @updatedAt
+  reactions      SocialMessageReaction[]
+  hiddenFor      SocialMessageDeletion[]
+
+  @@index([conversationId, sentAt])
+  @@index([senderId, sentAt])
+}
+
+model SocialMessageReaction {
+  id        String        @id @default(cuid())
+  messageId String
+  message   SocialMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  emoji     String
+  createdAt DateTime      @default(now())
+
+  @@unique([messageId, userId, emoji])
+}
+
+model SocialMessageDeletion {
+  id        String        @id @default(cuid())
+  messageId String
+  message   SocialMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime      @default(now())
+
+  @@unique([messageId, userId])
+}
+
+model SocialCallSession {
+  id             String              @id @default(cuid())
+  conversationId String?
+  conversation   SocialConversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  callerId       String
+  caller         User                @relation("SocialCallCaller", fields: [callerId], references: [id], onDelete: Cascade)
+  calleeId       String
+  callee         User                @relation("SocialCallCallee", fields: [calleeId], references: [id], onDelete: Cascade)
+  type           String              @default("video")
+  status         String              @default("ringing")
+  offer          Json?
+  answer         Json?
+  iceCandidates  Json                @default("[]")
+  startedAt      DateTime?
+  answeredAt     DateTime?
+  endedAt        DateTime?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+
+  @@index([calleeId, status, createdAt])
+  @@index([callerId, status, createdAt])
+}
+
+model SocialLiveStream {
+  id          String    @id @default(cuid())
+  hostId      String
+  host        User      @relation("SocialLiveHost", fields: [hostId], references: [id], onDelete: Cascade)
+  title       String
+  description String?
+  status      String    @default("scheduled")
+  visibility  String    @default("public")
+  streamKey   String    @unique
+  ingestUrl   String?
+  playbackUrl String?
+  qualities   Json      @default("[]")
+  viewerCount Int       @default(0)
+  scheduledAt DateTime?
+  startedAt   DateTime?
+  endedAt     DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([status, createdAt])
+  @@index([hostId, status])
+}
+
+model SocialReport {
+  id         String      @id @default(cuid())
+  reporterId String
+  postId     String?
+  post       SocialPost? @relation(fields: [postId], references: [id], onDelete: Cascade)
+  targetType String
+  targetId   String
+  reason     String
+  details    String?
+  status     String      @default("open")
+  resolution String?
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+
+  @@index([status, createdAt])
+  @@index([targetType, targetId])
 }

@@ -22,6 +22,7 @@ import { tPanelResolvers } from './modules/tpanel/resolvers.js';
 import { emailResolvers } from './modules/email/resolvers.js';
 import { powerDnsResolvers } from './modules/powerdns/resolvers.js';
 import { whatsAppResolvers } from './modules/whatsapp/resolvers.js';
+import { socialResolvers } from './modules/social/resolvers.js';
 
 export const resolvers = mergeResolvers(
   authResolvers,
@@ -46,5 +47,6 @@ export const resolvers = mergeResolvers(
   powerDnsResolvers,
   rbacResolvers,
   notificationResolvers,
-  whatsAppResolvers
+  whatsAppResolvers,
+  socialResolvers
 );

@@ -29,6 +29,7 @@ import { registerTiwloPayApiRoutes } from './modules/tiwlo-pay/service.js';
 import { startPowerDnsAutomation } from './modules/powerdns/service.js';
 import { registerDiscordRoutes } from './modules/discord/service.js';
 import { ensureWhatsAppAuthSchema, publicWhatsAppStatus } from './modules/whatsapp/service.js';
+import { registerSocialRoutes } from './modules/social/media.js';
 import { publicCurrencyContext } from './core/currency.js';
 import { registerTSecurity } from '../../tSecurity/index.js';
 
@@ -64,7 +65,9 @@ app.use(['/graphql', '/api', '/ai', '/automation', '/payments'], rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   validate: { trustProxy: false },
-  skip: (req) => req.path === '/health' || req.originalUrl.startsWith('/api/system-assets/')
+  skip: (req) => req.path === '/health'
+    || req.originalUrl.startsWith('/api/system-assets/')
+    || req.originalUrl.startsWith('/api/social/media/files/')
 }));
 
 app.post('/webhooks/stripe', express.raw({ type: 'application/json' }), async (req, res) => {
@@ -354,6 +357,12 @@ app.use(express.json({ limit: '20mb' }));
 registerTSecurity(app, { prisma, requestIp, userFromRequest });
 
 registerTiwloPayApiRoutes(app, { prisma, requestIp });
+
+registerSocialRoutes(app, {
+  prisma,
+  userFromRequest,
+  rootDir: join(__dirname, '../..')
+});
 
 const writeSse = (res, event) => {
   res.write(`data: ${JSON.stringify(event)}\n\n`);

@@ -70,6 +70,7 @@ const AdminAiModel = lazy(() => import('../pages/management/AdminAiModel'));
 const AdminSupport = lazy(() => import('../pages/management/AdminSupport'));
 const AdminIdentityVerification = lazy(() => import('../pages/management/AdminIdentityVerification'));
 const AdminNotifications = lazy(() => import('../pages/management/AdminNotifications'));
+const AdminSocial = lazy(() => import('../pages/management/AdminSocial'));
 const AdminEmail = lazy(() => import('../pages/management/AdminEmail'));
 const AdminWhatsAppApi = lazy(() => import('../pages/management/AdminWhatsAppApi'));
 const AdminPlans = lazy(() => import('../pages/management/AdminPlans'));
@@ -222,6 +223,7 @@ function ConsoleContent({
                   <Route path="/management/servers" element={<AddSystemServer />} />
                   <Route path="/management/statistics" element={<AdminServiceStatistics />} />
                   <Route path="/management/notifications" element={<AdminNotifications />} />
+                  <Route path="/management/social" element={<AdminSocial />} />
                   <Route path="/management/email" element={<AdminEmail />} />
                   <Route path="/management/whatsapp-api" element={<AdminWhatsAppApi />} />
                   <Route path="/management/payments" element={<AdminPayments />} />

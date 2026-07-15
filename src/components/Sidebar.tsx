@@ -78,6 +78,7 @@ export default function Sidebar({ user, isOpen, setIsOpen, onLogout }: SidebarPr
           { name: 'AI Model', icon: Bot, path: '/management/ai-model' },
           { name: 'Service Statistics', icon: Activity, path: '/management/statistics' },
           { name: 'Live Notifications', icon: Bell, path: '/management/notifications' },
+          { name: 'Social', icon: MessageCircle, path: '/management/social' },
         ]
       },
       {

@@ -32,6 +32,7 @@ type User {
   updatedAt: String
   securitySummary: JSON
   deviceSessions: [UserDeviceSession!]!
+  socialProfile: SocialProfile
 }
 
 type UserDeviceSession {
@@ -2699,6 +2700,283 @@ input AiModelChatInput {
   reset: Boolean
 }
 
+type SocialProfile {
+  id: ID!
+  userId: ID!
+  user: SocialPublicUser!
+  adminUser: User
+  username: String!
+  bio: String
+  about: String
+  category: String
+  website: String
+  location: String
+  coverUrl: String
+  verified: Boolean!
+  privacy: JSON!
+  preferences: JSON!
+  followerCount: Int!
+  followingCount: Int!
+  postCount: Int!
+  isFollowing: Boolean!
+  createdAt: String
+  updatedAt: String
+}
+
+type SocialPost {
+  id: ID!
+  authorId: ID!
+  author: SocialPublicUser!
+  adminAuthor: User
+  authorProfile: SocialProfile
+  type: String!
+  body: String
+  media: JSON!
+  thumbnailUrl: String
+  hlsUrl: String
+  processingStatus: String!
+  visibility: String!
+  status: String!
+  location: String
+  durationSeconds: Int
+  aspectRatio: Float
+  viewCount: Int!
+  shareCount: Int!
+  reactionCount: Int!
+  commentCount: Int!
+  viewerReaction: String
+  publishedAt: String
+  deletedAt: String
+  createdAt: String
+  updatedAt: String
+}
+
+type SocialComment {
+  id: ID!
+  postId: ID!
+  authorId: ID!
+  author: SocialPublicUser!
+  authorProfile: SocialProfile
+  replyToId: ID
+  body: String!
+  status: String!
+  createdAt: String
+  updatedAt: String
+}
+
+type SocialConversationMember {
+  id: ID!
+  conversationId: ID!
+  userId: ID!
+  user: SocialPublicUser!
+  profile: SocialProfile
+  role: String!
+  muted: Boolean!
+  archived: Boolean!
+  lastReadAt: String
+  joinedAt: String
+}
+
+type SocialConversation {
+  id: ID!
+  type: String!
+  title: String
+  avatarUrl: String
+  members: [SocialConversationMember!]!
+  lastMessage: SocialMessage
+  unreadCount: Int!
+  createdAt: String
+  updatedAt: String
+}
+
+type SocialMessageReaction {
+  id: ID!
+  messageId: ID!
+  userId: ID!
+  emoji: String!
+  createdAt: String
+}
+
+type SocialMessage {
+  id: ID!
+  conversationId: ID!
+  senderId: ID!
+  sender: SocialPublicUser!
+  senderProfile: SocialProfile
+  type: String!
+  body: String
+  media: JSON!
+  replyToId: ID
+  deliveryStatus: String!
+  sentAt: String
+  deliveredAt: String
+  readAt: String
+  editedAt: String
+  unsentAt: String
+  deletedAt: String
+  reactions: [SocialMessageReaction!]!
+  createdAt: String
+  updatedAt: String
+}
+
+type SocialCallSession {
+  id: ID!
+  conversationId: ID
+  callerId: ID!
+  caller: SocialPublicUser!
+  calleeId: ID!
+  callee: SocialPublicUser!
+  type: String!
+  status: String!
+  offer: JSON
+  answer: JSON
+  iceCandidates: JSON!
+  startedAt: String
+  answeredAt: String
+  endedAt: String
+  createdAt: String
+  updatedAt: String
+}
+
+type SocialLiveStream {
+  id: ID!
+  hostId: ID!
+  host: SocialPublicUser!
+  hostProfile: SocialProfile
+  title: String!
+  description: String
+  status: String!
+  visibility: String!
+  streamKey: String
+  ingestUrl: String
+  playbackUrl: String
+  qualities: JSON!
+  viewerCount: Int!
+  scheduledAt: String
+  startedAt: String
+  endedAt: String
+  createdAt: String
+  updatedAt: String
+}
+
+type SocialReport {
+  id: ID!
+  reporterId: ID!
+  postId: ID
+  targetType: String!
+  targetId: ID!
+  reason: String!
+  details: String
+  status: String!
+  resolution: String
+  createdAt: String
+  updatedAt: String
+}
+
+type SocialAdminOverview {
+  profiles: Int!
+  verifiedProfiles: Int!
+  posts: Int!
+  reels: Int!
+  messages: Int!
+  activeLiveStreams: Int!
+  openReports: Int!
+}
+
+type SocialPublicUser {
+  id: ID!
+  name: String!
+  avatar: String
+  status: String
+}
+
+input SocialProfileInput {
+  username: String
+  bio: String
+  about: String
+  category: String
+  website: String
+  location: String
+  coverUrl: String
+  avatar: String
+  privacy: JSON
+  preferences: JSON
+}
+
+input SocialPostInput {
+  type: String
+  body: String
+  media: JSON
+  thumbnailUrl: String
+  hlsUrl: String
+  processingStatus: String
+  visibility: String
+  location: String
+  durationSeconds: Int
+  aspectRatio: Float
+}
+
+input SocialPostUpdateInput {
+  id: ID!
+  body: String
+  media: JSON
+  thumbnailUrl: String
+  hlsUrl: String
+  processingStatus: String
+  visibility: String
+  location: String
+}
+
+input SocialConversationInput {
+  memberIds: [ID!]!
+  type: String
+  title: String
+  avatarUrl: String
+}
+
+input SocialMessageInput {
+  conversationId: ID!
+  type: String
+  body: String
+  media: JSON
+  replyToId: ID
+}
+
+input SocialCallInput {
+  conversationId: ID
+  calleeId: ID!
+  type: String!
+  offer: JSON
+}
+
+input SocialCallSignalInput {
+  id: ID!
+  status: String
+  offer: JSON
+  answer: JSON
+  iceCandidate: JSON
+}
+
+input SocialLiveStreamInput {
+  title: String!
+  description: String
+  visibility: String
+  scheduledAt: String
+}
+
+input SocialAdminSettingsInput {
+  enabled: Boolean
+  registrationsEnabled: Boolean
+  postingEnabled: Boolean
+  messagingEnabled: Boolean
+  callsEnabled: Boolean
+  liveEnabled: Boolean
+  mediaMaxMb: Int
+  autoTranscode: Boolean
+  moderation: JSON
+  stunServers: JSON
+}
+
 type Query {
   health: String!
   me: User
@@ -2790,6 +3068,21 @@ type Query {
   ddosAttackEvents(status: String, assetId: ID, sourceIp: String, limit: Int): [DdosAttackEvent!]!
   ddosBlockRules(status: String, assetId: ID, sourceIp: String): [DdosBlockRule!]!
   aiModelOverview: AiModelOverview!
+  socialProfile(userId: ID, username: String): SocialProfile
+  socialSearch(query: String, limit: Int): [SocialProfile!]!
+  socialFeed(type: String, authorId: ID, before: String, limit: Int): [SocialPost!]!
+  socialPost(id: ID!): SocialPost
+  socialComments(postId: ID!, before: String, limit: Int): [SocialComment!]!
+  socialConversations: [SocialConversation!]!
+  socialMessages(conversationId: ID!, before: String, limit: Int): [SocialMessage!]!
+  socialCall(id: ID!): SocialCallSession
+  socialIncomingCalls: [SocialCallSession!]!
+  socialLiveStreams(status: String, limit: Int): [SocialLiveStream!]!
+  socialSettings: JSON!
+  adminSocialOverview: SocialAdminOverview!
+  adminSocialUsers(search: String, status: String, verified: Boolean): [SocialProfile!]!
+  adminSocialPosts(type: String, status: String, search: String, limit: Int): [SocialPost!]!
+  adminSocialReports(status: String): [SocialReport!]!
 }
 
 type Mutation {
@@ -2970,4 +3263,32 @@ type Mutation {
   stopAiModel: AiModelOverview!
   downloadAiModel: AiModelOverview!
   chatWithAiModel(input: AiModelChatInput!): AiModelChatResponse!
+  upsertSocialProfile(input: SocialProfileInput!): SocialProfile!
+  followSocialUser(userId: ID!): SocialProfile!
+  unfollowSocialUser(userId: ID!): SocialProfile!
+  createSocialPost(input: SocialPostInput!): SocialPost!
+  updateSocialPost(input: SocialPostUpdateInput!): SocialPost!
+  deleteSocialPost(id: ID!): Boolean!
+  viewSocialPost(id: ID!): SocialPost!
+  reactToSocialPost(id: ID!, kind: String): SocialPost!
+  addSocialComment(postId: ID!, body: String!, replyToId: ID): SocialComment!
+  deleteSocialComment(id: ID!): Boolean!
+  createSocialConversation(input: SocialConversationInput!): SocialConversation!
+  sendSocialMessage(input: SocialMessageInput!): SocialMessage!
+  editSocialMessage(id: ID!, body: String!): SocialMessage!
+  markSocialConversationRead(id: ID!): SocialConversation!
+  reactToSocialMessage(id: ID!, emoji: String!): SocialMessage!
+  unsendSocialMessage(id: ID!): SocialMessage!
+  deleteSocialMessageForMe(id: ID!): Boolean!
+  startSocialCall(input: SocialCallInput!): SocialCallSession!
+  signalSocialCall(input: SocialCallSignalInput!): SocialCallSession!
+  endSocialCall(id: ID!, status: String): SocialCallSession!
+  startSocialLiveStream(input: SocialLiveStreamInput!): SocialLiveStream!
+  updateSocialLiveStream(id: ID!, status: String!, viewerCount: Int): SocialLiveStream!
+  reportSocialContent(targetType: String!, targetId: ID!, reason: String!, details: String): SocialReport!
+  adminVerifySocialProfile(userId: ID!, verified: Boolean!): SocialProfile!
+  adminUpdateSocialUserStatus(userId: ID!, status: String!): SocialProfile!
+  adminDeleteSocialPost(id: ID!): Boolean!
+  adminResolveSocialReport(id: ID!, status: String!, resolution: String): SocialReport!
+  adminUpdateSocialSettings(input: SocialAdminSettingsInput!): JSON!
 }

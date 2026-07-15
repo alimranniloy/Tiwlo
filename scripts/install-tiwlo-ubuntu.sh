@@ -506,7 +506,7 @@ echo "postfix postfix/mailname string ${DOMAIN:-tiwlo.local}" | debconf-set-sele
 echo "postfix postfix/main_mailer_type select Internet Site" | debconf-set-selections || true
 apt-get update
 apt-get install -y \
-  sudo git curl wget ca-certificates xz-utils build-essential python3 make g++ \
+  sudo git curl wget ca-certificates xz-utils build-essential python3 make g++ ffmpeg \
   postgresql postgresql-contrib nginx ufw certbot python3-certbot-nginx \
   pdns-server pdns-backend-pgsql dnsutils \
   postfix dovecot-imapd dovecot-pop3d roundcube roundcube-core roundcube-pgsql \
@@ -602,7 +602,7 @@ cat >"$NGINX_SITE" <<NGINX
 server {
     listen 80;
     server_name ${SERVER_NAME};
-    client_max_body_size 100m;
+    client_max_body_size 2048m;
 
     proxy_set_header Host \$host;
     proxy_set_header X-Real-IP \$remote_addr;
