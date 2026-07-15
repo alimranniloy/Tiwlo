@@ -489,6 +489,22 @@ const fulfillPaidInvoice = async (tx, invoice, paidAt = new Date()) => {
     }
   }
 
+  if (invoice.scope === 'social_verification') {
+    const verification = items?.verification || {};
+    const profile = await tx.socialProfile.findUnique({ where: { userId: invoice.ownerId } });
+    if (profile) {
+      const months = Math.max(1, Number(verification.periodMonths || 1));
+      const currentEnd = profile.badgeExpiresAt && profile.badgeExpiresAt > paidAt ? profile.badgeExpiresAt : paidAt;
+      const expiresAt = new Date(currentEnd);
+      expiresAt.setMonth(expiresAt.getMonth() + months);
+      await tx.socialProfile.update({
+        where: { userId: invoice.ownerId },
+        data: { verified: true, badgeType: 'blue', badgePlan: verification.packageId || invoice.scopeId || 'blue', badgeExpiresAt: expiresAt }
+      });
+      items = { ...items, verificationActivatedAt: paidAt.toISOString(), verificationExpiresAt: expiresAt.toISOString() };
+    }
+  }
+
   if (invoice.scope === 'cloud_order' && items.pendingResource && !items.fulfilledResourceId) {
     resource = await createBillingResource(tx, invoice.ownerId, items.pendingResource, invoice, paidAt);
     items = {

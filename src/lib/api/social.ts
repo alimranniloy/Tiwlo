@@ -1,7 +1,7 @@
 import { graphQL, userFields } from './client';
 
 const socialProfileFields = `
-  id userId username bio about category website location coverUrl verified
+  id userId username bio about category website location coverUrl verified badgeType badgePlan badgeExpiresAt
   privacy preferences followerCount followingCount postCount isFollowing createdAt updatedAt
   user: adminUser { ${userFields} }
 `;
@@ -11,7 +11,7 @@ const socialPostFields = `
   durationSeconds aspectRatio viewCount shareCount reactionCount commentCount viewerReaction
   publishedAt deletedAt createdAt updatedAt
   author: adminAuthor { ${userFields} }
-  authorProfile { id userId username verified }
+  authorProfile { id userId username verified badgeType }
 `;
 
 export async function fetchAdminSocialOverviewWithApi() {
@@ -64,6 +64,15 @@ export async function adminVerifySocialProfileWithApi(userId: string, verified: 
     }
   `, { userId, verified });
   return data.adminVerifySocialProfile;
+}
+
+export async function adminSetSocialBadgeWithApi(userId: string, badgeType: string, badgePlan?: string) {
+  const data = await graphQL<{ adminSetSocialBadge: any }>(`
+    mutation AdminSetSocialBadge($userId: ID!, $badgeType: String!, $badgePlan: String) {
+      adminSetSocialBadge(userId: $userId, badgeType: $badgeType, badgePlan: $badgePlan) { ${socialProfileFields} }
+    }
+  `, { userId, badgeType, badgePlan });
+  return data.adminSetSocialBadge;
 }
 
 export async function adminUpdateSocialUserStatusWithApi(userId: string, status: string) {

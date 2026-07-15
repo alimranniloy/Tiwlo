@@ -34,7 +34,9 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.pager.VerticalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -71,6 +73,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.Dp
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
@@ -80,6 +83,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.core.content.ContextCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -94,7 +98,15 @@ import com.example.ui.theme.TiwiPink
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.datasource.cache.CacheDataSource
+import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
+import androidx.media3.datasource.cache.SimpleCache
+import androidx.media3.database.StandaloneDatabaseProvider
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
 import com.example.social.SocialConversation
 import com.example.social.SocialCallSession
@@ -104,6 +116,8 @@ import com.example.social.SocialMessage
 import com.example.social.SocialPost
 import com.example.social.SocialProfile
 import com.example.social.SocialRepository
+import com.example.social.SocialVerificationOptions
+import com.example.social.SocialVerificationPackage
 import com.example.social.PasswordResetChallenge
 import com.example.social.WebRtcCallManager
 import kotlinx.coroutines.delay
@@ -111,6 +125,11 @@ import kotlinx.coroutines.launch
 import org.webrtc.EglBase
 import org.webrtc.SurfaceViewRenderer
 import org.webrtc.VideoTrack
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.TimeZone
 
 val InstaBlue = Color(0xFF0095F6)
 val FriendOrange = Color(0xFFFF4C29)
@@ -258,7 +277,7 @@ private fun DisabledAccountScreen(repository: SocialRepository, onLogout: () -> 
         Text("Account disabled", fontSize = 27.sp, fontWeight = FontWeight.ExtraBold, color = Color(0xFF101828))
         Spacer(Modifier.height(10.dp))
         Text(
-            "${user?.name.orEmpty()}, your Tiwlo account is currently ${user?.status ?: "restricted"}. Contact support within 180 days to request a review. After that, your account and information may be permanently removed.",
+            "${user?.name.orEmpty()}, your Tiwi account is currently ${user?.status ?: "restricted"}. Contact support within 180 days to request a review. After that, your account and information may be permanently removed.",
             textAlign = TextAlign.Center,
             color = Color(0xFF475467),
             lineHeight = 21.sp
@@ -522,6 +541,7 @@ data class Post(
     val views: Int = 0,
     val liked: Boolean = false,
     val verified: Boolean = false,
+    val badgeType: String = "none",
     val following: Boolean = false,
     val visibility: String = "public"
 )
@@ -539,7 +559,8 @@ data class Reel(
     val likes: Int = 0,
     val comments: Int = 0,
     val following: Boolean = false,
-    val verified: Boolean = false
+    val verified: Boolean = false,
+    val badgeType: String = "none"
 )
 
 private data class TiwiCallRequest(
@@ -550,6 +571,30 @@ private data class TiwiCallRequest(
     val video: Boolean,
     val incoming: SocialCallSession? = null
 )
+
+private fun relativePostTime(value: String?): String {
+    if (value.isNullOrBlank()) return "Just now"
+    val parsed = listOf("yyyy-MM-dd'T'HH:mm:ss.SSSX", "yyyy-MM-dd'T'HH:mm:ssX", "yyyy-MM-dd'T'HH:mm:ss.SSSXXX", "yyyy-MM-dd'T'HH:mm:ssXXX")
+        .firstNotNullOfOrNull { pattern -> runCatching { SimpleDateFormat(pattern, Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }.parse(value) }.getOrNull() }
+        ?: return value.replace('T', ' ').take(16)
+    val elapsed = (System.currentTimeMillis() - parsed.time).coerceAtLeast(0L)
+    val minutes = elapsed / 60_000L
+    val hours = elapsed / 3_600_000L
+    val days = elapsed / 86_400_000L
+    return when {
+        minutes < 1 -> "Just now"
+        minutes < 60 -> "$minutes min ago"
+        hours == 1L -> "an hour ago"
+        hours < 24 -> "$hours hours ago"
+        days == 1L -> "a day ago"
+        days < 7 -> "$days days ago"
+        else -> {
+            val nowYear = SimpleDateFormat("yyyy", Locale.US).format(Date())
+            val itemYear = SimpleDateFormat("yyyy", Locale.US).format(parsed)
+            SimpleDateFormat(if (nowYear == itemYear) "MMM d" else "MMM d, yyyy", Locale.US).format(parsed)
+        }
+    }
+}
 
 private fun toUiPost(value: SocialPost): Post {
     val media = value.media.firstOrNull()
@@ -563,13 +608,14 @@ private fun toUiPost(value: SocialPost): Post {
         imageUrl = media?.takeUnless { it.type == "video" }?.url,
         videoUrl = if (media?.type == "video") media.hlsUrl.takeIf { media.processingStatus == "ready" } ?: media.url else null,
         media = value.media,
-        time = value.publishedAt?.replace('T', ' ')?.take(16) ?: "Now",
+        time = relativePostTime(value.publishedAt),
         likes = value.reactionCount,
         comments = value.commentCount,
         shares = value.shareCount,
         views = value.viewCount,
         liked = value.viewerReaction == "like",
         verified = value.authorProfile?.verified == true,
+        badgeType = value.authorProfile?.badgeType ?: if (value.authorProfile?.verified == true) "blue" else "none",
         following = value.authorProfile?.isFollowing == true,
         visibility = value.visibility
     )
@@ -590,7 +636,8 @@ private fun toUiReel(value: SocialPost): Reel {
         likes = value.reactionCount,
         comments = value.commentCount,
         following = value.authorProfile?.isFollowing == true,
-        verified = value.authorProfile?.verified == true
+        verified = value.authorProfile?.verified == true,
+        badgeType = value.authorProfile?.badgeType ?: if (value.authorProfile?.verified == true) "blue" else "none"
     )
 }
 
@@ -601,35 +648,75 @@ private fun TiwiAvatar(url: String?, fallback: Int, modifier: Modifier, contentS
 }
 
 @Composable
+private fun VerifiedBadge(badgeType: String?, size: Dp, modifier: Modifier = Modifier, onClick: (() -> Unit)? = null) {
+    val type = badgeType?.lowercase() ?: "blue"
+    val badgeModifier = if (onClick != null) modifier.clickable(onClick = onClick) else modifier
+    Icon(
+        Icons.Default.Verified,
+        contentDescription = if (type == "gold") "Gold verified" else "Verified",
+        tint = if (type == "gold") Color(0xFFF4B400) else TiwiBlue,
+        modifier = badgeModifier.size(size)
+    )
+}
+
+@Composable
 private fun ExploreImage(url: String?, modifier: Modifier) {
     if (!url.isNullOrBlank()) AsyncImage(model = url, contentDescription = null, modifier = modifier, contentScale = ContentScale.Crop)
     else Box(modifier.background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)))
 }
 
+@OptIn(UnstableApi::class)
+private object TiwiPlaybackCache {
+    @Volatile private var cache: SimpleCache? = null
+
+    @Synchronized
+    private fun cache(context: Context): SimpleCache = cache ?: SimpleCache(
+        File(context.applicationContext.cacheDir, "tiwi_video_cache"),
+        LeastRecentlyUsedCacheEvictor(384L * 1024L * 1024L),
+        StandaloneDatabaseProvider(context.applicationContext)
+    ).also { cache = it }
+
+    fun player(context: Context): ExoPlayer {
+        val upstream = DefaultHttpDataSource.Factory().setAllowCrossProtocolRedirects(true).setConnectTimeoutMs(12_000).setReadTimeoutMs(30_000)
+        val dataSource = CacheDataSource.Factory().setCache(cache(context)).setUpstreamDataSourceFactory(upstream).setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
+        val loadControl = DefaultLoadControl.Builder().setBufferDurationsMs(1_200, 20_000, 250, 500).setPrioritizeTimeOverSizeThresholds(true).build()
+        return ExoPlayer.Builder(context).setMediaSourceFactory(DefaultMediaSourceFactory(dataSource)).setLoadControl(loadControl).build()
+    }
+}
+
+@OptIn(UnstableApi::class)
 @Composable
 private fun TiwiVideo(url: String, modifier: Modifier, autoplay: Boolean = false, fallbackUrl: String? = null, posterUrl: String? = null) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     var activeUrl by remember(url, fallbackUrl) { mutableStateOf(url) }
-    var visibleEnough by remember(url) { mutableStateOf(true) }
+    var visibleEnough by remember(url) { mutableStateOf(false) }
     var renderedFirstFrame by remember(activeUrl) { mutableStateOf(false) }
     var buffering by remember(activeUrl) { mutableStateOf(true) }
+    var manuallyPaused by remember(activeUrl) { mutableStateOf(false) }
+    var playing by remember(activeUrl) { mutableStateOf(false) }
+    var showPauseOverlay by remember(activeUrl) { mutableStateOf(false) }
     val player = remember(activeUrl) {
-        ExoPlayer.Builder(context).build().apply {
+        TiwiPlaybackCache.player(context).apply {
             setMediaItem(MediaItem.fromUri(activeUrl))
             prepare()
             repeatMode = if (autoplay) ExoPlayer.REPEAT_MODE_ONE else ExoPlayer.REPEAT_MODE_OFF
         }
     }
-    LaunchedEffect(player, autoplay, visibleEnough) {
+    LaunchedEffect(player, autoplay, visibleEnough, manuallyPaused) {
         player.repeatMode = if (autoplay) ExoPlayer.REPEAT_MODE_ONE else ExoPlayer.REPEAT_MODE_OFF
-        if (autoplay && visibleEnough) player.play() else player.pause()
+        if (autoplay && visibleEnough && !manuallyPaused) player.play() else player.pause()
+    }
+    LaunchedEffect(showPauseOverlay) {
+        if (showPauseOverlay) { delay(650); showPauseOverlay = false }
     }
     DisposableEffect(player, lifecycleOwner, activeUrl, fallbackUrl) {
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
                 buffering = playbackState == Player.STATE_BUFFERING
             }
+
+            override fun onIsPlayingChanged(isPlaying: Boolean) { playing = isPlaying }
 
             override fun onRenderedFirstFrame() {
                 renderedFirstFrame = true
@@ -644,7 +731,7 @@ private fun TiwiVideo(url: String, modifier: Modifier, autoplay: Boolean = false
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_PAUSE, Lifecycle.Event.ON_STOP -> player.pause()
-                Lifecycle.Event.ON_RESUME -> if (autoplay && visibleEnough) player.play()
+                Lifecycle.Event.ON_RESUME -> if (autoplay && visibleEnough && !manuallyPaused) player.play()
                 else -> Unit
             }
         }
@@ -665,14 +752,23 @@ private fun TiwiVideo(url: String, modifier: Modifier, autoplay: Boolean = false
         }
     ) {
         AndroidView(
-            factory = { PlayerView(it).apply { this.player = player; useController = true; controllerShowTimeoutMs = 1500 } },
+            factory = { PlayerView(it).apply { this.player = player; useController = false } },
             update = { it.player = player },
             modifier = Modifier.fillMaxSize()
         )
         if (!renderedFirstFrame && !posterUrl.isNullOrBlank()) {
             AsyncImage(model = posterUrl, contentDescription = "Video thumbnail", modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
         }
-        if (buffering && autoplay) CircularProgressIndicator(Modifier.align(Alignment.Center).size(32.dp), color = Color.White, strokeWidth = 3.dp)
+        Box(Modifier.fillMaxSize().clickable {
+            if (playing) { manuallyPaused = true; player.pause() } else { manuallyPaused = false; player.play() }
+            showPauseOverlay = true
+        })
+        if (buffering && visibleEnough) CircularProgressIndicator(Modifier.align(Alignment.Center).size(30.dp), color = Color.White, strokeWidth = 2.5.dp)
+        if ((!playing && !buffering && visibleEnough) || showPauseOverlay) {
+            Box(Modifier.align(Alignment.Center).size(58.dp).background(Color.Black.copy(alpha = .48f), CircleShape), contentAlignment = Alignment.Center) {
+                Icon(if (playing) Icons.Default.Pause else Icons.Default.PlayArrow, if (playing) "Pause" else "Play", tint = Color.White, modifier = Modifier.size(34.dp))
+            }
+        }
     }
 }
 
@@ -822,7 +918,7 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
 
     Scaffold(
         topBar = { 
-            if (selectedTab != 2 && !showProfile && !showCreatePost && !showMessages && !showConnect && selectedProfileUserId == null && selectedChat == null && selectedPostId == null) {
+            if (selectedTab != 2 && selectedTab != 4 && !showProfile && !showCreatePost && !showMessages && !showConnect && selectedProfileUserId == null && selectedChat == null && selectedPostId == null) {
                 TiwiTopBar(
                     avatarUrl = currentUser?.avatar,
                     onProfileClick = { showProfile = true },
@@ -902,13 +998,14 @@ fun TiwiTopBar(avatarUrl: String?, onProfileClick: () -> Unit, onCreateClick: ()
         modifier = Modifier
             .fillMaxWidth()
             .statusBarsPadding()
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .heightIn(min = 50.dp)
+            .padding(horizontal = 12.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
         Text(
             text = "Tiwi",
-            style = MaterialTheme.typography.headlineMedium.copy(
+            style = MaterialTheme.typography.headlineSmall.copy(
                 fontWeight = FontWeight.ExtraBold,
                 letterSpacing = (-1).sp,
                 brush = Brush.linearGradient(listOf(TiwiBlue, TiwiPurple))
@@ -916,21 +1013,21 @@ fun TiwiTopBar(avatarUrl: String?, onProfileClick: () -> Unit, onCreateClick: ()
         )
         
         Row(verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onConnectClick) {
-                Icon(Icons.Outlined.Explore, contentDescription = "Connect", tint = TiwiBlue)
+            IconButton(onClick = onConnectClick, modifier = Modifier.size(40.dp)) {
+                Icon(Icons.Outlined.PersonSearch, contentDescription = "Find people", tint = TiwiBlue, modifier = Modifier.size(23.dp))
             }
-            IconButton(onClick = onCreateClick) {
-                Icon(Icons.Outlined.AddBox, contentDescription = "Create", tint = MaterialTheme.colorScheme.onBackground)
+            IconButton(onClick = onCreateClick, modifier = Modifier.size(40.dp)) {
+                Icon(Icons.Outlined.AddBox, contentDescription = "Create", tint = MaterialTheme.colorScheme.onBackground, modifier = Modifier.size(23.dp))
             }
-            IconButton(onClick = onMessagesClick) {
-                Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = "Messages", tint = MaterialTheme.colorScheme.onBackground)
+            IconButton(onClick = onMessagesClick, modifier = Modifier.size(40.dp)) {
+                Icon(Icons.AutoMirrored.Outlined.Send, contentDescription = "Messages", tint = MaterialTheme.colorScheme.onBackground, modifier = Modifier.size(23.dp))
             }
-            Spacer(modifier = Modifier.width(8.dp))
+            Spacer(modifier = Modifier.width(2.dp))
             TiwiAvatar(
                 url = avatarUrl,
                 fallback = R.drawable.img_tiwi_avatar_1,
                 modifier = Modifier
-                    .size(36.dp)
+                    .size(32.dp)
                     .clip(CircleShape)
                     .clickable { onProfileClick() },
                 contentScale = ContentScale.Crop
@@ -988,7 +1085,7 @@ private fun SuggestedFriendsSection(
                     Spacer(Modifier.height(6.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(profile.user.name, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                        if (profile.verified) Icon(Icons.Default.Verified, null, tint = TiwiBlue, modifier = Modifier.size(14.dp))
+                        if (profile.verified) VerifiedBadge(profile.badgeType, 14.dp)
                     }
                     Text("@${profile.username}", maxLines = 1, color = Color.Gray, fontSize = 11.sp)
                     Button(
@@ -1096,7 +1193,7 @@ fun PostCard(post: Post, repository: SocialRepository, onShareClick: () -> Unit 
                     )
                     if (post.verified) {
                         Spacer(modifier = Modifier.width(2.dp))
-                        Icon(Icons.Default.Verified, contentDescription = "Verified", tint = TiwiBlue, modifier = Modifier.size(16.dp).clickable { showVerified = true })
+                        VerifiedBadge(post.badgeType, 16.dp, onClick = { showVerified = true })
                     }
                     if (!isOwn) {
                         Spacer(modifier = Modifier.width(5.dp))
@@ -1211,7 +1308,7 @@ fun PostCard(post: Post, repository: SocialRepository, onShareClick: () -> Unit 
     if (showReport) AlertDialog(onDismissRequest = { showReport = false }, containerColor = Color.White, tonalElevation = 0.dp, title = { Text("Report post") }, text = { Text("Report spam, harassment, false information or inappropriate content to Tiwlo administrators.") },
         confirmButton = { TextButton(onClick = { showReport = false; scope.launch { runCatching { repository.reportContent("post", post.id, "inappropriate_content") }.onSuccess { Toast.makeText(context, "Report sent", Toast.LENGTH_SHORT).show() } } }) { Text("Send report") } },
         dismissButton = { TextButton(onClick = { showReport = false }) { Text("Cancel") } })
-    if (showVerified) VerifiedInfoSheet(post.author, post.authorAvatarUrl, onDismiss = { showVerified = false })
+    if (showVerified) VerifiedInfoSheet(post.author, post.authorAvatarUrl, post.badgeType, onDismiss = { showVerified = false })
 }
 
 @Composable
@@ -1296,15 +1393,15 @@ private fun SharedPostCard(media: SocialMedia, onOpen: () -> Unit) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun VerifiedInfoSheet(name: String, avatar: String?, onDismiss: () -> Unit) {
+private fun VerifiedInfoSheet(name: String, avatar: String?, badgeType: String = "blue", onDismiss: () -> Unit) {
     ModalBottomSheet(onDismissRequest = onDismiss, dragHandle = null, containerColor = Color.White, contentColor = Color.Black, tonalElevation = 0.dp) {
         Column(Modifier.fillMaxWidth().padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             TiwiAvatar(avatar, R.drawable.img_tiwi_avatar_1, Modifier.size(72.dp).clip(CircleShape))
             Spacer(Modifier.height(8.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) { Text(name, fontWeight = FontWeight.Bold, fontSize = 18.sp); Spacer(Modifier.width(3.dp)); Icon(Icons.Default.Verified, null, tint = TiwiBlue) }
+            Row(verticalAlignment = Alignment.CenterVertically) { Text(name, fontWeight = FontWeight.Bold, fontSize = 18.sp); Spacer(Modifier.width(3.dp)); VerifiedBadge(badgeType, 24.dp) }
             Spacer(Modifier.height(10.dp))
             Text("This profile is verified", fontWeight = FontWeight.Bold)
-            Text("Tiwlo confirmed that this is the authentic presence for this person or notable account.", textAlign = TextAlign.Center, color = Color.Gray, modifier = Modifier.padding(vertical = 8.dp))
+            Text(if (badgeType == "gold") "Tiwi confirmed this is an authentic notable person or organization." else "Tiwi confirmed that this is the authentic presence for this account.", textAlign = TextAlign.Center, color = Color.Gray, modifier = Modifier.padding(vertical = 8.dp))
             Button(onClick = onDismiss, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(8.dp)) { Text("Got it") }
             Spacer(Modifier.navigationBarsPadding())
         }
@@ -1402,7 +1499,7 @@ private fun CommentRow(
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(comment.author.name, fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                if (comment.authorProfile?.verified == true) Icon(Icons.Default.Verified, null, tint = TiwiBlue, modifier = Modifier.size(14.dp))
+                if (comment.authorProfile?.verified == true) VerifiedBadge(comment.authorProfile?.badgeType, 14.dp)
             }
             Text(comment.body, color = MaterialTheme.colorScheme.onBackground)
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1464,7 +1561,7 @@ fun TiwiShareSheet(repository: SocialRepository, post: Post, onDismiss: () -> Un
                         Column(Modifier.weight(1f)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(post.author, fontWeight = FontWeight.Bold)
-                                if (post.verified) Icon(Icons.Default.Verified, null, tint = TiwiBlue, modifier = Modifier.padding(start = 3.dp).size(15.dp))
+                                if (post.verified) VerifiedBadge(post.badgeType, 15.dp, Modifier.padding(start = 3.dp))
                             }
                             Text(post.time, color = Color.Gray, fontSize = 11.sp)
                         }
@@ -1846,7 +1943,7 @@ fun SearchScreen(repository: SocialRepository, onProfileClick: (String) -> Unit,
                                     Spacer(Modifier.height(5.dp))
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         Text(profile.user.name, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                        if (profile.verified) Icon(Icons.Default.Verified, "Verified", tint = TiwiBlue, modifier = Modifier.padding(start = 2.dp).size(14.dp))
+                                        if (profile.verified) VerifiedBadge(profile.badgeType, 14.dp, Modifier.padding(start = 2.dp))
                                     }
                                     Text("@${profile.username}", color = Color.Gray, fontSize = 11.sp, maxLines = 1)
                                     Button(
@@ -1867,7 +1964,7 @@ fun SearchScreen(repository: SocialRepository, onProfileClick: (String) -> Unit,
                     ListItem(
                         modifier = Modifier.clickable { onProfileClick(profile.userId) },
                         leadingContent = { TiwiAvatar(profile.user.avatar, R.drawable.img_tiwi_avatar_1, Modifier.size(48.dp).clip(CircleShape)) },
-                        headlineContent = { Row(verticalAlignment = Alignment.CenterVertically) { Text(profile.user.name, fontWeight = FontWeight.Bold); if (profile.verified) Icon(Icons.Default.Verified, "Verified", tint = TiwiBlue, modifier = Modifier.padding(start = 3.dp).size(15.dp)) } },
+                        headlineContent = { Row(verticalAlignment = Alignment.CenterVertically) { Text(profile.user.name, fontWeight = FontWeight.Bold); if (profile.verified) VerifiedBadge(profile.badgeType, 15.dp, Modifier.padding(start = 3.dp)) } },
                         supportingContent = { Text("@${profile.username}") },
                         trailingContent = {
                             TextButton(onClick = { scope.launch { runCatching { repository.follow(profile.userId, !profile.isFollowing) }.onSuccess { updated -> profiles = profiles.map { if (it.userId == updated.userId) updated else it } } } }) {
@@ -1920,7 +2017,7 @@ fun ReelsScreen(reels: List<Reel>, repository: SocialRepository, onOpen: (String
     }
     val pagerState = rememberPagerState(pageCount = { reels.size })
     val scope = rememberCoroutineScope()
-    VerticalPager(state = pagerState, modifier = Modifier.fillMaxSize().background(Color.Black)) { page ->
+    VerticalPager(state = pagerState, beyondViewportPageCount = 1, modifier = Modifier.fillMaxSize().background(Color.Black)) { page ->
         val reel = reels[page]
         Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
             when {
@@ -1959,7 +2056,7 @@ fun ReelsScreen(reels: List<Reel>, repository: SocialRepository, onOpen: (String
                         TiwiAvatar(reel.authorAvatarUrl, R.drawable.img_tiwi_avatar_1, Modifier.size(32.dp).clip(CircleShape))
                         Spacer(modifier = Modifier.width(7.dp))
                         Text(reel.author, color = Color.White, fontWeight = FontWeight.Bold, maxLines = 1)
-                        if (reel.verified) Icon(Icons.Default.Verified, null, tint = TiwiBlue, modifier = Modifier.padding(start = 3.dp).size(16.dp))
+                        if (reel.verified) VerifiedBadge(reel.badgeType, 16.dp)
                     }
                     if (reel.authorId != repository.currentUserId()) {
                         Spacer(modifier = Modifier.width(9.dp))
@@ -2159,20 +2256,16 @@ fun NotificationsScreen(repository: SocialRepository) {
         
         val notifications = emptyList<String>()
         
-        LazyColumn {
-            items(notifications) { note ->
-                ListItem(
-                    leadingContent = { 
-                        Box(modifier = Modifier.size(40.dp).clip(CircleShape).background(TiwiBlue.copy(alpha = 0.1f)), contentAlignment = Alignment.Center) {
-                            Icon(Icons.Default.Notifications, contentDescription = null, tint = TiwiBlue)
-                        }
-                    },
-                    headlineContent = { Text(note) },
-                    supportingContent = { Text("2 hours ago") },
-                    colors = ListItemDefaults.colors(containerColor = Color.Transparent)
-                )
+        if (notifications.isEmpty()) Box(Modifier.fillMaxSize().padding(bottom = 72.dp), contentAlignment = Alignment.Center) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Box(Modifier.size(72.dp).background(Color(0xFFF2F4F7), CircleShape), contentAlignment = Alignment.Center) { Icon(Icons.Outlined.NotificationsNone, null, tint = Color(0xFF667085), modifier = Modifier.size(32.dp)) }
+                Spacer(Modifier.height(14.dp))
+                Text("No notifications yet", fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                Text("Likes, comments, follows and mentions will appear here.", color = Color.Gray, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 5.dp, start = 28.dp, end = 28.dp))
             }
-        }
+        } else LazyColumn { items(notifications) { note ->
+            ListItem(leadingContent = { Box(modifier = Modifier.size(40.dp).clip(CircleShape).background(TiwiBlue.copy(alpha = 0.1f)), contentAlignment = Alignment.Center) { Icon(Icons.Default.Notifications, contentDescription = null, tint = TiwiBlue) } }, headlineContent = { Text(note) }, supportingContent = { Text("2 hours ago") }, colors = ListItemDefaults.colors(containerColor = Color.Transparent))
+        } }
     }
 }
 
@@ -2187,15 +2280,7 @@ fun MenuScreen(repository: SocialRepository, name: String, avatarUrl: String?, o
         SocialSettingsPage(repository, profile, setting, onBack = { selectedSetting = null })
         return
     }
-    Column(modifier = Modifier.fillMaxSize().background(Color.White).padding(horizontal = 10.dp)) {
-        Text(
-            text = "Menu",
-            style = MaterialTheme.typography.headlineLarge.copy(fontWeight = FontWeight.Bold),
-            modifier = Modifier.padding(top = 8.dp)
-        )
-
-        Spacer(modifier = Modifier.height(8.dp))
-
+    Column(modifier = Modifier.fillMaxSize().background(Color.White).statusBarsPadding().padding(horizontal = 10.dp)) {
         Surface(
             modifier = Modifier.fillMaxWidth(),
             color = Color.White,
@@ -2221,7 +2306,7 @@ fun MenuScreen(repository: SocialRepository, name: String, avatarUrl: String?, o
                     Column(Modifier.weight(1f)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(name, style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
-                            if (profile?.verified == true) Icon(Icons.Default.Verified, "Verified", tint = TiwiBlue, modifier = Modifier.padding(start = 3.dp).size(17.dp))
+                            if (profile?.verified == true) VerifiedBadge(profile?.badgeType, 17.dp, Modifier.padding(start = 3.dp))
                         }
                         Text("@${profile?.username.orEmpty()} · View profile", style = MaterialTheme.typography.labelMedium, color = Color.Gray)
                     }
@@ -2230,9 +2315,28 @@ fun MenuScreen(repository: SocialRepository, name: String, avatarUrl: String?, o
             }
         }
 
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(9.dp))
 
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Surface(
+            modifier = Modifier.fillMaxWidth().clickable { selectedSetting = "Verified badge" },
+            color = Color.White,
+            shape = RoundedCornerShape(12.dp),
+            border = BorderStroke(1.dp, Color(0xFFB9D7FF)),
+            tonalElevation = 0.dp
+        ) {
+            Row(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(42.dp).background(Color(0xFFEAF3FF), CircleShape), contentAlignment = Alignment.Center) { VerifiedBadge("blue", 24.dp) }
+                Column(Modifier.weight(1f).padding(start = 11.dp)) {
+                    Text("Apply for a verified badge", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                    Text("Blue subscriptions or Gold notable review", color = Color.Gray, fontSize = 12.sp)
+                }
+                Icon(Icons.Default.ChevronRight, null, tint = Color.Gray)
+            }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             item {
                 Text("Your Shortcuts", style = MaterialTheme.typography.titleSmall, color = Color.Gray)
                 Spacer(modifier = Modifier.height(8.dp))
@@ -2267,6 +2371,7 @@ fun MenuScreen(repository: SocialRepository, name: String, avatarUrl: String?, o
                 Text("Settings & Support", style = MaterialTheme.typography.titleSmall, color = Color.Gray)
                 Spacer(modifier = Modifier.height(8.dp))
                 val settings = listOf(
+                    Pair("Account Center", Icons.Default.AccountCircle),
                     Pair("Account Settings", Icons.Default.Settings),
                     Pair("Privacy Center", Icons.Default.Security),
                     Pair("Help & Support", Icons.Default.Help),
@@ -2306,35 +2411,115 @@ fun MenuScreen(repository: SocialRepository, name: String, avatarUrl: String?, o
 private fun SocialSettingsPage(repository: SocialRepository, profile: SocialProfile?, page: String, onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val currentUser by repository.currentUser.collectAsState()
     val isPrivacy = page == "Privacy Center"
     val editable = page == "Account Settings" || isPrivacy
     var autoplay by remember(profile, page) { mutableStateOf(profile?.preferences?.get("autoplayVideo") as? Boolean ?: true) }
     var autoQuality by remember(profile, page) { mutableStateOf(profile?.preferences?.get("autoQuality") as? Boolean ?: true) }
     var dataSaver by remember(profile, page) { mutableStateOf(profile?.preferences?.get("dataSaver") as? Boolean ?: false) }
+    var notifications by remember(profile, page) { mutableStateOf(profile?.preferences?.get("notifications") as? Boolean ?: true) }
+    var notificationSound by remember(profile, page) { mutableStateOf(profile?.preferences?.get("notificationSound") as? Boolean ?: true) }
     var privateProfile by remember(profile, page) { mutableStateOf(profile?.privacy?.get("profileVisibility") == "private") }
-    var allowMessages by remember(profile, page) { mutableStateOf(profile?.privacy?.get("allowMessages") as? Boolean ?: true) }
+    var allowMessages by remember(profile, page) { mutableStateOf(profile?.privacy?.get("allowMessages") as? Boolean ?: (profile?.privacy?.get("messagePermission") != "nobody")) }
     var allowCalls by remember(profile, page) { mutableStateOf(profile?.privacy?.get("allowCalls") as? Boolean ?: true) }
+    var showActivity by remember(profile, page) { mutableStateOf(profile?.privacy?.get("showActivityStatus") as? Boolean ?: true) }
+    var readReceipts by remember(profile, page) { mutableStateOf(profile?.privacy?.get("readReceipts") as? Boolean ?: true) }
+    var allowMentions by remember(profile, page) { mutableStateOf(profile?.privacy?.get("allowMentions") as? Boolean ?: true) }
+    var tagReview by remember(profile, page) { mutableStateOf(profile?.privacy?.get("tagReview") as? Boolean ?: false) }
+    var discoverable by remember(profile, page) { mutableStateOf(profile?.privacy?.get("discoverableByEmail") as? Boolean ?: true) }
+    var searchIndexing by remember(profile, page) { mutableStateOf(profile?.privacy?.get("searchEngineIndexing") as? Boolean ?: false) }
+    var personalizedAds by remember(profile, page) { mutableStateOf(profile?.privacy?.get("personalizedAds") as? Boolean ?: true) }
+    var sensitiveMedia by remember(profile, page) { mutableStateOf(profile?.privacy?.get("showSensitiveMedia") as? Boolean ?: false) }
+    var verificationOptions by remember { mutableStateOf<SocialVerificationOptions?>(null) }
+    var selectedGateway by remember { mutableStateOf("") }
+    var packageBusy by remember { mutableStateOf<String?>(null) }
+    var optionsLoading by remember { mutableStateOf(false) }
 
     var saving by remember { mutableStateOf(false) }
-    Column(Modifier.fillMaxSize().background(Color.White)) {
-        Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
-            Text(page, fontWeight = FontWeight.Bold, fontSize = 19.sp)
+    LaunchedEffect(page) {
+        if (page == "Verified badge") {
+            optionsLoading = true
+            runCatching { repository.verificationOptions() }
+                .onSuccess { verificationOptions = it; selectedGateway = it.gateways.firstOrNull()?.provider.orEmpty() }
+                .onFailure { Toast.makeText(context, it.message ?: "Verification packages could not load", Toast.LENGTH_LONG).show() }
+            optionsLoading = false
         }
-        HorizontalDivider(thickness = .5.dp, color = Color(0xFFE3E6EA))
-        Column(Modifier.weight(1f).padding(horizontal = 14.dp, vertical = 12.dp)) {
+    }
+    Column(Modifier.fillMaxSize().background(Color.White).statusBarsPadding()) {
+        Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack, modifier = Modifier.size(44.dp)) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", modifier = Modifier.size(22.dp)) }
+            Text(page, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+        }
+        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 14.dp, vertical = 10.dp)) {
             when {
+                page == "Account Center" -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.size(54.dp).background(Color(0xFFEAF3FF), CircleShape), contentAlignment = Alignment.Center) { Icon(Icons.Default.AccountCircle, null, tint = TiwiBlue, modifier = Modifier.size(30.dp)) }
+                        Column(Modifier.padding(start = 12.dp)) { Text("Tiwi Account Center", fontWeight = FontWeight.Bold, fontSize = 20.sp); Text("Connected to your Tiwlo account", color = Color.Gray) }
+                    }
+                    Surface(color = Color.White, border = BorderStroke(1.dp, Color(0xFFE3E6EA)), shape = RoundedCornerShape(12.dp), tonalElevation = 0.dp) {
+                        Column(Modifier.padding(14.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) { TiwiAvatar(currentUser?.avatar, R.drawable.img_tiwi_avatar_1, Modifier.size(48.dp).clip(CircleShape)); Column(Modifier.padding(start = 10.dp)) { Text(currentUser?.name.orEmpty(), fontWeight = FontWeight.Bold); Text(currentUser?.email.orEmpty(), color = Color.Gray, fontSize = 12.sp) } }
+                            HorizontalDivider(Modifier.padding(vertical = 12.dp), color = Color(0xFFE9EAED))
+                            Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.Link, null, tint = TiwiBlue); Text("Linked to Tiwlo", Modifier.weight(1f).padding(start = 9.dp), fontWeight = FontWeight.SemiBold); Icon(Icons.Default.CheckCircle, null, tint = Color(0xFF12B76A), modifier = Modifier.size(20.dp)) }
+                        }
+                    }
+                    Text("Manage connected experiences", fontWeight = FontWeight.Bold, color = Color.Gray, fontSize = 13.sp)
+                    listOf("Personal details" to Icons.Outlined.Person, "Password and security" to Icons.Outlined.Security, "Billing profile" to Icons.Outlined.Payment, "Your information and permissions" to Icons.Outlined.FolderShared).forEach { item ->
+                        Surface(Modifier.fillMaxWidth().clickable { context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://tiwlo.com/settings"))) }, color = Color.White, border = BorderStroke(1.dp, Color(0xFFE3E6EA)), shape = RoundedCornerShape(10.dp), tonalElevation = 0.dp) { Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) { Icon(item.second, null, tint = Color(0xFF475467)); Text(item.first, Modifier.weight(1f).padding(start = 11.dp), fontWeight = FontWeight.Medium); Icon(Icons.Default.OpenInNew, null, tint = Color.Gray, modifier = Modifier.size(18.dp)) } }
+                    }
+                }
                 page == "Account Settings" -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Playback", fontWeight = FontWeight.Bold, color = Color.Gray)
                     SettingSwitch("Autoplay videos", autoplay) { autoplay = it }
                     SettingSwitch("Automatic video quality", autoQuality) { autoQuality = it }
                     SettingSwitch("Data saver", dataSaver) { dataSaver = it }
+                    Text("Notifications", fontWeight = FontWeight.Bold, color = Color.Gray, modifier = Modifier.padding(top = 8.dp))
+                    SettingSwitch("Activity notifications", notifications) { notifications = it }
+                    SettingSwitch("Notification sounds", notificationSound) { notificationSound = it }
                 }
                 isPrivacy -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Who can interact with you", fontWeight = FontWeight.Bold, color = Color.Gray)
+                    Text("Audience and visibility", fontWeight = FontWeight.Bold, color = Color.Gray)
                     SettingSwitch("Private profile", privateProfile) { privateProfile = it }
+                    SettingSwitch("Find me by email", discoverable) { discoverable = it }
+                    SettingSwitch("Show profile in search engines", searchIndexing) { searchIndexing = it }
+                    Text("How people interact with you", fontWeight = FontWeight.Bold, color = Color.Gray, modifier = Modifier.padding(top = 8.dp))
                     SettingSwitch("Allow messages", allowMessages) { allowMessages = it }
                     SettingSwitch("Allow audio/video calls", allowCalls) { allowCalls = it }
+                    SettingSwitch("Show active status", showActivity) { showActivity = it }
+                    SettingSwitch("Read receipts", readReceipts) { readReceipts = it }
+                    SettingSwitch("Allow mentions", allowMentions) { allowMentions = it }
+                    SettingSwitch("Review tags before showing", tagReview) { tagReview = it }
+                    Text("Content and data", fontWeight = FontWeight.Bold, color = Color.Gray, modifier = Modifier.padding(top = 8.dp))
+                    SettingSwitch("Show sensitive media", sensitiveMedia) { sensitiveMedia = it }
+                    SettingSwitch("Personalized ads", personalizedAds) { personalizedAds = it }
+                }
+                page == "Verified badge" -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) { VerifiedBadge(profile?.badgeType, 34.dp); Column(Modifier.padding(start = 11.dp)) { Text("Verification for Tiwi", fontWeight = FontWeight.Bold, fontSize = 20.sp); Text(if (profile?.verified == true) "Your ${profile.badgeType} badge is active" else "Choose a plan or apply as notable", color = Color.Gray) } }
+                    Text("Blue badge subscriptions", fontWeight = FontWeight.Bold, color = Color.Gray, fontSize = 13.sp)
+                    if (optionsLoading) Box(Modifier.fillMaxWidth().height(100.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 2.5.dp) }
+                    val options = verificationOptions
+                    if (options != null) {
+                        if (options.gateways.isNotEmpty()) {
+                            Text("Pay with", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                            Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) { options.gateways.forEach { gateway -> FilterChip(selected = selectedGateway == gateway.provider, onClick = { selectedGateway = gateway.provider }, label = { Text(gateway.name) }) } }
+                        } else Text("No payment gateway is currently enabled.", color = Color(0xFFB42318), fontSize = 12.sp)
+                        options.packages.forEach { plan ->
+                            VerificationPackageCard(plan, options, packageBusy == plan.id, plan.notableOnly || selectedGateway.isNotBlank()) {
+                                scope.launch {
+                                    packageBusy = plan.id
+                                    runCatching { repository.startVerificationCheckout(plan.id, if (plan.notableOnly) "manual" else selectedGateway, options.currency) }
+                                        .onSuccess { checkout ->
+                                            if (!checkout.paymentUrl.isNullOrBlank()) context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(checkout.paymentUrl)))
+                                            else Toast.makeText(context, checkout.message ?: "Application submitted", Toast.LENGTH_LONG).show()
+                                        }
+                                        .onFailure { Toast.makeText(context, it.message ?: "Checkout failed", Toast.LENGTH_LONG).show() }
+                                    packageBusy = null
+                                }
+                            }
+                        }
+                        Text("Prices use Tiwlo's live currency settings. Blue badges activate after confirmed payment. Gold badges are never sold and require administrator review.", color = Color.Gray, fontSize = 11.sp, lineHeight = 16.sp)
+                    }
                 }
                 page == "Help & Support" -> Text("For account and app support, use the support contact on tiwlo.com.")
                 else -> Text("Tiwi Social connects your real Tiwlo account, feed, reels, messages and calls.")
@@ -2349,10 +2534,19 @@ private fun SocialSettingsPage(repository: SocialRepository, profile: SocialProf
                         "privacy" to (profile?.privacy.orEmpty() + mapOf(
                             "profileVisibility" to if (privateProfile) "private" else "public",
                             "allowMessages" to allowMessages,
-                            "allowCalls" to allowCalls
+                            "messagePermission" to if (allowMessages) "everyone" else "nobody",
+                            "allowCalls" to allowCalls,
+                            "showActivityStatus" to showActivity,
+                            "readReceipts" to readReceipts,
+                            "allowMentions" to allowMentions,
+                            "tagReview" to tagReview,
+                            "discoverableByEmail" to discoverable,
+                            "searchEngineIndexing" to searchIndexing,
+                            "personalizedAds" to personalizedAds,
+                            "showSensitiveMedia" to sensitiveMedia
                         ))
                     ) else mapOf(
-                        "preferences" to (profile?.preferences.orEmpty() + mapOf("autoplayVideo" to autoplay, "autoQuality" to autoQuality, "dataSaver" to dataSaver))
+                        "preferences" to (profile?.preferences.orEmpty() + mapOf("autoplayVideo" to autoplay, "autoQuality" to autoQuality, "dataSaver" to dataSaver, "notifications" to notifications, "notificationSound" to notificationSound))
                     )
                     runCatching { repository.updateProfile(input) }
                         .onSuccess { onBack() }
@@ -2364,6 +2558,26 @@ private fun SocialSettingsPage(repository: SocialRepository, profile: SocialProf
             shape = RoundedCornerShape(8.dp),
             colors = ButtonDefaults.buttonColors(containerColor = TiwiBlue)
         ) { if (saving) CircularProgressIndicator(Modifier.size(18.dp), color = Color.White, strokeWidth = 2.dp) else Text("Save changes", fontWeight = FontWeight.Bold) }
+    }
+}
+
+@Composable
+private fun VerificationPackageCard(plan: SocialVerificationPackage, options: SocialVerificationOptions, busy: Boolean, enabled: Boolean, onChoose: () -> Unit) {
+    val gold = plan.badgeType == "gold" || plan.notableOnly
+    val converted = plan.priceUsd * options.usdRate
+    val price = when {
+        gold -> "Administrator review"
+        options.currency == "USD" -> "\$${String.format(Locale.US, "%.2f", converted)} / month"
+        options.currency == "BDT" -> "BDT ${String.format(Locale.US, "%.0f", converted)} / month"
+        else -> "${options.currency} ${String.format(Locale.US, "%.2f", converted)} / month"
+    }
+    Surface(color = Color.White, border = BorderStroke(1.dp, if (gold) Color(0xFFF2C94C) else Color(0xFFB9D7FF)), shape = RoundedCornerShape(13.dp), tonalElevation = 0.dp) {
+        Column(Modifier.padding(15.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) { VerifiedBadge(if (gold) "gold" else "blue", 25.dp); Text(plan.name, Modifier.weight(1f).padding(start = 8.dp), fontWeight = FontWeight.Bold, fontSize = 17.sp); if (!gold) Text("\$${plan.priceUsd.toInt()}", color = TiwiBlue, fontWeight = FontWeight.Bold) }
+            Text(price, color = if (gold) Color(0xFF9A6700) else TiwiBlue, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 7.dp))
+            plan.features.forEach { feature -> Row(Modifier.padding(top = 7.dp), verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.CheckCircle, null, tint = Color(0xFF12B76A), modifier = Modifier.size(17.dp)); Text(feature, Modifier.padding(start = 7.dp), fontSize = 13.sp) } }
+            Button(onClick = onChoose, enabled = enabled && !busy, modifier = Modifier.fillMaxWidth().padding(top = 13.dp), colors = ButtonDefaults.buttonColors(containerColor = if (gold) Color(0xFFB7791F) else TiwiBlue), shape = RoundedCornerShape(8.dp)) { if (busy) CircularProgressIndicator(Modifier.size(18.dp), color = Color.White, strokeWidth = 2.dp) else Text(if (gold) "Apply for Gold" else "Subscribe", fontWeight = FontWeight.Bold) }
+        }
     }
 }
 
@@ -2470,7 +2684,7 @@ private fun LegacyProfileScreen(repository: SocialRepository, posts: List<Post>,
             Column(modifier = Modifier.padding(16.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(name, style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold))
-                    if (profile?.verified == true) { Spacer(Modifier.width(5.dp)); Icon(Icons.Default.Verified, "Verified", tint = TiwiBlue, modifier = Modifier.size(19.dp)) }
+                    if (profile?.verified == true) { Spacer(Modifier.width(5.dp)); VerifiedBadge(profile?.badgeType, 19.dp) }
                 }
                 Text(profile?.bio.orEmpty(), style = MaterialTheme.typography.bodyMedium)
                 Spacer(modifier = Modifier.height(12.dp))
@@ -2658,7 +2872,7 @@ fun ProfileScreen(
                 Column(Modifier.padding(horizontal = 14.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(name, fontWeight = FontWeight.Bold)
-                        if (profile?.verified == true) Icon(Icons.Default.Verified, "Verified", tint = TiwiBlue, modifier = Modifier.padding(start = 3.dp).size(17.dp).clickable { showVerified = true })
+                        if (profile?.verified == true) VerifiedBadge(profile?.badgeType, 17.dp, Modifier.padding(start = 3.dp), onClick = { showVerified = true })
                     }
                     if (!profile?.bio.isNullOrBlank()) Text(profile?.bio.orEmpty(), fontSize = 14.sp)
                     if (!profile?.category.isNullOrBlank()) Text(profile?.category.orEmpty(), color = Color.Gray, fontSize = 13.sp)
@@ -2704,7 +2918,7 @@ fun ProfileScreen(
         }
     }
     if (showEdit) EditProfileDialog(repository, profile, onDismiss = { showEdit = false })
-    if (showVerified) VerifiedInfoSheet(name, profile?.user?.avatar, onDismiss = { showVerified = false })
+    if (showVerified) VerifiedInfoSheet(name, profile?.user?.avatar, profile?.badgeType ?: "blue", onDismiss = { showVerified = false })
 }
 
 @Composable
@@ -3193,7 +3407,7 @@ fun FeaturedContentSection(posts: List<Post>) {
                 ) {
                     Box {
                         if (!post.imageUrl.isNullOrBlank()) AsyncImage(model = post.imageUrl, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-                        else if (!post.videoUrl.isNullOrBlank()) TiwiVideo(post.videoUrl, Modifier.fillMaxSize(), fallbackUrl = post.media.firstOrNull()?.url, posterUrl = post.media.firstOrNull()?.thumbnailUrl)
+                        else if (!post.videoUrl.isNullOrBlank()) TiwiVideo(post.videoUrl, Modifier.fillMaxSize(), autoplay = true, fallbackUrl = post.media.firstOrNull()?.url, posterUrl = post.media.firstOrNull()?.thumbnailUrl)
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()

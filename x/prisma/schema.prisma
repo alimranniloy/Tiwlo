@@ -1407,6 +1407,9 @@ model SocialProfile {
   location    String?
   coverUrl    String?
   verified    Boolean  @default(false)
+  badgeType   String   @default("none")
+  badgePlan   String?
+  badgeExpiresAt DateTime?
   privacy     Json     @default("{\"profileVisibility\":\"public\",\"messagePermission\":\"everyone\",\"showActivityStatus\":true,\"allowCalls\":true}")
   preferences Json     @default("{\"autoplay\":true,\"dataSaver\":false,\"videoQuality\":\"auto\",\"notifications\":true}")
   createdAt   DateTime @default(now())

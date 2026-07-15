@@ -10,6 +10,12 @@ export const socialResolvers = {
   },
   SocialProfile: {
     user: (parent, _, ctx) => parent.user || ctx.prisma.user.findUnique({ where: { id: parent.userId } }),
+    verified: (parent) => Boolean(parent.verified && (!parent.badgeExpiresAt || new Date(parent.badgeExpiresAt) > new Date())),
+    badgeType: (parent) => {
+      const active = parent.verified && (!parent.badgeExpiresAt || new Date(parent.badgeExpiresAt) > new Date());
+      if (!active) return 'none';
+      return parent.badgeType && parent.badgeType !== 'none' ? parent.badgeType : 'blue';
+    },
     adminUser: async (parent, _, ctx) => {
       await requireAdmin(ctx);
       return parent.user || ctx.prisma.user.findUnique({ where: { id: parent.userId } });
@@ -90,7 +96,9 @@ export const socialResolvers = {
     startSocialLiveStream: (_, { input }, ctx) => api(service.startLiveStream(ctx, input)),
     updateSocialLiveStream: (_, { id, status, viewerCount }, ctx) => api(service.updateLiveStream(ctx, id, status, viewerCount)),
     reportSocialContent: (_, { targetType, targetId, reason, details }, ctx) => api(service.reportContent(ctx, targetType, targetId, reason, details)),
+    startSocialVerificationCheckout: (_, { packageId, provider, currency }, ctx) => api(service.startVerificationCheckout(ctx, packageId, provider, currency)),
     adminVerifySocialProfile: (_, { userId, verified }, ctx) => api(service.adminVerifyProfile(ctx, userId, verified)),
+    adminSetSocialBadge: (_, { userId, badgeType, badgePlan }, ctx) => api(service.adminSetSocialBadge(ctx, userId, badgeType, badgePlan)),
     adminUpdateSocialUserStatus: (_, { userId, status }, ctx) => api(service.adminUpdateUserStatus(ctx, userId, status)),
     adminDeleteSocialPost: (_, { id }, ctx) => service.deletePost(ctx, id, true),
     adminResolveSocialReport: (_, { id, status, resolution }, ctx) => api(service.adminResolveReport(ctx, id, status, resolution)),

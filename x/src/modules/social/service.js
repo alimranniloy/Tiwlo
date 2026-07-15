@@ -3,6 +3,7 @@ import { isAdmin, requireAdmin, requireAuth } from '../../core/auth.js';
 import { AppError, forbidden, notFound } from '../../core/errors.js';
 import { removeUndefined } from '../../core/format.js';
 import { writeAudit } from '../../core/audit.js';
+import { convertMoneyForCtx, startInvoicePayment } from '../billing/service.js';
 
 export const SOCIAL_SETTING_KEY = 'social';
 
@@ -15,6 +16,11 @@ const SOCIAL_DEFAULTS = Object.freeze({
   liveEnabled: true,
   mediaMaxMb: 2048,
   autoTranscode: true,
+  verificationPackages: [
+    { id: 'blue_pro', name: 'Blue Badge Pro', badgeType: 'blue', priceUsd: 11, periodMonths: 1, enabled: true, notableOnly: false, features: ['Verified blue badge', 'Account protection', 'Priority support'] },
+    { id: 'blue_plus', name: 'Blue Badge Plus', badgeType: 'blue', priceUsd: 30, periodMonths: 1, enabled: true, notableOnly: false, features: ['Everything in Pro', 'Enhanced profile support', 'Priority review'] },
+    { id: 'gold_notable', name: 'Gold Notable', badgeType: 'gold', priceUsd: 0, periodMonths: 0, enabled: true, notableOnly: true, features: ['For notable people and organizations', 'Administrator review required'] }
+  ],
   moderation: { reportsEnabled: true, blockedWords: [] },
   stunServers: [{ urls: 'stun:stun.l.google.com:19302' }]
 });
@@ -65,6 +71,7 @@ export const getSettings = async (ctx) => {
     ...SOCIAL_DEFAULTS,
     ...stored,
     moderation: { ...SOCIAL_DEFAULTS.moderation, ...(stored.moderation || {}) },
+    verificationPackages: Array.isArray(stored.verificationPackages) ? stored.verificationPackages : SOCIAL_DEFAULTS.verificationPackages,
     stunServers: Array.isArray(stored.stunServers) ? stored.stunServers : SOCIAL_DEFAULTS.stunServers
   };
 };
@@ -89,16 +96,24 @@ const profileInclude = {
 
 const mapProfile = async (ctx, profile, viewerId) => {
   if (!profile) return null;
-  const isFollowing = viewerId && viewerId !== profile.userId
+  let activeProfile = profile;
+  if (profile.verified && profile.badgeExpiresAt && profile.badgeExpiresAt <= new Date()) {
+    activeProfile = await ctx.prisma.socialProfile.update({
+      where: { userId: profile.userId },
+      data: { verified: false, badgeType: 'none', badgePlan: null, badgeExpiresAt: null },
+      include: profileInclude
+    });
+  }
+  const isFollowing = viewerId && viewerId !== activeProfile.userId
     ? Boolean(await ctx.prisma.socialFollow.findUnique({
-      where: { followerId_followingId: { followerId: viewerId, followingId: profile.userId } }
+      where: { followerId_followingId: { followerId: viewerId, followingId: activeProfile.userId } }
     }))
     : false;
   return {
-    ...profile,
-    followerCount: profile.user?._count?.socialFollowers || 0,
-    followingCount: profile.user?._count?.socialFollowing || 0,
-    postCount: profile.user?._count?.socialPosts || 0,
+    ...activeProfile,
+    followerCount: activeProfile.user?._count?.socialFollowers || 0,
+    followingCount: activeProfile.user?._count?.socialFollowing || 0,
+    postCount: activeProfile.user?._count?.socialPosts || 0,
     isFollowing
   };
 };
@@ -911,9 +926,96 @@ export const adminVerifyProfile = async (ctx, userId, verified) => {
   const user = await ctx.prisma.user.findUnique({ where: { id: userId } });
   if (!user) notFound('User');
   await ensureProfile(ctx, user);
-  const profile = await ctx.prisma.socialProfile.update({ where: { userId }, data: { verified }, include: profileInclude });
+  const profile = await ctx.prisma.socialProfile.update({
+    where: { userId },
+    data: { verified, badgeType: verified ? 'blue' : 'none', badgePlan: verified ? 'admin' : null, badgeExpiresAt: null },
+    include: profileInclude
+  });
   await writeAudit(ctx, 'admin_verify_social_profile', 'socialProfile', profile.id, { userId, verified });
   return mapProfile(ctx, profile, actor.id);
+};
+
+export const adminSetSocialBadge = async (ctx, userId, badgeType, badgePlan) => {
+  const actor = await requireAdmin(ctx);
+  const user = await ctx.prisma.user.findUnique({ where: { id: userId } });
+  if (!user) notFound('User');
+  await ensureProfile(ctx, user);
+  const type = bounded(badgeType, 20).toLowerCase();
+  if (!['none', 'blue', 'gold'].includes(type)) throw new AppError('Badge type must be none, blue or gold', 'BAD_USER_INPUT');
+  const profile = await ctx.prisma.socialProfile.update({
+    where: { userId },
+    data: {
+      verified: type !== 'none',
+      badgeType: type,
+      badgePlan: type === 'none' ? null : bounded(badgePlan || 'admin', 60),
+      badgeExpiresAt: null
+    },
+    include: profileInclude
+  });
+  await writeAudit(ctx, 'admin_set_social_badge', 'socialProfile', profile.id, { userId, badgeType: type, badgePlan });
+  return mapProfile(ctx, profile, actor.id);
+};
+
+export const startVerificationCheckout = async (ctx, packageId, provider, currency = 'USD') => {
+  const actor = await requireAuth(ctx);
+  const settings = await requireSocialFeature(ctx);
+  const plan = settings.verificationPackages.find((item) => item?.id === packageId && item?.enabled !== false);
+  if (!plan) throw new AppError('Verification package was not found', 'NOT_FOUND');
+  await ensureProfile(ctx, actor);
+
+  if (plan.badgeType === 'gold' || plan.notableOnly) {
+    const existing = await ctx.prisma.socialReport.findFirst({
+      where: { reporterId: actor.id, targetType: 'verification', targetId: actor.id, status: 'open' }
+    });
+    if (!existing) {
+      await ctx.prisma.socialReport.create({
+        data: {
+          reporterId: actor.id,
+          targetType: 'verification',
+          targetId: actor.id,
+          reason: 'gold_notable_application',
+          details: JSON.stringify({ packageId: plan.id, packageName: plan.name, badgeType: 'gold' })
+        }
+      });
+    }
+    return { status: 'pending_review', provider: 'manual', message: 'Your Gold Notable application was sent to the Social administrators.' };
+  }
+
+  if (plan.badgeType !== 'blue') throw new AppError('This package cannot be purchased', 'BAD_USER_INPUT');
+  const requestedCurrency = bounded(currency || 'USD', 3).toUpperCase();
+  const amount = Math.round((await convertMoneyForCtx(ctx, Number(plan.priceUsd || 0), 'USD', requestedCurrency)) * 100) / 100;
+  if (amount <= 0) throw new AppError('Verification package price is invalid', 'BAD_USER_INPUT');
+  let invoice = await ctx.prisma.invoice.findFirst({
+    where: { ownerId: actor.id, scope: 'social_verification', scopeId: plan.id, status: { in: ['open', 'payment_failed'] } },
+    orderBy: { createdAt: 'desc' }
+  });
+  if (invoice) {
+    invoice = await ctx.prisma.invoice.update({
+      where: { id: invoice.id },
+      data: { amount, currency: requestedCurrency, status: 'open', dueDate: new Date(), items: {
+        verification: { packageId: plan.id, packageName: plan.name, badgeType: 'blue', periodMonths: Math.max(1, Number(plan.periodMonths || 1)), priceUsd: Number(plan.priceUsd) },
+        lineItems: [{ label: `${plan.name} subscription`, amount, currency: requestedCurrency }]
+      } }
+    });
+  } else {
+    invoice = await ctx.prisma.invoice.create({
+      data: {
+        ownerId: actor.id,
+        number: `SOC-${Date.now()}-${randomBytes(3).toString('hex').toUpperCase()}`,
+        amount,
+        currency: requestedCurrency,
+        scope: 'social_verification',
+        scopeId: plan.id,
+        dueDate: new Date(),
+        items: {
+          verification: { packageId: plan.id, packageName: plan.name, badgeType: 'blue', periodMonths: Math.max(1, Number(plan.periodMonths || 1)), priceUsd: Number(plan.priceUsd) },
+          lineItems: [{ label: `${plan.name} subscription`, amount, currency: requestedCurrency }]
+        }
+      }
+    });
+  }
+  await writeAudit(ctx, 'start_social_verification_checkout', 'invoice', invoice.id, { packageId: plan.id, provider, currency: requestedCurrency });
+  return startInvoicePayment(ctx, { invoiceId: invoice.id, provider });
 };
 
 export const adminUpdateUserStatus = async (ctx, userId, status) => {

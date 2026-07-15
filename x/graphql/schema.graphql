@@ -2724,6 +2724,9 @@ type SocialProfile {
   location: String
   coverUrl: String
   verified: Boolean!
+  badgeType: String!
+  badgePlan: String
+  badgeExpiresAt: String
   privacy: JSON!
   preferences: JSON!
   followerCount: Int!
@@ -2990,6 +2993,7 @@ input SocialAdminSettingsInput {
   autoTranscode: Boolean
   moderation: JSON
   stunServers: JSON
+  verificationPackages: JSON
 }
 
 type Query {
@@ -3305,7 +3309,9 @@ type Mutation {
   startSocialLiveStream(input: SocialLiveStreamInput!): SocialLiveStream!
   updateSocialLiveStream(id: ID!, status: String!, viewerCount: Int): SocialLiveStream!
   reportSocialContent(targetType: String!, targetId: ID!, reason: String!, details: String): SocialReport!
+  startSocialVerificationCheckout(packageId: String!, provider: String!, currency: String): CheckoutSession!
   adminVerifySocialProfile(userId: ID!, verified: Boolean!): SocialProfile!
+  adminSetSocialBadge(userId: ID!, badgeType: String!, badgePlan: String): SocialProfile!
   adminUpdateSocialUserStatus(userId: ID!, status: String!): SocialProfile!
   adminDeleteSocialPost(id: ID!): Boolean!
   adminResolveSocialReport(id: ID!, status: String!, resolution: String): SocialReport!

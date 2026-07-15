@@ -396,6 +396,48 @@ class SocialRepository(context: Context) {
         return data.objectValue("socialSettings") ?: emptyMap()
     }
 
+    suspend fun verificationOptions(): SocialVerificationOptions = supervisorScope {
+        val socialJob = async {
+            client.execute("""query TiwiVerificationOptions { socialSettings availablePaymentGateways { key name provider status } }""")
+        }
+        val currencyJob = async { runCatching { client.getJson("/api/platform/currency") }.getOrDefault(emptyMap()) }
+        val data = socialJob.await()
+        val currencyData = currencyJob.await()
+        val settings = data.objectValue("socialSettings") ?: emptyMap()
+        val currency = currencyData.string("detectedCurrency") ?: currencyData.string("fallbackCurrency") ?: "USD"
+        val policy = currencyData.objectValue("policy") ?: emptyMap()
+        val rates = policy.objectValue("rates") ?: emptyMap()
+        val targetRate = rates.number(currency)?.toDouble()?.takeIf { it > 0 } ?: 1.0
+        val sourceRate = rates.number("USD")?.toDouble()?.takeIf { it > 0 } ?: 1.0
+        val usdRate = targetRate / sourceRate
+        SocialVerificationOptions(
+            packages = settings.list("verificationPackages").mapNotNull { row -> row.objectMap()?.let { plan ->
+                SocialVerificationPackage(
+                    id = plan.string("id").orEmpty(), name = plan.string("name") ?: "Verification",
+                    badgeType = plan.string("badgeType") ?: "blue", priceUsd = plan.number("priceUsd")?.toDouble() ?: 0.0,
+                    periodMonths = plan.number("periodMonths")?.toInt() ?: 1, enabled = plan["enabled"] as? Boolean ?: true,
+                    notableOnly = plan.boolean("notableOnly"), features = plan.list("features").map { it.toString() }
+                )
+            } }.filter { it.enabled },
+            gateways = data.list("availablePaymentGateways").mapNotNull { row -> row.objectMap()?.let { gateway ->
+                SocialPaymentGateway(gateway.string("key") ?: gateway.string("provider").orEmpty(), gateway.string("name") ?: gateway.string("provider").orEmpty(), gateway.string("provider").orEmpty())
+            } },
+            currency = currency,
+            usdRate = usdRate
+        )
+    }
+
+    suspend fun startVerificationCheckout(packageId: String, provider: String, currency: String): SocialCheckout {
+        val data = client.execute(
+            """mutation TiwiVerificationCheckout(${D}packageId: String!, ${D}provider: String!, ${D}currency: String) {
+                startSocialVerificationCheckout(packageId: ${D}packageId, provider: ${D}provider, currency: ${D}currency) { status provider paymentUrl message }
+            }""",
+            mapOf("packageId" to packageId, "provider" to provider, "currency" to currency)
+        )
+        val checkout = data.objectValue("startSocialVerificationCheckout") ?: throw SocialApiException("Verification checkout did not start")
+        return SocialCheckout(checkout.string("status") ?: "pending", checkout.string("provider") ?: provider, checkout.string("paymentUrl"), checkout.string("message"))
+    }
+
     suspend fun signalCall(id: String, status: String? = null, offer: Map<String, Any?>? = null, answer: Map<String, Any?>? = null, candidate: Map<String, Any?>? = null): SocialCallSession {
         val data = client.execute(
             """mutation SignalTiwiCall(${D}input: SocialCallSignalInput!) { signalSocialCall(input: ${D}input) { $CALL_FIELDS } }""",
@@ -492,6 +534,8 @@ class SocialRepository(context: Context) {
             username = value.string("username").orEmpty(), bio = value.string("bio"), about = value.string("about"),
             category = value.string("category"), website = value.string("website"), location = value.string("location"),
             coverUrl = absoluteUrl(value.string("coverUrl")), verified = value.boolean("verified"),
+            badgeType = value.string("badgeType") ?: if (value.boolean("verified")) "blue" else "none",
+            badgePlan = value.string("badgePlan"), badgeExpiresAt = value.string("badgeExpiresAt"),
             privacy = value.objectValue("privacy") ?: emptyMap(), preferences = value.objectValue("preferences") ?: emptyMap(),
             followerCount = value.number("followerCount")?.toInt() ?: 0, followingCount = value.number("followingCount")?.toInt() ?: 0,
             postCount = value.number("postCount")?.toInt() ?: 0, isFollowing = value.boolean("isFollowing")
@@ -579,11 +623,11 @@ class SocialRepository(context: Context) {
         const val CHAT_TTL = 20_000L
         const val USER_FIELDS = "id email name avatar role status signupSource emailVerifiedAt"
         const val PUBLIC_USER_FIELDS = "id name avatar status"
-        const val PROFILE_FIELDS = "id userId username bio about category website location coverUrl verified privacy preferences followerCount followingCount postCount isFollowing user { $PUBLIC_USER_FIELDS }"
-        const val POST_FIELDS = "id authorId type body media thumbnailUrl hlsUrl processingStatus visibility status viewCount shareCount reactionCount commentCount viewerReaction publishedAt author { $PUBLIC_USER_FIELDS } authorProfile { id userId username verified isFollowing }"
-        const val COMMENT_FIELDS = "id postId authorId replyToId body status reactionCount viewerLiked createdAt author { $PUBLIC_USER_FIELDS } authorProfile { id userId username verified }"
+        const val PROFILE_FIELDS = "id userId username bio about category website location coverUrl verified badgeType badgePlan badgeExpiresAt privacy preferences followerCount followingCount postCount isFollowing user { $PUBLIC_USER_FIELDS }"
+        const val POST_FIELDS = "id authorId type body media thumbnailUrl hlsUrl processingStatus visibility status viewCount shareCount reactionCount commentCount viewerReaction publishedAt author { $PUBLIC_USER_FIELDS } authorProfile { id userId username verified badgeType isFollowing }"
+        const val COMMENT_FIELDS = "id postId authorId replyToId body status reactionCount viewerLiked createdAt author { $PUBLIC_USER_FIELDS } authorProfile { id userId username verified badgeType }"
         const val MESSAGE_FIELDS = "id conversationId senderId type body media replyToId deliveryStatus sentAt deliveredAt readAt editedAt unsentAt reactions { id userId emoji } sender { $PUBLIC_USER_FIELDS }"
-        const val CONVERSATION_FIELDS = "id type title avatarUrl requestStatus requestedById unreadCount updatedAt members { id userId role lastReadAt user { $PUBLIC_USER_FIELDS } profile { id userId username verified } } lastMessage { $MESSAGE_FIELDS }"
+        const val CONVERSATION_FIELDS = "id type title avatarUrl requestStatus requestedById unreadCount updatedAt members { id userId role lastReadAt user { $PUBLIC_USER_FIELDS } profile { id userId username verified badgeType } } lastMessage { $MESSAGE_FIELDS }"
         const val CALL_FIELDS = "id conversationId callerId calleeId type status offer answer iceCandidates caller { $PUBLIC_USER_FIELDS } callee { $PUBLIC_USER_FIELDS }"
     }
 }

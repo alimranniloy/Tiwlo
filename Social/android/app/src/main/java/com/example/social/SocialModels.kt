@@ -34,6 +34,9 @@ data class SocialProfile(
     val location: String? = null,
     val coverUrl: String? = null,
     val verified: Boolean = false,
+    val badgeType: String = "none",
+    val badgePlan: String? = null,
+    val badgeExpiresAt: String? = null,
     val privacy: Map<String, Any?> = emptyMap(),
     val preferences: Map<String, Any?> = emptyMap(),
     val followerCount: Int = 0,
@@ -195,3 +198,25 @@ data class MediaUploadResult(
 }
 
 class SocialApiException(message: String, val code: String? = null) : Exception(message)
+
+data class SocialVerificationPackage(
+    val id: String,
+    val name: String,
+    val badgeType: String,
+    val priceUsd: Double,
+    val periodMonths: Int,
+    val enabled: Boolean,
+    val notableOnly: Boolean,
+    val features: List<String>
+)
+
+data class SocialPaymentGateway(val key: String, val name: String, val provider: String)
+
+data class SocialVerificationOptions(
+    val packages: List<SocialVerificationPackage>,
+    val gateways: List<SocialPaymentGateway>,
+    val currency: String,
+    val usdRate: Double
+)
+
+data class SocialCheckout(val status: String, val provider: String, val paymentUrl: String?, val message: String?)
