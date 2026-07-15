@@ -24,3 +24,7 @@ WebRTC with the STUN/TURN servers configured in Tiwlo Admin > Social.
 Version 2.0 adds multi-photo/video composer previews, post detail with threaded
 replies and reactions, edit/delete/report controls, reposts, compact profiles,
 verified-account information, suggested people, and chat message requests.
+
+Version 2.1 adds corrected system-bar spacing, internal hardware-Back behavior,
+profile covers, privacy-aware posting, upload progress notifications, clickable
+search media, vertical Reels paging, and automatic lifecycle-aware video pause.

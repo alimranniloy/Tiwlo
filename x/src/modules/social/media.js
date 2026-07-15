@@ -9,6 +9,7 @@ import { getSettings } from './service.js';
 const safeId = (value) => String(value || '').replace(/[^a-zA-Z0-9_-]/g, '');
 const safeProcessingId = (value) => String(value || '').replace(/[^a-zA-Z0-9._-]/g, '');
 const allowedExtensions = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif', '.mp4', '.mov', '.mkv', '.webm', '.m4v', '.mp3', '.m4a', '.aac', '.wav', '.ogg', '.pdf']);
+const restrictedUserStatuses = new Set(['disabled', 'banned', 'blocked', 'suspended']);
 const isAllowedMime = (mime = '') => /^(image|video|audio)\//i.test(mime) || mime === 'application/pdf' || mime === 'application/octet-stream';
 
 const runProcess = (command, args) => new Promise((resolve, reject) => {
@@ -109,7 +110,7 @@ export const registerSocialRoutes = (app, { prisma, userFromRequest, rootDir }) 
         res.status(401).json({ error: 'Authentication required' });
         return;
       }
-      if (user.status !== 'active') {
+      if (restrictedUserStatuses.has(String(user.status || '').trim().toLowerCase())) {
         res.status(403).json({ error: 'This account cannot upload media' });
         return;
       }

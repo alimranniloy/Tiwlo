@@ -149,10 +149,10 @@ class SocialRepository(context: Context) {
         }
     }
 
-    suspend fun createPost(body: String, type: String = "post", media: List<SocialMedia> = emptyList()): SocialPost {
+    suspend fun createPost(body: String, type: String = "post", media: List<SocialMedia> = emptyList(), visibility: String = "public"): SocialPost {
         val mediaInput = media.map { mapOf("url" to it.url, "type" to it.type, "hlsUrl" to it.hlsUrl, "thumbnailUrl" to it.thumbnailUrl, "mimeType" to it.mimeType, "processingId" to it.processingId) }
         val input = mapOf(
-            "type" to type, "body" to body.trim(), "visibility" to "public", "media" to mediaInput,
+            "type" to type, "body" to body.trim(), "visibility" to visibility, "media" to mediaInput,
             "hlsUrl" to media.firstOrNull()?.hlsUrl,
             "processingStatus" to "ready"
         )

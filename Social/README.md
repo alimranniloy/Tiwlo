@@ -25,6 +25,10 @@ approval for new direct conversations, content/profile reporting, and enriched
 feed follow state. Reports remain available to administrators under
 **Admin > Social > Reports**.
 
+Social v2.1 keeps media upload authorization aligned with account restrictions
+and adds Android post privacy, upload progress notifications, profile covers,
+clickable post/video discovery, swipeable Reels, and lifecycle-aware playback.
+
 Uploaded media is served through `/api/social/media/files/`. Video uploads are
 transcoded asynchronously by FFmpeg to 360p, 480p and 720p HLS renditions, with
 an adaptive master playlist.
@@ -36,5 +40,5 @@ Set `SOCIAL_MEDIA_MAX_MB`, `SOCIAL_FFMPEG_PATH`, `SOCIAL_RTMP_URL` and
 servers entered in **Admin > Social > Settings**. The Ubuntu installer installs
 FFmpeg and configures Nginx to proxy all Social API and media routes.
 
-Before deployment, run `npm --prefix x run prisma:generate` and
-`npm --prefix x run prisma:push`, then rebuild/restart the backend and frontend.
+Before deployment, run `npm --prefix x run db:generate` and
+`npm --prefix x run db:push`, then rebuild/restart the backend and frontend.
