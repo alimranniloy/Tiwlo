@@ -11,7 +11,16 @@ data class SocialUser(
     val role: String = "user",
     val status: String = "active",
     val signupSource: String = "web",
-    val emailVerifiedAt: String? = null
+    val emailVerifiedAt: String? = null,
+    val phone: String? = null,
+    val mobileCountryCode: String? = null,
+    val primaryRegion: String? = null,
+    val country: String? = null,
+    val addressLine1: String? = null,
+    val city: String? = null,
+    val state: String? = null,
+    val postalCode: String? = null,
+    val billingName: String? = null
 )
 
 @JsonClass(generateAdapter = true)
@@ -78,6 +87,10 @@ data class SocialPost(
     val hlsUrl: String? = null,
     val processingStatus: String = "ready",
     val visibility: String = "public",
+    val commentPermission: String = "everyone",
+    val pinned: Boolean = false,
+    val groupId: String? = null,
+    val saved: Boolean = false,
     val status: String = "published",
     val viewCount: Int = 0,
     val shareCount: Int = 0,
@@ -220,3 +233,28 @@ data class SocialVerificationOptions(
 )
 
 data class SocialCheckout(val status: String, val provider: String, val paymentUrl: String?, val message: String?)
+
+data class SocialGroup(
+    val id: String = "",
+    val ownerId: String = "",
+    val owner: SocialUser = SocialUser(),
+    val name: String = "",
+    val description: String? = null,
+    val coverUrl: String? = null,
+    val privacy: String = "public",
+    val memberCount: Int = 0,
+    val viewerRole: String? = null,
+    val viewerJoined: Boolean = false,
+    val createdAt: String? = null
+)
+
+data class SocialGroupMember(
+    val id: String = "",
+    val groupId: String = "",
+    val userId: String = "",
+    val user: SocialUser = SocialUser(),
+    val profile: SocialProfile? = null,
+    val role: String = "member",
+    val status: String = "active",
+    val joinedAt: String? = null
+)

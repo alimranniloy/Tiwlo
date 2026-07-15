@@ -111,11 +111,14 @@ import androidx.media3.ui.PlayerView
 import com.example.social.SocialConversation
 import com.example.social.SocialCallSession
 import com.example.social.SocialComment
+import com.example.social.SocialGroup
+import com.example.social.SocialGroupMember
 import com.example.social.SocialMedia
 import com.example.social.SocialMessage
 import com.example.social.SocialPost
 import com.example.social.SocialProfile
 import com.example.social.SocialRepository
+import com.example.social.SocialUser
 import com.example.social.SocialVerificationOptions
 import com.example.social.SocialVerificationPackage
 import com.example.social.PasswordResetChallenge
@@ -543,7 +546,10 @@ data class Post(
     val verified: Boolean = false,
     val badgeType: String = "none",
     val following: Boolean = false,
-    val visibility: String = "public"
+    val visibility: String = "public",
+    val commentPermission: String = "everyone",
+    val pinned: Boolean = false,
+    val saved: Boolean = false
 )
 
 data class Reel(
@@ -558,6 +564,7 @@ data class Reel(
     val content: String = "",
     val likes: Int = 0,
     val comments: Int = 0,
+    val views: Int = 0,
     val following: Boolean = false,
     val verified: Boolean = false,
     val badgeType: String = "none"
@@ -596,6 +603,12 @@ private fun relativePostTime(value: String?): String {
     }
 }
 
+private fun formatCount(value: Int): String = when {
+    value < 1_000 -> value.toString()
+    value < 1_000_000 -> String.format(Locale.US, if (value < 10_000 && value % 1_000 != 0) "%.1fK" else "%.0fK", value / 1_000.0)
+    else -> String.format(Locale.US, if (value < 10_000_000 && value % 1_000_000 != 0) "%.1fM" else "%.0fM", value / 1_000_000.0)
+}
+
 private fun toUiPost(value: SocialPost): Post {
     val media = value.media.firstOrNull()
     return Post(
@@ -617,7 +630,10 @@ private fun toUiPost(value: SocialPost): Post {
         verified = value.authorProfile?.verified == true,
         badgeType = value.authorProfile?.badgeType ?: if (value.authorProfile?.verified == true) "blue" else "none",
         following = value.authorProfile?.isFollowing == true,
-        visibility = value.visibility
+        visibility = value.visibility,
+        commentPermission = value.commentPermission,
+        pinned = value.pinned,
+        saved = value.saved
     )
 }
 
@@ -635,6 +651,7 @@ private fun toUiReel(value: SocialPost): Reel {
         content = value.body,
         likes = value.reactionCount,
         comments = value.commentCount,
+        views = value.viewCount,
         following = value.authorProfile?.isFollowing == true,
         verified = value.authorProfile?.verified == true,
         badgeType = value.authorProfile?.badgeType ?: if (value.authorProfile?.verified == true) "blue" else "none"
@@ -684,6 +701,30 @@ private object TiwiPlaybackCache {
     }
 }
 
+private object TiwiPlaybackCoordinator {
+    private val scores = mutableMapOf<String, Float>()
+    var activeId by mutableStateOf<String?>(null)
+        private set
+
+    @Synchronized
+    fun update(id: String, score: Float, eligible: Boolean) {
+        if (eligible && score >= .55f) scores[id] = score else scores.remove(id)
+        activeId = scores.maxByOrNull { it.value }?.key
+    }
+
+    @Synchronized
+    fun activate(id: String) {
+        scores[id] = 2f
+        activeId = id
+    }
+
+    @Synchronized
+    fun remove(id: String) {
+        scores.remove(id)
+        if (activeId == id) activeId = scores.maxByOrNull { it.value }?.key
+    }
+}
+
 @OptIn(UnstableApi::class)
 @Composable
 private fun TiwiVideo(url: String, modifier: Modifier, autoplay: Boolean = false, fallbackUrl: String? = null, posterUrl: String? = null) {
@@ -696,6 +737,8 @@ private fun TiwiVideo(url: String, modifier: Modifier, autoplay: Boolean = false
     var manuallyPaused by remember(activeUrl) { mutableStateOf(false) }
     var playing by remember(activeUrl) { mutableStateOf(false) }
     var showPauseOverlay by remember(activeUrl) { mutableStateOf(false) }
+    val playerId = remember(activeUrl) { "$activeUrl#${System.nanoTime()}" }
+    val isActivePlayer = TiwiPlaybackCoordinator.activeId == playerId
     val player = remember(activeUrl) {
         TiwiPlaybackCache.player(context).apply {
             setMediaItem(MediaItem.fromUri(activeUrl))
@@ -703,10 +746,11 @@ private fun TiwiVideo(url: String, modifier: Modifier, autoplay: Boolean = false
             repeatMode = if (autoplay) ExoPlayer.REPEAT_MODE_ONE else ExoPlayer.REPEAT_MODE_OFF
         }
     }
-    LaunchedEffect(player, autoplay, visibleEnough, manuallyPaused) {
+    LaunchedEffect(player, autoplay, visibleEnough, manuallyPaused, isActivePlayer) {
         player.repeatMode = if (autoplay) ExoPlayer.REPEAT_MODE_ONE else ExoPlayer.REPEAT_MODE_OFF
-        if (autoplay && visibleEnough && !manuallyPaused) player.play() else player.pause()
+        if (autoplay && visibleEnough && isActivePlayer && !manuallyPaused) player.play() else if (autoplay || isActivePlayer) player.pause()
     }
+    LaunchedEffect(playerId, autoplay) { if (!autoplay) TiwiPlaybackCoordinator.remove(playerId) }
     LaunchedEffect(showPauseOverlay) {
         if (showPauseOverlay) { delay(650); showPauseOverlay = false }
     }
@@ -731,7 +775,7 @@ private fun TiwiVideo(url: String, modifier: Modifier, autoplay: Boolean = false
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_PAUSE, Lifecycle.Event.ON_STOP -> player.pause()
-                Lifecycle.Event.ON_RESUME -> if (autoplay && visibleEnough && !manuallyPaused) player.play()
+                Lifecycle.Event.ON_RESUME -> if (autoplay && visibleEnough && isActivePlayer && !manuallyPaused) player.play()
                 else -> Unit
             }
         }
@@ -740,6 +784,7 @@ private fun TiwiVideo(url: String, modifier: Modifier, autoplay: Boolean = false
         onDispose {
             player.removeListener(listener)
             lifecycleOwner.lifecycle.removeObserver(observer)
+            TiwiPlaybackCoordinator.remove(playerId)
             player.release()
         }
     }
@@ -748,7 +793,11 @@ private fun TiwiVideo(url: String, modifier: Modifier, autoplay: Boolean = false
             val bounds = coordinates.boundsInWindow()
             val screenHeight = context.resources.displayMetrics.heightPixels.toFloat()
             val visibleHeight = (minOf(bounds.bottom, screenHeight) - maxOf(bounds.top, 0f)).coerceAtLeast(0f)
-            visibleEnough = bounds.height > 0f && visibleHeight / bounds.height >= .6f
+            val ratio = if (bounds.height > 0f) visibleHeight / bounds.height else 0f
+            val itemCenter = (bounds.top + bounds.bottom) / 2f
+            val centerDistance = kotlin.math.abs(itemCenter - screenHeight / 2f) / screenHeight
+            visibleEnough = ratio >= .55f
+            TiwiPlaybackCoordinator.update(playerId, ratio - centerDistance * .15f, autoplay)
         }
     ) {
         AndroidView(
@@ -760,7 +809,7 @@ private fun TiwiVideo(url: String, modifier: Modifier, autoplay: Boolean = false
             AsyncImage(model = posterUrl, contentDescription = "Video thumbnail", modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
         }
         Box(Modifier.fillMaxSize().clickable {
-            if (playing) { manuallyPaused = true; player.pause() } else { manuallyPaused = false; player.play() }
+            if (playing) { manuallyPaused = true; player.pause() } else { manuallyPaused = false; TiwiPlaybackCoordinator.activate(playerId); player.play() }
             showPauseOverlay = true
         })
         if (buffering && visibleEnough) CircularProgressIndicator(Modifier.align(Alignment.Center).size(30.dp), color = Color.White, strokeWidth = 2.5.dp)
@@ -829,10 +878,37 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
     val posts = remember(apiPosts) { apiPosts.map(::toUiPost) }
     val reels = remember(apiPosts) { apiPosts.filter { it.type == "reel" || it.type == "video" }.map(::toUiReel) }
     val scope = rememberCoroutineScope()
+    val appContext = LocalContext.current
     val appView = LocalView.current
-    val appActivity = LocalContext.current as? Activity
+    val appActivity = appContext as? Activity
+    val permissionPreferences = remember { appContext.getSharedPreferences("tiwi_first_run_permissions", Context.MODE_PRIVATE) }
+    var showPermissionIntro by remember { mutableStateOf(!permissionPreferences.getBoolean("requested_v1", false)) }
+    val firstRunPermissions = remember {
+        buildList {
+            add(Manifest.permission.CAMERA)
+            add(Manifest.permission.RECORD_AUDIO)
+            add(Manifest.permission.ACCESS_FINE_LOCATION)
+            if (Build.VERSION.SDK_INT >= 33) {
+                add(Manifest.permission.POST_NOTIFICATIONS)
+                add(Manifest.permission.READ_MEDIA_IMAGES)
+                add(Manifest.permission.READ_MEDIA_VIDEO)
+            } else add(Manifest.permission.READ_EXTERNAL_STORAGE)
+        }.filter { ContextCompat.checkSelfPermission(appContext, it) != PackageManager.PERMISSION_GRANTED }.toTypedArray()
+    }
+    val firstRunPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        permissionPreferences.edit().putBoolean("requested_v1", true).apply()
+    }
     val hasOverlay = showProfile || showCreatePost || showMessages || showConnect || selectedProfileUserId != null || selectedChat != null || selectedPostId != null
     val darkChrome = selectedTab == 2 && !hasOverlay
+
+    if (showPermissionIntro) AlertDialog(
+        onDismissRequest = {}, containerColor = Color.White, tonalElevation = 0.dp,
+        icon = { Icon(Icons.Default.Security, null, tint = TiwiBlue) },
+        title = { Text("Enable Tiwi features") },
+        text = { Text("Tiwi uses notifications for activity, photos and videos for posts, camera and microphone for calls, and location only when you choose to add it. You can change these permissions anytime in Android settings.") },
+        confirmButton = { TextButton(onClick = { showPermissionIntro = false; permissionPreferences.edit().putBoolean("requested_v1", true).apply(); if (firstRunPermissions.isNotEmpty()) firstRunPermissionLauncher.launch(firstRunPermissions) }) { Text("Continue", fontWeight = FontWeight.Bold) } },
+        dismissButton = { TextButton(onClick = { showPermissionIntro = false; permissionPreferences.edit().putBoolean("requested_v1", true).apply() }) { Text("Not now") } }
+    )
 
     SideEffect {
         appActivity?.window?.let { window ->
@@ -1161,6 +1237,8 @@ fun PostCard(post: Post, repository: SocialRepository, onShareClick: () -> Unit 
     var showDelete by remember { mutableStateOf(false) }
     var showReport by remember { mutableStateOf(false) }
     var showVerified by remember { mutableStateOf(false) }
+    var showPrivacy by remember { mutableStateOf(false) }
+    var showCommentPolicy by remember { mutableStateOf(false) }
     var editBody by remember(post.content) { mutableStateOf(post.content) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -1215,16 +1293,8 @@ fun PostCard(post: Post, repository: SocialRepository, onShareClick: () -> Unit 
                     }
                 }
             }
-            Box {
             IconButton(onClick = { showMenu = true }, modifier = Modifier.size(36.dp)) {
                 Icon(Icons.Default.MoreVert, contentDescription = "More")
-            }
-                DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
-                    if (isOwn) {
-                        DropdownMenuItem(text = { Text("Edit post") }, leadingIcon = { Icon(Icons.Default.Edit, null) }, onClick = { showMenu = false; showEdit = true })
-                        DropdownMenuItem(text = { Text("Delete post", color = Color.Red) }, leadingIcon = { Icon(Icons.Default.Delete, null, tint = Color.Red) }, onClick = { showMenu = false; showDelete = true })
-                    } else DropdownMenuItem(text = { Text("Report post") }, leadingIcon = { Icon(Icons.Default.Flag, null) }, onClick = { showMenu = false; showReport = true })
-                }
             }
         }
 
@@ -1256,14 +1326,14 @@ fun PostCard(post: Post, repository: SocialRepository, onShareClick: () -> Unit 
                         Icon(Icons.Default.ThumbUp, null, tint = Color.White, modifier = Modifier.size(11.dp))
                     }
                     Spacer(Modifier.width(4.dp))
-                    Text(post.likes.toString(), color = Color.Gray, fontSize = 12.sp)
+                    Text(formatCount(post.likes), color = Color.Gray, fontSize = 12.sp)
                 }
                 Spacer(Modifier.weight(1f))
                 Text(
                     listOfNotNull(
-                        post.comments.takeIf { it > 0 }?.let { "$it comments" },
-                        post.shares.takeIf { it > 0 }?.let { "$it reposts" },
-                        post.views.takeIf { it > 0 }?.let { "$it views" }
+                        post.comments.takeIf { it > 0 }?.let { "${formatCount(it)} comments" },
+                        post.shares.takeIf { it > 0 }?.let { "${formatCount(it)} reposts" },
+                        post.views.takeIf { it > 0 }?.let { "${formatCount(it)} views" }
                     ).joinToString(" · "),
                     color = Color.Gray,
                     fontSize = 12.sp
@@ -1288,8 +1358,8 @@ fun PostCard(post: Post, repository: SocialRepository, onShareClick: () -> Unit 
             IconButton(onClick = onShareClick, modifier = Modifier.size(36.dp)) { Icon(Icons.Outlined.Share, "Share", Modifier.size(20.dp), tint = Color.Gray) }
             Spacer(Modifier.weight(1f))
             CompactPostAction(Icons.Outlined.BarChart, post.views, description = "Views") { scope.launch { runCatching { repository.viewPost(post.id) } } }
-            IconButton(onClick = { Toast.makeText(context, "Saved", Toast.LENGTH_SHORT).show() }, modifier = Modifier.size(36.dp)) {
-                Icon(Icons.Outlined.BookmarkBorder, "Save", Modifier.size(20.dp), tint = Color.Gray)
+            IconButton(onClick = { scope.launch { runCatching { repository.savePost(post.id, !post.saved) }.onSuccess { Toast.makeText(context, if (post.saved) "Removed from Saved" else "Saved", Toast.LENGTH_SHORT).show() } } }, modifier = Modifier.size(36.dp)) {
+                Icon(if (post.saved) Icons.Filled.Bookmark else Icons.Outlined.BookmarkBorder, "Save", Modifier.size(20.dp), tint = if (post.saved) TiwiBlue else Color.Gray)
             }
         }
         
@@ -1309,6 +1379,30 @@ fun PostCard(post: Post, repository: SocialRepository, onShareClick: () -> Unit 
         confirmButton = { TextButton(onClick = { showReport = false; scope.launch { runCatching { repository.reportContent("post", post.id, "inappropriate_content") }.onSuccess { Toast.makeText(context, "Report sent", Toast.LENGTH_SHORT).show() } } }) { Text("Send report") } },
         dismissButton = { TextButton(onClick = { showReport = false }) { Text("Cancel") } })
     if (showVerified) VerifiedInfoSheet(post.author, post.authorAvatarUrl, post.badgeType, onDismiss = { showVerified = false })
+    if (showMenu) PostActionsSheet(
+        post = post, isOwn = isOwn, onDismiss = { showMenu = false },
+        onEdit = { showMenu = false; showEdit = true }, onDelete = { showMenu = false; showDelete = true },
+        onReport = { showMenu = false; showReport = true }, onPrivacy = { showMenu = false; showPrivacy = true },
+        onCommentPolicy = { showMenu = false; showCommentPolicy = true }, onShare = { showMenu = false; onShareClick() },
+        onSave = { showMenu = false; scope.launch { runCatching { repository.savePost(post.id, !post.saved) }.onSuccess { Toast.makeText(context, if (post.saved) "Removed from Saved" else "Saved", Toast.LENGTH_SHORT).show() } } },
+        onFavorite = { showMenu = false; scope.launch { runCatching { repository.favoriteUser(post.authorId, true) }.onSuccess { Toast.makeText(context, "${post.author} added to Favorites", Toast.LENGTH_SHORT).show() } } },
+        onSnooze = { showMenu = false; scope.launch { runCatching { repository.snoozeUser(post.authorId, 30) }.onSuccess { Toast.makeText(context, "${post.author} snoozed for 30 days", Toast.LENGTH_SHORT).show() } } },
+        onPin = { showMenu = false; scope.launch { runCatching { repository.updatePostOptions(post.id, pinned = !post.pinned) }.onSuccess { Toast.makeText(context, if (post.pinned) "Post unpinned" else "Post pinned", Toast.LENGTH_SHORT).show() } } },
+        onCopy = {
+            showMenu = false
+            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            clipboard.setPrimaryClip(ClipData.newPlainText("Tiwi post", "https://tiwlo.com/social/post/${post.id}"))
+            Toast.makeText(context, "Link copied", Toast.LENGTH_SHORT).show()
+        },
+        onCreateAd = { showMenu = false; context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://tiwlo.com/ads/create?post=${post.id}"))) },
+        onPartnership = { showMenu = false; context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://tiwlo.com/social/partnership?post=${post.id}"))) }
+    )
+    if (showPrivacy) ChoiceDialog("Post audience", listOf("public" to "Public", "followers" to "Followers", "private" to "Only me"), post.visibility, { showPrivacy = false }) { value ->
+        showPrivacy = false; scope.launch { runCatching { repository.updatePostOptions(post.id, visibility = value) } }
+    }
+    if (showCommentPolicy) ChoiceDialog("Who can comment", listOf("everyone" to "Everyone", "followers" to "Followers", "none" to "No one"), post.commentPermission, { showCommentPolicy = false }) { value ->
+        showCommentPolicy = false; scope.launch { runCatching { repository.updatePostOptions(post.id, commentPermission = value) } }
+    }
 }
 
 @Composable
@@ -1323,8 +1417,60 @@ private fun CompactPostAction(
         IconButton(onClick = onClick, modifier = Modifier.size(34.dp)) {
             Icon(icon, contentDescription = description, modifier = Modifier.size(20.dp), tint = tint)
         }
-        if (count > 0) Text(count.toString(), style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+        if (count > 0) Text(formatCount(count), style = MaterialTheme.typography.labelSmall, color = Color.Gray)
     }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PostActionsSheet(
+    post: Post, isOwn: Boolean, onDismiss: () -> Unit, onEdit: () -> Unit, onDelete: () -> Unit, onReport: () -> Unit,
+    onPrivacy: () -> Unit, onCommentPolicy: () -> Unit, onShare: () -> Unit, onSave: () -> Unit, onFavorite: () -> Unit,
+    onSnooze: () -> Unit, onPin: () -> Unit, onCopy: () -> Unit, onCreateAd: () -> Unit, onPartnership: () -> Unit
+) {
+    var more by remember { mutableStateOf(false) }
+    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = Color.White, contentColor = Color.Black, tonalElevation = 0.dp) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
+            Text(if (isOwn) "Manage your post" else "Post options", fontWeight = FontWeight.Bold, fontSize = 19.sp, modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp))
+            if (isOwn) {
+                PostActionRow(Icons.Outlined.Edit, "Edit post", "Update the text in this post", onEdit)
+                PostActionRow(if (post.pinned) Icons.Outlined.PushPin else Icons.Filled.PushPin, if (post.pinned) "Unpin post" else "Pin post", "Keep an important post at the top", onPin)
+                PostActionRow(Icons.Outlined.Lock, "Edit privacy", post.visibility.replaceFirstChar { it.uppercase() }, onPrivacy)
+                PostActionRow(Icons.Outlined.ChatBubbleOutline, "Who can comment", post.commentPermission.replaceFirstChar { it.uppercase() }, onCommentPolicy)
+                PostActionRow(Icons.Outlined.ContentCopy, "Copy link", "Share a direct deep link", onCopy)
+                PostActionRow(Icons.Outlined.Campaign, "Create ad", "Promote this post with Tiwlo Ads", onCreateAd)
+                PostActionRow(Icons.Outlined.Handshake, "Partnership label", "Manage branded-content partnership", onPartnership)
+                PostActionRow(Icons.Outlined.Delete, "Delete this post", "This cannot be undone", onDelete, Color(0xFFB42318))
+            } else {
+                PostActionRow(if (post.saved) Icons.Filled.Bookmark else Icons.Outlined.BookmarkBorder, if (post.saved) "Remove from Saved" else "Save post or reel", "Find it later in Your Shortcuts", onSave)
+                PostActionRow(Icons.Outlined.Flag, "Report post", "Send it to Tiwi moderators", onReport)
+                PostActionRow(Icons.Outlined.Share, "Share", "Send, repost or copy a link", onShare)
+                PostActionRow(Icons.Outlined.Tune, if (more) "Fewer options" else "More options", "Control what appears in your feed", { more = !more })
+                if (more) {
+                    PostActionRow(Icons.Outlined.StarOutline, "Add ${post.author} to Favorites", "See this person's posts higher in Feed", onFavorite)
+                    PostActionRow(Icons.Outlined.Snooze, "Snooze ${post.author} for 30 days", "Temporarily hide this person's posts", onSnooze)
+                    PostActionRow(Icons.Outlined.ContentCopy, "Copy link", "Copy the post deep link", onCopy)
+                }
+            }
+            Spacer(Modifier.navigationBarsPadding().height(10.dp))
+        }
+    }
+}
+
+@Composable
+private fun PostActionRow(icon: ImageVector, title: String, subtitle: String, onClick: () -> Unit, tint: Color = Color(0xFF344054)) {
+    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).clickable(onClick = onClick).padding(horizontal = 9.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(42.dp).background(Color(0xFFF0F2F5), CircleShape), contentAlignment = Alignment.Center) { Icon(icon, null, tint = tint, modifier = Modifier.size(22.dp)) }
+        Column(Modifier.weight(1f).padding(start = 11.dp)) { Text(title, fontWeight = FontWeight.SemiBold, color = tint); Text(subtitle, fontSize = 12.sp, color = Color.Gray) }
+        Icon(Icons.Default.ChevronRight, null, tint = Color.Gray, modifier = Modifier.size(19.dp))
+    }
+}
+
+@Composable
+private fun ChoiceDialog(title: String, options: List<Pair<String, String>>, selected: String, onDismiss: () -> Unit, onSelect: (String) -> Unit) {
+    AlertDialog(onDismissRequest = onDismiss, containerColor = Color.White, tonalElevation = 0.dp, title = { Text(title) }, text = {
+        Column { options.forEach { option -> Row(Modifier.fillMaxWidth().clickable { onSelect(option.first) }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) { RadioButton(selected == option.first, onClick = { onSelect(option.first) }); Text(option.second, Modifier.padding(start = 8.dp)) } } }
+    }, confirmButton = {}, dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
 }
 
 @Composable
@@ -1414,6 +1560,7 @@ private fun PostDetailScreen(repository: SocialRepository, postId: String, onBac
     val commentsByPost by repository.comments.collectAsState()
     val post = feed.firstOrNull { it.id == postId }?.let(::toUiPost)
     val comments = commentsByPost[postId].orEmpty()
+    val expandedReplies = remember(postId) { mutableStateMapOf<String, Boolean>() }
     var text by remember { mutableStateOf("") }
     var replyTo by remember { mutableStateOf<SocialComment?>(null) }
     var sending by remember { mutableStateOf(false) }
@@ -1437,16 +1584,38 @@ private fun PostDetailScreen(repository: SocialRepository, postId: String, onBac
             post?.let { item { PostCard(it, repository, onShareClick = { onShare(it) }, onAuthorClick = { onProfileClick(it.authorId) }) } }
             item { Text("Comments", modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp), fontWeight = FontWeight.Bold) }
             if (comments.isEmpty()) item { Text("Be the first to comment", color = Color.Gray, modifier = Modifier.padding(24.dp).fillMaxWidth(), textAlign = TextAlign.Center) }
-            items(comments, key = { it.id }) { comment ->
-                CommentRow(
-                    comment = comment,
-                    isOwn = comment.authorId == repository.currentUserId(),
-                    onProfile = { onProfileClick(comment.authorId) },
-                    onReply = { replyTo = comment; text = "@${comment.author.name} " },
-                    onLike = { scope.launch { runCatching { repository.reactToComment(postId, comment.id) } } },
-                    onDelete = { scope.launch { runCatching { repository.deleteComment(postId, comment.id) } } },
-                    onReport = { scope.launch { runCatching { repository.reportContent("comment", comment.id, "inappropriate_content") }.onSuccess { Toast.makeText(context, "Report sent", Toast.LENGTH_SHORT).show() } } }
-                )
+            val byId = comments.associateBy { it.id }
+            val roots = comments.filter { it.replyToId == null }
+            roots.forEach { root ->
+                item(key = root.id) {
+                    CommentRow(
+                        comment = root, isOwn = root.authorId == repository.currentUserId(), onProfile = { onProfileClick(root.authorId) },
+                        onReply = { replyTo = root; text = "@${root.author.name} " },
+                        onLike = { scope.launch { runCatching { repository.reactToComment(postId, root.id) } } },
+                        onDelete = { scope.launch { runCatching { repository.deleteComment(postId, root.id) } } },
+                        onReport = { scope.launch { runCatching { repository.reportContent("comment", root.id, "inappropriate_content") }.onSuccess { Toast.makeText(context, "Report sent", Toast.LENGTH_SHORT).show() } } }
+                    )
+                }
+                val replies = comments.filter { candidate ->
+                    if (candidate.replyToId == null) false else generateSequence(candidate.replyToId) { id -> byId[id]?.replyToId }.take(20).any { it == root.id }
+                }.sortedBy { it.createdAt }
+                val shown = if (expandedReplies[root.id] == true) replies else replies.take(1)
+                items(shown, key = { it.id }) { comment ->
+                    CommentRow(
+                        comment = comment, isOwn = comment.authorId == repository.currentUserId(), onProfile = { onProfileClick(comment.authorId) },
+                        onReply = { replyTo = comment; text = "@${comment.author.name} " },
+                        onLike = { scope.launch { runCatching { repository.reactToComment(postId, comment.id) } } },
+                        onDelete = { scope.launch { runCatching { repository.deleteComment(postId, comment.id) } } },
+                        onReport = { scope.launch { runCatching { repository.reportContent("comment", comment.id, "inappropriate_content") }.onSuccess { Toast.makeText(context, "Report sent", Toast.LENGTH_SHORT).show() } } }
+                    )
+                }
+                if (replies.size > shown.size) item(key = "more-${root.id}") {
+                    Text(
+                        "View ${replies.size - shown.size} more ${if (replies.size - shown.size == 1) "reply" else "replies"}",
+                        modifier = Modifier.padding(start = 88.dp, top = 2.dp, bottom = 8.dp).clickable { expandedReplies[root.id] = true },
+                        color = Color.Gray, fontWeight = FontWeight.Bold, fontSize = 12.sp
+                    )
+                }
             }
         }
         replyTo?.let { target ->
@@ -1503,8 +1672,9 @@ private fun CommentRow(
             }
             Text(comment.body, color = MaterialTheme.colorScheme.onBackground)
             Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(relativePostTime(comment.createdAt), fontSize = 11.sp, color = Color.Gray, modifier = Modifier.padding(end = 10.dp))
                 Text("Reply", modifier = Modifier.clickable(onClick = onReply).padding(vertical = 5.dp), fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color.Gray)
-                if (comment.reactionCount > 0) Text("  ${comment.reactionCount} likes", fontSize = 11.sp, color = Color.Gray)
+                if (comment.reactionCount > 0) Text("  ${formatCount(comment.reactionCount)} likes", fontSize = 11.sp, color = Color.Gray)
             }
         }
         IconButton(onClick = onLike, modifier = Modifier.size(34.dp)) {
@@ -2015,8 +2185,20 @@ fun ReelsScreen(reels: List<Reel>, repository: SocialRepository, onOpen: (String
         }
         return
     }
+    val feed by repository.feed.collectAsState()
+    val context = LocalContext.current
+    var actionPost by remember { mutableStateOf<Post?>(null) }
+    var editPost by remember { mutableStateOf<Post?>(null) }
+    var editText by remember { mutableStateOf("") }
+    var deletePost by remember { mutableStateOf<Post?>(null) }
+    var privacyPost by remember { mutableStateOf<Post?>(null) }
+    var commentsPost by remember { mutableStateOf<Post?>(null) }
     val pagerState = rememberPagerState(pageCount = { reels.size })
     val scope = rememberCoroutineScope()
+    val currentReelId = reels.getOrNull(pagerState.currentPage)?.id
+    LaunchedEffect(pagerState.currentPage, currentReelId) {
+        currentReelId?.let { id -> runCatching { repository.viewPost(id) } }
+    }
     VerticalPager(state = pagerState, beyondViewportPageCount = 1, modifier = Modifier.fillMaxSize().background(Color.Black)) { page ->
         val reel = reels[page]
         Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
@@ -2036,15 +2218,19 @@ fun ReelsScreen(reels: List<Reel>, repository: SocialRepository, onOpen: (String
                     )
             )
             Text("Reels", modifier = Modifier.align(Alignment.TopStart).statusBarsPadding().padding(horizontal = 14.dp, vertical = 10.dp), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 20.sp)
+            IconButton(onClick = { feed.firstOrNull { it.id == reel.id }?.let { actionPost = toUiPost(it) } }, modifier = Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(end = 5.dp, top = 3.dp)) { Icon(Icons.Default.MoreVert, "Reel options", tint = Color.White) }
             Column(
                 modifier = Modifier.align(Alignment.BottomEnd).padding(end = 10.dp, bottom = 14.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 IconButton(onClick = { scope.launch { runCatching { repository.reactToPost(reel.id) } } }) { Icon(Icons.Default.Favorite, "Like", tint = Color.White, modifier = Modifier.size(30.dp)) }
-                Text(reel.likes.toString(), color = Color.White, style = MaterialTheme.typography.labelMedium)
+                Text(formatCount(reel.likes), color = Color.White, style = MaterialTheme.typography.labelMedium)
                 Spacer(modifier = Modifier.height(12.dp))
                 IconButton(onClick = { onOpen(reel.id) }) { Icon(Icons.Default.Comment, "Comment", tint = Color.White, modifier = Modifier.size(30.dp)) }
-                Text(reel.comments.toString(), color = Color.White, style = MaterialTheme.typography.labelMedium)
+                Text(formatCount(reel.comments), color = Color.White, style = MaterialTheme.typography.labelMedium)
+                Spacer(modifier = Modifier.height(12.dp))
+                Icon(Icons.Default.Visibility, "Views", tint = Color.White, modifier = Modifier.size(27.dp))
+                Text(formatCount(reel.views), color = Color.White, style = MaterialTheme.typography.labelMedium)
                 Spacer(modifier = Modifier.height(12.dp))
                 IconButton(onClick = { onShare(reel) }) { Icon(Icons.Default.Share, "Share", tint = Color.White, modifier = Modifier.size(30.dp)) }
                 Text("Share", color = Color.White, style = MaterialTheme.typography.labelMedium)
@@ -2078,6 +2264,28 @@ fun ReelsScreen(reels: List<Reel>, repository: SocialRepository, onOpen: (String
             }
         }
     }
+    actionPost?.let { post ->
+        val isOwn = post.authorId == repository.currentUserId()
+        PostActionsSheet(
+            post, isOwn, onDismiss = { actionPost = null },
+            onEdit = { editPost = post; editText = post.content; actionPost = null },
+            onDelete = { deletePost = post; actionPost = null },
+            onReport = { actionPost = null; scope.launch { runCatching { repository.reportContent("post", post.id, "inappropriate_content") }.onSuccess { Toast.makeText(context, "Report sent", Toast.LENGTH_SHORT).show() } } },
+            onPrivacy = { privacyPost = post; actionPost = null }, onCommentPolicy = { commentsPost = post; actionPost = null },
+            onShare = { actionPost = null; reels.firstOrNull { it.id == post.id }?.let(onShare) },
+            onSave = { actionPost = null; scope.launch { runCatching { repository.savePost(post.id, !post.saved) }.onSuccess { Toast.makeText(context, if (post.saved) "Removed from Saved" else "Saved", Toast.LENGTH_SHORT).show() } } },
+            onFavorite = { actionPost = null; scope.launch { runCatching { repository.favoriteUser(post.authorId, true) }.onSuccess { Toast.makeText(context, "Added to Favorites", Toast.LENGTH_SHORT).show() } } },
+            onSnooze = { actionPost = null; scope.launch { runCatching { repository.snoozeUser(post.authorId, 30) }.onSuccess { Toast.makeText(context, "Snoozed for 30 days", Toast.LENGTH_SHORT).show() } } },
+            onPin = { actionPost = null; scope.launch { runCatching { repository.updatePostOptions(post.id, pinned = !post.pinned) } } },
+            onCopy = { actionPost = null; (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("Tiwi reel", "https://tiwlo.com/social/post/${post.id}")); Toast.makeText(context, "Link copied", Toast.LENGTH_SHORT).show() },
+            onCreateAd = { actionPost = null; context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://tiwlo.com/ads/create?post=${post.id}"))) },
+            onPartnership = { actionPost = null; context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://tiwlo.com/social/partnership?post=${post.id}"))) }
+        )
+    }
+    editPost?.let { post -> AlertDialog(onDismissRequest = { editPost = null }, containerColor = Color.White, tonalElevation = 0.dp, title = { Text("Edit reel") }, text = { OutlinedTextField(editText, { editText = it }, modifier = Modifier.fillMaxWidth(), minLines = 3) }, confirmButton = { TextButton(onClick = { editPost = null; scope.launch { runCatching { repository.updatePost(post.id, editText) } } }) { Text("Save") } }, dismissButton = { TextButton(onClick = { editPost = null }) { Text("Cancel") } }) }
+    deletePost?.let { post -> AlertDialog(onDismissRequest = { deletePost = null }, containerColor = Color.White, tonalElevation = 0.dp, title = { Text("Delete reel?") }, text = { Text("This removes the reel from Tiwi.") }, confirmButton = { TextButton(onClick = { deletePost = null; scope.launch { runCatching { repository.deletePost(post.id) } } }) { Text("Delete", color = Color.Red) } }, dismissButton = { TextButton(onClick = { deletePost = null }) { Text("Cancel") } }) }
+    privacyPost?.let { post -> ChoiceDialog("Reel audience", listOf("public" to "Public", "followers" to "Followers", "private" to "Only me"), post.visibility, { privacyPost = null }) { value -> privacyPost = null; scope.launch { runCatching { repository.updatePostOptions(post.id, visibility = value) } } } }
+    commentsPost?.let { post -> ChoiceDialog("Who can comment", listOf("everyone" to "Everyone", "followers" to "Followers", "none" to "No one"), post.commentPermission, { commentsPost = null }) { value -> commentsPost = null; scope.launch { runCatching { repository.updatePostOptions(post.id, commentPermission = value) } } } }
 }
 
 @Composable
@@ -2272,12 +2480,18 @@ fun NotificationsScreen(repository: SocialRepository) {
 @Composable
 fun MenuScreen(repository: SocialRepository, name: String, avatarUrl: String?, onProfileClick: () -> Unit, onLogout: () -> Unit) {
     var selectedSetting by remember { mutableStateOf<String?>(null) }
+    var selectedShortcut by remember { mutableStateOf<String?>(null) }
     var showEditProfile by remember { mutableStateOf(false) }
     val profile by repository.profile.collectAsState()
     val context = LocalContext.current
     selectedSetting?.let { setting ->
         BackHandler { selectedSetting = null }
         SocialSettingsPage(repository, profile, setting, onBack = { selectedSetting = null })
+        return
+    }
+    selectedShortcut?.let { shortcut ->
+        BackHandler { selectedShortcut = null }
+        ShortcutScreen(repository, shortcut, onBack = { selectedShortcut = null })
         return
     }
     Column(modifier = Modifier.fillMaxSize().background(Color.White).statusBarsPadding().padding(horizontal = 10.dp)) {
@@ -2348,7 +2562,7 @@ fun MenuScreen(repository: SocialRepository, name: String, avatarUrl: String?, o
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     shortcuts.forEach { item ->
                         Surface(
-                            modifier = Modifier.weight(1f).height(100.dp),
+                            modifier = Modifier.weight(1f).height(100.dp).clickable { selectedShortcut = item.first },
                             color = Color.White,
                             shape = RoundedCornerShape(10.dp),
                             border = BorderStroke(1.dp, Color(0xFFE3E6EA)),
@@ -2408,6 +2622,120 @@ fun MenuScreen(repository: SocialRepository, name: String, avatarUrl: String?, o
 }
 
 @Composable
+private fun ShortcutScreen(repository: SocialRepository, shortcut: String, onBack: () -> Unit) {
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    var loading by remember(shortcut) { mutableStateOf(true) }
+    var posts by remember(shortcut) { mutableStateOf<List<SocialPost>>(emptyList()) }
+    LaunchedEffect(shortcut) {
+        if (shortcut != "Groups") {
+            loading = true
+            runCatching { if (shortcut == "Saved") repository.savedPosts() else repository.memories() }
+                .onSuccess { posts = it }.onFailure { Toast.makeText(context, it.message ?: "Could not load $shortcut", Toast.LENGTH_LONG).show() }
+            loading = false
+        }
+    }
+    Column(Modifier.fillMaxSize().background(Color.White).statusBarsPadding()) {
+        Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
+            Text(shortcut, fontWeight = FontWeight.Bold, fontSize = 19.sp)
+        }
+        HorizontalDivider(color = Color(0xFFE9EAED), thickness = .5.dp)
+        if (shortcut == "Groups") GroupShortcutContent(repository)
+        else when {
+            loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 2.5.dp) }
+            posts.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Column(horizontalAlignment = Alignment.CenterHorizontally) { Icon(if (shortcut == "Saved") Icons.Outlined.BookmarkBorder else Icons.Outlined.History, null, tint = Color.Gray, modifier = Modifier.size(44.dp)); Text(if (shortcut == "Saved") "No saved posts yet" else "No memories yet", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 10.dp)); Text(if (shortcut == "Saved") "Use a post menu to save it here." else "Posts older than 30 days will appear here.", color = Color.Gray, fontSize = 12.sp) } }
+            else -> LazyColumn(Modifier.fillMaxSize()) { items(posts, key = { it.id }) { value -> PostCard(toUiPost(value), repository) } }
+        }
+    }
+}
+
+@Composable
+private fun GroupShortcutContent(repository: SocialRepository) {
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    var query by remember { mutableStateOf("") }
+    var mineOnly by remember { mutableStateOf(false) }
+    var groups by remember { mutableStateOf<List<SocialGroup>>(emptyList()) }
+    var selectedGroup by remember { mutableStateOf<SocialGroup?>(null) }
+    var members by remember { mutableStateOf<List<SocialGroupMember>>(emptyList()) }
+    var groupPosts by remember { mutableStateOf<List<SocialPost>>(emptyList()) }
+    var loading by remember { mutableStateOf(true) }
+    var showCreate by remember { mutableStateOf(false) }
+    var showSettings by remember { mutableStateOf(false) }
+    var postText by remember { mutableStateOf("") }
+
+    suspend fun refreshGroups() {
+        loading = true
+        runCatching { repository.groups(query, mineOnly) }.onSuccess { groups = it }.onFailure { Toast.makeText(context, it.message ?: "Groups could not load", Toast.LENGTH_LONG).show() }
+        loading = false
+    }
+    LaunchedEffect(query, mineOnly) { delay(250); refreshGroups() }
+    LaunchedEffect(selectedGroup?.id) {
+        val group = selectedGroup ?: return@LaunchedEffect
+        runCatching { repository.group(group.id) }.getOrNull()?.let { selectedGroup = it }
+        members = runCatching { repository.groupMembers(group.id) }.getOrDefault(emptyList())
+        groupPosts = runCatching { repository.groupPosts(group.id) }.getOrDefault(emptyList())
+    }
+    val group = selectedGroup
+    if (group != null) {
+        BackHandler { selectedGroup = null }
+        Column(Modifier.fillMaxSize()) {
+            Row(Modifier.fillMaxWidth().height(48.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = { selectedGroup = null }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Groups") }
+                Text(group.name, Modifier.weight(1f), fontWeight = FontWeight.Bold, maxLines = 1)
+                if (group.viewerRole == "admin") IconButton(onClick = { showSettings = true }) { Icon(Icons.Outlined.Settings, "Group settings") }
+            }
+            LazyColumn(Modifier.fillMaxSize()) {
+                item {
+                    Box(Modifier.fillMaxWidth().height(150.dp).background(Color(0xFFEAF3FF))) { if (!group.coverUrl.isNullOrBlank()) AsyncImage(group.coverUrl, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop); Icon(Icons.Default.Group, null, tint = TiwiBlue, modifier = Modifier.align(Alignment.Center).size(48.dp)) }
+                    Column(Modifier.padding(14.dp)) {
+                        Text(group.name, fontWeight = FontWeight.ExtraBold, fontSize = 22.sp)
+                        Text("${formatCount(group.memberCount)} members • ${group.privacy.replaceFirstChar { it.uppercase() }} group", color = Color.Gray, fontSize = 12.sp)
+                        if (!group.description.isNullOrBlank()) Text(group.description, modifier = Modifier.padding(top = 7.dp))
+                        Button(onClick = { scope.launch { if (group.viewerJoined) runCatching { repository.leaveGroup(group.id) }.onSuccess { selectedGroup = null; refreshGroups() } else runCatching { repository.joinGroup(group.id) }.onSuccess { selectedGroup = it } } }, modifier = Modifier.fillMaxWidth().padding(top = 10.dp), shape = RoundedCornerShape(8.dp)) { Text(if (group.viewerJoined) "Leave group" else "Join group", fontWeight = FontWeight.Bold) }
+                    }
+                }
+                if (group.viewerJoined) item {
+                    Surface(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 5.dp), color = Color.White, border = BorderStroke(1.dp, Color(0xFFE3E6EA)), shape = RoundedCornerShape(12.dp), tonalElevation = 0.dp) {
+                        Column(Modifier.padding(12.dp)) { OutlinedTextField(postText, { postText = it }, label = { Text("Write something to the group") }, modifier = Modifier.fillMaxWidth(), minLines = 2); Button(enabled = postText.isNotBlank(), onClick = { val body = postText; postText = ""; scope.launch { runCatching { repository.createPost(body, groupId = group.id) }.onSuccess { groupPosts = listOf(it) + groupPosts }.onFailure { Toast.makeText(context, it.message ?: "Post failed", Toast.LENGTH_LONG).show() } } }, modifier = Modifier.align(Alignment.End).padding(top = 7.dp), shape = RoundedCornerShape(8.dp)) { Text("Post") } }
+                    }
+                }
+                item { Text("Members", fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) }
+                items(members, key = { "member-${it.id}" }) { member ->
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        TiwiAvatar(member.user.avatar, R.drawable.img_tiwi_avatar_1, Modifier.size(40.dp).clip(CircleShape)); Column(Modifier.weight(1f).padding(start = 9.dp)) { Text(member.user.name, fontWeight = FontWeight.SemiBold); Text(member.role.replaceFirstChar { it.uppercase() }, color = Color.Gray, fontSize = 11.sp) }
+                        if (group.viewerRole == "admin" && member.userId != repository.currentUserId() && member.userId != group.ownerId) {
+                            TextButton(onClick = { scope.launch { val next = if (member.role == "member") "editor" else "member"; runCatching { repository.updateGroupMember(group.id, member.userId, next) }.onSuccess { members = repository.groupMembers(group.id) } } }) { Text(if (member.role == "member") "Make editor" else "Make member", fontSize = 11.sp) }
+                            IconButton(onClick = { scope.launch { runCatching { repository.updateGroupMember(group.id, member.userId, remove = true) }.onSuccess { members = repository.groupMembers(group.id) } } }) { Icon(Icons.Outlined.PersonRemove, "Remove") }
+                        }
+                    }
+                }
+                if (groupPosts.isNotEmpty()) item { Text("Group posts", fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) }
+                items(groupPosts, key = { "group-post-${it.id}" }) { value -> PostCard(toUiPost(value), repository) }
+                item { Spacer(Modifier.navigationBarsPadding().height(16.dp)) }
+            }
+        }
+    } else Column(Modifier.fillMaxSize()) {
+        Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(query, { query = it }, placeholder = { Text("Search groups") }, leadingIcon = { Icon(Icons.Default.Search, null) }, singleLine = true, modifier = Modifier.weight(1f), shape = RoundedCornerShape(24.dp))
+            IconButton(onClick = { showCreate = true }) { Icon(Icons.Default.AddCircle, "Create group", tint = TiwiBlue) }
+        }
+        Row(Modifier.padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically) { FilterChip(selected = !mineOnly, onClick = { mineOnly = false }, label = { Text("Discover") }); Spacer(Modifier.width(8.dp)); FilterChip(selected = mineOnly, onClick = { mineOnly = true }, label = { Text("Your groups") }) }
+        when { loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 2.5.dp) }; groups.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(if (mineOnly) "You haven't joined a group yet" else "No groups found", color = Color.Gray) }; else -> LazyColumn { items(groups, key = { it.id }) { value -> Surface(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 5.dp).clickable { selectedGroup = value }, color = Color.White, border = BorderStroke(1.dp, Color(0xFFE3E6EA)), shape = RoundedCornerShape(12.dp), tonalElevation = 0.dp) { Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) { Box(Modifier.size(58.dp).background(Color(0xFFEAF3FF), RoundedCornerShape(10.dp)), contentAlignment = Alignment.Center) { if (!value.coverUrl.isNullOrBlank()) AsyncImage(value.coverUrl, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) else Icon(Icons.Default.Group, null, tint = TiwiBlue) }; Column(Modifier.weight(1f).padding(start = 11.dp)) { Text(value.name, fontWeight = FontWeight.Bold); Text("${formatCount(value.memberCount)} members • ${value.privacy}", color = Color.Gray, fontSize = 12.sp) }; if (value.viewerJoined) AssistChip(onClick = { selectedGroup = value }, label = { Text("Joined") }) else Icon(Icons.Default.ChevronRight, null) } } } }
+        }
+    }
+    if (showCreate) GroupEditorDialog(title = "Create group", initialName = "", initialDescription = "", initialPrivacy = "public", onDismiss = { showCreate = false }) { name, description, privacy -> scope.launch { runCatching { repository.createGroup(name, description, privacy) }.onSuccess { showCreate = false; selectedGroup = it; refreshGroups() }.onFailure { Toast.makeText(context, it.message ?: "Group could not be created", Toast.LENGTH_LONG).show() } } }
+    if (showSettings && group != null) GroupEditorDialog(title = "Group settings", initialName = group.name, initialDescription = group.description.orEmpty(), initialPrivacy = group.privacy, onDismiss = { showSettings = false }) { name, description, privacy -> scope.launch { runCatching { repository.updateGroup(group.id, name, description, privacy) }.onSuccess { showSettings = false; selectedGroup = it }.onFailure { Toast.makeText(context, it.message ?: "Group could not be updated", Toast.LENGTH_LONG).show() } } }
+}
+
+@Composable
+private fun GroupEditorDialog(title: String, initialName: String, initialDescription: String, initialPrivacy: String, onDismiss: () -> Unit, onSave: (String, String, String) -> Unit) {
+    var name by remember { mutableStateOf(initialName) }; var description by remember { mutableStateOf(initialDescription) }; var privacy by remember { mutableStateOf(initialPrivacy) }
+    AlertDialog(onDismissRequest = onDismiss, containerColor = Color.White, tonalElevation = 0.dp, title = { Text(title) }, text = { Column(verticalArrangement = Arrangement.spacedBy(9.dp)) { OutlinedTextField(name, { name = it }, label = { Text("Group name") }, singleLine = true); OutlinedTextField(description, { description = it }, label = { Text("Description") }, minLines = 2); Row { FilterChip(selected = privacy == "public", onClick = { privacy = "public" }, label = { Text("Public") }); Spacer(Modifier.width(8.dp)); FilterChip(selected = privacy == "private", onClick = { privacy = "private" }, label = { Text("Private") }) } } }, confirmButton = { TextButton(enabled = name.isNotBlank(), onClick = { onSave(name, description, privacy) }) { Text("Save") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
+}
+
+@Composable
 private fun SocialSettingsPage(repository: SocialRepository, profile: SocialProfile?, page: String, onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -2431,7 +2759,7 @@ private fun SocialSettingsPage(repository: SocialRepository, profile: SocialProf
     var personalizedAds by remember(profile, page) { mutableStateOf(profile?.privacy?.get("personalizedAds") as? Boolean ?: true) }
     var sensitiveMedia by remember(profile, page) { mutableStateOf(profile?.privacy?.get("showSensitiveMedia") as? Boolean ?: false) }
     var verificationOptions by remember { mutableStateOf<SocialVerificationOptions?>(null) }
-    var selectedGateway by remember { mutableStateOf("") }
+    var pendingVerificationPlan by remember { mutableStateOf<SocialVerificationPackage?>(null) }
     var packageBusy by remember { mutableStateOf<String?>(null) }
     var optionsLoading by remember { mutableStateOf(false) }
 
@@ -2440,7 +2768,7 @@ private fun SocialSettingsPage(repository: SocialRepository, profile: SocialProf
         if (page == "Verified badge") {
             optionsLoading = true
             runCatching { repository.verificationOptions() }
-                .onSuccess { verificationOptions = it; selectedGateway = it.gateways.firstOrNull()?.provider.orEmpty() }
+                .onSuccess { verificationOptions = it }
                 .onFailure { Toast.makeText(context, it.message ?: "Verification packages could not load", Toast.LENGTH_LONG).show() }
             optionsLoading = false
         }
@@ -2452,23 +2780,7 @@ private fun SocialSettingsPage(repository: SocialRepository, profile: SocialProf
         }
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 14.dp, vertical = 10.dp)) {
             when {
-                page == "Account Center" -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.size(54.dp).background(Color(0xFFEAF3FF), CircleShape), contentAlignment = Alignment.Center) { Icon(Icons.Default.AccountCircle, null, tint = TiwiBlue, modifier = Modifier.size(30.dp)) }
-                        Column(Modifier.padding(start = 12.dp)) { Text("Tiwi Account Center", fontWeight = FontWeight.Bold, fontSize = 20.sp); Text("Connected to your Tiwlo account", color = Color.Gray) }
-                    }
-                    Surface(color = Color.White, border = BorderStroke(1.dp, Color(0xFFE3E6EA)), shape = RoundedCornerShape(12.dp), tonalElevation = 0.dp) {
-                        Column(Modifier.padding(14.dp)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) { TiwiAvatar(currentUser?.avatar, R.drawable.img_tiwi_avatar_1, Modifier.size(48.dp).clip(CircleShape)); Column(Modifier.padding(start = 10.dp)) { Text(currentUser?.name.orEmpty(), fontWeight = FontWeight.Bold); Text(currentUser?.email.orEmpty(), color = Color.Gray, fontSize = 12.sp) } }
-                            HorizontalDivider(Modifier.padding(vertical = 12.dp), color = Color(0xFFE9EAED))
-                            Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.Link, null, tint = TiwiBlue); Text("Linked to Tiwlo", Modifier.weight(1f).padding(start = 9.dp), fontWeight = FontWeight.SemiBold); Icon(Icons.Default.CheckCircle, null, tint = Color(0xFF12B76A), modifier = Modifier.size(20.dp)) }
-                        }
-                    }
-                    Text("Manage connected experiences", fontWeight = FontWeight.Bold, color = Color.Gray, fontSize = 13.sp)
-                    listOf("Personal details" to Icons.Outlined.Person, "Password and security" to Icons.Outlined.Security, "Billing profile" to Icons.Outlined.Payment, "Your information and permissions" to Icons.Outlined.FolderShared).forEach { item ->
-                        Surface(Modifier.fillMaxWidth().clickable { context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://tiwlo.com/settings"))) }, color = Color.White, border = BorderStroke(1.dp, Color(0xFFE3E6EA)), shape = RoundedCornerShape(10.dp), tonalElevation = 0.dp) { Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) { Icon(item.second, null, tint = Color(0xFF475467)); Text(item.first, Modifier.weight(1f).padding(start = 11.dp), fontWeight = FontWeight.Medium); Icon(Icons.Default.OpenInNew, null, tint = Color.Gray, modifier = Modifier.size(18.dp)) } }
-                    }
-                }
+                page == "Account Center" -> AccountCenterPage(repository, currentUser)
                 page == "Account Settings" -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Playback", fontWeight = FontWeight.Bold, color = Color.Gray)
                     SettingSwitch("Autoplay videos", autoplay) { autoplay = it }
@@ -2500,23 +2812,8 @@ private fun SocialSettingsPage(repository: SocialRepository, profile: SocialProf
                     if (optionsLoading) Box(Modifier.fillMaxWidth().height(100.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 2.5.dp) }
                     val options = verificationOptions
                     if (options != null) {
-                        if (options.gateways.isNotEmpty()) {
-                            Text("Pay with", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-                            Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) { options.gateways.forEach { gateway -> FilterChip(selected = selectedGateway == gateway.provider, onClick = { selectedGateway = gateway.provider }, label = { Text(gateway.name) }) } }
-                        } else Text("No payment gateway is currently enabled.", color = Color(0xFFB42318), fontSize = 12.sp)
                         options.packages.forEach { plan ->
-                            VerificationPackageCard(plan, options, packageBusy == plan.id, plan.notableOnly || selectedGateway.isNotBlank()) {
-                                scope.launch {
-                                    packageBusy = plan.id
-                                    runCatching { repository.startVerificationCheckout(plan.id, if (plan.notableOnly) "manual" else selectedGateway, options.currency) }
-                                        .onSuccess { checkout ->
-                                            if (!checkout.paymentUrl.isNullOrBlank()) context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(checkout.paymentUrl)))
-                                            else Toast.makeText(context, checkout.message ?: "Application submitted", Toast.LENGTH_LONG).show()
-                                        }
-                                        .onFailure { Toast.makeText(context, it.message ?: "Checkout failed", Toast.LENGTH_LONG).show() }
-                                    packageBusy = null
-                                }
-                            }
+                            VerificationPackageCard(plan, options, packageBusy == plan.id, plan.notableOnly || options.gateways.isNotEmpty()) { pendingVerificationPlan = plan }
                         }
                         Text("Prices use Tiwlo's live currency settings. Blue badges activate after confirmed payment. Gold badges are never sold and require administrator review.", color = Color.Gray, fontSize = 11.sp, lineHeight = 16.sp)
                     }
@@ -2558,6 +2855,151 @@ private fun SocialSettingsPage(repository: SocialRepository, profile: SocialProf
             shape = RoundedCornerShape(8.dp),
             colors = ButtonDefaults.buttonColors(containerColor = TiwiBlue)
         ) { if (saving) CircularProgressIndicator(Modifier.size(18.dp), color = Color.White, strokeWidth = 2.dp) else Text("Save changes", fontWeight = FontWeight.Bold) }
+    }
+    val invoicePlan = pendingVerificationPlan
+    val invoiceOptions = verificationOptions
+    if (invoicePlan != null && invoiceOptions != null) VerificationInvoiceSheet(invoicePlan, invoiceOptions, packageBusy == invoicePlan.id, onDismiss = { pendingVerificationPlan = null }) { provider ->
+        scope.launch {
+            packageBusy = invoicePlan.id
+            runCatching { repository.startVerificationCheckout(invoicePlan.id, provider, invoiceOptions.currency) }
+                .onSuccess { checkout ->
+                    pendingVerificationPlan = null
+                    if (!checkout.paymentUrl.isNullOrBlank()) context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(checkout.paymentUrl)))
+                    else Toast.makeText(context, checkout.message ?: "Application submitted", Toast.LENGTH_LONG).show()
+                }
+                .onFailure { Toast.makeText(context, it.message ?: "Checkout failed", Toast.LENGTH_LONG).show() }
+            packageBusy = null
+        }
+    }
+}
+
+@Composable
+private fun AccountCenterPage(repository: SocialRepository, user: SocialUser?) {
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    var section by remember { mutableStateOf<String?>(null) }
+    var busy by remember { mutableStateOf(false) }
+    var exportJson by remember { mutableStateOf<String?>(null) }
+    val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        val value = exportJson
+        if (uri != null && value != null) runCatching { context.contentResolver.openOutputStream(uri)?.bufferedWriter()?.use { it.write(value) } }
+            .onSuccess { Toast.makeText(context, "Your information was downloaded", Toast.LENGTH_LONG).show() }
+            .onFailure { Toast.makeText(context, it.message ?: "Download failed", Toast.LENGTH_LONG).show() }
+        exportJson = null; busy = false
+    }
+    var name by remember(user?.id, user?.name) { mutableStateOf(user?.name.orEmpty()) }
+    var currentPassword by remember { mutableStateOf("") }
+    var newPassword by remember { mutableStateOf("") }
+    var confirmPassword by remember { mutableStateOf("") }
+    var billingName by remember(user?.id) { mutableStateOf(user?.billingName.orEmpty()) }
+    var phone by remember(user?.id) { mutableStateOf(user?.phone.orEmpty()) }
+    var mobileCountryCode by remember(user?.id) { mutableStateOf(user?.mobileCountryCode.orEmpty()) }
+    var country by remember(user?.id) { mutableStateOf(user?.country.orEmpty()) }
+    var address by remember(user?.id) { mutableStateOf(user?.addressLine1.orEmpty()) }
+    var city by remember(user?.id) { mutableStateOf(user?.city.orEmpty()) }
+    var state by remember(user?.id) { mutableStateOf(user?.state.orEmpty()) }
+    var postalCode by remember(user?.id) { mutableStateOf(user?.postalCode.orEmpty()) }
+
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        if (section != null) {
+            Row(Modifier.fillMaxWidth().clickable { section = null }.padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back"); Text(section.orEmpty(), Modifier.padding(start = 9.dp), fontWeight = FontWeight.Bold, fontSize = 19.sp)
+            }
+        }
+        when (section) {
+            "Personal details" -> {
+                Text("Your name is shared with your linked Tiwlo identity. Your email can be changed only after verification.", color = Color.Gray, fontSize = 12.sp)
+                AccountField("Full name", name) { name = it }
+                AccountField("Email", user?.email.orEmpty(), enabled = false) {}
+                Button(enabled = !busy && name.isNotBlank(), onClick = { scope.launch { busy = true; runCatching { repository.updateAccount(mapOf("name" to name.trim())) }.onSuccess { Toast.makeText(context, "Personal details saved", Toast.LENGTH_SHORT).show(); section = null }.onFailure { Toast.makeText(context, it.message ?: "Save failed", Toast.LENGTH_LONG).show() }; busy = false } }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(8.dp)) { if (busy) CircularProgressIndicator(Modifier.size(18.dp), color = Color.White, strokeWidth = 2.dp) else Text("Save details") }
+            }
+            "Password and security" -> {
+                Text("Changing this password also changes the password for your linked Tiwlo account.", color = Color.Gray, fontSize = 12.sp)
+                AccountField("Current password", currentPassword, password = true) { currentPassword = it }
+                AccountField("New password", newPassword, password = true) { newPassword = it }
+                AccountField("Confirm new password", confirmPassword, password = true) { confirmPassword = it }
+                Button(enabled = !busy && currentPassword.isNotBlank() && newPassword.length >= 6 && newPassword == confirmPassword, onClick = { scope.launch { busy = true; runCatching { repository.changePassword(currentPassword, newPassword) }.onSuccess { Toast.makeText(context, "Password changed", Toast.LENGTH_LONG).show(); currentPassword = ""; newPassword = ""; confirmPassword = ""; section = null }.onFailure { Toast.makeText(context, it.message ?: "Password change failed", Toast.LENGTH_LONG).show() }; busy = false } }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(8.dp)) { if (busy) CircularProgressIndicator(Modifier.size(18.dp), color = Color.White, strokeWidth = 2.dp) else Text("Change password") }
+            }
+            "Billing profile" -> {
+                Text("Billing details are used only when you buy Tiwlo services or verification.", color = Color.Gray, fontSize = 12.sp)
+                AccountField("Billing name", billingName) { billingName = it }
+                AccountField("Mobile country code", mobileCountryCode) { mobileCountryCode = it }
+                AccountField("Phone", phone) { phone = it }
+                AccountField("Country code", country) { country = it }
+                AccountField("Address", address) { address = it }
+                AccountField("City", city) { city = it }
+                AccountField("State / region", state) { state = it }
+                AccountField("Postal code", postalCode) { postalCode = it }
+                val complete = listOf(billingName, mobileCountryCode, phone, country, address, city, state, postalCode).all { it.isNotBlank() }
+                Button(enabled = !busy && complete, onClick = { scope.launch { busy = true; runCatching { repository.updateAccount(mapOf("billingName" to billingName.trim(), "mobileCountryCode" to mobileCountryCode.trim(), "phone" to phone.trim(), "country" to country.trim(), "addressLine1" to address.trim(), "city" to city.trim(), "state" to state.trim(), "postalCode" to postalCode.trim())) }.onSuccess { Toast.makeText(context, "Billing profile saved", Toast.LENGTH_SHORT).show(); section = null }.onFailure { Toast.makeText(context, it.message ?: "Save failed", Toast.LENGTH_LONG).show() }; busy = false } }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(8.dp)) { if (busy) CircularProgressIndicator(Modifier.size(18.dp), color = Color.White, strokeWidth = 2.dp) else Text("Save billing profile") }
+            }
+            "Your information and permissions" -> {
+                AccountMenuRow(Icons.Outlined.Download, "Download your information", "Posts, profile and messages") { if (!busy) scope.launch { busy = true; runCatching { repository.exportAccountDataJson() }.onSuccess { exportJson = it; exportLauncher.launch("tiwi-account-information.json") }.onFailure { busy = false; Toast.makeText(context, it.message ?: "Download failed", Toast.LENGTH_LONG).show() } } }
+                AccountMenuRow(Icons.Outlined.Security, "Android permissions", "Camera, microphone, media, location and notifications") { context.startActivity(Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.parse("package:${context.packageName}"))) }
+                AccountMenuRow(Icons.Outlined.Policy, "Privacy Center", "Control social visibility and interactions") { Toast.makeText(context, "Open Privacy Center from the previous menu", Toast.LENGTH_SHORT).show() }
+            }
+            else -> {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(54.dp).background(Color(0xFFEAF3FF), CircleShape), contentAlignment = Alignment.Center) { Icon(Icons.Default.AccountCircle, null, tint = TiwiBlue, modifier = Modifier.size(30.dp)) }
+                    Column(Modifier.padding(start = 12.dp)) { Text("Tiwi Account Center", fontWeight = FontWeight.Bold, fontSize = 20.sp); Text("Connected to your Tiwlo account", color = Color.Gray) }
+                }
+                Surface(color = Color.White, border = BorderStroke(1.dp, Color(0xFFE3E6EA)), shape = RoundedCornerShape(12.dp), tonalElevation = 0.dp) {
+                    Column(Modifier.padding(14.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) { TiwiAvatar(user?.avatar, R.drawable.img_tiwi_avatar_1, Modifier.size(48.dp).clip(CircleShape)); Column(Modifier.padding(start = 10.dp)) { Text(user?.name.orEmpty(), fontWeight = FontWeight.Bold); Text(user?.email.orEmpty(), color = Color.Gray, fontSize = 12.sp) } }
+                        HorizontalDivider(Modifier.padding(vertical = 12.dp), color = Color(0xFFE9EAED))
+                        Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.Link, null, tint = TiwiBlue); Text("Linked to Tiwlo", Modifier.weight(1f).padding(start = 9.dp), fontWeight = FontWeight.SemiBold); Icon(Icons.Default.CheckCircle, null, tint = Color(0xFF12B76A), modifier = Modifier.size(20.dp)) }
+                    }
+                }
+                Text("Manage connected experiences", fontWeight = FontWeight.Bold, color = Color.Gray, fontSize = 13.sp)
+                listOf("Personal details" to Icons.Outlined.Person, "Password and security" to Icons.Outlined.Security, "Billing profile" to Icons.Outlined.Payment, "Your information and permissions" to Icons.Outlined.FolderShared).forEach { item ->
+                    AccountMenuRow(item.second, item.first, "Manage in the Tiwi app") { section = item.first }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AccountField(label: String, value: String, enabled: Boolean = true, password: Boolean = false, onChange: (String) -> Unit) {
+    OutlinedTextField(value, onChange, enabled = enabled, label = { Text(label) }, singleLine = true, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(8.dp), visualTransformation = if (password) PasswordVisualTransformation() else VisualTransformation.None)
+}
+
+@Composable
+private fun AccountMenuRow(icon: ImageVector, title: String, subtitle: String, onClick: () -> Unit) {
+    Surface(Modifier.fillMaxWidth().clickable(onClick = onClick), color = Color.White, border = BorderStroke(1.dp, Color(0xFFE3E6EA)), shape = RoundedCornerShape(10.dp), tonalElevation = 0.dp) {
+        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) { Icon(icon, null, tint = Color(0xFF475467)); Column(Modifier.weight(1f).padding(start = 11.dp)) { Text(title, fontWeight = FontWeight.Medium); Text(subtitle, color = Color.Gray, fontSize = 11.sp) }; Icon(Icons.Default.ChevronRight, null, tint = Color.Gray, modifier = Modifier.size(18.dp)) }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun VerificationInvoiceSheet(plan: SocialVerificationPackage, options: SocialVerificationOptions, busy: Boolean, onDismiss: () -> Unit, onPay: (String) -> Unit) {
+    var selectedProvider by remember(plan.id) { mutableStateOf("") }
+    val gold = plan.notableOnly || plan.badgeType == "gold"
+    val converted = plan.priceUsd * options.usdRate
+    val total = when (options.currency) { "BDT" -> "BDT ${String.format(Locale.US, "%.0f", converted)}"; else -> "\$${String.format(Locale.US, "%.2f", plan.priceUsd)} USD" }
+    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = Color.White, contentColor = Color.Black, tonalElevation = 0.dp) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) { VerifiedBadge(if (gold) "gold" else "blue", 30.dp); Column(Modifier.padding(start = 10.dp)) { Text("Verification invoice", fontWeight = FontWeight.Bold, fontSize = 20.sp); Text("Review before continuing to Tiwlo payment", color = Color.Gray, fontSize = 12.sp) } }
+            Surface(color = Color(0xFFF8FAFC), border = BorderStroke(1.dp, Color(0xFFE3E6EA)), shape = RoundedCornerShape(12.dp), tonalElevation = 0.dp) {
+                Column(Modifier.padding(14.dp)) {
+                    Row { Text(plan.name, Modifier.weight(1f), fontWeight = FontWeight.SemiBold); Text(total, fontWeight = FontWeight.Bold, color = TiwiBlue) }
+                    Text(if (gold) "Notable-person review • No purchase" else "${plan.periodMonths} month subscription • Taxes may be added by the payment provider", color = Color.Gray, fontSize = 12.sp, modifier = Modifier.padding(top = 5.dp))
+                }
+            }
+            if (!gold) {
+                Text("Select a payment method", fontWeight = FontWeight.Bold)
+                if (options.gateways.isEmpty()) Text("No payment method is enabled on Tiwlo right now.", color = Color(0xFFB42318), fontSize = 12.sp)
+                options.gateways.forEach { gateway ->
+                    Surface(Modifier.fillMaxWidth().clickable { selectedProvider = gateway.provider }, color = if (selectedProvider == gateway.provider) Color(0xFFEAF3FF) else Color.White, border = BorderStroke(1.dp, if (selectedProvider == gateway.provider) TiwiBlue else Color(0xFFD0D5DD)), shape = RoundedCornerShape(10.dp), tonalElevation = 0.dp) {
+                        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) { RadioButton(selectedProvider == gateway.provider, onClick = { selectedProvider = gateway.provider }); Icon(Icons.Outlined.Payment, null, tint = TiwiBlue, modifier = Modifier.padding(start = 4.dp)); Text(gateway.name, Modifier.padding(start = 9.dp), fontWeight = FontWeight.Medium) }
+                    }
+                }
+            }
+            Button(enabled = !busy && (gold || selectedProvider.isNotBlank()), onClick = { onPay(if (gold) "manual" else selectedProvider) }, modifier = Modifier.fillMaxWidth().height(48.dp), shape = RoundedCornerShape(9.dp)) { if (busy) CircularProgressIndicator(Modifier.size(19.dp), color = Color.White, strokeWidth = 2.dp) else Text(if (gold) "Submit for review" else "Pay $total", fontWeight = FontWeight.Bold) }
+            Text("No method is selected automatically. Payment opens the secure main Tiwlo checkout.", color = Color.Gray, fontSize = 11.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+            Spacer(Modifier.navigationBarsPadding().height(8.dp))
+        }
     }
 }
 

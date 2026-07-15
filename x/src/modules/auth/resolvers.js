@@ -18,6 +18,7 @@ export const authResolvers = {
     resetPassword: (_, { token, password }, ctx) => service.resetPassword(ctx, token, password),
     resendEmailVerification: async (_, __, ctx) => service.resendEmailVerification(ctx, await requireAuth(ctx)),
     verifyEmail: (_, { token }, ctx) => service.verifyEmail(ctx, token),
-    verifyPassword: async (_, { password }, ctx) => service.verifyPassword(ctx, await requireAuth(ctx), password)
+    verifyPassword: async (_, { password }, ctx) => service.verifyPassword(ctx, await requireAuth(ctx), password),
+    changePassword: async (_, { currentPassword, newPassword }, ctx) => service.changePassword(ctx, await requireAuth(ctx), currentPassword, newPassword)
   }
 };

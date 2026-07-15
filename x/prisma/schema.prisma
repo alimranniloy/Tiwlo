@@ -44,44 +44,51 @@ model User {
   createdAt                DateTime  @default(now())
   updatedAt                DateTime  @updatedAt
 
-  resources                CloudResource[]
-  domains                  Domain[]
-  invoices                 Invoice[]
-  supportTickets           SupportTicket[]
-  assignedSupportTickets   SupportTicket[]             @relation("SupportTicketAssignee")
-  supportTicketMessages    SupportTicketMessage[]
-  liveChatSessions         LiveChatSession[]
-  assignedLiveChatSessions LiveChatSession[]           @relation("LiveChatAssignee")
-  liveChatMessages         LiveChatMessage[]
-  stores                   Store[]
-  ispSites                 IspSite[]
-  auditLogs                AuditLog[]
-  apiCredentials           ApiCredential[]
-  roleLinks                UserRole[]
-  notifications            Notification[]
-  tiwloPayProfile          TiwloPayProfile?
-  tiwloPayLinks            TiwloPayLink[]
-  tiwloPayTransactions     TiwloPayTransaction[]
-  tiwloPayWithdrawals      TiwloPayWithdrawal[]
-  deviceSessions           UserDeviceSession[]
-  identityVerifications    IdentityVerification[]
-  whatsAppOtps             WhatsAppOtpChallenge[]
-  passwordResetOtps        PasswordResetOtpChallenge[]
-  socialProfile            SocialProfile?
-  socialPosts              SocialPost[]                @relation("SocialPostAuthor")
-  socialComments           SocialComment[]             @relation("SocialCommentAuthor")
-  socialPostReactions      SocialPostReaction[]
-  socialCommentReactions   SocialCommentReaction[]
-  socialFollowers          SocialFollow[]              @relation("SocialFollowTarget")
-  socialFollowing          SocialFollow[]              @relation("SocialFollowFollower")
-  socialConversationLinks  SocialConversationMember[]
-  socialConversationRequests SocialConversation[]      @relation("SocialConversationRequester")
-  socialMessages           SocialMessage[]             @relation("SocialMessageSender")
-  socialMessageReactions   SocialMessageReaction[]
-  socialMessageDeletions   SocialMessageDeletion[]
-  socialCallsPlaced        SocialCallSession[]         @relation("SocialCallCaller")
-  socialCallsReceived      SocialCallSession[]         @relation("SocialCallCallee")
-  socialLiveStreams        SocialLiveStream[]          @relation("SocialLiveHost")
+  resources                  CloudResource[]
+  domains                    Domain[]
+  invoices                   Invoice[]
+  supportTickets             SupportTicket[]
+  assignedSupportTickets     SupportTicket[]             @relation("SupportTicketAssignee")
+  supportTicketMessages      SupportTicketMessage[]
+  liveChatSessions           LiveChatSession[]
+  assignedLiveChatSessions   LiveChatSession[]           @relation("LiveChatAssignee")
+  liveChatMessages           LiveChatMessage[]
+  stores                     Store[]
+  ispSites                   IspSite[]
+  auditLogs                  AuditLog[]
+  apiCredentials             ApiCredential[]
+  roleLinks                  UserRole[]
+  notifications              Notification[]
+  tiwloPayProfile            TiwloPayProfile?
+  tiwloPayLinks              TiwloPayLink[]
+  tiwloPayTransactions       TiwloPayTransaction[]
+  tiwloPayWithdrawals        TiwloPayWithdrawal[]
+  deviceSessions             UserDeviceSession[]
+  identityVerifications      IdentityVerification[]
+  whatsAppOtps               WhatsAppOtpChallenge[]
+  passwordResetOtps          PasswordResetOtpChallenge[]
+  socialProfile              SocialProfile?
+  socialPosts                SocialPost[]                @relation("SocialPostAuthor")
+  socialComments             SocialComment[]             @relation("SocialCommentAuthor")
+  socialPostReactions        SocialPostReaction[]
+  socialCommentReactions     SocialCommentReaction[]
+  socialFollowers            SocialFollow[]              @relation("SocialFollowTarget")
+  socialFollowing            SocialFollow[]              @relation("SocialFollowFollower")
+  socialConversationLinks    SocialConversationMember[]
+  socialConversationRequests SocialConversation[]        @relation("SocialConversationRequester")
+  socialMessages             SocialMessage[]             @relation("SocialMessageSender")
+  socialMessageReactions     SocialMessageReaction[]
+  socialMessageDeletions     SocialMessageDeletion[]
+  socialCallsPlaced          SocialCallSession[]         @relation("SocialCallCaller")
+  socialCallsReceived        SocialCallSession[]         @relation("SocialCallCallee")
+  socialLiveStreams          SocialLiveStream[]          @relation("SocialLiveHost")
+  socialSavedPosts           SocialSavedPost[]
+  socialFavoritesGiven       SocialFavorite[]            @relation("SocialFavoriteOwner")
+  socialFavoritesReceived    SocialFavorite[]            @relation("SocialFavoriteTarget")
+  socialSnoozesGiven         SocialSnooze[]              @relation("SocialSnoozeOwner")
+  socialSnoozesReceived      SocialSnooze[]              @relation("SocialSnoozeTarget")
+  socialGroupsOwned          SocialGroup[]               @relation("SocialGroupOwner")
+  socialGroupMemberships     SocialGroupMember[]
 }
 
 model WhatsAppOtpChallenge {
@@ -1396,24 +1403,24 @@ model DdosBlockRule {
 // Tiwlo Social reuses the platform User identity and authentication tables.
 // User-owned media files are stored under public/uploads/social/<userId>/.
 model SocialProfile {
-  id          String   @id @default(cuid())
-  userId      String   @unique
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  username    String   @unique
-  bio         String?
-  about       String?
-  category    String?
-  website     String?
-  location    String?
-  coverUrl    String?
-  verified    Boolean  @default(false)
-  badgeType   String   @default("none")
-  badgePlan   String?
+  id             String    @id @default(cuid())
+  userId         String    @unique
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  username       String    @unique
+  bio            String?
+  about          String?
+  category       String?
+  website        String?
+  location       String?
+  coverUrl       String?
+  verified       Boolean   @default(false)
+  badgeType      String    @default("none")
+  badgePlan      String?
   badgeExpiresAt DateTime?
-  privacy     Json     @default("{\"profileVisibility\":\"public\",\"messagePermission\":\"everyone\",\"showActivityStatus\":true,\"allowCalls\":true}")
-  preferences Json     @default("{\"autoplay\":true,\"dataSaver\":false,\"videoQuality\":\"auto\",\"notifications\":true}")
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  privacy        Json      @default("{\"profileVisibility\":\"public\",\"messagePermission\":\"everyone\",\"showActivityStatus\":true,\"allowCalls\":true}")
+  preferences    Json      @default("{\"autoplay\":true,\"dataSaver\":false,\"videoQuality\":\"auto\",\"notifications\":true}")
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 }
 
 model SocialFollow {
@@ -1429,32 +1436,110 @@ model SocialFollow {
 }
 
 model SocialPost {
-  id               String               @id @default(cuid())
-  authorId         String
-  author           User                 @relation("SocialPostAuthor", fields: [authorId], references: [id], onDelete: Cascade)
-  type             String               @default("post")
-  body             String?
-  media            Json                 @default("[]")
-  thumbnailUrl     String?
-  hlsUrl           String?
-  processingStatus String               @default("ready")
-  visibility       String               @default("public")
-  status           String               @default("published")
-  location         String?
-  durationSeconds  Int?
-  aspectRatio      Float?
-  viewCount        Int                  @default(0)
-  shareCount       Int                  @default(0)
-  publishedAt      DateTime             @default(now())
-  deletedAt        DateTime?
-  createdAt        DateTime             @default(now())
-  updatedAt        DateTime             @updatedAt
-  comments         SocialComment[]
-  reactions        SocialPostReaction[]
-  reports          SocialReport[]
+  id                String               @id @default(cuid())
+  authorId          String
+  author            User                 @relation("SocialPostAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+  type              String               @default("post")
+  body              String?
+  media             Json                 @default("[]")
+  thumbnailUrl      String?
+  hlsUrl            String?
+  processingStatus  String               @default("ready")
+  visibility        String               @default("public")
+  commentPermission String               @default("everyone")
+  pinned            Boolean              @default(false)
+  groupId           String?
+  group             SocialGroup?         @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  status            String               @default("published")
+  location          String?
+  durationSeconds   Int?
+  aspectRatio       Float?
+  viewCount         Int                  @default(0)
+  shareCount        Int                  @default(0)
+  publishedAt       DateTime             @default(now())
+  deletedAt         DateTime?
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+  comments          SocialComment[]
+  reactions         SocialPostReaction[]
+  reports           SocialReport[]
+  savedBy           SocialSavedPost[]
 
   @@index([status, type, publishedAt])
   @@index([authorId, status, publishedAt])
+  @@index([groupId, status, publishedAt])
+}
+
+model SocialSavedPost {
+  id        String     @id @default(cuid())
+  userId    String
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  postId    String
+  post      SocialPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  createdAt DateTime   @default(now())
+
+  @@unique([userId, postId])
+  @@index([userId, createdAt])
+}
+
+model SocialFavorite {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation("SocialFavoriteOwner", fields: [userId], references: [id], onDelete: Cascade)
+  targetUserId String
+  targetUser   User     @relation("SocialFavoriteTarget", fields: [targetUserId], references: [id], onDelete: Cascade)
+  createdAt    DateTime @default(now())
+
+  @@unique([userId, targetUserId])
+  @@index([userId, createdAt])
+}
+
+model SocialSnooze {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation("SocialSnoozeOwner", fields: [userId], references: [id], onDelete: Cascade)
+  targetUserId String
+  targetUser   User     @relation("SocialSnoozeTarget", fields: [targetUserId], references: [id], onDelete: Cascade)
+  until        DateTime
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([userId, targetUserId])
+  @@index([userId, until])
+}
+
+model SocialGroup {
+  id          String              @id @default(cuid())
+  ownerId     String
+  owner       User                @relation("SocialGroupOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  coverUrl    String?
+  privacy     String              @default("public")
+  status      String              @default("active")
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+  members     SocialGroupMember[]
+  posts       SocialPost[]
+
+  @@index([status, privacy, createdAt])
+  @@index([ownerId, status])
+}
+
+model SocialGroupMember {
+  id        String      @id @default(cuid())
+  groupId   String
+  group     SocialGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      String      @default("member")
+  status    String      @default("active")
+  joinedAt  DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  @@unique([groupId, userId])
+  @@index([userId, status, joinedAt])
+  @@index([groupId, role, status])
 }
 
 model SocialPostReaction {
@@ -1472,16 +1557,16 @@ model SocialPostReaction {
 }
 
 model SocialComment {
-  id        String     @id @default(cuid())
+  id        String                  @id @default(cuid())
   postId    String
-  post      SocialPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  post      SocialPost              @relation(fields: [postId], references: [id], onDelete: Cascade)
   authorId  String
-  author    User       @relation("SocialCommentAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+  author    User                    @relation("SocialCommentAuthor", fields: [authorId], references: [id], onDelete: Cascade)
   replyToId String?
   body      String
-  status    String     @default("published")
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
+  status    String                  @default("published")
+  createdAt DateTime                @default(now())
+  updatedAt DateTime                @updatedAt
   reactions SocialCommentReaction[]
 
   @@index([postId, status, createdAt])
@@ -1500,18 +1585,18 @@ model SocialCommentReaction {
 }
 
 model SocialConversation {
-  id        String                     @id @default(cuid())
-  type      String                     @default("direct")
-  title     String?
-  avatarUrl String?
-  requestStatus String                   @default("accepted")
+  id            String                     @id @default(cuid())
+  type          String                     @default("direct")
+  title         String?
+  avatarUrl     String?
+  requestStatus String                     @default("accepted")
   requestedById String?
-  requestedBy   User?                    @relation("SocialConversationRequester", fields: [requestedById], references: [id], onDelete: SetNull)
-  createdAt DateTime                   @default(now())
-  updatedAt DateTime                   @updatedAt
-  members   SocialConversationMember[]
-  messages  SocialMessage[]
-  calls     SocialCallSession[]
+  requestedBy   User?                      @relation("SocialConversationRequester", fields: [requestedById], references: [id], onDelete: SetNull)
+  createdAt     DateTime                   @default(now())
+  updatedAt     DateTime                   @updatedAt
+  members       SocialConversationMember[]
+  messages      SocialMessage[]
+  calls         SocialCallSession[]
 }
 
 model SocialConversationMember {

@@ -33,6 +33,13 @@ export const socialResolvers = {
     author: (parent, _, ctx) => parent.author || ctx.prisma.user.findUnique({ where: { id: parent.authorId } }),
     authorProfile: (parent, _, ctx) => parent.authorProfile || parent.author?.socialProfile || ctx.prisma.socialProfile.findUnique({ where: { userId: parent.authorId } })
   },
+  SocialGroup: {
+    owner: (parent, _, ctx) => parent.owner || ctx.prisma.user.findUnique({ where: { id: parent.ownerId } })
+  },
+  SocialGroupMember: {
+    user: (parent, _, ctx) => parent.user || ctx.prisma.user.findUnique({ where: { id: parent.userId } }),
+    profile: (parent, _, ctx) => parent.profile || parent.user?.socialProfile || ctx.prisma.socialProfile.findUnique({ where: { userId: parent.userId } })
+  },
   SocialConversationMember: {
     user: (parent, _, ctx) => parent.user || ctx.prisma.user.findUnique({ where: { id: parent.userId } }),
     profile: (parent, _, ctx) => parent.profile || parent.user?.socialProfile || ctx.prisma.socialProfile.findUnique({ where: { userId: parent.userId } })
@@ -55,6 +62,11 @@ export const socialResolvers = {
     socialFeed: (_, args, ctx) => api(service.listFeed(ctx, args)),
     socialPost: (_, { id }, ctx) => api(service.getPost(ctx, id)),
     socialComments: (_, args, ctx) => api(service.listComments(ctx, args)),
+    socialSavedPosts: (_, { limit }, ctx) => api(service.listSavedPosts(ctx, limit)),
+    socialMemories: (_, { limit }, ctx) => api(service.listMemories(ctx, limit)),
+    socialGroups: (_, args, ctx) => api(service.listGroups(ctx, args)),
+    socialGroup: (_, { id }, ctx) => api(service.getGroup(ctx, id)),
+    socialGroupMembers: (_, { groupId, limit }, ctx) => api(service.listGroupMembers(ctx, groupId, limit)),
     socialConversations: (_, __, ctx) => api(service.listConversations(ctx)),
     socialMessages: (_, args, ctx) => api(service.listMessages(ctx, args)),
     socialCall: (_, { id }, ctx) => api(service.getCall(ctx, id)),
@@ -79,9 +91,17 @@ export const socialResolvers = {
     viewSocialPost: (_, { id }, ctx) => api(service.viewPost(ctx, id)),
     reactToSocialPost: (_, { id, kind }, ctx) => api(service.reactToPost(ctx, id, kind)),
     repostSocialPost: (_, { id }, ctx) => api(service.repostPost(ctx, id)),
+    saveSocialPost: (_, { id, save }, ctx) => api(service.savePost(ctx, id, save)),
+    favoriteSocialUser: (_, { userId, favorite }, ctx) => service.favoriteUser(ctx, userId, favorite),
+    snoozeSocialUser: (_, { userId, days }, ctx) => service.snoozeUser(ctx, userId, days),
     addSocialComment: (_, { postId, body, replyToId }, ctx) => api(service.addComment(ctx, postId, body, replyToId)),
     reactToSocialComment: (_, { id }, ctx) => api(service.reactToComment(ctx, id)),
     deleteSocialComment: (_, { id }, ctx) => service.deleteComment(ctx, id),
+    createSocialGroup: (_, { input }, ctx) => api(service.createGroup(ctx, input)),
+    updateSocialGroup: (_, { input }, ctx) => api(service.updateGroup(ctx, input)),
+    joinSocialGroup: (_, { id }, ctx) => api(service.joinGroup(ctx, id)),
+    leaveSocialGroup: (_, { id }, ctx) => service.leaveGroup(ctx, id),
+    updateSocialGroupMember: (_, { groupId, userId, role, remove }, ctx) => api(service.updateGroupMember(ctx, groupId, userId, role, remove)),
     createSocialConversation: (_, { input }, ctx) => api(service.createConversation(ctx, input)),
     respondToSocialMessageRequest: (_, { id, accept }, ctx) => api(service.respondToMessageRequest(ctx, id, accept)),
     sendSocialMessage: (_, { input }, ctx) => api(service.sendMessage(ctx, input)),

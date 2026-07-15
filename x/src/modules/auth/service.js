@@ -602,6 +602,31 @@ export const verifyPassword = async (ctx, actor, password) => {
   return true;
 };
 
+export const changePassword = async (ctx, actor, currentPassword, newPassword) => {
+  if (!actor.passwordHash) throw new AppError('Password changes are not available for this account', 'BAD_USER_INPUT');
+  if (!newPassword || String(newPassword).length < 6) {
+    throw new AppError('The new password must contain at least 6 characters', 'BAD_USER_INPUT');
+  }
+  const validPassword = await bcrypt.compare(String(currentPassword || ''), actor.passwordHash);
+  if (!validPassword) throw new AppError('Current password is incorrect', 'UNAUTHENTICATED');
+  if (await bcrypt.compare(String(newPassword), actor.passwordHash)) {
+    throw new AppError('Choose a password you have not just used', 'BAD_USER_INPUT');
+  }
+  await ctx.prisma.user.update({
+    where: { id: actor.id },
+    data: { passwordHash: await bcrypt.hash(String(newPassword), 10) }
+  });
+  await writeAudit(ctx, 'change_password', 'user', actor.id, { source: 'tiwi_social_app' });
+  queueAuthEmail(ctx, {
+    to: actor.email,
+    subject: 'Your Tiwlo password was changed',
+    title: 'Password changed',
+    preview: 'Your password was updated from Tiwi Social.',
+    html: paragraph('Your password was changed from Tiwi Social. If this was not you, contact support immediately.')
+  });
+  return true;
+};
+
 const findPasswordResetUser = async (ctx, input = {}) => {
   const identifier = typeof input === 'string' ? input : (input.identifier || input.email || input.phone || '');
   const email = String(identifier || '').includes('@') ? normalizeEmail(identifier) : normalizeEmail(input.email || '');

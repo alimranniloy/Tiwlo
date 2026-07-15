@@ -2750,6 +2750,10 @@ type SocialPost {
   hlsUrl: String
   processingStatus: String!
   visibility: String!
+  commentPermission: String!
+  pinned: Boolean!
+  groupId: ID
+  saved: Boolean!
   status: String!
   location: String
   durationSeconds: Int
@@ -2761,6 +2765,33 @@ type SocialPost {
   viewerReaction: String
   publishedAt: String
   deletedAt: String
+  createdAt: String
+  updatedAt: String
+}
+
+type SocialGroupMember {
+  id: ID!
+  groupId: ID!
+  userId: ID!
+  user: SocialPublicUser!
+  profile: SocialProfile
+  role: String!
+  status: String!
+  joinedAt: String
+}
+
+type SocialGroup {
+  id: ID!
+  ownerId: ID!
+  owner: SocialPublicUser!
+  name: String!
+  description: String
+  coverUrl: String
+  privacy: String!
+  status: String!
+  memberCount: Int!
+  viewerRole: String
+  viewerJoined: Boolean!
   createdAt: String
   updatedAt: String
 }
@@ -2929,6 +2960,8 @@ input SocialPostInput {
   hlsUrl: String
   processingStatus: String
   visibility: String
+  commentPermission: String
+  groupId: ID
   location: String
   durationSeconds: Int
   aspectRatio: Float
@@ -2942,7 +2975,24 @@ input SocialPostUpdateInput {
   hlsUrl: String
   processingStatus: String
   visibility: String
+  commentPermission: String
+  pinned: Boolean
   location: String
+}
+
+input SocialGroupInput {
+  name: String!
+  description: String
+  coverUrl: String
+  privacy: String
+}
+
+input SocialGroupUpdateInput {
+  id: ID!
+  name: String
+  description: String
+  coverUrl: String
+  privacy: String
 }
 
 input SocialConversationInput {
@@ -3089,9 +3139,14 @@ type Query {
   aiModelOverview: AiModelOverview!
   socialProfile(userId: ID, username: String): SocialProfile
   socialSearch(query: String, limit: Int): [SocialProfile!]!
-  socialFeed(type: String, authorId: ID, before: String, limit: Int): [SocialPost!]!
+  socialFeed(type: String, authorId: ID, groupId: ID, before: String, limit: Int): [SocialPost!]!
   socialPost(id: ID!): SocialPost
   socialComments(postId: ID!, before: String, limit: Int): [SocialComment!]!
+  socialSavedPosts(limit: Int): [SocialPost!]!
+  socialMemories(limit: Int): [SocialPost!]!
+  socialGroups(search: String, mine: Boolean, limit: Int): [SocialGroup!]!
+  socialGroup(id: ID!): SocialGroup
+  socialGroupMembers(groupId: ID!, limit: Int): [SocialGroupMember!]!
   socialConversations: [SocialConversation!]!
   socialMessages(conversationId: ID!, before: String, limit: Int): [SocialMessage!]!
   socialCall(id: ID!): SocialCallSession
@@ -3121,6 +3176,7 @@ type Mutation {
   resendEmailVerification: Boolean!
   verifyEmail(token: String!): AuthPayload!
   verifyPassword(password: String!): Boolean!
+  changePassword(currentPassword: String!, newPassword: String!): Boolean!
   mailboxLogin(input: MailboxLoginInput!): MailboxLoginPayload!
   requestMailboxRecoveryOtp(input: RequestMailboxRecoveryOtpInput!): MailboxRecoveryOtpPayload!
   mailboxRegister(input: MailboxRegisterInput!): MailboxLoginPayload!
@@ -3292,9 +3348,17 @@ type Mutation {
   viewSocialPost(id: ID!): SocialPost!
   reactToSocialPost(id: ID!, kind: String): SocialPost!
   repostSocialPost(id: ID!): SocialPost!
+  saveSocialPost(id: ID!, save: Boolean!): SocialPost!
+  favoriteSocialUser(userId: ID!, favorite: Boolean!): Boolean!
+  snoozeSocialUser(userId: ID!, days: Int!): Boolean!
   addSocialComment(postId: ID!, body: String!, replyToId: ID): SocialComment!
   reactToSocialComment(id: ID!): SocialComment!
   deleteSocialComment(id: ID!): Boolean!
+  createSocialGroup(input: SocialGroupInput!): SocialGroup!
+  updateSocialGroup(input: SocialGroupUpdateInput!): SocialGroup!
+  joinSocialGroup(id: ID!): SocialGroup!
+  leaveSocialGroup(id: ID!): Boolean!
+  updateSocialGroupMember(groupId: ID!, userId: ID!, role: String, remove: Boolean): SocialGroup!
   createSocialConversation(input: SocialConversationInput!): SocialConversation!
   respondToSocialMessageRequest(id: ID!, accept: Boolean!): SocialConversation!
   sendSocialMessage(input: SocialMessageInput!): SocialMessage!

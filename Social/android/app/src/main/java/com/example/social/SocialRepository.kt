@@ -133,6 +133,21 @@ class SocialRepository(context: Context) {
         return value
     }
 
+    suspend fun updateAccount(input: Map<String, Any?>): SocialUser {
+        val data = client.execute(
+            """mutation UpdateTiwiAccount(${D}input: UpdateProfileInput!) { updateProfile(input: ${D}input) { $USER_FIELDS } }""",
+            mapOf("input" to input)
+        )
+        return mapUser(data.objectValue("updateProfile") ?: throw SocialApiException("Account was not updated")).also(::setUser)
+    }
+
+    suspend fun changePassword(currentPassword: String, newPassword: String) {
+        client.execute(
+            """mutation ChangeTiwiPassword(${D}current: String!, ${D}next: String!) { changePassword(currentPassword: ${D}current, newPassword: ${D}next) }""",
+            mapOf("current" to currentPassword, "next" to newPassword)
+        )
+    }
+
     suspend fun searchProfiles(query: String = ""): List<SocialProfile> {
         val data = client.execute(
             """query TiwiDiscover(${D}query: String) { socialSearch(query: ${D}query, limit: 50) { $PROFILE_FIELDS } }""",
@@ -169,10 +184,10 @@ class SocialRepository(context: Context) {
         }
     }
 
-    suspend fun createPost(body: String, type: String = "post", media: List<SocialMedia> = emptyList(), visibility: String = "public"): SocialPost {
+    suspend fun createPost(body: String, type: String = "post", media: List<SocialMedia> = emptyList(), visibility: String = "public", groupId: String? = null): SocialPost {
         val mediaInput = media.map { mapOf("url" to it.url, "type" to it.type, "hlsUrl" to it.hlsUrl, "thumbnailUrl" to it.thumbnailUrl, "mimeType" to it.mimeType, "processingId" to it.processingId, "processingStatus" to it.processingStatus) }
         val input = mapOf(
-            "type" to type, "body" to body.trim(), "visibility" to visibility, "media" to mediaInput,
+            "type" to type, "body" to body.trim(), "visibility" to visibility, "media" to mediaInput, "groupId" to groupId,
             "hlsUrl" to media.firstOrNull()?.hlsUrl,
             "thumbnailUrl" to media.firstOrNull()?.thumbnailUrl,
             "processingStatus" to (media.firstOrNull()?.processingStatus ?: "ready")
@@ -238,6 +253,111 @@ class SocialRepository(context: Context) {
             mapOf("input" to mapOf("id" to id, "body" to body.trim()))
         )
         return mapPost(data.objectValue("updateSocialPost") ?: throw SocialApiException("Post update failed")).also(::replacePost)
+    }
+
+    suspend fun updatePostOptions(id: String, visibility: String? = null, pinned: Boolean? = null, commentPermission: String? = null): SocialPost {
+        val input = mutableMapOf<String, Any?>("id" to id)
+        visibility?.let { input["visibility"] = it }
+        pinned?.let { input["pinned"] = it }
+        commentPermission?.let { input["commentPermission"] = it }
+        val data = client.execute(
+            """mutation UpdateTiwiPostOptions(${D}input: SocialPostUpdateInput!) { updateSocialPost(input: ${D}input) { $POST_FIELDS } }""",
+            mapOf("input" to input)
+        )
+        return mapPost(data.objectValue("updateSocialPost") ?: throw SocialApiException("Post settings were not updated")).also(::replacePost)
+    }
+
+    suspend fun savePost(id: String, save: Boolean): SocialPost {
+        val data = client.execute(
+            """mutation SaveTiwiPost(${D}id: ID!, ${D}save: Boolean!) { saveSocialPost(id: ${D}id, save: ${D}save) { $POST_FIELDS } }""",
+            mapOf("id" to id, "save" to save)
+        )
+        return mapPost(data.objectValue("saveSocialPost") ?: throw SocialApiException("Save action failed")).also(::replacePost)
+    }
+
+    suspend fun favoriteUser(userId: String, favorite: Boolean) {
+        client.execute(
+            """mutation FavoriteTiwiUser(${D}id: ID!, ${D}favorite: Boolean!) { favoriteSocialUser(userId: ${D}id, favorite: ${D}favorite) }""",
+            mapOf("id" to userId, "favorite" to favorite)
+        )
+    }
+
+    suspend fun snoozeUser(userId: String, days: Int = 30) {
+        client.execute(
+            """mutation SnoozeTiwiUser(${D}id: ID!, ${D}days: Int!) { snoozeSocialUser(userId: ${D}id, days: ${D}days) }""",
+            mapOf("id" to userId, "days" to days)
+        )
+        _feed.value = _feed.value.filterNot { it.authorId == userId }
+        cache.saveFeed(_feed.value)
+    }
+
+    suspend fun savedPosts(): List<SocialPost> {
+        val data = client.execute("query TiwiSavedPosts { socialSavedPosts(limit: 100) { $POST_FIELDS } }")
+        return data.list("socialSavedPosts").mapNotNull { it.objectMap()?.let(::mapPost) }
+    }
+
+    suspend fun memories(): List<SocialPost> {
+        val data = client.execute("query TiwiMemories { socialMemories(limit: 100) { $POST_FIELDS } }")
+        return data.list("socialMemories").mapNotNull { it.objectMap()?.let(::mapPost) }
+    }
+
+    suspend fun groups(search: String = "", mine: Boolean = false): List<SocialGroup> {
+        val data = client.execute(
+            """query TiwiGroups(${D}search: String, ${D}mine: Boolean) { socialGroups(search: ${D}search, mine: ${D}mine, limit: 100) { $GROUP_FIELDS } }""",
+            mapOf("search" to search.trim(), "mine" to mine)
+        )
+        return data.list("socialGroups").mapNotNull { it.objectMap()?.let(::mapGroup) }
+    }
+
+    suspend fun group(id: String): SocialGroup? {
+        val data = client.execute("""query TiwiGroup(${D}id: ID!) { socialGroup(id: ${D}id) { $GROUP_FIELDS } }""", mapOf("id" to id))
+        return data.objectValue("socialGroup")?.let(::mapGroup)
+    }
+
+    suspend fun groupMembers(id: String): List<SocialGroupMember> {
+        val data = client.execute(
+            """query TiwiGroupMembers(${D}id: ID!) { socialGroupMembers(groupId: ${D}id, limit: 200) { $GROUP_MEMBER_FIELDS } }""",
+            mapOf("id" to id)
+        )
+        return data.list("socialGroupMembers").mapNotNull { it.objectMap()?.let(::mapGroupMember) }
+    }
+
+    suspend fun groupPosts(id: String): List<SocialPost> {
+        val data = client.execute("""query TiwiGroupPosts(${D}id: ID!) { socialFeed(groupId: ${D}id, limit: 100) { $POST_FIELDS } }""", mapOf("id" to id))
+        return data.list("socialFeed").mapNotNull { it.objectMap()?.let(::mapPost) }
+    }
+
+    suspend fun createGroup(name: String, description: String, privacy: String): SocialGroup {
+        val data = client.execute(
+            """mutation CreateTiwiGroup(${D}input: SocialGroupInput!) { createSocialGroup(input: ${D}input) { $GROUP_FIELDS } }""",
+            mapOf("input" to mapOf("name" to name.trim(), "description" to description.trim(), "privacy" to privacy))
+        )
+        return mapGroup(data.objectValue("createSocialGroup") ?: throw SocialApiException("Group was not created"))
+    }
+
+    suspend fun updateGroup(id: String, name: String, description: String, privacy: String): SocialGroup {
+        val data = client.execute(
+            """mutation UpdateTiwiGroup(${D}input: SocialGroupUpdateInput!) { updateSocialGroup(input: ${D}input) { $GROUP_FIELDS } }""",
+            mapOf("input" to mapOf("id" to id, "name" to name.trim(), "description" to description.trim(), "privacy" to privacy))
+        )
+        return mapGroup(data.objectValue("updateSocialGroup") ?: throw SocialApiException("Group was not updated"))
+    }
+
+    suspend fun joinGroup(id: String): SocialGroup {
+        val data = client.execute("""mutation JoinTiwiGroup(${D}id: ID!) { joinSocialGroup(id: ${D}id) { $GROUP_FIELDS } }""", mapOf("id" to id))
+        return mapGroup(data.objectValue("joinSocialGroup") ?: throw SocialApiException("Group was not joined"))
+    }
+
+    suspend fun leaveGroup(id: String) {
+        client.execute("""mutation LeaveTiwiGroup(${D}id: ID!) { leaveSocialGroup(id: ${D}id) }""", mapOf("id" to id))
+    }
+
+    suspend fun updateGroupMember(groupId: String, userId: String, role: String? = null, remove: Boolean = false): SocialGroup {
+        val data = client.execute(
+            """mutation UpdateTiwiGroupMember(${D}groupId: ID!, ${D}userId: ID!, ${D}role: String, ${D}remove: Boolean) { updateSocialGroupMember(groupId: ${D}groupId, userId: ${D}userId, role: ${D}role, remove: ${D}remove) { $GROUP_FIELDS } }""",
+            mapOf("groupId" to groupId, "userId" to userId, "role" to role, "remove" to remove)
+        )
+        return mapGroup(data.objectValue("updateSocialGroupMember") ?: throw SocialApiException("Member was not updated"))
     }
 
     suspend fun deletePost(id: String) {
@@ -404,7 +524,8 @@ class SocialRepository(context: Context) {
         val data = socialJob.await()
         val currencyData = currencyJob.await()
         val settings = data.objectValue("socialSettings") ?: emptyMap()
-        val currency = currencyData.string("detectedCurrency") ?: currencyData.string("fallbackCurrency") ?: "USD"
+        val detectedCountry = currencyData.string("detectedCountry") ?: currencyData.string("countryCode") ?: currencyData.string("country")
+        val currency = if (detectedCountry.equals("BD", ignoreCase = true) || detectedCountry.equals("Bangladesh", ignoreCase = true)) "BDT" else "USD"
         val policy = currencyData.objectValue("policy") ?: emptyMap()
         val rates = policy.objectValue("rates") ?: emptyMap()
         val targetRate = rates.number(currency)?.toDouble()?.takeIf { it > 0 } ?: 1.0
@@ -523,12 +644,18 @@ class SocialRepository(context: Context) {
     private fun mapUser(value: Map<String, Any?>) = SocialUser(
         id = value.string("id").orEmpty(), email = value.string("email").orEmpty(), name = value.string("name").orEmpty(),
         avatar = absoluteUrl(value.string("avatar")), role = value.string("role") ?: "user", status = value.string("status") ?: "active",
-        signupSource = value.string("signupSource") ?: "web", emailVerifiedAt = value.string("emailVerifiedAt")
+        signupSource = value.string("signupSource") ?: "web", emailVerifiedAt = value.string("emailVerifiedAt"),
+        phone = value.string("phone"), mobileCountryCode = value.string("mobileCountryCode"), primaryRegion = value.string("primaryRegion"),
+        country = value.string("country"), addressLine1 = value.string("addressLine1"), city = value.string("city"), state = value.string("state"),
+        postalCode = value.string("postalCode"), billingName = value.string("billingName")
     )
 
     private fun mapProfile(value: Map<String, Any?>, fallback: SocialUser? = null): SocialProfile {
         val publicUser = value.objectValue("user")?.let(::mapUser) ?: fallback ?: SocialUser(id = value.string("userId").orEmpty(), name = value.string("username").orEmpty())
-        val user = if (publicUser.id == currentUserId()) publicUser.copy(email = _currentUser.value?.email.orEmpty(), role = _currentUser.value?.role ?: publicUser.role) else publicUser
+        val user = if (publicUser.id == currentUserId()) {
+            val current = _currentUser.value
+            current?.copy(name = publicUser.name.ifBlank { current.name }, avatar = publicUser.avatar ?: current.avatar) ?: publicUser
+        } else publicUser
         return SocialProfile(
             id = value.string("id").orEmpty(), userId = value.string("userId") ?: user.id, user = user,
             username = value.string("username").orEmpty(), bio = value.string("bio"), about = value.string("about"),
@@ -563,6 +690,8 @@ class SocialRepository(context: Context) {
             body = value.string("body").orEmpty(), media = value.list("media").mapNotNull { it.objectMap()?.let(::mapMedia) },
             thumbnailUrl = absoluteUrl(value.string("thumbnailUrl")), hlsUrl = absoluteUrl(value.string("hlsUrl")),
             processingStatus = value.string("processingStatus") ?: "ready", visibility = value.string("visibility") ?: "public",
+            commentPermission = value.string("commentPermission") ?: "everyone", pinned = value.boolean("pinned"),
+            groupId = value.string("groupId"), saved = value.boolean("saved"),
             status = value.string("status") ?: "published", viewCount = value.number("viewCount")?.toInt() ?: 0,
             shareCount = value.number("shareCount")?.toInt() ?: 0, reactionCount = value.number("reactionCount")?.toInt() ?: 0,
             commentCount = value.number("commentCount")?.toInt() ?: 0, viewerReaction = value.string("viewerReaction"), publishedAt = value.string("publishedAt")
@@ -595,6 +724,22 @@ class SocialRepository(context: Context) {
         offer = value.objectValue("offer"), answer = value.objectValue("answer"), iceCandidates = value.list("iceCandidates").mapNotNull { it.objectMap() }
     )
 
+    private fun mapGroup(value: Map<String, Any?>) = SocialGroup(
+        id = value.string("id").orEmpty(), ownerId = value.string("ownerId").orEmpty(), owner = mapUser(value.objectValue("owner") ?: emptyMap()),
+        name = value.string("name").orEmpty(), description = value.string("description"), coverUrl = absoluteUrl(value.string("coverUrl")),
+        privacy = value.string("privacy") ?: "public", memberCount = value.number("memberCount")?.toInt() ?: 0,
+        viewerRole = value.string("viewerRole"), viewerJoined = value.boolean("viewerJoined"), createdAt = value.string("createdAt")
+    )
+
+    private fun mapGroupMember(value: Map<String, Any?>): SocialGroupMember {
+        val user = mapUser(value.objectValue("user") ?: emptyMap())
+        return SocialGroupMember(
+            id = value.string("id").orEmpty(), groupId = value.string("groupId").orEmpty(), userId = value.string("userId") ?: user.id,
+            user = user, profile = value.objectValue("profile")?.let { mapProfile(it, user) }, role = value.string("role") ?: "member",
+            status = value.string("status") ?: "active", joinedAt = value.string("joinedAt")
+        )
+    }
+
     private fun mapComment(value: Map<String, Any?>): SocialComment {
         val author = mapUser(value.objectValue("author") ?: emptyMap())
         return SocialComment(
@@ -621,13 +766,15 @@ class SocialRepository(context: Context) {
         val RESTRICTED_STATUSES = setOf("disabled", "banned", "blocked", "suspended")
         const val FEED_TTL = 60_000L
         const val CHAT_TTL = 20_000L
-        const val USER_FIELDS = "id email name avatar role status signupSource emailVerifiedAt"
+        const val USER_FIELDS = "id email name avatar role status signupSource emailVerifiedAt phone mobileCountryCode primaryRegion country addressLine1 city state postalCode billingName"
         const val PUBLIC_USER_FIELDS = "id name avatar status"
         const val PROFILE_FIELDS = "id userId username bio about category website location coverUrl verified badgeType badgePlan badgeExpiresAt privacy preferences followerCount followingCount postCount isFollowing user { $PUBLIC_USER_FIELDS }"
-        const val POST_FIELDS = "id authorId type body media thumbnailUrl hlsUrl processingStatus visibility status viewCount shareCount reactionCount commentCount viewerReaction publishedAt author { $PUBLIC_USER_FIELDS } authorProfile { id userId username verified badgeType isFollowing }"
+        const val POST_FIELDS = "id authorId type body media thumbnailUrl hlsUrl processingStatus visibility commentPermission pinned groupId saved status viewCount shareCount reactionCount commentCount viewerReaction publishedAt author { $PUBLIC_USER_FIELDS } authorProfile { id userId username verified badgeType isFollowing }"
         const val COMMENT_FIELDS = "id postId authorId replyToId body status reactionCount viewerLiked createdAt author { $PUBLIC_USER_FIELDS } authorProfile { id userId username verified badgeType }"
         const val MESSAGE_FIELDS = "id conversationId senderId type body media replyToId deliveryStatus sentAt deliveredAt readAt editedAt unsentAt reactions { id userId emoji } sender { $PUBLIC_USER_FIELDS }"
         const val CONVERSATION_FIELDS = "id type title avatarUrl requestStatus requestedById unreadCount updatedAt members { id userId role lastReadAt user { $PUBLIC_USER_FIELDS } profile { id userId username verified badgeType } } lastMessage { $MESSAGE_FIELDS }"
         const val CALL_FIELDS = "id conversationId callerId calleeId type status offer answer iceCandidates caller { $PUBLIC_USER_FIELDS } callee { $PUBLIC_USER_FIELDS }"
+        const val GROUP_FIELDS = "id ownerId name description coverUrl privacy status memberCount viewerRole viewerJoined createdAt owner { $PUBLIC_USER_FIELDS }"
+        const val GROUP_MEMBER_FIELDS = "id groupId userId role status joinedAt user { $PUBLIC_USER_FIELDS } profile { id userId username verified badgeType }"
     }
 }
