@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.aistudio.tiwi.social.nqpzm",
+      "sha256_cert_fingerprints": [
+        "77:08:52:D2:76:50:3B:48:87:C8:C4:62:51:F7:F9:57:4E:C3:B1:C5:30:89:A1:DF:B2:C4:5C:CD:B7:9A:5B:0D"
+      ]
+    }
+  }
+]

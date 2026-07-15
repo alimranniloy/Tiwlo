@@ -8,6 +8,7 @@ import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import org.json.JSONObject
 
 class SocialRepository(context: Context) {
     private val appContext = context.applicationContext
@@ -37,6 +38,7 @@ class SocialRepository(context: Context) {
     fun hasSavedSession(): Boolean = !token.isNullOrBlank() && _currentUser.value != null
     fun currentUserId(): String? = _currentUser.value?.id
     fun absoluteUrl(path: String?): String? = client.absoluteUrl(path)
+    fun isAccountRestricted(): Boolean = _currentUser.value?.status?.lowercase() in RESTRICTED_STATUSES
 
     suspend fun login(identifier: String, password: String): SocialUser {
         val secureToken = security.issueAuthToken("login", mapOf("email" to identifier.trim(), "password" to password))
@@ -135,6 +137,20 @@ class SocialRepository(context: Context) {
         return data.list("socialSearch").mapNotNull { it.objectMap()?.let(::mapProfile) }
     }
 
+    suspend fun exportAccountDataJson(): String {
+        val userId = currentUserId() ?: throw SocialApiException("Sign in to download your information")
+        val data = client.execute(
+            """query TiwiAccountExport(${D}userId: ID!) {
+                me { $USER_FIELDS }
+                socialProfile(userId: ${D}userId) { $PROFILE_FIELDS }
+                socialFeed(authorId: ${D}userId, limit: 100) { $POST_FIELDS }
+                socialConversations { $CONVERSATION_FIELDS }
+            }""",
+            mapOf("userId" to userId)
+        )
+        return JSONObject(data).toString(2)
+    }
+
     suspend fun follow(userId: String, follow: Boolean): SocialProfile {
         val operation = if (follow) "followSocialUser" else "unfollowSocialUser"
         val data = client.execute(
@@ -167,8 +183,8 @@ class SocialRepository(context: Context) {
         return post
     }
 
-    suspend fun uploadMedia(resolver: ContentResolver, uri: Uri, kind: String): SocialMedia =
-        client.uploadMedia(resolver, uri, kind).asSocialMedia()
+    suspend fun uploadMedia(resolver: ContentResolver, uri: Uri, kind: String, onProgress: ((Int) -> Unit)? = null): SocialMedia =
+        client.uploadMedia(resolver, uri, kind, onProgress).asSocialMedia()
 
     suspend fun reactToPost(id: String): SocialPost {
         val before = _feed.value
@@ -202,7 +218,13 @@ class SocialRepository(context: Context) {
 
     suspend fun repostPost(id: String): SocialPost {
         val data = client.execute("""mutation RepostTiwi(${D}id: ID!) { repostSocialPost(id: ${D}id) { $POST_FIELDS } }""", mapOf("id" to id))
-        return mapPost(data.objectValue("repostSocialPost") ?: throw SocialApiException("Repost failed")).also(::replacePost)
+        val repost = mapPost(data.objectValue("repostSocialPost") ?: throw SocialApiException("Repost failed"))
+        val updated = _feed.value
+            .map { post -> if (post.id == id) post.copy(shareCount = post.shareCount + 1) else post }
+            .filterNot { it.id == repost.id }
+        _feed.value = listOf(repost) + updated
+        cache.saveFeed(_feed.value)
+        return repost
     }
 
     suspend fun updatePost(id: String, body: String): SocialPost {
@@ -473,7 +495,13 @@ class SocialRepository(context: Context) {
     private fun mapMedia(value: Map<String, Any?>) = SocialMedia(
         url = absoluteUrl(value.string("url")).orEmpty(), type = value.string("type") ?: "image",
         hlsUrl = absoluteUrl(value.string("hlsUrl")), thumbnailUrl = absoluteUrl(value.string("thumbnailUrl")),
-        mimeType = value.string("mimeType"), processingId = value.string("processingId")
+        mimeType = value.string("mimeType"), processingId = value.string("processingId"),
+        sharedPostId = value.string("sharedPostId"), sharedAuthorId = value.string("sharedAuthorId"),
+        sharedAuthor = value.string("sharedAuthor"), sharedAvatar = absoluteUrl(value.string("sharedAvatar")),
+        sharedBody = value.string("sharedBody"), sharedMediaType = value.string("sharedMediaType"),
+        sharedViews = value.number("sharedViews")?.toInt() ?: 0,
+        sharedReactions = value.number("sharedReactions")?.toInt() ?: 0,
+        sharedComments = value.number("sharedComments")?.toInt() ?: 0
     )
 
     private fun mapPost(value: Map<String, Any?>): SocialPost {
@@ -527,7 +555,8 @@ class SocialRepository(context: Context) {
     }
 
     private fun replacePost(updated: SocialPost) {
-        _feed.value = _feed.value.map { if (it.id == updated.id) updated else it }
+        _feed.value = if (_feed.value.any { it.id == updated.id }) _feed.value.map { if (it.id == updated.id) updated else it }
+        else listOf(updated) + _feed.value
         cache.saveFeed(_feed.value)
     }
 
@@ -538,6 +567,7 @@ class SocialRepository(context: Context) {
 
     private companion object {
         const val D = "$"
+        val RESTRICTED_STATUSES = setOf("disabled", "banned", "blocked", "suspended")
         const val FEED_TTL = 60_000L
         const val CHAT_TTL = 20_000L
         const val USER_FIELDS = "id email name avatar role status"

@@ -1,5 +1,5 @@
 import React from 'react';
-import { LifeBuoy, LogOut } from 'lucide-react';
+import { Download, LifeBuoy, LogOut } from 'lucide-react';
 import SystemStatusPage from '../components/SystemStatusPage';
 import { fetchIdentityVerificationChallengeWithApi } from '../lib/tiwloApi';
 import { User } from '../types';
@@ -70,6 +70,16 @@ export default function BannedAccount({ user, onLogout }: BannedAccountProps) {
     window.setTimeout(emit, 150);
   };
 
+  const downloadInformation = () => {
+    const blob = new Blob([JSON.stringify({ exportedAt: new Date().toISOString(), account: user }, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'tiwlo-account-information.json';
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <SystemStatusPage variant="disabled" title="Account Disabled | Tiwlo">
       {verificationMessage && (
@@ -77,7 +87,17 @@ export default function BannedAccount({ user, onLogout }: BannedAccountProps) {
           {verificationMessage}
         </div>
       )}
+      <p className="mb-4 text-[13px] font-semibold leading-6 text-[#64748b]">
+        Contact support within 180 days to request a review. After that, your account and stored information may be permanently removed.
+      </p>
       <div className="flex flex-col gap-3 sm:flex-row sm:justify-center">
+        <button
+          onClick={downloadInformation}
+          className="inline-flex items-center justify-center gap-2 rounded-md border border-[#dfe5ee] bg-white px-4 py-2.5 text-[13px] font-bold text-[#111827] hover:bg-[#f8fafc]"
+        >
+          <Download className="h-4 w-4" />
+          Download your information
+        </button>
         <button
           onClick={openSupport}
           className="inline-flex items-center justify-center gap-2 rounded-md border border-[#dfe5ee] bg-white px-4 py-2.5 text-[13px] font-bold text-[#111827] hover:bg-[#f8fafc]"

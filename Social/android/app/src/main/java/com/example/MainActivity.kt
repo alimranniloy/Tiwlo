@@ -4,7 +4,10 @@ import android.Manifest
 import android.app.Activity
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.RingtoneManager
 import android.os.Build
@@ -114,26 +117,124 @@ val FriendBlue = Color(0xFF1186FF)
 val TiwiBlack = Color(0xFF000000)
 
 class MainActivity : ComponentActivity() {
+    private var pendingDeepLink by mutableStateOf<String?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        pendingDeepLink = intent?.dataString
         enableEdgeToEdge()
         setContent {
             TiwiTheme {
                 val repository = remember { SocialRepository(applicationContext) }
-                MainNavigation(repository)
+                MainNavigation(repository, pendingDeepLink) { pendingDeepLink = null }
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        pendingDeepLink = intent.dataString
     }
 }
 
 @Composable
-fun MainNavigation(repository: SocialRepository) {
+fun MainNavigation(repository: SocialRepository, deepLink: String? = null, onDeepLinkConsumed: () -> Unit = {}) {
     var currentScreen by remember { mutableStateOf("splash") }
+    val currentUser by repository.currentUser.collectAsState()
+    LaunchedEffect(currentUser?.status, currentScreen) {
+        if (currentScreen != "splash" && currentScreen != "auth") {
+            currentScreen = if (repository.isAccountRestricted()) "disabled" else if (currentScreen == "disabled") "main" else currentScreen
+        }
+    }
     
     when (currentScreen) {
-        "splash" -> SplashScreen(onFinished = { currentScreen = if (repository.hasSavedSession()) "main" else "auth" })
-        "auth" -> AuthScreen(repository, onLoginSuccess = { currentScreen = "main" })
-        "main" -> TiwiApp(repository, onLogout = { currentScreen = "auth" })
+        "splash" -> SplashScreen(onFinished = { currentScreen = if (!repository.hasSavedSession()) "auth" else if (repository.isAccountRestricted()) "disabled" else "main" })
+        "auth" -> AuthScreen(repository, onLoginSuccess = { currentScreen = if (repository.isAccountRestricted()) "disabled" else "main" })
+        "main" -> TiwiApp(repository, onLogout = { currentScreen = "auth" }, initialDeepLink = deepLink, onDeepLinkConsumed = onDeepLinkConsumed)
+        "disabled" -> DisabledAccountScreen(repository, onLogout = { repository.logout(); currentScreen = "auth" })
+    }
+}
+
+@Composable
+private fun DisabledAccountScreen(repository: SocialRepository, onLogout: () -> Unit) {
+    val context = LocalContext.current
+    val user by repository.currentUser.collectAsState()
+    val scope = rememberCoroutineScope()
+    var busy by remember { mutableStateOf(false) }
+    var pendingExport by remember { mutableStateOf<String?>(null) }
+    val createDocument = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        val json = pendingExport
+        if (uri != null && json != null) {
+            runCatching { context.contentResolver.openOutputStream(uri)?.bufferedWriter()?.use { it.write(json) } }
+                .onSuccess { Toast.makeText(context, "Your information was downloaded", Toast.LENGTH_LONG).show() }
+                .onFailure { Toast.makeText(context, it.message ?: "Download failed", Toast.LENGTH_LONG).show() }
+        }
+        pendingExport = null
+        busy = false
+    }
+    val view = LocalView.current
+    val activity = context as? Activity
+    SideEffect {
+        activity?.window?.let { window ->
+            window.statusBarColor = Color.White.toArgb()
+            window.navigationBarColor = Color.White.toArgb()
+            WindowCompat.getInsetsController(window, view).apply {
+                isAppearanceLightStatusBars = true
+                isAppearanceLightNavigationBars = true
+            }
+        }
+    }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(10000)
+            runCatching { repository.validateSession() }
+        }
+    }
+    Column(
+        Modifier.fillMaxSize().background(Color.White).statusBarsPadding().navigationBarsPadding().padding(horizontal = 24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Box(Modifier.size(82.dp).background(Color(0xFFFFF1F0), CircleShape), contentAlignment = Alignment.Center) {
+            Icon(Icons.Default.Lock, null, tint = Color(0xFFD92D20), modifier = Modifier.size(38.dp))
+        }
+        Spacer(Modifier.height(20.dp))
+        Text("Account disabled", fontSize = 27.sp, fontWeight = FontWeight.ExtraBold, color = Color(0xFF101828))
+        Spacer(Modifier.height(10.dp))
+        Text(
+            "${user?.name.orEmpty()}, your Tiwlo account is currently ${user?.status ?: "restricted"}. Contact support within 180 days to request a review. After that, your account and information may be permanently removed.",
+            textAlign = TextAlign.Center,
+            color = Color(0xFF475467),
+            lineHeight = 21.sp
+        )
+        Spacer(Modifier.height(24.dp))
+        Button(
+            enabled = !busy,
+            onClick = {
+                scope.launch {
+                    busy = true
+                    runCatching { repository.exportAccountDataJson() }
+                        .onSuccess { json -> pendingExport = json; createDocument.launch("tiwi-account-information.json") }
+                        .onFailure { busy = false; Toast.makeText(context, it.message ?: "Download failed", Toast.LENGTH_LONG).show() }
+                }
+            },
+            modifier = Modifier.fillMaxWidth().height(48.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color(0xFF101828)),
+            border = BorderStroke(1.dp, Color(0xFFD0D5DD)),
+            shape = RoundedCornerShape(8.dp)
+        ) {
+            if (busy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = TiwiBlue)
+            else { Icon(Icons.Default.Download, null); Spacer(Modifier.width(8.dp)); Text("Download your information", fontWeight = FontWeight.Bold) }
+        }
+        Spacer(Modifier.height(10.dp))
+        Button(
+            onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://tiwlo.com/support"))) },
+            modifier = Modifier.fillMaxWidth().height(48.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = TiwiBlue),
+            shape = RoundedCornerShape(8.dp)
+        ) { Text("Contact support", fontWeight = FontWeight.Bold) }
+        TextButton(onClick = onLogout, modifier = Modifier.padding(top = 6.dp)) { Text("Sign out", color = Color(0xFF475467)) }
     }
 }
 
@@ -536,11 +637,11 @@ private fun playPostPublishedSound(context: Context) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit) {
+fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink: String? = null, onDeepLinkConsumed: () -> Unit = {}) {
     var selectedTab by remember { mutableIntStateOf(0) }
     var showProfile by remember { mutableStateOf(false) }
     var showCreatePost by remember { mutableStateOf(false) }
-    var showShareSheet by remember { mutableStateOf(false) }
+    var sharedPost by remember { mutableStateOf<Post?>(null) }
     var showMessages by remember { mutableStateOf(false) }
     var showConnect by remember { mutableStateOf(false) }
     var isRandomChat by remember { mutableStateOf(false) }
@@ -575,9 +676,9 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit) {
         }
     }
 
-    BackHandler(enabled = showShareSheet || hasOverlay || selectedTab != 0) {
+    BackHandler(enabled = sharedPost != null || hasOverlay || selectedTab != 0) {
         when {
-            showShareSheet -> showShareSheet = false
+            sharedPost != null -> sharedPost = null
             selectedPostId != null -> selectedPostId = null
             selectedProfileUserId != null -> selectedProfileUserId = null
             selectedChat != null -> { selectedChat = null; isRandomChat = false }
@@ -592,6 +693,24 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit) {
     LaunchedEffect(Unit) {
         repository.validateSession()
         repository.refreshAll()
+    }
+
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(15000)
+            runCatching { repository.validateSession() }
+        }
+    }
+
+    LaunchedEffect(initialDeepLink) {
+        val link = initialDeepLink ?: return@LaunchedEffect
+        val uri = runCatching { android.net.Uri.parse(link) }.getOrNull()
+        val segments = uri?.pathSegments.orEmpty()
+        when {
+            segments.size >= 3 && segments[0] == "social" && segments[1] == "post" -> selectedPostId = segments[2]
+            segments.size >= 3 && segments[0] == "social" && segments[1] == "profile" -> selectedProfileUserId = segments[2]
+        }
+        onDeepLinkConsumed()
     }
 
     LaunchedEffect(currentUser?.id) {
@@ -620,8 +739,8 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit) {
         return
     }
 
-    if (showShareSheet) {
-        TiwiShareSheet(repository, onDismiss = { showShareSheet = false })
+    sharedPost?.let { post ->
+        TiwiShareSheet(repository, post, onDismiss = { sharedPost = null })
     }
 
     Scaffold(
@@ -638,7 +757,7 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit) {
         },
         bottomBar = { 
             if (!showProfile && !showCreatePost && !showMessages && !showConnect && selectedProfileUserId == null && selectedChat == null && selectedPostId == null) {
-                TiwiBottomBar(selectedTab, dark = selectedTab == 2) {
+                TiwiBottomBar(selectedTab, dark = selectedTab == 2, avatarUrl = currentUser?.avatar) {
                     selectedTab = it
                 } 
             }
@@ -648,10 +767,10 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit) {
     ) { innerPadding ->
         Box(modifier = Modifier.padding(innerPadding)) {
             when {
-                selectedPostId != null -> PostDetailScreen(repository, selectedPostId!!, onBack = { selectedPostId = null }, onProfileClick = { selectedProfileUserId = it; selectedPostId = null })
+                selectedPostId != null -> PostDetailScreen(repository, selectedPostId!!, onBack = { selectedPostId = null }, onProfileClick = { selectedProfileUserId = it; selectedPostId = null }, onShare = { sharedPost = it })
                 selectedProfileUserId != null -> ProfileScreen(
                     repository, posts.filter { it.authorId == selectedProfileUserId }, reels.filter { it.authorId == selectedProfileUserId }, userId = selectedProfileUserId,
-                    onBack = { selectedProfileUserId = null }, onPostClick = { selectedPostId = it }, onMessage = { id -> scope.launch { selectedChat = repository.createConversation(id); selectedProfileUserId = null } }
+                    onBack = { selectedProfileUserId = null }, onPostClick = { selectedPostId = it }, onShare = { sharedPost = it }, onMessage = { id -> scope.launch { selectedChat = repository.createConversation(id); selectedProfileUserId = null } }
                 )
                 showConnect -> RandomConnectScreen(
                     repository = repository,
@@ -685,12 +804,12 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit) {
                 )
                 showMessages -> MessagesScreen(repository, onBack = { showMessages = false }, onChatClick = { selectedChat = it })
                 showCreatePost -> CreatePostScreen(repository, onBack = { showCreatePost = false })
-                showProfile -> ProfileScreen(repository, posts.filter { it.authorId == repository.currentUserId() }, reels.filter { it.authorId == repository.currentUserId() }, onBack = { showProfile = false }, onPostClick = { selectedPostId = it })
+                showProfile -> ProfileScreen(repository, posts.filter { it.authorId == repository.currentUserId() }, reels.filter { it.authorId == repository.currentUserId() }, onBack = { showProfile = false }, onPostClick = { selectedPostId = it }, onShare = { sharedPost = it })
                 else -> {
                     when (selectedTab) {
-                        0 -> HomeFeed(reels, posts, repository, onShareClick = { showShareSheet = true }, onAuthorClick = { selectedProfileUserId = it }, onPostClick = { selectedPostId = it })
+                        0 -> HomeFeed(reels, posts, repository, onShareClick = { sharedPost = it }, onAuthorClick = { selectedProfileUserId = it }, onPostClick = { selectedPostId = it })
                         1 -> SearchScreen(repository, onProfileClick = { selectedProfileUserId = it }, onPostClick = { selectedPostId = it })
-                        2 -> ReelsScreen(reels, repository, onOpen = { selectedPostId = it }, onShare = { showShareSheet = true }, onAuthor = { selectedProfileUserId = it })
+                        2 -> ReelsScreen(reels, repository, onOpen = { selectedPostId = it }, onShare = { reel -> sharedPost = posts.firstOrNull { it.id == reel.id } }, onAuthor = { selectedProfileUserId = it })
                         3 -> NotificationsScreen(repository)
                         4 -> MenuScreen(repository, currentUser?.name.orEmpty(), currentUser?.avatar, onProfileClick = { showProfile = true }, onLogout = { repository.logout(); onLogout() })
                     }
@@ -748,7 +867,7 @@ fun HomeFeed(
     reels: List<Reel>,
     posts: List<Post>,
     repository: SocialRepository,
-    onShareClick: () -> Unit,
+    onShareClick: (Post) -> Unit,
     onAuthorClick: (String) -> Unit,
     onPostClick: (String) -> Unit
 ) {
@@ -761,7 +880,7 @@ fun HomeFeed(
         }
         posts.forEachIndexed { index, post ->
             item(key = post.id) {
-                PostCard(post, repository, onShareClick, { onAuthorClick(post.authorId) }, { onPostClick(post.id) })
+                PostCard(post, repository, { onShareClick(post) }, { onAuthorClick(post.authorId) }, { onPostClick(post.id) })
             }
             if (suggestions.isNotEmpty() && index % 2 == 1) item(key = "suggest-$index") {
                 SuggestedFriendsSection(suggestions, repository, onAuthorClick) { updated ->
@@ -956,6 +1075,28 @@ fun PostCard(post: Post, repository: SocialRepository, onShareClick: () -> Unit 
 
         PostMediaGrid(post.media, onOpen)
 
+        if (post.likes + post.comments + post.shares + post.views > 0) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (post.likes > 0) {
+                    Box(Modifier.size(18.dp).background(TiwiBlue, CircleShape), contentAlignment = Alignment.Center) {
+                        Icon(Icons.Default.ThumbUp, null, tint = Color.White, modifier = Modifier.size(11.dp))
+                    }
+                    Spacer(Modifier.width(4.dp))
+                    Text(post.likes.toString(), color = Color.Gray, fontSize = 12.sp)
+                }
+                Spacer(Modifier.weight(1f))
+                Text(
+                    listOfNotNull(
+                        post.comments.takeIf { it > 0 }?.let { "$it comments" },
+                        post.shares.takeIf { it > 0 }?.let { "$it reposts" },
+                        post.views.takeIf { it > 0 }?.let { "$it views" }
+                    ).joinToString(" · "),
+                    color = Color.Gray,
+                    fontSize = 12.sp
+                )
+            }
+        }
+
         Row(
             modifier = Modifier.fillMaxWidth().height(44.dp).padding(horizontal = 5.dp),
             verticalAlignment = Alignment.CenterVertically
@@ -984,13 +1125,13 @@ fun PostCard(post: Post, repository: SocialRepository, onShareClick: () -> Unit 
         )
     }
 
-    if (showEdit) AlertDialog(onDismissRequest = { showEdit = false }, title = { Text("Edit post") }, text = {
+    if (showEdit) AlertDialog(onDismissRequest = { showEdit = false }, containerColor = Color.White, tonalElevation = 0.dp, title = { Text("Edit post") }, text = {
         OutlinedTextField(editBody, { editBody = it }, modifier = Modifier.fillMaxWidth(), minLines = 3)
     }, confirmButton = { TextButton(onClick = { showEdit = false; scope.launch { runCatching { repository.updatePost(post.id, editBody) } } }) { Text("Save") } }, dismissButton = { TextButton(onClick = { showEdit = false }) { Text("Cancel") } })
-    if (showDelete) AlertDialog(onDismissRequest = { showDelete = false }, title = { Text("Delete post?") }, text = { Text("This removes the post from every feed.") },
+    if (showDelete) AlertDialog(onDismissRequest = { showDelete = false }, containerColor = Color.White, tonalElevation = 0.dp, title = { Text("Delete post?") }, text = { Text("This removes the post from every feed.") },
         confirmButton = { TextButton(onClick = { showDelete = false; scope.launch { runCatching { repository.deletePost(post.id) } } }) { Text("Delete", color = Color.Red) } },
         dismissButton = { TextButton(onClick = { showDelete = false }) { Text("Cancel") } })
-    if (showReport) AlertDialog(onDismissRequest = { showReport = false }, title = { Text("Report post") }, text = { Text("Report spam, harassment, false information or inappropriate content to Tiwlo administrators.") },
+    if (showReport) AlertDialog(onDismissRequest = { showReport = false }, containerColor = Color.White, tonalElevation = 0.dp, title = { Text("Report post") }, text = { Text("Report spam, harassment, false information or inappropriate content to Tiwlo administrators.") },
         confirmButton = { TextButton(onClick = { showReport = false; scope.launch { runCatching { repository.reportContent("post", post.id, "inappropriate_content") }.onSuccess { Toast.makeText(context, "Report sent", Toast.LENGTH_SHORT).show() } } }) { Text("Send report") } },
         dismissButton = { TextButton(onClick = { showReport = false }) { Text("Cancel") } })
     if (showVerified) VerifiedInfoSheet(post.author, post.authorAvatarUrl, onDismiss = { showVerified = false })
@@ -1015,6 +1156,10 @@ private fun CompactPostAction(
 @Composable
 private fun PostMediaGrid(media: List<SocialMedia>, onOpen: () -> Unit) {
     if (media.isEmpty()) return
+    if (media.size == 1 && media.first().type == "shared_post") {
+        SharedPostCard(media.first(), onOpen)
+        return
+    }
     val visible = media.take(4)
     val cell: @Composable (SocialMedia, Modifier, Int) -> Unit = { item, modifier, index ->
         Box(modifier.clickable(onClick = onOpen).background(Color.Black)) {
@@ -1039,10 +1184,43 @@ private fun PostMediaGrid(media: List<SocialMedia>, onOpen: () -> Unit) {
     }
 }
 
+@Composable
+private fun SharedPostCard(media: SocialMedia, onOpen: () -> Unit) {
+    Column(
+        Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp)
+            .border(1.dp, Color(0xFFE2E2E2), RoundedCornerShape(10.dp))
+            .clip(RoundedCornerShape(10.dp)).clickable(onClick = onOpen).background(Color.White)
+    ) {
+        Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+            TiwiAvatar(media.sharedAvatar, R.drawable.img_tiwi_avatar_1, Modifier.size(38.dp).clip(CircleShape))
+            Spacer(Modifier.width(8.dp))
+            Column(Modifier.weight(1f)) {
+                Text(media.sharedAuthor ?: "Tiwlo user", fontWeight = FontWeight.Bold, color = Color.Black, maxLines = 1)
+                Text("Original post", fontSize = 12.sp, color = Color.Gray)
+            }
+        }
+        if (!media.sharedBody.isNullOrBlank()) {
+            Text(media.sharedBody, modifier = Modifier.padding(horizontal = 10.dp, vertical = 2.dp), color = Color.Black)
+        }
+        if (media.url.isNotBlank()) {
+            Box(Modifier.fillMaxWidth().heightIn(min = 180.dp, max = 360.dp).background(Color.Black), contentAlignment = Alignment.Center) {
+                AsyncImage(model = media.url, contentDescription = "Shared post media", modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                if (media.sharedMediaType == "video") {
+                    Icon(Icons.Default.PlayArrow, contentDescription = "Play shared video", tint = Color.White, modifier = Modifier.size(54.dp).background(Color.Black.copy(alpha = .35f), CircleShape).padding(10.dp))
+                }
+            }
+        }
+        Text(
+            "${media.sharedReactions} reactions  ·  ${media.sharedComments} comments  ·  ${media.sharedViews} views",
+            modifier = Modifier.padding(10.dp), fontSize = 12.sp, color = Color.Gray
+        )
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun VerifiedInfoSheet(name: String, avatar: String?, onDismiss: () -> Unit) {
-    ModalBottomSheet(onDismissRequest = onDismiss, dragHandle = null) {
+    ModalBottomSheet(onDismissRequest = onDismiss, dragHandle = null, containerColor = Color.White, contentColor = Color.Black, tonalElevation = 0.dp) {
         Column(Modifier.fillMaxWidth().padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             TiwiAvatar(avatar, R.drawable.img_tiwi_avatar_1, Modifier.size(72.dp).clip(CircleShape))
             Spacer(Modifier.height(8.dp))
@@ -1057,7 +1235,7 @@ private fun VerifiedInfoSheet(name: String, avatar: String?, onDismiss: () -> Un
 }
 
 @Composable
-private fun PostDetailScreen(repository: SocialRepository, postId: String, onBack: () -> Unit, onProfileClick: (String) -> Unit) {
+private fun PostDetailScreen(repository: SocialRepository, postId: String, onBack: () -> Unit, onProfileClick: (String) -> Unit, onShare: (Post) -> Unit) {
     val feed by repository.feed.collectAsState()
     val commentsByPost by repository.comments.collectAsState()
     val post = feed.firstOrNull { it.id == postId }?.let(::toUiPost)
@@ -1082,7 +1260,7 @@ private fun PostDetailScreen(repository: SocialRepository, postId: String, onBac
         }
         HorizontalDivider(thickness = .5.dp)
         LazyColumn(Modifier.weight(1f)) {
-            post?.let { item { PostCard(it, repository, onAuthorClick = { onProfileClick(it.authorId) }) } }
+            post?.let { item { PostCard(it, repository, onShareClick = { onShare(it) }, onAuthorClick = { onProfileClick(it.authorId) }) } }
             item { Text("Comments", modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp), fontWeight = FontWeight.Bold) }
             if (comments.isEmpty()) item { Text("Be the first to comment", color = Color.Gray, modifier = Modifier.padding(24.dp).fillMaxWidth(), textAlign = TextAlign.Center) }
             items(comments, key = { it.id }) { comment ->
@@ -1169,14 +1347,19 @@ private fun CommentRow(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun TiwiShareSheet(repository: SocialRepository, onDismiss: () -> Unit) {
+fun TiwiShareSheet(repository: SocialRepository, post: Post, onDismiss: () -> Unit) {
     val conversations by repository.conversations.collectAsState()
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val deepLink = "https://tiwlo.com/social/post/${post.id}"
     val contacts = remember(conversations) {
-        conversations.mapNotNull { chat -> chat.members.firstOrNull { it.userId != repository.currentUserId() }?.user?.name }.distinct().take(8)
+        conversations.filter { it.requestStatus == "accepted" }.distinctBy { it.id }.take(8)
     }
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        containerColor = MaterialTheme.colorScheme.surface,
+        containerColor = Color.White,
+        contentColor = Color.Black,
+        tonalElevation = 0.dp,
         dragHandle = { BottomSheetDefaults.DragHandle() }
     ) {
         Column(
@@ -1189,13 +1372,60 @@ fun TiwiShareSheet(repository: SocialRepository, onDismiss: () -> Unit) {
                 style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
                 modifier = Modifier.padding(bottom = 16.dp)
             )
+
+            Surface(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 14.dp),
+                shape = RoundedCornerShape(10.dp),
+                color = Color.White,
+                border = BorderStroke(1.dp, Color(0xFFE1E4E8)),
+                tonalElevation = 0.dp
+            ) {
+                Column {
+                    Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        TiwiAvatar(post.authorAvatarUrl, post.authorAvatar, Modifier.size(40.dp).clip(CircleShape))
+                        Spacer(Modifier.width(8.dp))
+                        Column(Modifier.weight(1f)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(post.author, fontWeight = FontWeight.Bold)
+                                if (post.verified) Icon(Icons.Default.Verified, null, tint = TiwiBlue, modifier = Modifier.padding(start = 3.dp).size(15.dp))
+                            }
+                            Text(post.time, color = Color.Gray, fontSize = 11.sp)
+                        }
+                        Icon(Icons.Default.Public, "Shared post", tint = Color.Gray, modifier = Modifier.size(16.dp))
+                    }
+                    if (post.content.isNotBlank()) Text(post.content, modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp), maxLines = 3, overflow = TextOverflow.Ellipsis)
+                    val preview = post.media.firstOrNull()
+                    if (preview != null) Box(Modifier.fillMaxWidth().height(160.dp).background(Color.Black), contentAlignment = Alignment.Center) {
+                        if (preview.type == "video") {
+                            val image = preview.thumbnailUrl ?: post.imageUrl
+                            if (!image.isNullOrBlank()) AsyncImage(image, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                            Icon(Icons.Default.PlayCircle, "Video", tint = Color.White, modifier = Modifier.size(48.dp))
+                        } else AsyncImage(preview.url, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                    }
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("${post.likes} reactions", color = Color.Gray, fontSize = 12.sp)
+                        Text("${post.comments} comments · ${post.shares} reposts · ${post.views} views", color = Color.Gray, fontSize = 12.sp)
+                    }
+                }
+            }
             
             LazyRow(
                 horizontalArrangement = Arrangement.spacedBy(16.dp),
                 modifier = Modifier.padding(bottom = 24.dp)
             ) {
-                items(contacts) { name ->
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                items(contacts, key = { it.id }) { chat ->
+                    val contact = chat.members.firstOrNull { it.userId != repository.currentUserId() }
+                    val name = chat.title ?: contact?.user?.name.orEmpty()
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.clickable {
+                            scope.launch {
+                                runCatching { repository.sendMessage(chat.id, deepLink) }
+                                    .onSuccess { Toast.makeText(context, "Sent to $name", Toast.LENGTH_SHORT).show(); onDismiss() }
+                                    .onFailure { Toast.makeText(context, it.message ?: "Share failed", Toast.LENGTH_SHORT).show() }
+                            }
+                        }
+                    ) {
                         Box(
                             modifier = Modifier
                                 .size(56.dp)
@@ -1203,7 +1433,7 @@ fun TiwiShareSheet(repository: SocialRepository, onDismiss: () -> Unit) {
                                 .background(TiwiBlue.copy(alpha = 0.1f)),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text(name.take(1), fontWeight = FontWeight.Bold, color = TiwiBlue)
+                            TiwiAvatar(contact?.user?.avatar, R.drawable.img_tiwi_avatar_1, Modifier.fillMaxSize().clip(CircleShape))
                         }
                         Text(name, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 4.dp))
                     }
@@ -1221,7 +1451,16 @@ fun TiwiShareSheet(repository: SocialRepository, onDismiss: () -> Unit) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable { onDismiss() }
+                        .clickable {
+                            if (name == "Copy Link") {
+                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                clipboard.setPrimaryClip(ClipData.newPlainText("Tiwi post", deepLink))
+                                Toast.makeText(context, "Link copied", Toast.LENGTH_SHORT).show()
+                            } else {
+                                shareDeepLink(context, "${post.author} on Tiwi", post.content, deepLink)
+                            }
+                            onDismiss()
+                        }
                         .padding(vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -1233,6 +1472,15 @@ fun TiwiShareSheet(repository: SocialRepository, onDismiss: () -> Unit) {
             Spacer(modifier = Modifier.height(32.dp))
         }
     }
+}
+
+private fun shareDeepLink(context: Context, title: String, text: String, url: String) {
+    val send = Intent(Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(Intent.EXTRA_SUBJECT, title)
+        putExtra(Intent.EXTRA_TEXT, listOf(text.trim(), url).filter { it.isNotBlank() }.joinToString("\n\n"))
+    }
+    context.startActivity(Intent.createChooser(send, "Share with"))
 }
 
 @Composable
@@ -1282,7 +1530,11 @@ fun CreatePostScreen(repository: SocialRepository, onBack: () -> Unit) {
                                 uploadStatus = "Uploading ${index + 1} of ${selectedUris.size}"
                                 uploadProgress = if (selectedUris.isEmpty()) 45 else 5 + ((index * 75) / selectedUris.size)
                                 showPostUploadNotification(context, uploadProgress, uploadStatus)
-                                repository.uploadMedia(context.contentResolver, uri, "post")
+                                repository.uploadMedia(context.contentResolver, uri, "post") { fileProgress ->
+                                    val total = selectedUris.size.coerceAtLeast(1)
+                                    uploadProgress = 5 + (((index * 80) + (fileProgress * 80 / 100)) / total)
+                                    showPostUploadNotification(context, uploadProgress, "Uploading ${index + 1} of ${selectedUris.size}")
+                                }
                             }
                             uploadProgress = 88
                             uploadStatus = "Publishing to the feed"
@@ -1416,7 +1668,7 @@ fun CreatePostScreen(repository: SocialRepository, onBack: () -> Unit) {
 }
 
 @Composable
-fun TiwiBottomBar(selectedTab: Int, dark: Boolean = false, onTabSelected: (Int) -> Unit) {
+fun TiwiBottomBar(selectedTab: Int, dark: Boolean = false, avatarUrl: String? = null, onTabSelected: (Int) -> Unit) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
         color = if (dark) Color.Black else MaterialTheme.colorScheme.background,
@@ -1444,7 +1696,15 @@ fun TiwiBottomBar(selectedTab: Int, dark: Boolean = false, onTabSelected: (Int) 
                     onClick = { onTabSelected(index) },
                     modifier = Modifier.size(48.dp)
                 ) {
-                    Icon(
+                    if (index == 4) {
+                        TiwiAvatar(
+                            avatarUrl,
+                            R.drawable.img_tiwi_avatar_1,
+                            Modifier.size(27.dp).graphicsLayer(scaleX = iconScale, scaleY = iconScale)
+                                .border(if (isSelected) 2.dp else 1.dp, if (dark) Color.White else if (isSelected) Color.Black else Color.Gray, CircleShape)
+                                .padding(2.dp).clip(CircleShape)
+                        )
+                    } else Icon(
                         imageVector = if (isSelected) filled else outlined,
                         contentDescription = null,
                         tint = if (dark) Color.White else if (isSelected) Color.Black else Color.Gray,
@@ -1574,7 +1834,7 @@ private fun ExplorePostTile(post: SocialPost, modifier: Modifier, onPostClick: (
 }
 
 @Composable
-fun ReelsScreen(reels: List<Reel>, repository: SocialRepository, onOpen: (String) -> Unit = {}, onShare: () -> Unit = {}, onAuthor: (String) -> Unit = {}) {
+fun ReelsScreen(reels: List<Reel>, repository: SocialRepository, onOpen: (String) -> Unit = {}, onShare: (Reel) -> Unit = {}, onAuthor: (String) -> Unit = {}) {
     if (reels.isEmpty()) {
         Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
             Text("No reels yet", color = Color.White)
@@ -1612,7 +1872,7 @@ fun ReelsScreen(reels: List<Reel>, repository: SocialRepository, onOpen: (String
                 IconButton(onClick = { onOpen(reel.id) }) { Icon(Icons.Default.Comment, "Comment", tint = Color.White, modifier = Modifier.size(30.dp)) }
                 Text(reel.comments.toString(), color = Color.White, style = MaterialTheme.typography.labelMedium)
                 Spacer(modifier = Modifier.height(12.dp))
-                IconButton(onClick = onShare) { Icon(Icons.Default.Share, "Share", tint = Color.White, modifier = Modifier.size(30.dp)) }
+                IconButton(onClick = { onShare(reel) }) { Icon(Icons.Default.Share, "Share", tint = Color.White, modifier = Modifier.size(30.dp)) }
                 Text("Share", color = Color.White, style = MaterialTheme.typography.labelMedium)
             }
 
@@ -1842,41 +2102,60 @@ fun NotificationsScreen(repository: SocialRepository) {
 @Composable
 fun MenuScreen(repository: SocialRepository, name: String, avatarUrl: String?, onProfileClick: () -> Unit, onLogout: () -> Unit) {
     var selectedSetting by remember { mutableStateOf<String?>(null) }
+    var showEditProfile by remember { mutableStateOf(false) }
     val profile by repository.profile.collectAsState()
-    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+    val context = LocalContext.current
+    selectedSetting?.let { setting ->
+        BackHandler { selectedSetting = null }
+        SocialSettingsPage(repository, profile, setting, onBack = { selectedSetting = null })
+        return
+    }
+    Column(modifier = Modifier.fillMaxSize().background(Color.White).padding(horizontal = 10.dp)) {
         Text(
             text = "Menu",
-            style = MaterialTheme.typography.headlineLarge.copy(fontWeight = FontWeight.Bold)
+            style = MaterialTheme.typography.headlineLarge.copy(fontWeight = FontWeight.Bold),
+            modifier = Modifier.padding(top = 8.dp)
         )
-        
-        Spacer(modifier = Modifier.height(16.dp))
-        
-        // Profile Card
+
+        Spacer(modifier = Modifier.height(8.dp))
+
         Surface(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable { onProfileClick() },
-            color = MaterialTheme.colorScheme.surface,
-            shape = RoundedCornerShape(16.dp)
+            modifier = Modifier.fillMaxWidth(),
+            color = Color.White,
+            shape = RoundedCornerShape(12.dp),
+            border = BorderStroke(1.dp, Color(0xFFE3E6EA)),
+            tonalElevation = 0.dp
         ) {
-            Row(
-                modifier = Modifier.padding(16.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                TiwiAvatar(avatarUrl, R.drawable.img_tiwi_avatar_1, Modifier.size(50.dp).clip(CircleShape))
-                Spacer(modifier = Modifier.width(16.dp))
-                Column {
-                    Text(name, style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
-                    Text("See your profile", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+            Column {
+                Box(Modifier.fillMaxWidth().height(142.dp)) {
+                    TiwiAvatar(profile?.coverUrl, R.drawable.img_tiwi_cover, Modifier.fillMaxWidth().height(105.dp).clip(RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)), ContentScale.Crop)
+                    TiwiAvatar(
+                        avatarUrl,
+                        R.drawable.img_tiwi_avatar_1,
+                        Modifier.align(Alignment.BottomStart).padding(start = 12.dp).size(76.dp).border(4.dp, Color.White, CircleShape).clip(CircleShape)
+                    )
+                    FilledTonalIconButton(
+                        onClick = { showEditProfile = true },
+                        modifier = Modifier.align(Alignment.BottomEnd).padding(end = 10.dp, bottom = 3.dp).size(36.dp),
+                        colors = IconButtonDefaults.filledTonalIconButtonColors(containerColor = Color(0xFFF0F2F5), contentColor = Color.Black)
+                    ) { Icon(Icons.Default.Edit, "Edit profile", modifier = Modifier.size(18.dp)) }
                 }
-                Spacer(modifier = Modifier.weight(1f))
-                Icon(Icons.Default.ChevronRight, contentDescription = null)
+                Row(Modifier.fillMaxWidth().clickable(onClick = onProfileClick).padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(name, style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
+                            if (profile?.verified == true) Icon(Icons.Default.Verified, "Verified", tint = TiwiBlue, modifier = Modifier.padding(start = 3.dp).size(17.dp))
+                        }
+                        Text("@${profile?.username.orEmpty()} · View profile", style = MaterialTheme.typography.labelMedium, color = Color.Gray)
+                    }
+                    Icon(Icons.Default.ChevronRight, contentDescription = null)
+                }
             }
         }
-        
-        Spacer(modifier = Modifier.height(24.dp))
-        
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             item {
                 Text("Your Shortcuts", style = MaterialTheme.typography.titleSmall, color = Color.Gray)
                 Spacer(modifier = Modifier.height(8.dp))
@@ -1889,8 +2168,10 @@ fun MenuScreen(repository: SocialRepository, name: String, avatarUrl: String?, o
                     shortcuts.forEach { item ->
                         Surface(
                             modifier = Modifier.weight(1f).height(100.dp),
-                            color = MaterialTheme.colorScheme.surface,
-                            shape = RoundedCornerShape(12.dp)
+                            color = Color.White,
+                            shape = RoundedCornerShape(10.dp),
+                            border = BorderStroke(1.dp, Color(0xFFE3E6EA)),
+                            tonalElevation = 0.dp
                         ) {
                             Column(
                                 modifier = Modifier.padding(12.dp),
@@ -1920,7 +2201,7 @@ fun MenuScreen(repository: SocialRepository, name: String, avatarUrl: String?, o
                             headlineContent = { Text(item.first) },
                             leadingContent = { Icon(item.second, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)) },
                             trailingContent = { Icon(Icons.Default.ChevronRight, contentDescription = null) },
-                            colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surface),
+                            colors = ListItemDefaults.colors(containerColor = Color.White),
                             modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { selectedSetting = item.first }
                         )
                     }
@@ -1931,7 +2212,8 @@ fun MenuScreen(repository: SocialRepository, name: String, avatarUrl: String?, o
                 Button(
                     onClick = onLogout,
                     modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColors(containerColor = TiwiPink.copy(alpha = 0.1f), contentColor = TiwiPink),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color(0xFFB42318)),
+                    border = BorderStroke(1.dp, Color(0xFFF1B4AE)),
                     shape = RoundedCornerShape(12.dp)
                 ) {
                     Text("Log Out", fontWeight = FontWeight.Bold)
@@ -1940,13 +2222,11 @@ fun MenuScreen(repository: SocialRepository, name: String, avatarUrl: String?, o
             }
         }
     }
-    selectedSetting?.let { setting ->
-        SocialSettingsDialog(repository, profile, setting, onDismiss = { selectedSetting = null })
-    }
+    if (showEditProfile) EditProfileDialog(repository, profile, onDismiss = { showEditProfile = false })
 }
 
 @Composable
-private fun SocialSettingsDialog(repository: SocialRepository, profile: SocialProfile?, page: String, onDismiss: () -> Unit) {
+private fun SocialSettingsPage(repository: SocialRepository, profile: SocialProfile?, page: String, onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val isPrivacy = page == "Privacy Center"
@@ -1958,17 +2238,23 @@ private fun SocialSettingsDialog(repository: SocialRepository, profile: SocialPr
     var allowMessages by remember(profile, page) { mutableStateOf(profile?.privacy?.get("allowMessages") as? Boolean ?: true) }
     var allowCalls by remember(profile, page) { mutableStateOf(profile?.privacy?.get("allowCalls") as? Boolean ?: true) }
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(page) },
-        text = {
+    var saving by remember { mutableStateOf(false) }
+    Column(Modifier.fillMaxSize().background(Color.White)) {
+        Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
+            Text(page, fontWeight = FontWeight.Bold, fontSize = 19.sp)
+        }
+        HorizontalDivider(thickness = .5.dp, color = Color(0xFFE3E6EA))
+        Column(Modifier.weight(1f).padding(horizontal = 14.dp, vertical = 12.dp)) {
             when {
-                page == "Account Settings" -> Column {
+                page == "Account Settings" -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Playback", fontWeight = FontWeight.Bold, color = Color.Gray)
                     SettingSwitch("Autoplay videos", autoplay) { autoplay = it }
                     SettingSwitch("Automatic video quality", autoQuality) { autoQuality = it }
                     SettingSwitch("Data saver", dataSaver) { dataSaver = it }
                 }
-                isPrivacy -> Column {
+                isPrivacy -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Who can interact with you", fontWeight = FontWeight.Bold, color = Color.Gray)
                     SettingSwitch("Private profile", privateProfile) { privateProfile = it }
                     SettingSwitch("Allow messages", allowMessages) { allowMessages = it }
                     SettingSwitch("Allow audio/video calls", allowCalls) { allowCalls = it }
@@ -1976,10 +2262,12 @@ private fun SocialSettingsDialog(repository: SocialRepository, profile: SocialPr
                 page == "Help & Support" -> Text("For account and app support, use the support contact on tiwlo.com.")
                 else -> Text("Tiwi Social connects your real Tiwlo account, feed, reels, messages and calls.")
             }
-        },
-        confirmButton = {
-            TextButton(onClick = {
-                if (!editable) onDismiss() else scope.launch {
+        }
+        if (editable) Button(
+            enabled = !saving,
+            onClick = {
+                scope.launch {
+                    saving = true
                     val input = if (isPrivacy) mapOf(
                         "privacy" to (profile?.privacy.orEmpty() + mapOf(
                             "profileVisibility" to if (privateProfile) "private" else "public",
@@ -1990,20 +2278,33 @@ private fun SocialSettingsDialog(repository: SocialRepository, profile: SocialPr
                         "preferences" to (profile?.preferences.orEmpty() + mapOf("autoplayVideo" to autoplay, "autoQuality" to autoQuality, "dataSaver" to dataSaver))
                     )
                     runCatching { repository.updateProfile(input) }
-                        .onSuccess { onDismiss() }
+                        .onSuccess { onBack() }
                         .onFailure { Toast.makeText(context, it.message ?: "Settings failed", Toast.LENGTH_SHORT).show() }
+                    saving = false
                 }
-            }) { Text(if (editable) "Save" else "Close") }
-        },
-        dismissButton = { if (editable) TextButton(onClick = onDismiss) { Text("Cancel") } }
-    )
+            },
+            modifier = Modifier.fillMaxWidth().padding(14.dp),
+            shape = RoundedCornerShape(8.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = TiwiBlue)
+        ) { if (saving) CircularProgressIndicator(Modifier.size(18.dp), color = Color.White, strokeWidth = 2.dp) else Text("Save changes", fontWeight = FontWeight.Bold) }
+    }
 }
 
 @Composable
 private fun SettingSwitch(label: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
-    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+    Row(modifier = Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(label, modifier = Modifier.weight(1f))
-        Switch(checked = checked, onCheckedChange = onCheckedChange)
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Color.White,
+                checkedTrackColor = TiwiBlue,
+                uncheckedThumbColor = Color.White,
+                uncheckedTrackColor = Color(0xFFD0D5DD),
+                uncheckedBorderColor = Color(0xFFD0D5DD)
+            )
+        )
     }
 }
 
@@ -2222,6 +2523,7 @@ fun ProfileScreen(
     userId: String? = null,
     onBack: () -> Unit,
     onPostClick: (String) -> Unit = {},
+    onShare: (Post) -> Unit = {},
     onMessage: (String) -> Unit = {}
 ) {
     var selectedTab by remember { mutableIntStateOf(0) }
@@ -2260,13 +2562,13 @@ fun ProfileScreen(
         HorizontalDivider(thickness = .5.dp, color = Color.LightGray.copy(alpha = .55f))
         LazyColumn(Modifier.weight(1f)) {
             item {
-                if (!profile?.coverUrl.isNullOrBlank()) {
-                    AsyncImage(
-                        model = profile?.coverUrl,
-                        contentDescription = "Cover photo",
-                        modifier = Modifier.fillMaxWidth().height(132.dp),
-                        contentScale = ContentScale.Crop
-                    )
+                Box(Modifier.fillMaxWidth().height(132.dp)) {
+                    TiwiAvatar(profile?.coverUrl, R.drawable.img_tiwi_cover, Modifier.fillMaxSize(), ContentScale.Crop)
+                    if (isOwn) FilledTonalIconButton(
+                        onClick = { showEdit = true },
+                        modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp).size(36.dp),
+                        colors = IconButtonDefaults.filledTonalIconButtonColors(containerColor = Color.White, contentColor = Color.Black)
+                    ) { Icon(Icons.Default.CameraAlt, "Change cover", Modifier.size(18.dp)) }
                 }
                 Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     TiwiAvatar(profile?.user?.avatar ?: ownUser?.avatar, R.drawable.img_tiwi_avatar_1, Modifier.size(86.dp).clip(CircleShape))
@@ -2293,7 +2595,10 @@ fun ProfileScreen(
                         }
                         ProfileActionButton("Message", Modifier.weight(1f)) { userId?.let(onMessage) }
                     }
-                    ProfileActionButton("Share profile", Modifier.weight(1f)) { Toast.makeText(context, "Profile link ready", Toast.LENGTH_SHORT).show() }
+                    ProfileActionButton("Share profile", Modifier.weight(1f)) {
+                        val profileId = profile?.userId ?: repository.currentUserId().orEmpty()
+                        shareDeepLink(context, "$name on Tiwi", profile?.bio.orEmpty(), "https://tiwlo.com/social/profile/$profileId")
+                    }
                 }
                 val highlights = posts.flatMap { it.media }.filter { it.type == "image" }.take(8)
                 if (highlights.isNotEmpty()) LazyRow(contentPadding = PaddingValues(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -2309,7 +2614,7 @@ fun ProfileScreen(
                 }
             }
             when (selectedTab) {
-                0 -> items(posts, key = { it.id }) { post -> PostCard(post, repository, onOpen = { onPostClick(post.id) }) }
+                0 -> items(posts, key = { it.id }) { post -> PostCard(post, repository, onShareClick = { onShare(post) }, onOpen = { onPostClick(post.id) }) }
                 1 -> item { LazyRow(contentPadding = PaddingValues(4.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) { items(reels) { ReelItem(it) } } }
                 else -> item {
                     Column(Modifier.padding(14.dp)) {
@@ -2371,6 +2676,8 @@ private fun EditProfileDialog(repository: SocialRepository, profile: SocialProfi
 
     AlertDialog(
         onDismissRequest = { if (!busy) onDismiss() },
+        containerColor = Color.White,
+        tonalElevation = 0.dp,
         title = { Text("Edit Profile") },
         text = {
             LazyColumn(modifier = Modifier.heightIn(max = 480.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {

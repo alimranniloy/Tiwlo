@@ -29,9 +29,16 @@ Social v2.1 keeps media upload authorization aligned with account restrictions
 and adds Android post privacy, upload progress notifications, profile covers,
 clickable post/video discovery, swipeable Reels, and lifecycle-aware playback.
 
+Social v2.2 adds sequential 768 KiB chunk uploads for large media (up to 2 GiB
+by default), verified app links for profiles/posts, native sharing, shared-post
+snapshot cards, and disabled-account recovery/export screens. Settings, privacy,
+verified and reporting surfaces use clean white containers in the Android app.
+
 Uploaded media is served through `/api/social/media/files/`. Video uploads are
 transcoded asynchronously by FFmpeg to 360p, 480p and 720p HLS renditions, with
-an adaptive master playlist.
+an adaptive master playlist. Large Android uploads use
+`/api/social/media/chunks/*`, so individual requests stay below common reverse
+proxy body limits.
 
 ## Production configuration
 

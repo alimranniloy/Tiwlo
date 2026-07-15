@@ -28,3 +28,8 @@ verified-account information, suggested people, and chat message requests.
 Version 2.1 adds corrected system-bar spacing, internal hardware-Back behavior,
 profile covers, privacy-aware posting, upload progress notifications, clickable
 search media, vertical Reels paging, and automatic lifecycle-aware video pause.
+
+Version 2.2 adds resumable chunked media uploads to avoid proxy 413 failures,
+cover/avatar editing, profile and post deep links, native share targets,
+Facebook-style repost cards and view metrics, a white full-page privacy/settings
+experience, and account-disabled recovery with information export.

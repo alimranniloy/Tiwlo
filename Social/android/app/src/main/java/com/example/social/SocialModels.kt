@@ -40,7 +40,16 @@ data class SocialMedia(
     val hlsUrl: String? = null,
     val thumbnailUrl: String? = null,
     val mimeType: String? = null,
-    val processingId: String? = null
+    val processingId: String? = null,
+    val sharedPostId: String? = null,
+    val sharedAuthorId: String? = null,
+    val sharedAuthor: String? = null,
+    val sharedAvatar: String? = null,
+    val sharedBody: String? = null,
+    val sharedMediaType: String? = null,
+    val sharedViews: Int = 0,
+    val sharedReactions: Int = 0,
+    val sharedComments: Int = 0
 )
 
 @JsonClass(generateAdapter = true)

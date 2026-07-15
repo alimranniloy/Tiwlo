@@ -16,6 +16,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.asRequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.File
@@ -74,7 +75,7 @@ internal class GraphQlClient(context: Context, private val token: () -> String?)
         }
     }
 
-    suspend fun uploadMedia(resolver: ContentResolver, uri: Uri, kind: String): MediaUploadResult = withContext(Dispatchers.IO) {
+    suspend fun uploadMedia(resolver: ContentResolver, uri: Uri, kind: String, onProgress: ((Int) -> Unit)? = null): MediaUploadResult = withContext(Dispatchers.IO) {
         val name = resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
             if (cursor.moveToFirst()) cursor.getString(0) else null
         } ?: "upload-${System.currentTimeMillis()}"
@@ -83,24 +84,76 @@ internal class GraphQlClient(context: Context, private val token: () -> String?)
         try {
             resolver.openInputStream(uri)?.use { input -> temp.outputStream().use(input::copyTo) }
                 ?: throw SocialApiException("Selected media could not be opened")
+            if (temp.length() > CHUNK_THRESHOLD) {
+                return@withContext uploadMediaInChunks(temp, name, mime, kind, onProgress)
+            }
             val body = MultipartBody.Builder().setType(MultipartBody.FORM)
                 .addFormDataPart("kind", kind)
                 .addFormDataPart("file", name, temp.asRequestBody(mime.toMediaType()))
                 .build()
             val builder = Request.Builder().url("$baseUrl/api/social/media").post(body).header("Accept", "application/json")
             token()?.let { builder.header("Authorization", "Bearer $it") }
+            onProgress?.invoke(5)
             http.newCall(builder.build()).execute().use { response ->
                 val text = response.body?.string().orEmpty()
                 val value = runCatching { mapAdapter.fromJson(text) }.getOrNull()
+                if (response.code == 413) return@withContext uploadMediaInChunks(temp, name, mime, kind, onProgress)
                 if (!response.isSuccessful || value == null) throw SocialApiException(value?.string("error") ?: "Media upload failed (${response.code})")
-                MediaUploadResult(
-                    processingId = value.string("processingId").orEmpty(), kind = value.string("kind") ?: kind,
-                    mimeType = value.string("mimeType") ?: mime, sourceUrl = absoluteUrl(value.string("sourceUrl")).orEmpty(),
-                    hlsUrl = absoluteUrl(value.string("hlsUrl")), processingStatus = value.string("processingStatus") ?: "ready"
-                )
+                onProgress?.invoke(100)
+                mediaResult(value, mime, kind)
             }
         } finally { temp.delete() }
     }
+
+    private fun uploadMediaInChunks(temp: File, name: String, mime: String, kind: String, onProgress: ((Int) -> Unit)?): MediaUploadResult {
+        val start = authenticatedUploadJson(
+            Request.Builder()
+                .url("$baseUrl/api/social/media/chunks/start")
+                .post(mapAdapter.toJson(mapOf("name" to name, "mimeType" to mime, "size" to temp.length(), "kind" to kind)).toRequestBody(JSON))
+        )
+        val uploadId = start.string("uploadId") ?: throw SocialApiException("Chunked upload did not start")
+        val chunkSize = (start.number("chunkSize")?.toInt() ?: DEFAULT_CHUNK_SIZE).coerceIn(64 * 1024, 900 * 1024)
+        var sent = 0L
+        var index = 0
+        temp.inputStream().buffered().use { input ->
+            val buffer = ByteArray(chunkSize)
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                if (count == 0) continue
+                authenticatedUploadJson(
+                    Request.Builder()
+                        .url("$baseUrl/api/social/media/chunks/$uploadId/$index")
+                        .post(buffer.copyOf(count).toRequestBody(OCTET))
+                )
+                sent += count
+                index += 1
+                onProgress?.invoke(((sent * 95L) / temp.length()).toInt().coerceIn(1, 95))
+            }
+        }
+        val complete = authenticatedUploadJson(
+            Request.Builder().url("$baseUrl/api/social/media/chunks/$uploadId/complete").post(EMPTY_BODY)
+        )
+        onProgress?.invoke(100)
+        return mediaResult(complete, mime, kind)
+    }
+
+    private fun authenticatedUploadJson(builder: Request.Builder): Map<String, Any?> {
+        builder.header("Accept", "application/json")
+        token()?.takeIf { it.isNotBlank() }?.let { builder.header("Authorization", "Bearer $it") }
+        http.newCall(builder.build()).execute().use { response ->
+            val text = response.body?.string().orEmpty()
+            val value = runCatching { mapAdapter.fromJson(text) }.getOrNull()
+            if (!response.isSuccessful || value == null) throw SocialApiException(value?.string("error") ?: "Chunked media upload failed (${response.code})")
+            return value
+        }
+    }
+
+    private fun mediaResult(value: Map<String, Any?>, fallbackMime: String, fallbackKind: String) = MediaUploadResult(
+        processingId = value.string("processingId").orEmpty(), kind = value.string("kind") ?: fallbackKind,
+        mimeType = value.string("mimeType") ?: fallbackMime, sourceUrl = absoluteUrl(value.string("sourceUrl")).orEmpty(),
+        hlsUrl = absoluteUrl(value.string("hlsUrl")), processingStatus = value.string("processingStatus") ?: "ready"
+    )
 
     fun absoluteUrl(path: String?): String? {
         val clean = path?.trim()?.takeIf { it.isNotEmpty() } ?: return null
@@ -108,7 +161,13 @@ internal class GraphQlClient(context: Context, private val token: () -> String?)
         return runCatching { URI("$baseUrl/").resolve(clean.removePrefix("/")).toString() }.getOrDefault("$baseUrl/${clean.removePrefix("/")}")
     }
 
-    private companion object { val JSON = "application/json; charset=utf-8".toMediaType() }
+    private companion object {
+        const val CHUNK_THRESHOLD = 512L * 1024L
+        const val DEFAULT_CHUNK_SIZE = 768 * 1024
+        val JSON = "application/json; charset=utf-8".toMediaType()
+        val OCTET = "application/octet-stream".toMediaType()
+        val EMPTY_BODY: RequestBody = ByteArray(0).toRequestBody(OCTET)
+    }
 }
 
 internal fun Any?.objectMap(): Map<String, Any?>? = (this as? Map<*, *>)?.entries?.associate { it.key.toString() to it.value }

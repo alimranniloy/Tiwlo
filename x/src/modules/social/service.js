@@ -13,7 +13,7 @@ const SOCIAL_DEFAULTS = Object.freeze({
   messagingEnabled: true,
   callsEnabled: true,
   liveEnabled: true,
-  mediaMaxMb: 500,
+  mediaMaxMb: 2048,
   autoTranscode: true,
   moderation: { reportsEnabled: true, blockedWords: [] },
   stunServers: [{ urls: 'stun:stun.l.google.com:19302' }]
@@ -360,13 +360,38 @@ export const reactToPost = async (ctx, id, kind) => {
 export const repostPost = async (ctx, id) => {
   const actor = await requireAuth(ctx);
   await requireSocialFeature(ctx, 'postingEnabled');
-  if (!await getPost(ctx, id)) notFound('Post');
-  const updated = await ctx.prisma.socialPost.update({
+  const original = await getPost(ctx, id);
+  if (!original) notFound('Post');
+  await ctx.prisma.socialPost.update({
     where: { id },
-    data: { shareCount: { increment: 1 } },
+    data: { shareCount: { increment: 1 } }
+  });
+  const preview = original.media?.[0] || {};
+  const repost = await ctx.prisma.socialPost.create({
+    data: {
+      authorId: actor.id,
+      type: 'post',
+      body: '',
+      visibility: 'public',
+      processingStatus: 'ready',
+      media: [{
+        type: 'shared_post',
+        url: preview.url || original.thumbnailUrl || '',
+        thumbnailUrl: preview.thumbnailUrl || original.thumbnailUrl || '',
+        sharedPostId: original.id,
+        sharedAuthorId: original.authorId,
+        sharedAuthor: original.author?.name || original.authorProfile?.username || 'Tiwi User',
+        sharedAvatar: original.author?.avatar || '',
+        sharedBody: original.body || '',
+        sharedMediaType: preview.type || original.type,
+        sharedViews: original.viewCount || 0,
+        sharedReactions: original.reactionCount || 0,
+        sharedComments: original.commentCount || 0
+      }]
+    },
     include: postInclude(actor.id)
   });
-  return mapPost(updated);
+  return mapPost(repost);
 };
 
 const commentInclude = (viewerId) => ({

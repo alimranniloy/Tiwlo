@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { extname, join } from 'node:path';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import express from 'express';
 import multer from 'multer';
 import { getSettings } from './service.js';
@@ -11,6 +11,7 @@ const safeProcessingId = (value) => String(value || '').replace(/[^a-zA-Z0-9._-]
 const allowedExtensions = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif', '.mp4', '.mov', '.mkv', '.webm', '.m4v', '.mp3', '.m4a', '.aac', '.wav', '.ogg', '.pdf']);
 const restrictedUserStatuses = new Set(['disabled', 'banned', 'blocked', 'suspended']);
 const isAllowedMime = (mime = '') => /^(image|video|audio)\//i.test(mime) || mime === 'application/pdf' || mime === 'application/octet-stream';
+const chunkBytes = 768 * 1024;
 
 const runProcess = (command, args) => new Promise((resolve, reject) => {
   const child = spawn(command, args, { windowsHide: true });
@@ -85,7 +86,7 @@ const transcodeVideo = async ({ inputPath, outputDir, publicBase, statusFile }) 
 
 export const registerSocialRoutes = (app, { prisma, userFromRequest, rootDir }) => {
   const uploadRoot = join(rootDir, 'public', 'uploads', 'social');
-  const maxBytes = Math.max(1, Math.min(Number(process.env.SOCIAL_MEDIA_MAX_MB || 500), 2048)) * 1024 * 1024;
+  const maxBytes = Math.max(1, Math.min(Number(process.env.SOCIAL_MEDIA_MAX_MB || 2048), 2048)) * 1024 * 1024;
   const storage = multer.diskStorage({
     destination: (req, _file, callback) => {
       const directory = join(uploadRoot, safeId(req.socialUser?.id));
@@ -119,6 +120,40 @@ export const registerSocialRoutes = (app, { prisma, userFromRequest, rootDir }) 
     } catch (error) {
       next(error);
     }
+  };
+
+  const finishUpload = async ({ userId, filename, filePath, mimeType, size, kind }) => {
+    const publicRoot = '/api/social/media/files';
+    const sourceUrl = `${publicRoot}/${userId}/${filename}`;
+    const isVideo = String(mimeType || '').startsWith('video/');
+    const settings = await getSettings({ prisma });
+    const processingId = filename.replace(/[^a-zA-Z0-9._-]/g, '');
+    const outputName = `${processingId}-hls`;
+    const outputDir = join(uploadRoot, userId, outputName);
+    const statusFile = join(outputDir, 'status.json');
+    const hlsUrl = `${publicRoot}/${userId}/${outputName}/master.m3u8`;
+    if (isVideo && settings.autoTranscode) {
+      await mkdir(outputDir, { recursive: true });
+      await writeStatus(statusFile, { status: 'queued', progress: 0, sourceUrl, hlsUrl });
+      setImmediate(() => {
+        transcodeVideo({
+          inputPath: filePath,
+          outputDir,
+          statusFile,
+          publicBase: { sourceUrl, hlsUrl }
+        });
+      });
+    }
+    return {
+      ok: true,
+      processingId,
+      kind: boundedKind(kind),
+      mimeType,
+      size,
+      sourceUrl,
+      hlsUrl: isVideo && settings.autoTranscode ? hlsUrl : null,
+      processingStatus: isVideo && settings.autoTranscode ? 'queued' : 'ready'
+    };
   };
 
   app.use('/api/social/media/files', express.static(uploadRoot, {
@@ -164,39 +199,112 @@ export const registerSocialRoutes = (app, { prisma, userFromRequest, rootDir }) 
         return;
       }
       const userId = safeId(req.socialUser.id);
-      const filename = req.file.filename;
-      const publicRoot = '/api/social/media/files';
-      const sourceUrl = `${publicRoot}/${userId}/${filename}`;
-      const isVideo = String(req.file.mimetype || '').startsWith('video/');
-      const settings = await getSettings({ prisma });
-      const processingId = filename.replace(/[^a-zA-Z0-9._-]/g, '');
-      const outputName = `${processingId}-hls`;
-      const outputDir = join(uploadRoot, userId, outputName);
-      const statusFile = join(outputDir, 'status.json');
-      const hlsUrl = `${publicRoot}/${userId}/${outputName}/master.m3u8`;
-      if (isVideo && settings.autoTranscode) {
-        await mkdir(outputDir, { recursive: true });
-        await writeStatus(statusFile, { status: 'queued', progress: 0, sourceUrl, hlsUrl });
-        setImmediate(() => {
-          transcodeVideo({
-            inputPath: req.file.path,
-            outputDir,
-            statusFile,
-            publicBase: { sourceUrl, hlsUrl }
-          });
-        });
-      }
-      res.status(201).json({
-        ok: true,
-        processingId,
-        kind: boundedKind(req.body?.kind),
+      res.status(201).json(await finishUpload({
+        userId,
+        filename: req.file.filename,
+        filePath: req.file.path,
         mimeType: req.file.mimetype,
         size: req.file.size,
-        sourceUrl,
-        hlsUrl: isVideo && settings.autoTranscode ? hlsUrl : null,
-        processingStatus: isVideo && settings.autoTranscode ? 'queued' : 'ready'
-      });
+        kind: req.body?.kind
+      }));
     });
+  });
+
+  app.post('/api/social/media/chunks/start', authenticate, async (req, res) => {
+    const size = Number(req.body?.size || 0);
+    const mimeType = String(req.body?.mimeType || 'application/octet-stream').trim().toLowerCase();
+    const originalName = String(req.body?.name || 'upload').trim();
+    if (!Number.isSafeInteger(size) || size <= 0 || size > maxBytes) {
+      res.status(413).json({ error: `Media exceeds the ${Math.round(maxBytes / 1024 / 1024)} MB upload limit` });
+      return;
+    }
+    if (!isAllowedMime(mimeType)) {
+      res.status(400).json({ error: 'Unsupported media type' });
+      return;
+    }
+    const userId = safeId(req.socialUser.id);
+    const directory = join(uploadRoot, userId);
+    await mkdir(directory, { recursive: true });
+    const uploadId = randomBytes(20).toString('hex');
+    const originalExtension = extname(originalName).toLowerCase();
+    const extension = allowedExtensions.has(originalExtension) ? originalExtension : '';
+    const filename = `${Date.now()}-${randomBytes(12).toString('hex')}${extension}`;
+    const metadataPath = join(directory, `.chunk-${uploadId}.json`);
+    const partPath = join(directory, `.chunk-${uploadId}.part`);
+    await writeFile(partPath, Buffer.alloc(0));
+    await writeFile(metadataPath, JSON.stringify({
+      uploadId,
+      filename,
+      mimeType,
+      size,
+      kind: boundedKind(req.body?.kind),
+      nextIndex: 0,
+      receivedBytes: 0,
+      createdAt: new Date().toISOString()
+    }), 'utf8');
+    res.status(201).json({ ok: true, uploadId, chunkSize: chunkBytes, maxBytes });
+  });
+
+  app.post('/api/social/media/chunks/:uploadId/:index(\\d+)', authenticate, express.raw({ type: () => true, limit: `${chunkBytes + 1024}b` }), async (req, res) => {
+    const uploadId = safeId(req.params.uploadId);
+    const index = Number(req.params.index);
+    if (!uploadId || uploadId !== req.params.uploadId || !Number.isSafeInteger(index) || index < 0 || !Buffer.isBuffer(req.body) || req.body.length === 0) {
+      res.status(400).json({ error: 'Invalid media chunk' });
+      return;
+    }
+    const directory = join(uploadRoot, safeId(req.socialUser.id));
+    const metadataPath = join(directory, `.chunk-${uploadId}.json`);
+    const partPath = join(directory, `.chunk-${uploadId}.part`);
+    try {
+      const metadata = JSON.parse(await readFile(metadataPath, 'utf8'));
+      if (metadata.nextIndex !== index) {
+        res.status(409).json({ error: `Expected chunk ${metadata.nextIndex}`, nextIndex: metadata.nextIndex });
+        return;
+      }
+      if (metadata.receivedBytes + req.body.length > metadata.size) {
+        res.status(400).json({ error: 'Chunk exceeds declared media size' });
+        return;
+      }
+      await appendFile(partPath, req.body);
+      metadata.nextIndex += 1;
+      metadata.receivedBytes += req.body.length;
+      await writeFile(metadataPath, JSON.stringify(metadata), 'utf8');
+      res.json({ ok: true, nextIndex: metadata.nextIndex, receivedBytes: metadata.receivedBytes, size: metadata.size });
+    } catch {
+      res.status(404).json({ error: 'Chunked upload was not found' });
+    }
+  });
+
+  app.post('/api/social/media/chunks/:uploadId/complete', authenticate, async (req, res) => {
+    const uploadId = safeId(req.params.uploadId);
+    if (!uploadId || uploadId !== req.params.uploadId) {
+      res.status(400).json({ error: 'Invalid upload id' });
+      return;
+    }
+    const userId = safeId(req.socialUser.id);
+    const directory = join(uploadRoot, userId);
+    const metadataPath = join(directory, `.chunk-${uploadId}.json`);
+    const partPath = join(directory, `.chunk-${uploadId}.part`);
+    try {
+      const metadata = JSON.parse(await readFile(metadataPath, 'utf8'));
+      if (metadata.receivedBytes !== metadata.size) {
+        res.status(409).json({ error: 'Media upload is incomplete', receivedBytes: metadata.receivedBytes, size: metadata.size });
+        return;
+      }
+      const finalPath = join(directory, metadata.filename);
+      await rename(partPath, finalPath);
+      await rm(metadataPath, { force: true });
+      res.status(201).json(await finishUpload({
+        userId,
+        filename: metadata.filename,
+        filePath: finalPath,
+        mimeType: metadata.mimeType,
+        size: metadata.size,
+        kind: metadata.kind
+      }));
+    } catch {
+      res.status(404).json({ error: 'Chunked upload was not found' });
+    }
   });
 
   app.get('/api/social/media/:processingId/status', authenticate, async (req, res) => {
