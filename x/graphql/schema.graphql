@@ -8,6 +8,7 @@ type User {
   credits: Float
   role: String!
   status: String
+  signupSource: String
   phone: String
   mobileCountryCode: String
   primaryRegion: String
@@ -99,6 +100,7 @@ type AuthPayload {
 type SignupPayload {
   ok: Boolean!
   requiresWhatsAppOtp: Boolean!
+  requiresEmailVerification: Boolean
   challengeId: ID
   phone: String
   phoneE164: String
@@ -1733,6 +1735,15 @@ input SignupInput {
   billingName: String
 }
 
+input SocialAppSignupInput {
+  name: String!
+  email: String!
+  password: String!
+  username: String
+  deviceFingerprint: String!
+  deviceMetadata: JSON
+}
+
 input StartSignupPromoVerificationInput {
   provider: String!
 }
@@ -3092,6 +3103,7 @@ type Query {
 type Mutation {
   login(input: LoginInput!): AuthPayload!
   signup(input: SignupInput!): SignupPayload!
+  socialAppSignup(input: SocialAppSignupInput!): SignupPayload!
   resendSignupWhatsAppOtp(challengeId: ID!): WhatsAppOtpPayload!
   changeSignupWhatsAppPhone(challengeId: ID!, input: WhatsAppPhoneInput!): WhatsAppOtpPayload!
   verifySignupWhatsAppOtp(challengeId: ID!, code: String!): AuthPayload!

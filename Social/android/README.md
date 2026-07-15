@@ -33,3 +33,10 @@ Version 2.2 adds resumable chunked media uploads to avoid proxy 413 failures,
 cover/avatar editing, profile and post deep links, native share targets,
 Facebook-style repost cards and view metrics, a white full-page privacy/settings
 experience, and account-disabled recovery with information export.
+
+Version 2.3 separates Social-app registration from website tSecurity signup.
+Social signup grants no free credit, requires email verification, allows no more
+than one account per device/IP, and defers billing details until the user opens
+the Tiwlo website. Uploaded videos now receive server thumbnails, poll processing
+state, show a poster while loading, and fall back to the original video if HLS
+is not ready.

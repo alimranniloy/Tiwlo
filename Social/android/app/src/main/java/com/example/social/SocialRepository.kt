@@ -39,6 +39,7 @@ class SocialRepository(context: Context) {
     fun currentUserId(): String? = _currentUser.value?.id
     fun absoluteUrl(path: String?): String? = client.absoluteUrl(path)
     fun isAccountRestricted(): Boolean = _currentUser.value?.status?.lowercase() in RESTRICTED_STATUSES
+    fun requiresEmailVerification(): Boolean = _currentUser.value?.signupSource == "social_app" && _currentUser.value?.emailVerifiedAt.isNullOrBlank()
 
     suspend fun login(identifier: String, password: String): SocialUser {
         val secureToken = security.issueAuthToken("login", mapOf("email" to identifier.trim(), "password" to password))
@@ -53,20 +54,23 @@ class SocialRepository(context: Context) {
         return user
     }
 
-    suspend fun signup(name: String, email: String, password: String, username: String): SocialUser {
-        val form = mapOf("name" to name.trim(), "email" to email.trim(), "password" to password)
-        val secureToken = security.issueAuthToken("signup", form)
+    suspend fun signup(name: String, email: String, password: String, username: String): SocialSignupResult {
         val data = client.execute(
-            """mutation TiwiSignup(${D}input: SignupInput!) { signup(input: ${D}input) { ok requiresWhatsAppOtp challengeId message token user { $USER_FIELDS } } }""",
-            mapOf("input" to mapOf("tSecurityToken" to secureToken))
+            """mutation TiwiSocialSignup(${D}input: SocialAppSignupInput!) { socialAppSignup(input: ${D}input) { ok requiresEmailVerification message token user { $USER_FIELDS } } }""",
+            mapOf("input" to mapOf(
+                "name" to name.trim(), "email" to email.trim(), "password" to password,
+                "username" to username.trim(), "deviceFingerprint" to security.deviceFingerprint(),
+                "deviceMetadata" to security.deviceMetadata()
+            ))
         )
-        val payload = data.objectValue("signup") ?: throw SocialApiException("Signup response was incomplete")
-        if (payload.boolean("requiresWhatsAppOtp")) throw SocialApiException(payload.string("message") ?: "Complete WhatsApp verification at tiwlo.com")
+        val payload = data.objectValue("socialAppSignup") ?: throw SocialApiException("Signup response was incomplete")
         val user = mapUser(payload.objectValue("user") ?: throw SocialApiException("Account was not returned"))
         saveSession(payload.string("token") ?: throw SocialApiException("Signup token was not returned"), user)
-        updateProfile(mapOf("username" to username.trim()))
-        refreshAll(force = true)
-        return user
+        return SocialSignupResult(user, payload.boolean("requiresEmailVerification"), payload.string("message").orEmpty())
+    }
+
+    suspend fun resendEmailVerification() {
+        client.execute("mutation TiwiResendEmailVerification { resendEmailVerification }")
     }
 
     suspend fun validateSession(): Boolean {
@@ -166,11 +170,12 @@ class SocialRepository(context: Context) {
     }
 
     suspend fun createPost(body: String, type: String = "post", media: List<SocialMedia> = emptyList(), visibility: String = "public"): SocialPost {
-        val mediaInput = media.map { mapOf("url" to it.url, "type" to it.type, "hlsUrl" to it.hlsUrl, "thumbnailUrl" to it.thumbnailUrl, "mimeType" to it.mimeType, "processingId" to it.processingId) }
+        val mediaInput = media.map { mapOf("url" to it.url, "type" to it.type, "hlsUrl" to it.hlsUrl, "thumbnailUrl" to it.thumbnailUrl, "mimeType" to it.mimeType, "processingId" to it.processingId, "processingStatus" to it.processingStatus) }
         val input = mapOf(
             "type" to type, "body" to body.trim(), "visibility" to visibility, "media" to mediaInput,
             "hlsUrl" to media.firstOrNull()?.hlsUrl,
-            "processingStatus" to "ready"
+            "thumbnailUrl" to media.firstOrNull()?.thumbnailUrl,
+            "processingStatus" to (media.firstOrNull()?.processingStatus ?: "ready")
         )
         val data = client.execute(
             """mutation CreateTiwiPost(${D}input: SocialPostInput!) { createSocialPost(input: ${D}input) { $POST_FIELDS } }""",
@@ -475,7 +480,8 @@ class SocialRepository(context: Context) {
 
     private fun mapUser(value: Map<String, Any?>) = SocialUser(
         id = value.string("id").orEmpty(), email = value.string("email").orEmpty(), name = value.string("name").orEmpty(),
-        avatar = absoluteUrl(value.string("avatar")), role = value.string("role") ?: "user", status = value.string("status") ?: "active"
+        avatar = absoluteUrl(value.string("avatar")), role = value.string("role") ?: "user", status = value.string("status") ?: "active",
+        signupSource = value.string("signupSource") ?: "web", emailVerifiedAt = value.string("emailVerifiedAt")
     )
 
     private fun mapProfile(value: Map<String, Any?>, fallback: SocialUser? = null): SocialProfile {
@@ -496,6 +502,7 @@ class SocialRepository(context: Context) {
         url = absoluteUrl(value.string("url")).orEmpty(), type = value.string("type") ?: "image",
         hlsUrl = absoluteUrl(value.string("hlsUrl")), thumbnailUrl = absoluteUrl(value.string("thumbnailUrl")),
         mimeType = value.string("mimeType"), processingId = value.string("processingId"),
+        processingStatus = value.string("processingStatus") ?: "ready",
         sharedPostId = value.string("sharedPostId"), sharedAuthorId = value.string("sharedAuthorId"),
         sharedAuthor = value.string("sharedAuthor"), sharedAvatar = absoluteUrl(value.string("sharedAvatar")),
         sharedBody = value.string("sharedBody"), sharedMediaType = value.string("sharedMediaType"),
@@ -570,7 +577,7 @@ class SocialRepository(context: Context) {
         val RESTRICTED_STATUSES = setOf("disabled", "banned", "blocked", "suspended")
         const val FEED_TTL = 60_000L
         const val CHAT_TTL = 20_000L
-        const val USER_FIELDS = "id email name avatar role status"
+        const val USER_FIELDS = "id email name avatar role status signupSource emailVerifiedAt"
         const val PUBLIC_USER_FIELDS = "id name avatar status"
         const val PROFILE_FIELDS = "id userId username bio about category website location coverUrl verified privacy preferences followerCount followingCount postCount isFollowing user { $PUBLIC_USER_FIELDS }"
         const val POST_FIELDS = "id authorId type body media thumbnailUrl hlsUrl processingStatus visibility status viewCount shareCount reactionCount commentCount viewerReaction publishedAt author { $PUBLIC_USER_FIELDS } authorProfile { id userId username verified isFollowing }"

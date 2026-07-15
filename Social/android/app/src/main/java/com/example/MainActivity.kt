@@ -92,6 +92,8 @@ import com.example.ui.theme.TiwiBlue
 import com.example.ui.theme.TiwiPurple
 import com.example.ui.theme.TiwiPink
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import com.example.social.SocialConversation
@@ -142,17 +144,70 @@ class MainActivity : ComponentActivity() {
 fun MainNavigation(repository: SocialRepository, deepLink: String? = null, onDeepLinkConsumed: () -> Unit = {}) {
     var currentScreen by remember { mutableStateOf("splash") }
     val currentUser by repository.currentUser.collectAsState()
-    LaunchedEffect(currentUser?.status, currentScreen) {
+    fun signedInDestination() = when {
+        repository.isAccountRestricted() -> "disabled"
+        repository.requiresEmailVerification() -> "verification"
+        else -> "main"
+    }
+    LaunchedEffect(currentUser?.status, currentUser?.emailVerifiedAt, currentScreen) {
         if (currentScreen != "splash" && currentScreen != "auth") {
-            currentScreen = if (repository.isAccountRestricted()) "disabled" else if (currentScreen == "disabled") "main" else currentScreen
+            val destination = signedInDestination()
+            if (destination != "main" || currentScreen == "disabled" || currentScreen == "verification") currentScreen = destination
         }
     }
     
     when (currentScreen) {
-        "splash" -> SplashScreen(onFinished = { currentScreen = if (!repository.hasSavedSession()) "auth" else if (repository.isAccountRestricted()) "disabled" else "main" })
-        "auth" -> AuthScreen(repository, onLoginSuccess = { currentScreen = if (repository.isAccountRestricted()) "disabled" else "main" })
+        "splash" -> SplashScreen(onFinished = { currentScreen = if (!repository.hasSavedSession()) "auth" else signedInDestination() })
+        "auth" -> AuthScreen(repository, onLoginSuccess = { currentScreen = signedInDestination() })
+        "verification" -> EmailVerificationScreen(repository, onVerified = { currentScreen = "main" }, onLogout = { repository.logout(); currentScreen = "auth" })
         "main" -> TiwiApp(repository, onLogout = { currentScreen = "auth" }, initialDeepLink = deepLink, onDeepLinkConsumed = onDeepLinkConsumed)
         "disabled" -> DisabledAccountScreen(repository, onLogout = { repository.logout(); currentScreen = "auth" })
+    }
+}
+
+@Composable
+private fun EmailVerificationScreen(repository: SocialRepository, onVerified: () -> Unit, onLogout: () -> Unit) {
+    val context = LocalContext.current
+    val user by repository.currentUser.collectAsState()
+    val scope = rememberCoroutineScope()
+    var busy by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        while (repository.requiresEmailVerification()) {
+            delay(5000)
+            runCatching { repository.validateSession() }
+            if (!repository.requiresEmailVerification()) onVerified()
+        }
+    }
+    Column(
+        Modifier.fillMaxSize().background(Color.White).statusBarsPadding().navigationBarsPadding().padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Box(Modifier.size(84.dp).background(Color(0xFFEAF4FF), CircleShape), contentAlignment = Alignment.Center) {
+            Icon(Icons.Default.MarkEmailUnread, null, tint = InstaBlue, modifier = Modifier.size(40.dp))
+        }
+        Spacer(Modifier.height(20.dp))
+        Text("Verify your email", fontSize = 27.sp, fontWeight = FontWeight.ExtraBold, color = Color(0xFF101828))
+        Spacer(Modifier.height(10.dp))
+        Text("We sent a verification link to ${user?.email.orEmpty()}. Open the link, then return here. Email verification is required before Tiwi Social can be used.", textAlign = TextAlign.Center, color = Color(0xFF475467), lineHeight = 21.sp)
+        Spacer(Modifier.height(24.dp))
+        Button(onClick = {
+            runCatching { context.startActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_APP_EMAIL).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                .onFailure { Toast.makeText(context, "Open your email app to continue", Toast.LENGTH_LONG).show() }
+        }, modifier = Modifier.fillMaxWidth().height(48.dp), shape = RoundedCornerShape(8.dp)) { Text("Open email app", fontWeight = FontWeight.Bold) }
+        Spacer(Modifier.height(10.dp))
+        OutlinedButton(enabled = !busy, onClick = {
+            scope.launch {
+                busy = true
+                runCatching { repository.resendEmailVerification() }
+                    .onSuccess { Toast.makeText(context, "Verification email sent", Toast.LENGTH_LONG).show() }
+                    .onFailure { Toast.makeText(context, it.message ?: "Could not resend email", Toast.LENGTH_LONG).show() }
+                busy = false
+            }
+        }, modifier = Modifier.fillMaxWidth().height(48.dp), shape = RoundedCornerShape(8.dp)) {
+            if (busy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Text("Resend verification email", fontWeight = FontWeight.Bold)
+        }
+        TextButton(onClick = onLogout) { Text("Sign out", color = Color.Gray) }
     }
 }
 
@@ -379,7 +434,7 @@ fun AuthScreen(repository: SocialRepository, onLoginSuccess: () -> Unit) {
                         try {
                             if (isLogin) repository.login(email, password)
                             else repository.signup(fullName, email, password, username)
-                            if (isLogin) onLoginSuccess() else signupStep = 1
+                            if (isLogin) onLoginSuccess() else onLoginSuccess()
                         } catch (error: Exception) {
                             Toast.makeText(context, error.message ?: "Unable to continue", Toast.LENGTH_LONG).show()
                         } finally { busy = false }
@@ -479,6 +534,7 @@ data class Reel(
     val thumbnail: Int,
     val thumbnailUrl: String? = null,
     val videoUrl: String? = null,
+    val fallbackVideoUrl: String? = null,
     val content: String = "",
     val likes: Int = 0,
     val comments: Int = 0,
@@ -505,7 +561,7 @@ private fun toUiPost(value: SocialPost): Post {
         authorAvatarUrl = value.author.avatar,
         content = value.body,
         imageUrl = media?.takeUnless { it.type == "video" }?.url,
-        videoUrl = if (media?.type == "video") media.hlsUrl ?: media.url else null,
+        videoUrl = if (media?.type == "video") media.hlsUrl.takeIf { media.processingStatus == "ready" } ?: media.url else null,
         media = value.media,
         time = value.publishedAt?.replace('T', ' ')?.take(16) ?: "Now",
         likes = value.reactionCount,
@@ -527,8 +583,9 @@ private fun toUiReel(value: SocialPost): Reel {
         author = value.author.name.ifBlank { value.authorProfile?.username ?: "Tiwi User" },
         authorAvatarUrl = value.author.avatar,
         thumbnail = R.drawable.img_tiwi_logo,
-        thumbnailUrl = value.thumbnailUrl ?: media?.thumbnailUrl ?: media?.url,
-        videoUrl = media?.hlsUrl ?: media?.url ?: value.hlsUrl,
+        thumbnailUrl = value.thumbnailUrl ?: media?.thumbnailUrl ?: media?.takeUnless { it.type == "video" }?.url,
+        videoUrl = media?.hlsUrl?.takeIf { media.processingStatus == "ready" } ?: media?.url ?: value.hlsUrl,
+        fallbackVideoUrl = media?.url,
         content = value.body,
         likes = value.reactionCount,
         comments = value.commentCount,
@@ -550,13 +607,16 @@ private fun ExploreImage(url: String?, modifier: Modifier) {
 }
 
 @Composable
-private fun TiwiVideo(url: String, modifier: Modifier, autoplay: Boolean = false) {
+private fun TiwiVideo(url: String, modifier: Modifier, autoplay: Boolean = false, fallbackUrl: String? = null, posterUrl: String? = null) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    var activeUrl by remember(url, fallbackUrl) { mutableStateOf(url) }
     var visibleEnough by remember(url) { mutableStateOf(true) }
-    val player = remember(url) {
+    var renderedFirstFrame by remember(activeUrl) { mutableStateOf(false) }
+    var buffering by remember(activeUrl) { mutableStateOf(true) }
+    val player = remember(activeUrl) {
         ExoPlayer.Builder(context).build().apply {
-            setMediaItem(MediaItem.fromUri(url))
+            setMediaItem(MediaItem.fromUri(activeUrl))
             prepare()
             repeatMode = if (autoplay) ExoPlayer.REPEAT_MODE_ONE else ExoPlayer.REPEAT_MODE_OFF
         }
@@ -565,7 +625,22 @@ private fun TiwiVideo(url: String, modifier: Modifier, autoplay: Boolean = false
         player.repeatMode = if (autoplay) ExoPlayer.REPEAT_MODE_ONE else ExoPlayer.REPEAT_MODE_OFF
         if (autoplay && visibleEnough) player.play() else player.pause()
     }
-    DisposableEffect(player, lifecycleOwner) {
+    DisposableEffect(player, lifecycleOwner, activeUrl, fallbackUrl) {
+        val listener = object : Player.Listener {
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                buffering = playbackState == Player.STATE_BUFFERING
+            }
+
+            override fun onRenderedFirstFrame() {
+                renderedFirstFrame = true
+                buffering = false
+            }
+
+            override fun onPlayerError(error: PlaybackException) {
+                val fallback = fallbackUrl?.takeIf { it.isNotBlank() && it != activeUrl }
+                if (fallback != null) activeUrl = fallback else buffering = false
+            }
+        }
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_PAUSE, Lifecycle.Event.ON_STOP -> player.pause()
@@ -573,30 +648,32 @@ private fun TiwiVideo(url: String, modifier: Modifier, autoplay: Boolean = false
                 else -> Unit
             }
         }
+        player.addListener(listener)
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
+            player.removeListener(listener)
             lifecycleOwner.lifecycle.removeObserver(observer)
             player.release()
         }
     }
-    AndroidView(
-        factory = {
-            PlayerView(it).apply {
-                this.player = player
-                useController = true
-                controllerShowTimeoutMs = 1500
-            }
-        },
-        update = { it.player = player },
-        modifier = modifier
-            .background(Color.Black)
-            .onGloballyPositioned { coordinates ->
-                val bounds = coordinates.boundsInWindow()
-                val screenHeight = context.resources.displayMetrics.heightPixels.toFloat()
-                val visibleHeight = (minOf(bounds.bottom, screenHeight) - maxOf(bounds.top, 0f)).coerceAtLeast(0f)
-                visibleEnough = bounds.height > 0f && visibleHeight / bounds.height >= .6f
-            }
-    )
+    Box(
+        modifier.background(Color.Black).onGloballyPositioned { coordinates ->
+            val bounds = coordinates.boundsInWindow()
+            val screenHeight = context.resources.displayMetrics.heightPixels.toFloat()
+            val visibleHeight = (minOf(bounds.bottom, screenHeight) - maxOf(bounds.top, 0f)).coerceAtLeast(0f)
+            visibleEnough = bounds.height > 0f && visibleHeight / bounds.height >= .6f
+        }
+    ) {
+        AndroidView(
+            factory = { PlayerView(it).apply { this.player = player; useController = true; controllerShowTimeoutMs = 1500 } },
+            update = { it.player = player },
+            modifier = Modifier.fillMaxSize()
+        )
+        if (!renderedFirstFrame && !posterUrl.isNullOrBlank()) {
+            AsyncImage(model = posterUrl, contentDescription = "Video thumbnail", modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+        }
+        if (buffering && autoplay) CircularProgressIndicator(Modifier.align(Alignment.Center).size(32.dp), color = Color.White, strokeWidth = 3.dp)
+    }
 }
 
 private const val POST_UPLOAD_CHANNEL = "tiwi_post_uploads"
@@ -1163,7 +1240,7 @@ private fun PostMediaGrid(media: List<SocialMedia>, onOpen: () -> Unit) {
     val visible = media.take(4)
     val cell: @Composable (SocialMedia, Modifier, Int) -> Unit = { item, modifier, index ->
         Box(modifier.clickable(onClick = onOpen).background(Color.Black)) {
-            if (item.type == "video") TiwiVideo(item.hlsUrl ?: item.url, Modifier.fillMaxSize(), autoplay = media.size == 1)
+            if (item.type == "video") TiwiVideo(item.hlsUrl?.takeIf { item.processingStatus == "ready" } ?: item.url, Modifier.fillMaxSize(), autoplay = media.size == 1, fallbackUrl = item.url, posterUrl = item.thumbnailUrl)
             else AsyncImage(model = item.url, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
             if (index == 3 && media.size > 4) Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = .55f)), contentAlignment = Alignment.Center) {
                 Text("+${media.size - 4}", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold)
@@ -1847,7 +1924,7 @@ fun ReelsScreen(reels: List<Reel>, repository: SocialRepository, onOpen: (String
         val reel = reels[page]
         Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
             when {
-                !reel.videoUrl.isNullOrBlank() -> TiwiVideo(reel.videoUrl!!, Modifier.fillMaxSize(), autoplay = pagerState.currentPage == page)
+                !reel.videoUrl.isNullOrBlank() -> TiwiVideo(reel.videoUrl!!, Modifier.fillMaxSize(), autoplay = pagerState.currentPage == page, fallbackUrl = reel.fallbackVideoUrl, posterUrl = reel.thumbnailUrl)
                 !reel.thumbnailUrl.isNullOrBlank() -> AsyncImage(model = reel.thumbnailUrl, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                 else -> Box(Modifier.fillMaxSize().background(Color.Black))
             }
@@ -2999,7 +3076,7 @@ fun ChatDetailScreen(
                         Column {
                             message.media.forEach { media ->
                                 when (media.type) {
-                                    "video" -> TiwiVideo(media.hlsUrl ?: media.url, Modifier.fillMaxWidth().height(180.dp))
+                                    "video" -> TiwiVideo(media.hlsUrl?.takeIf { media.processingStatus == "ready" } ?: media.url, Modifier.fillMaxWidth().height(180.dp), fallbackUrl = media.url, posterUrl = media.thumbnailUrl)
                                     "image" -> AsyncImage(model = media.url, contentDescription = "Attachment", modifier = Modifier.fillMaxWidth().heightIn(max = 220.dp), contentScale = ContentScale.Crop)
                                     else -> Text("Attachment", modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp), color = if (isMe) Color.White else Color.Black)
                                 }
@@ -3116,7 +3193,7 @@ fun FeaturedContentSection(posts: List<Post>) {
                 ) {
                     Box {
                         if (!post.imageUrl.isNullOrBlank()) AsyncImage(model = post.imageUrl, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-                        else if (!post.videoUrl.isNullOrBlank()) TiwiVideo(post.videoUrl, Modifier.fillMaxSize())
+                        else if (!post.videoUrl.isNullOrBlank()) TiwiVideo(post.videoUrl, Modifier.fillMaxSize(), fallbackUrl = post.media.firstOrNull()?.url, posterUrl = post.media.firstOrNull()?.thumbnailUrl)
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()

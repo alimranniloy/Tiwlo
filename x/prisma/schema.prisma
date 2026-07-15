@@ -16,6 +16,7 @@ model User {
   credits                  Float     @default(0)
   role                     String    @default("user")
   status                   String    @default("active")
+  signupSource             String    @default("web")
   phone                    String?
   mobileCountryCode        String?
   primaryRegion            String?

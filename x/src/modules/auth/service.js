@@ -8,6 +8,7 @@ import { getAccountCreditPolicy } from '../../core/settings.js';
 import { isProfileInputComplete, profileCompletionData } from '../../core/profile.js';
 import { appOrigin, cta, paragraph, sendTiwloEmail } from '../../core/email.js';
 import { consumeSensitivePayload, recordAuthDeviceSession } from '../../../../tSecurity/index.js';
+import { hashValue, normalizeIp } from '../../../../tSecurity/utils.js';
 import {
   attachWhatsAppState,
   createPasswordResetOtpChallenge,
@@ -311,6 +312,34 @@ function queueVerificationEmail(ctx, user, token) {
   });
 }
 
+function queueRequiredVerificationEmail(ctx, user, token) {
+  setImmediate(() => {
+    sendVerificationEmail(ctx, user, token)
+      .then((result) => {
+        if (!result?.sent) console.warn('[auth-email] required Social verification email was not sent:', result?.reason || result?.message || user.email);
+      })
+      .catch((error) => console.warn('[auth-email] required Social verification email failed:', error?.message || error));
+  });
+}
+
+const normalizedSocialUsername = (value) => String(value || '')
+  .trim()
+  .toLowerCase()
+  .replace(/[^a-z0-9._]/g, '')
+  .replace(/^[._]+|[._]+$/g, '')
+  .slice(0, 30);
+
+const availableSocialUsername = async (prisma, requested, email) => {
+  const requestedName = normalizedSocialUsername(requested);
+  const fallback = normalizedSocialUsername(String(email || '').split('@')[0]);
+  const base = (requestedName.length >= 3 ? requestedName : fallback.length >= 3 ? fallback : `tiwi${crypto.randomBytes(4).toString('hex')}`).slice(0, 26);
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const candidate = attempt === 0 ? base : `${base.slice(0, 26)}${attempt}`;
+    if (!await prisma.socialProfile.findUnique({ where: { username: candidate }, select: { id: true } })) return candidate;
+  }
+  throw new AppError('That username is unavailable. Choose another username.', 'BAD_USER_INPUT');
+};
+
 export const login = async (ctx, input) => {
   const secure = await consumeSensitivePayload(ctx, 'login', input);
   input = secure.payload;
@@ -412,6 +441,80 @@ export const signup = async (ctx, input) => {
   await writeAudit({ ...ctx, user }, 'signup', 'user', user.id, { email, device: device.session });
   queueVerificationEmail(ctx, user, verificationToken);
   return { ok: true, requiresWhatsAppOtp: false, token: createToken(user), user: toApi(user), message: 'Account created.' };
+};
+
+export const socialAppSignup = async (ctx, input = {}) => {
+  const email = normalizeEmail(input.email);
+  const name = String(input.name || '').trim().slice(0, 120);
+  const password = String(input.password || '');
+  const deviceFingerprint = String(input.deviceFingerprint || '').trim().toLowerCase();
+  if (!name || name.length < 2) throw new AppError('Enter your full name.', 'BAD_USER_INPUT');
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new AppError('Enter a valid email address.', 'BAD_USER_INPUT');
+  if (password.length < 8) throw new AppError('Password must contain at least 8 characters.', 'BAD_USER_INPUT');
+  if (!/^[a-f0-9]{64}$/.test(deviceFingerprint)) throw new AppError('This Android device could not be verified.', 'BAD_USER_INPUT');
+  if (['admin@tiwlo.app', 'admin@tiwlo.com'].includes(email)) throw new AppError('Tiwlo Team accounts cannot be created from the Social app.', 'FORBIDDEN');
+  if (await ctx.prisma.user.findUnique({ where: { email }, select: { id: true } })) throw new AppError('Account already exists. Sign in instead.', 'BAD_USER_INPUT');
+
+  const ipAddress = normalizeIp(ctx.requestIp || '');
+  const fingerprintHash = hashValue(`auth-device:${deviceFingerprint}`);
+  const duplicateSession = await ctx.prisma.userDeviceSession.findFirst({
+    where: {
+      OR: [
+        { fingerprintHash },
+        ...(ipAddress ? [{ ipAddress }] : [])
+      ]
+    },
+    include: { user: { select: { id: true, email: true, status: true } } },
+    orderBy: { lastSeenAt: 'desc' }
+  }).catch(() => null);
+  const duplicateAccount = Boolean(duplicateSession?.userId);
+  const username = await availableSocialUsername(ctx.prisma, input.username, email);
+  const verificationToken = randomToken();
+  const passwordHash = await bcrypt.hash(password, 10);
+  const user = await ctx.prisma.user.create({
+    data: {
+      email,
+      passwordHash,
+      name,
+      role: 'user',
+      status: duplicateAccount ? 'disabled' : 'active',
+      signupSource: 'social_app',
+      credits: 0,
+      emailVerifiedAt: null,
+      emailVerificationToken: duplicateAccount ? null : verificationToken,
+      emailVerificationExpires: duplicateAccount ? null : addHours(48),
+      socialProfile: { create: { username } }
+    }
+  });
+  const deviceInput = { deviceFingerprint, deviceMetadata: input.deviceMetadata || {} };
+  const device = await recordAuthDeviceSession(ctx, user, deviceInput, 'social_app_signup');
+  await writeAudit({ ...ctx, user }, duplicateAccount ? 'social_app_signup_disabled' : 'social_app_signup', 'user', user.id, {
+    email,
+    signupSource: 'social_app',
+    freeCredit: false,
+    duplicateDeviceOrIp: duplicateAccount,
+    matchedUserId: duplicateSession?.userId || null,
+    device: device.session
+  });
+  if (duplicateAccount) {
+    return {
+      ok: false,
+      requiresWhatsAppOtp: false,
+      requiresEmailVerification: false,
+      token: createToken(user),
+      user: toApi(user),
+      message: 'Only one Social account is allowed per device and IP. This account has been disabled.'
+    };
+  }
+  queueRequiredVerificationEmail(ctx, user, verificationToken);
+  return {
+    ok: true,
+    requiresWhatsAppOtp: false,
+    requiresEmailVerification: true,
+    token: createToken(user),
+    user: toApi(user),
+    message: 'Account created without free credit. Verify your email to open Tiwi Social.'
+  };
 };
 
 export const verifySignupWhatsAppOtp = async (ctx, challengeId, code) => {
@@ -652,7 +755,8 @@ export const resendEmailVerification = async (ctx, actor) => {
       emailVerificationExpires: addHours(48)
     }
   });
-  queueVerificationEmail(ctx, user, token);
+  if (user.signupSource === 'social_app') queueRequiredVerificationEmail(ctx, user, token);
+  else queueVerificationEmail(ctx, user, token);
   return true;
 };
 

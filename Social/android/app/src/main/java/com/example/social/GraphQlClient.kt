@@ -2,6 +2,8 @@ package com.example.social
 
 import android.content.ContentResolver
 import android.content.Context
+import android.graphics.Bitmap
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.provider.OpenableColumns
 import com.example.BuildConfig
@@ -10,6 +12,7 @@ import com.squareup.moshi.Moshi
 import com.squareup.moshi.Types
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import okhttp3.Cache
 import okhttp3.MediaType.Companion.toMediaType
@@ -84,28 +87,59 @@ internal class GraphQlClient(context: Context, private val token: () -> String?)
         try {
             resolver.openInputStream(uri)?.use { input -> temp.outputStream().use(input::copyTo) }
                 ?: throw SocialApiException("Selected media could not be opened")
-            if (temp.length() > CHUNK_THRESHOLD) {
-                return@withContext uploadMediaInChunks(temp, name, mime, kind, onProgress)
+            var uploaded = if (temp.length() > CHUNK_THRESHOLD) uploadMediaInChunks(temp, name, mime, kind, onProgress)
+            else uploadMediaMultipart(temp, name, mime, kind, onProgress)
+            onProgress?.invoke(95)
+            if (mime.startsWith("video/") && uploaded.thumbnailUrl.isNullOrBlank()) {
+                uploaded = attachGeneratedThumbnail(temp, name, uploaded)
             }
-            val body = MultipartBody.Builder().setType(MultipartBody.FORM)
-                .addFormDataPart("kind", kind)
-                .addFormDataPart("file", name, temp.asRequestBody(mime.toMediaType()))
-                .build()
-            val builder = Request.Builder().url("$baseUrl/api/social/media").post(body).header("Accept", "application/json")
-            token()?.let { builder.header("Authorization", "Bearer $it") }
-            onProgress?.invoke(5)
-            http.newCall(builder.build()).execute().use { response ->
-                val text = response.body?.string().orEmpty()
-                val value = runCatching { mapAdapter.fromJson(text) }.getOrNull()
-                if (response.code == 413) return@withContext uploadMediaInChunks(temp, name, mime, kind, onProgress)
-                if (!response.isSuccessful || value == null) throw SocialApiException(value?.string("error") ?: "Media upload failed (${response.code})")
-                onProgress?.invoke(100)
-                mediaResult(value, mime, kind)
-            }
+            awaitMediaPreview(uploaded, onProgress)
         } finally { temp.delete() }
     }
 
-    private fun uploadMediaInChunks(temp: File, name: String, mime: String, kind: String, onProgress: ((Int) -> Unit)?): MediaUploadResult {
+    private suspend fun uploadMediaMultipart(temp: File, name: String, mime: String, kind: String, onProgress: ((Int) -> Unit)?): MediaUploadResult {
+        val body = MultipartBody.Builder().setType(MultipartBody.FORM)
+            .addFormDataPart("kind", kind)
+            .addFormDataPart("file", name, temp.asRequestBody(mime.toMediaType()))
+            .build()
+        val builder = Request.Builder().url("$baseUrl/api/social/media").post(body).header("Accept", "application/json")
+        token()?.let { builder.header("Authorization", "Bearer $it") }
+        onProgress?.invoke(5)
+        return http.newCall(builder.build()).execute().use { response ->
+            val text = response.body?.string().orEmpty()
+            val value = runCatching { mapAdapter.fromJson(text) }.getOrNull()
+            if (response.code == 413) return uploadMediaInChunks(temp, name, mime, kind, onProgress)
+            if (!response.isSuccessful || value == null) throw SocialApiException(value?.string("error") ?: "Media upload failed (${response.code})")
+            mediaResult(value, mime, kind)
+        }
+    }
+
+    private suspend fun attachGeneratedThumbnail(video: File, originalName: String, result: MediaUploadResult): MediaUploadResult {
+        val thumbnail = File.createTempFile("tiwi-video-thumb-", ".jpg", cacheDirectory)
+        val retriever = MediaMetadataRetriever()
+        return try {
+            retriever.setDataSource(video.absolutePath)
+            val frame = retriever.getFrameAtTime(1_000_000L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                ?: retriever.getFrameAtTime(0L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                ?: return result
+            val largest = maxOf(frame.width, frame.height).coerceAtLeast(1)
+            val scale = minOf(1f, 960f / largest.toFloat())
+            val scaled = if (scale < 1f) Bitmap.createScaledBitmap(frame, (frame.width * scale).toInt().coerceAtLeast(1), (frame.height * scale).toInt().coerceAtLeast(1), true) else frame
+            thumbnail.outputStream().use { scaled.compress(Bitmap.CompressFormat.JPEG, 84, it) }
+            if (scaled !== frame) frame.recycle()
+            scaled.recycle()
+            if (thumbnail.length() == 0L) return result
+            val uploadedThumbnail = uploadMediaMultipart(thumbnail, "${originalName.substringBeforeLast('.')}-thumbnail.jpg", "image/jpeg", "thumbnail", null)
+            result.copy(thumbnailUrl = uploadedThumbnail.sourceUrl)
+        } catch (_: Exception) {
+            result
+        } finally {
+            retriever.release()
+            thumbnail.delete()
+        }
+    }
+
+    private suspend fun uploadMediaInChunks(temp: File, name: String, mime: String, kind: String, onProgress: ((Int) -> Unit)?): MediaUploadResult {
         val start = authenticatedUploadJson(
             Request.Builder()
                 .url("$baseUrl/api/social/media/chunks/start")
@@ -134,8 +168,37 @@ internal class GraphQlClient(context: Context, private val token: () -> String?)
         val complete = authenticatedUploadJson(
             Request.Builder().url("$baseUrl/api/social/media/chunks/$uploadId/complete").post(EMPTY_BODY)
         )
-        onProgress?.invoke(100)
         return mediaResult(complete, mime, kind)
+    }
+
+    private suspend fun awaitMediaPreview(initial: MediaUploadResult, onProgress: ((Int) -> Unit)?): MediaUploadResult {
+        if (!initial.mimeType.startsWith("video/") || initial.processingStatus == "ready" || initial.processingId.isBlank()) {
+            onProgress?.invoke(100)
+            return initial
+        }
+        var latest = initial
+        repeat(20) { attempt ->
+            delay(1000)
+            val status = runCatching {
+                authenticatedUploadJson(Request.Builder().url("$baseUrl/api/social/media/${initial.processingId}/status").get())
+            }.getOrNull()
+            if (status != null) {
+                val polled = mediaResult(status, initial.mimeType, initial.kind)
+                latest = polled.copy(
+                    processingId = initial.processingId,
+                    sourceUrl = polled.sourceUrl.ifBlank { initial.sourceUrl },
+                    hlsUrl = polled.hlsUrl ?: initial.hlsUrl,
+                    thumbnailUrl = polled.thumbnailUrl ?: initial.thumbnailUrl
+                )
+                onProgress?.invoke((96 + attempt / 5).coerceAtMost(99))
+                if (!latest.thumbnailUrl.isNullOrBlank() || latest.processingStatus in setOf("ready", "failed")) {
+                    onProgress?.invoke(100)
+                    return latest
+                }
+            }
+        }
+        onProgress?.invoke(100)
+        return latest
     }
 
     private fun authenticatedUploadJson(builder: Request.Builder): Map<String, Any?> {
@@ -152,7 +215,8 @@ internal class GraphQlClient(context: Context, private val token: () -> String?)
     private fun mediaResult(value: Map<String, Any?>, fallbackMime: String, fallbackKind: String) = MediaUploadResult(
         processingId = value.string("processingId").orEmpty(), kind = value.string("kind") ?: fallbackKind,
         mimeType = value.string("mimeType") ?: fallbackMime, sourceUrl = absoluteUrl(value.string("sourceUrl")).orEmpty(),
-        hlsUrl = absoluteUrl(value.string("hlsUrl")), processingStatus = value.string("processingStatus") ?: "ready"
+        hlsUrl = absoluteUrl(value.string("hlsUrl")), thumbnailUrl = absoluteUrl(value.string("thumbnailUrl")),
+        processingStatus = value.string("processingStatus") ?: value.string("status") ?: "ready"
     )
 
     fun absoluteUrl(path: String?): String? {

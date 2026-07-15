@@ -9,6 +9,7 @@ export const authResolvers = {
   Mutation: {
     login: (_, { input }, ctx) => service.login(ctx, input),
     signup: (_, { input }, ctx) => service.signup(ctx, input),
+    socialAppSignup: (_, { input }, ctx) => service.socialAppSignup(ctx, input),
     verifySignupWhatsAppOtp: (_, { challengeId, code }, ctx) => service.verifySignupWhatsAppOtp(ctx, challengeId, code),
     updateProfile: async (_, { input }, ctx) => service.updateProfile(ctx, await requireAuth(ctx), input),
     startPasswordResetOtp: (_, args, ctx) => service.startPasswordResetOtp(ctx, args),

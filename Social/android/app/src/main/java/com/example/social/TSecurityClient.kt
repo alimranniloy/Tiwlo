@@ -20,6 +20,9 @@ import javax.crypto.spec.SecretKeySpec
 import kotlin.random.Random
 
 internal class TSecurityClient(private val context: Context, private val api: GraphQlClient) {
+    fun deviceFingerprint(): String = fingerprint()
+    fun deviceMetadata(): Map<String, Any?> = metadata()
+
     suspend fun issueAuthToken(action: String, form: Map<String, Any?>): String {
         val state = api.getJson("/data/v3/sync-state").objectValue("state")
             ?: throw SocialApiException("tSecurity sync failed")

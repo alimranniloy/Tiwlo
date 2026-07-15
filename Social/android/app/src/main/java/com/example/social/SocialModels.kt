@@ -9,7 +9,16 @@ data class SocialUser(
     val name: String = "",
     val avatar: String? = null,
     val role: String = "user",
-    val status: String = "active"
+    val status: String = "active",
+    val signupSource: String = "web",
+    val emailVerifiedAt: String? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class SocialSignupResult(
+    val user: SocialUser,
+    val requiresEmailVerification: Boolean = false,
+    val message: String = ""
 )
 
 @JsonClass(generateAdapter = true)
@@ -41,6 +50,7 @@ data class SocialMedia(
     val thumbnailUrl: String? = null,
     val mimeType: String? = null,
     val processingId: String? = null,
+    val processingStatus: String = "ready",
     val sharedPostId: String? = null,
     val sharedAuthorId: String? = null,
     val sharedAuthor: String? = null,
@@ -166,6 +176,7 @@ data class MediaUploadResult(
     val mimeType: String = "application/octet-stream",
     val sourceUrl: String = "",
     val hlsUrl: String? = null,
+    val thumbnailUrl: String? = null,
     val processingStatus: String = "ready"
 ) {
     fun asSocialMedia() = SocialMedia(
@@ -176,8 +187,10 @@ data class MediaUploadResult(
             else -> "image"
         },
         hlsUrl = hlsUrl,
+        thumbnailUrl = thumbnailUrl,
         mimeType = mimeType,
-        processingId = processingId
+        processingId = processingId,
+        processingStatus = processingStatus
     )
 }
 

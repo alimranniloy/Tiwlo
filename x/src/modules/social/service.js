@@ -70,6 +70,9 @@ export const getSettings = async (ctx) => {
 };
 
 const requireSocialFeature = async (ctx, key) => {
+  if (ctx.user?.signupSource === 'social_app' && !ctx.user?.emailVerifiedAt) {
+    throw new AppError('Verify your email before using Tiwi Social', 'FORBIDDEN');
+  }
   const settings = await getSettings(ctx);
   if (!settings.enabled) throw new AppError('Tiwlo Social is currently disabled', 'SERVICE_UNAVAILABLE');
   if (key && settings[key] === false) throw new AppError('This Social feature is currently disabled', 'FORBIDDEN');
@@ -376,7 +379,7 @@ export const repostPost = async (ctx, id) => {
       processingStatus: 'ready',
       media: [{
         type: 'shared_post',
-        url: preview.url || original.thumbnailUrl || '',
+        url: preview.thumbnailUrl || original.thumbnailUrl || preview.url || '',
         thumbnailUrl: preview.thumbnailUrl || original.thumbnailUrl || '',
         sharedPostId: original.id,
         sharedAuthorId: original.authorId,

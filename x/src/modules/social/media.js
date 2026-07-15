@@ -32,6 +32,7 @@ const writeStatus = async (file, value) => {
 
 const transcodeVideo = async ({ inputPath, outputDir, publicBase, statusFile }) => {
   const ffmpeg = process.env.SOCIAL_FFMPEG_PATH || 'ffmpeg';
+  let thumbnailReady = false;
   const qualities = [
     { name: '360p', height: 360, bandwidth: 800000, resolution: '640x360' },
     { name: '480p', height: 480, bandwidth: 1400000, resolution: '854x480' },
@@ -39,7 +40,32 @@ const transcodeVideo = async ({ inputPath, outputDir, publicBase, statusFile }) 
   ];
   try {
     await mkdir(outputDir, { recursive: true });
-    await writeStatus(statusFile, { status: 'processing', progress: 2, sourceUrl: publicBase.sourceUrl, hlsUrl: publicBase.hlsUrl });
+    await writeStatus(statusFile, { status: 'processing', progress: 2, sourceUrl: publicBase.sourceUrl, hlsUrl: publicBase.hlsUrl, thumbnailUrl: null });
+    const thumbnailPath = join(outputDir, 'thumbnail.jpg');
+    try {
+      await runProcess(ffmpeg, [
+        '-hide_banner', '-loglevel', 'error', '-y', '-ss', '1', '-i', inputPath,
+        '-frames:v', '1', '-vf', 'scale=960:-2:force_original_aspect_ratio=decrease', '-q:v', '3', thumbnailPath
+      ]);
+      thumbnailReady = true;
+    } catch {
+      try {
+        await runProcess(ffmpeg, [
+          '-hide_banner', '-loglevel', 'error', '-y', '-i', inputPath,
+          '-frames:v', '1', '-vf', 'scale=960:-2:force_original_aspect_ratio=decrease', '-q:v', '3', thumbnailPath
+        ]);
+        thumbnailReady = true;
+      } catch {
+        thumbnailReady = false;
+      }
+    }
+    await writeStatus(statusFile, {
+      status: 'processing',
+      progress: 5,
+      sourceUrl: publicBase.sourceUrl,
+      hlsUrl: publicBase.hlsUrl,
+      thumbnailUrl: thumbnailReady ? publicBase.thumbnailUrl : null
+    });
     for (let index = 0; index < qualities.length; index += 1) {
       const quality = qualities[index];
       const qualityDir = join(outputDir, quality.name);
@@ -57,7 +83,8 @@ const transcodeVideo = async ({ inputPath, outputDir, publicBase, statusFile }) 
         status: 'processing',
         progress: Math.round(((index + 1) / qualities.length) * 90),
         sourceUrl: publicBase.sourceUrl,
-        hlsUrl: publicBase.hlsUrl
+        hlsUrl: publicBase.hlsUrl,
+        thumbnailUrl: thumbnailReady ? publicBase.thumbnailUrl : null
       });
     }
     const master = ['#EXTM3U', '#EXT-X-VERSION:3'];
@@ -71,6 +98,7 @@ const transcodeVideo = async ({ inputPath, outputDir, publicBase, statusFile }) 
       progress: 100,
       sourceUrl: publicBase.sourceUrl,
       hlsUrl: publicBase.hlsUrl,
+      thumbnailUrl: thumbnailReady ? publicBase.thumbnailUrl : null,
       qualities: qualities.map((quality) => quality.name)
     });
   } catch (error) {
@@ -79,6 +107,7 @@ const transcodeVideo = async ({ inputPath, outputDir, publicBase, statusFile }) 
       progress: 0,
       sourceUrl: publicBase.sourceUrl,
       hlsUrl: null,
+      thumbnailUrl: thumbnailReady ? publicBase.thumbnailUrl : null,
       error: String(error?.message || error).slice(0, 1000)
     }).catch(() => undefined);
   }
@@ -115,6 +144,10 @@ export const registerSocialRoutes = (app, { prisma, userFromRequest, rootDir }) 
         res.status(403).json({ error: 'This account cannot upload media' });
         return;
       }
+      if (user.signupSource === 'social_app' && !user.emailVerifiedAt) {
+        res.status(403).json({ error: 'Verify your email before uploading media' });
+        return;
+      }
       req.socialUser = user;
       next();
     } catch (error) {
@@ -132,15 +165,16 @@ export const registerSocialRoutes = (app, { prisma, userFromRequest, rootDir }) 
     const outputDir = join(uploadRoot, userId, outputName);
     const statusFile = join(outputDir, 'status.json');
     const hlsUrl = `${publicRoot}/${userId}/${outputName}/master.m3u8`;
+    const thumbnailUrl = `${publicRoot}/${userId}/${outputName}/thumbnail.jpg`;
     if (isVideo && settings.autoTranscode) {
       await mkdir(outputDir, { recursive: true });
-      await writeStatus(statusFile, { status: 'queued', progress: 0, sourceUrl, hlsUrl });
+      await writeStatus(statusFile, { status: 'queued', progress: 0, sourceUrl, hlsUrl, thumbnailUrl: null });
       setImmediate(() => {
         transcodeVideo({
           inputPath: filePath,
           outputDir,
           statusFile,
-          publicBase: { sourceUrl, hlsUrl }
+          publicBase: { sourceUrl, hlsUrl, thumbnailUrl }
         });
       });
     }
@@ -152,6 +186,7 @@ export const registerSocialRoutes = (app, { prisma, userFromRequest, rootDir }) 
       size,
       sourceUrl,
       hlsUrl: isVideo && settings.autoTranscode ? hlsUrl : null,
+      thumbnailUrl: null,
       processingStatus: isVideo && settings.autoTranscode ? 'queued' : 'ready'
     };
   };

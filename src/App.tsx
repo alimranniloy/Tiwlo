@@ -21,6 +21,7 @@ const EmailPortal = lazy(() => import('./pages/EmailPortal'));
 const BannedAccount = lazy(() => import('./pages/BannedAccount'));
 const MaintenancePage = lazy(() => import('./pages/Maintenance'));
 const CompleteProfile = lazy(() => import('./pages/CompleteProfile'));
+const EmailVerificationRequired = lazy(() => import('./pages/EmailVerificationRequired'));
 const StorefrontHost = lazy(() => import('./themes/StorefrontHost'));
 const StoreUserDashboard = lazy(() => import('./cloudstore/userdashboard'));
 const IdentityVerification = lazy(() => import('./pages/IdentityVerification'));
@@ -364,6 +365,16 @@ export default function App() {
         </Suspense>
         <Suspense fallback={null}>
           <FloatingAIWidget />
+        </Suspense>
+      </ResettableRouter>
+    );
+  }
+
+  if (!isAdminRole(user) && user.signupSource === 'social_app' && !user.emailVerifiedAt) {
+    return (
+      <ResettableRouter routerKey={`email-verification-${routerResetKey}`}>
+        <Suspense fallback={<RouteLoader />}>
+          <EmailVerificationRequired user={user} setUser={setUser} onLogout={handleLogout} />
         </Suspense>
       </ResettableRouter>
     );

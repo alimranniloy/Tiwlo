@@ -17,6 +17,7 @@ const userFields = `
   credits
   role
   status
+  signupSource
   phone
   mobileCountryCode
   primaryRegion

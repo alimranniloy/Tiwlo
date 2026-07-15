@@ -28,6 +28,7 @@ export interface User {
   avatar?: string;
   credits?: number;
   status?: string;
+  signupSource?: string;
   phone?: string;
   mobileCountryCode?: string;
   primaryRegion?: string;

@@ -34,6 +34,13 @@ by default), verified app links for profiles/posts, native sharing, shared-post
 snapshot cards, and disabled-account recovery/export screens. Settings, privacy,
 verified and reporting surfaces use clean white containers in the Android app.
 
+Social v2.3 uses a dedicated lightweight Android signup mutation. App-created
+accounts receive zero signup credit, require email verification, and are limited
+to one account per device or exact IP. Billing fields remain incomplete until
+the user opens `tiwlo.com`, where dashboard access is gated by email and billing
+profile completion. FFmpeg now creates automatic video thumbnails and Android
+falls back from unavailable HLS to the original uploaded video.
+
 Uploaded media is served through `/api/social/media/files/`. Video uploads are
 transcoded asynchronously by FFmpeg to 360p, 480p and 720p HLS renditions, with
 an adaptive master playlist. Large Android uploads use
