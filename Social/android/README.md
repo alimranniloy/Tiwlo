@@ -20,3 +20,7 @@ The app renders cached profile/feed/chat data first and refreshes it in the
 background. HTTP responses and media are disk-cached. Login/signup use Tiwlo
 tSecurity, password reset uses the Tiwlo OTP flow, and audio/video calls use
 WebRTC with the STUN/TURN servers configured in Tiwlo Admin > Social.
+
+Version 2.0 adds multi-photo/video composer previews, post detail with threaded
+replies and reactions, edit/delete/report controls, reposts, compact profiles,
+verified-account information, suggested people, and chat message requests.

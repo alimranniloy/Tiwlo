@@ -70,9 +70,11 @@ model User {
   socialPosts              SocialPost[]                @relation("SocialPostAuthor")
   socialComments           SocialComment[]             @relation("SocialCommentAuthor")
   socialPostReactions      SocialPostReaction[]
+  socialCommentReactions   SocialCommentReaction[]
   socialFollowers          SocialFollow[]              @relation("SocialFollowTarget")
   socialFollowing          SocialFollow[]              @relation("SocialFollowFollower")
   socialConversationLinks  SocialConversationMember[]
+  socialConversationRequests SocialConversation[]      @relation("SocialConversationRequester")
   socialMessages           SocialMessage[]             @relation("SocialMessageSender")
   socialMessageReactions   SocialMessageReaction[]
   socialMessageDeletions   SocialMessageDeletion[]
@@ -1476,8 +1478,21 @@ model SocialComment {
   status    String     @default("published")
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
+  reactions SocialCommentReaction[]
 
   @@index([postId, status, createdAt])
+}
+
+model SocialCommentReaction {
+  id        String        @id @default(cuid())
+  commentId String
+  comment   SocialComment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime      @default(now())
+
+  @@unique([commentId, userId])
+  @@index([userId, createdAt])
 }
 
 model SocialConversation {
@@ -1485,6 +1500,9 @@ model SocialConversation {
   type      String                     @default("direct")
   title     String?
   avatarUrl String?
+  requestStatus String                   @default("accepted")
+  requestedById String?
+  requestedBy   User?                    @relation("SocialConversationRequester", fields: [requestedById], references: [id], onDelete: SetNull)
   createdAt DateTime                   @default(now())
   updatedAt DateTime                   @updatedAt
   members   SocialConversationMember[]

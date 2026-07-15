@@ -66,6 +66,20 @@ data class SocialPost(
 )
 
 @JsonClass(generateAdapter = true)
+data class SocialComment(
+    val id: String = "",
+    val postId: String = "",
+    val authorId: String = "",
+    val author: SocialUser = SocialUser(),
+    val authorProfile: SocialProfile? = null,
+    val replyToId: String? = null,
+    val body: String = "",
+    val reactionCount: Int = 0,
+    val viewerLiked: Boolean = false,
+    val createdAt: String? = null
+)
+
+@JsonClass(generateAdapter = true)
 data class SocialMessageReaction(val id: String = "", val userId: String = "", val emoji: String = "")
 
 @JsonClass(generateAdapter = true)
@@ -103,6 +117,8 @@ data class SocialConversation(
     val type: String = "direct",
     val title: String? = null,
     val avatarUrl: String? = null,
+    val requestStatus: String = "accepted",
+    val requestedById: String? = null,
     val members: List<SocialConversationMember> = emptyList(),
     val lastMessage: SocialMessage? = null,
     val unreadCount: Int = 0,

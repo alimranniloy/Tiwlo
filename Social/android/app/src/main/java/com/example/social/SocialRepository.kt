@@ -27,6 +27,8 @@ class SocialRepository(context: Context) {
     val conversations: StateFlow<List<SocialConversation>> = _conversations.asStateFlow()
     private val _messages = MutableStateFlow<Map<String, List<SocialMessage>>>(emptyMap())
     val messages: StateFlow<Map<String, List<SocialMessage>>> = _messages.asStateFlow()
+    private val _comments = MutableStateFlow<Map<String, List<SocialComment>>>(emptyMap())
+    val comments: StateFlow<Map<String, List<SocialComment>>> = _comments.asStateFlow()
     private val _syncing = MutableStateFlow(false)
     val syncing: StateFlow<Boolean> = _syncing.asStateFlow()
     private val _incomingCalls = MutableStateFlow<List<SocialCallSession>>(emptyList())
@@ -139,7 +141,12 @@ class SocialRepository(context: Context) {
             """mutation TiwiFollow(${D}userId: ID!) { $operation(userId: ${D}userId) { $PROFILE_FIELDS } }""",
             mapOf("userId" to userId)
         )
-        return mapProfile(data.objectValue(operation) ?: throw SocialApiException("Follow action failed"))
+        return mapProfile(data.objectValue(operation) ?: throw SocialApiException("Follow action failed")).also { updated ->
+            _feed.value = _feed.value.map { post ->
+                if (post.authorId == userId) post.copy(authorProfile = (post.authorProfile ?: updated).copy(isFollowing = updated.isFollowing)) else post
+            }
+            cache.saveFeed(_feed.value)
+        }
     }
 
     suspend fun createPost(body: String, type: String = "post", media: List<SocialMedia> = emptyList()): SocialPost {
@@ -147,7 +154,7 @@ class SocialRepository(context: Context) {
         val input = mapOf(
             "type" to type, "body" to body.trim(), "visibility" to "public", "media" to mediaInput,
             "hlsUrl" to media.firstOrNull()?.hlsUrl,
-            "processingStatus" to if (media.any { !it.hlsUrl.isNullOrBlank() }) "processing" else "ready"
+            "processingStatus" to "ready"
         )
         val data = client.execute(
             """mutation CreateTiwiPost(${D}input: SocialPostInput!) { createSocialPost(input: ${D}input) { $POST_FIELDS } }""",
@@ -188,6 +195,71 @@ class SocialRepository(context: Context) {
         }
     }
 
+    suspend fun viewPost(id: String): SocialPost {
+        val data = client.execute("""mutation ViewTiwiPost(${D}id: ID!) { viewSocialPost(id: ${D}id) { $POST_FIELDS } }""", mapOf("id" to id))
+        return mapPost(data.objectValue("viewSocialPost") ?: throw SocialApiException("Post was not found")).also(::replacePost)
+    }
+
+    suspend fun repostPost(id: String): SocialPost {
+        val data = client.execute("""mutation RepostTiwi(${D}id: ID!) { repostSocialPost(id: ${D}id) { $POST_FIELDS } }""", mapOf("id" to id))
+        return mapPost(data.objectValue("repostSocialPost") ?: throw SocialApiException("Repost failed")).also(::replacePost)
+    }
+
+    suspend fun updatePost(id: String, body: String): SocialPost {
+        val data = client.execute(
+            """mutation EditTiwiPost(${D}input: SocialPostUpdateInput!) { updateSocialPost(input: ${D}input) { $POST_FIELDS } }""",
+            mapOf("input" to mapOf("id" to id, "body" to body.trim()))
+        )
+        return mapPost(data.objectValue("updateSocialPost") ?: throw SocialApiException("Post update failed")).also(::replacePost)
+    }
+
+    suspend fun deletePost(id: String) {
+        client.execute("""mutation DeleteTiwiPost(${D}id: ID!) { deleteSocialPost(id: ${D}id) }""", mapOf("id" to id))
+        _feed.value = _feed.value.filterNot { it.id == id }
+        cache.saveFeed(_feed.value)
+    }
+
+    suspend fun reportContent(targetType: String, targetId: String, reason: String, details: String? = null) {
+        client.execute(
+            """mutation ReportTiwi(${D}type: String!, ${D}id: ID!, ${D}reason: String!, ${D}details: String) { reportSocialContent(targetType: ${D}type, targetId: ${D}id, reason: ${D}reason, details: ${D}details) { id status } }""",
+            mapOf("type" to targetType, "id" to targetId, "reason" to reason, "details" to details)
+        )
+    }
+
+    suspend fun refreshComments(postId: String): List<SocialComment> {
+        val data = client.execute(
+            """query TiwiComments(${D}postId: ID!) { socialComments(postId: ${D}postId, limit: 100) { $COMMENT_FIELDS } }""",
+            mapOf("postId" to postId)
+        )
+        return data.list("socialComments").mapNotNull { it.objectMap()?.let(::mapComment) }.also {
+            _comments.value = _comments.value + (postId to it)
+        }
+    }
+
+    suspend fun addComment(postId: String, body: String, replyToId: String? = null): SocialComment {
+        val data = client.execute(
+            """mutation CommentTiwi(${D}postId: ID!, ${D}body: String!, ${D}replyToId: ID) { addSocialComment(postId: ${D}postId, body: ${D}body, replyToId: ${D}replyToId) { $COMMENT_FIELDS } }""",
+            mapOf("postId" to postId, "body" to body.trim(), "replyToId" to replyToId)
+        )
+        return mapComment(data.objectValue("addSocialComment") ?: throw SocialApiException("Comment failed")).also { comment ->
+            _comments.value = _comments.value + (postId to (listOf(comment) + _comments.value[postId].orEmpty()))
+            _feed.value = _feed.value.map { if (it.id == postId) it.copy(commentCount = it.commentCount + 1) else it }
+            cache.saveFeed(_feed.value)
+        }
+    }
+
+    suspend fun reactToComment(postId: String, id: String): SocialComment {
+        val data = client.execute("""mutation LikeTiwiComment(${D}id: ID!) { reactToSocialComment(id: ${D}id) { $COMMENT_FIELDS } }""", mapOf("id" to id))
+        return mapComment(data.objectValue("reactToSocialComment") ?: throw SocialApiException("Comment reaction failed")).also { updated ->
+            _comments.value = _comments.value + (postId to _comments.value[postId].orEmpty().map { if (it.id == id) updated else it })
+        }
+    }
+
+    suspend fun deleteComment(postId: String, id: String) {
+        client.execute("""mutation DeleteTiwiComment(${D}id: ID!) { deleteSocialComment(id: ${D}id) }""", mapOf("id" to id))
+        _comments.value = _comments.value + (postId to _comments.value[postId].orEmpty().filterNot { it.id == id })
+    }
+
     suspend fun refreshConversations(force: Boolean = false): List<SocialConversation> {
         if (!force && _conversations.value.isNotEmpty() && cache.isFresh("conversations", CHAT_TTL)) return _conversations.value
         val data = client.execute("query TiwiChats { socialConversations { $CONVERSATION_FIELDS } }")
@@ -206,6 +278,18 @@ class SocialRepository(context: Context) {
         _conversations.value = listOf(value) + _conversations.value.filterNot { it.id == value.id }
         cache.saveConversations(_conversations.value)
         return value
+    }
+
+    suspend fun respondToMessageRequest(id: String, accept: Boolean): SocialConversation {
+        val data = client.execute(
+            """mutation RespondTiwiRequest(${D}id: ID!, ${D}accept: Boolean!) { respondToSocialMessageRequest(id: ${D}id, accept: ${D}accept) { $CONVERSATION_FIELDS } }""",
+            mapOf("id" to id, "accept" to accept)
+        )
+        return mapConversation(data.objectValue("respondToSocialMessageRequest") ?: throw SocialApiException("Message request failed")).also { updated ->
+            _conversations.value = if (updated.requestStatus == "declined") _conversations.value.filterNot { it.id == id }
+            else _conversations.value.map { if (it.id == id) updated else it }
+            cache.saveConversations(_conversations.value)
+        }
     }
 
     fun cachedMessages(conversationId: String): List<SocialMessage> {
@@ -353,6 +437,7 @@ class SocialRepository(context: Context) {
         _feed.value = emptyList()
         _conversations.value = emptyList()
         _messages.value = emptyMap()
+        _comments.value = emptyMap()
     }
 
     private fun saveSession(value: String, user: SocialUser) {
@@ -416,6 +501,7 @@ class SocialRepository(context: Context) {
 
     private fun mapConversation(value: Map<String, Any?>) = SocialConversation(
         id = value.string("id").orEmpty(), type = value.string("type") ?: "direct", title = value.string("title"), avatarUrl = absoluteUrl(value.string("avatarUrl")),
+        requestStatus = value.string("requestStatus") ?: "accepted", requestedById = value.string("requestedById"),
         members = value.list("members").mapNotNull { row -> row.objectMap()?.let { member ->
             val user = mapUser(member.objectValue("user") ?: emptyMap())
             SocialConversationMember(member.string("id").orEmpty(), member.string("userId") ?: user.id, user, member.objectValue("profile")?.let { mapProfile(it, user) }, member.string("role") ?: "member", member.string("lastReadAt"))
@@ -430,6 +516,21 @@ class SocialRepository(context: Context) {
         offer = value.objectValue("offer"), answer = value.objectValue("answer"), iceCandidates = value.list("iceCandidates").mapNotNull { it.objectMap() }
     )
 
+    private fun mapComment(value: Map<String, Any?>): SocialComment {
+        val author = mapUser(value.objectValue("author") ?: emptyMap())
+        return SocialComment(
+            id = value.string("id").orEmpty(), postId = value.string("postId").orEmpty(), authorId = value.string("authorId") ?: author.id,
+            author = author, authorProfile = value.objectValue("authorProfile")?.let { mapProfile(it, author) }, replyToId = value.string("replyToId"),
+            body = value.string("body").orEmpty(), reactionCount = value.number("reactionCount")?.toInt() ?: 0,
+            viewerLiked = value.boolean("viewerLiked"), createdAt = value.string("createdAt")
+        )
+    }
+
+    private fun replacePost(updated: SocialPost) {
+        _feed.value = _feed.value.map { if (it.id == updated.id) updated else it }
+        cache.saveFeed(_feed.value)
+    }
+
     private fun mapReset(value: Map<String, Any?>) = PasswordResetChallenge(
         value.string("challengeId").orEmpty(), value.string("channel") ?: "email", value.string("destination").orEmpty(),
         value.string("expiresAt").orEmpty(), value.string("resendAvailableAt").orEmpty(), value.string("message").orEmpty()
@@ -442,9 +543,10 @@ class SocialRepository(context: Context) {
         const val USER_FIELDS = "id email name avatar role status"
         const val PUBLIC_USER_FIELDS = "id name avatar status"
         const val PROFILE_FIELDS = "id userId username bio about category website location coverUrl verified privacy preferences followerCount followingCount postCount isFollowing user { $PUBLIC_USER_FIELDS }"
-        const val POST_FIELDS = "id authorId type body media thumbnailUrl hlsUrl processingStatus visibility status viewCount shareCount reactionCount commentCount viewerReaction publishedAt author { $PUBLIC_USER_FIELDS } authorProfile { id userId username verified }"
+        const val POST_FIELDS = "id authorId type body media thumbnailUrl hlsUrl processingStatus visibility status viewCount shareCount reactionCount commentCount viewerReaction publishedAt author { $PUBLIC_USER_FIELDS } authorProfile { id userId username verified isFollowing }"
+        const val COMMENT_FIELDS = "id postId authorId replyToId body status reactionCount viewerLiked createdAt author { $PUBLIC_USER_FIELDS } authorProfile { id userId username verified }"
         const val MESSAGE_FIELDS = "id conversationId senderId type body media replyToId deliveryStatus sentAt deliveredAt readAt editedAt unsentAt reactions { id userId emoji } sender { $PUBLIC_USER_FIELDS }"
-        const val CONVERSATION_FIELDS = "id type title avatarUrl unreadCount updatedAt members { id userId role lastReadAt user { $PUBLIC_USER_FIELDS } profile { id userId username verified } } lastMessage { $MESSAGE_FIELDS }"
+        const val CONVERSATION_FIELDS = "id type title avatarUrl requestStatus requestedById unreadCount updatedAt members { id userId role lastReadAt user { $PUBLIC_USER_FIELDS } profile { id userId username verified } } lastMessage { $MESSAGE_FIELDS }"
         const val CALL_FIELDS = "id conversationId callerId calleeId type status offer answer iceCandidates caller { $PUBLIC_USER_FIELDS } callee { $PUBLIC_USER_FIELDS }"
     }
 }

@@ -204,14 +204,24 @@ export const followUser = async (ctx, userId, follow) => {
 };
 
 const postInclude = (viewerId) => ({
-  author: { include: { socialProfile: true } },
+  author: { include: {
+    socialProfile: true,
+    _count: { select: { socialFollowers: true, socialFollowing: true, socialPosts: true } },
+    socialFollowers: viewerId ? { where: { followerId: viewerId }, take: 1 } : false
+  } },
   _count: { select: { reactions: true, comments: true } },
   reactions: viewerId ? { where: { userId: viewerId }, take: 1 } : false
 });
 
 const mapPost = (post) => ({
   ...post,
-  authorProfile: post.author?.socialProfile || null,
+  authorProfile: post.author?.socialProfile ? {
+    ...post.author.socialProfile,
+    followerCount: post.author?._count?.socialFollowers || 0,
+    followingCount: post.author?._count?.socialFollowing || 0,
+    postCount: post.author?._count?.socialPosts || 0,
+    isFollowing: Boolean(post.author?.socialFollowers?.length)
+  } : null,
   reactionCount: post._count?.reactions || 0,
   commentCount: post._count?.comments || 0,
   viewerReaction: post.reactions?.[0]?.kind || null
@@ -347,16 +357,41 @@ export const reactToPost = async (ctx, id, kind) => {
   return getPost(ctx, id);
 };
 
+export const repostPost = async (ctx, id) => {
+  const actor = await requireAuth(ctx);
+  await requireSocialFeature(ctx, 'postingEnabled');
+  if (!await getPost(ctx, id)) notFound('Post');
+  const updated = await ctx.prisma.socialPost.update({
+    where: { id },
+    data: { shareCount: { increment: 1 } },
+    include: postInclude(actor.id)
+  });
+  return mapPost(updated);
+};
+
+const commentInclude = (viewerId) => ({
+  author: { include: { socialProfile: true } },
+  _count: { select: { reactions: true } },
+  reactions: viewerId ? { where: { userId: viewerId }, take: 1 } : false
+});
+
+const mapComment = (row) => ({
+  ...row,
+  authorProfile: row.author?.socialProfile || null,
+  reactionCount: row._count?.reactions || 0,
+  viewerLiked: Boolean(row.reactions?.length)
+});
+
 export const listComments = async (ctx, { postId, before, limit }) => {
   const actor = await requireAuth(ctx);
   if (!await getPost(ctx, postId)) notFound('Post');
   const rows = await ctx.prisma.socialComment.findMany({
     where: { postId, status: 'published', ...(before ? { createdAt: { lt: safeDate(before) } } : {}) },
-    include: { author: { include: { socialProfile: true } } },
+    include: commentInclude(actor.id),
     orderBy: { createdAt: 'desc' },
     take: boundedLimit(limit, 50, 100)
   });
-  return rows.map((row) => ({ ...row, authorProfile: row.author?.socialProfile || null, viewerId: actor.id }));
+  return rows.map(mapComment);
 };
 
 export const addComment = async (ctx, postId, body, replyToId) => {
@@ -371,9 +406,22 @@ export const addComment = async (ctx, postId, body, replyToId) => {
   }
   const row = await ctx.prisma.socialComment.create({
     data: { postId, authorId: actor.id, body: text, replyToId },
-    include: { author: { include: { socialProfile: true } } }
+    include: commentInclude(actor.id)
   });
-  return { ...row, authorProfile: row.author?.socialProfile || null };
+  return mapComment(row);
+};
+
+export const reactToComment = async (ctx, id) => {
+  const actor = await requireAuth(ctx);
+  const comment = await ctx.prisma.socialComment.findUnique({ where: { id } });
+  if (!comment || comment.status !== 'published') notFound('Comment');
+  if (!await getPost(ctx, comment.postId)) notFound('Post');
+  const existing = await ctx.prisma.socialCommentReaction.findUnique({
+    where: { commentId_userId: { commentId: id, userId: actor.id } }
+  });
+  if (existing) await ctx.prisma.socialCommentReaction.delete({ where: { id: existing.id } });
+  else await ctx.prisma.socialCommentReaction.create({ data: { commentId: id, userId: actor.id } });
+  return mapComment(await ctx.prisma.socialComment.findUnique({ where: { id }, include: commentInclude(actor.id) }));
 };
 
 export const deleteComment = async (ctx, id) => {
@@ -460,16 +508,36 @@ export const createConversation = async (ctx, input) => {
     });
     if (existing) return mapConversation(ctx, existing, actor.id);
   }
+  const recipientId = type === 'direct' ? memberIds.find((id) => id !== actor.id) : null;
+  const recipientFollowsActor = recipientId ? await ctx.prisma.socialFollow.findUnique({
+    where: { followerId_followingId: { followerId: recipientId, followingId: actor.id } }
+  }) : true;
   const conversation = await ctx.prisma.socialConversation.create({
     data: {
       type,
       title: bounded(input.title, 120),
       avatarUrl: bounded(input.avatarUrl, 2000),
+      requestStatus: recipientFollowsActor ? 'accepted' : 'pending',
+      requestedById: recipientFollowsActor ? null : actor.id,
       members: { create: memberIds.map((userId) => ({ userId, role: userId === actor.id ? 'owner' : 'member' })) }
     },
     include: conversationInclude(actor.id)
   });
   return mapConversation(ctx, conversation, actor.id);
+};
+
+export const respondToMessageRequest = async (ctx, id, accept) => {
+  const actor = await requireAuth(ctx);
+  const conversation = await ctx.prisma.socialConversation.findUnique({ where: { id }, include: conversationInclude(actor.id) });
+  if (!conversation) notFound('Conversation');
+  await requireConversationMember(ctx, id, actor.id);
+  if (conversation.requestStatus !== 'pending' || conversation.requestedById === actor.id) forbidden('This message request cannot be changed');
+  const updated = await ctx.prisma.socialConversation.update({
+    where: { id },
+    data: { requestStatus: accept ? 'accepted' : 'declined' },
+    include: conversationInclude(actor.id)
+  });
+  return mapConversation(ctx, updated, actor.id);
 };
 
 export const listMessages = async (ctx, { conversationId, before, limit }) => {

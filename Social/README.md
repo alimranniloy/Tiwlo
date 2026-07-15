@@ -20,6 +20,11 @@ cache-first while fresh data syncs in the background. WebRTC signaling uses the
 same authenticated GraphQL API and reads STUN/TURN configuration from Social
 settings.
 
+Social v2 also provides comment reactions, repost counters, message-request
+approval for new direct conversations, content/profile reporting, and enriched
+feed follow state. Reports remain available to administrators under
+**Admin > Social > Reports**.
+
 Uploaded media is served through `/api/social/media/files/`. Video uploads are
 transcoded asynchronously by FFmpeg to 360p, 480p and 720p HLS renditions, with
 an adaptive master playlist.

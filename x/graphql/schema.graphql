@@ -2760,6 +2760,8 @@ type SocialComment {
   replyToId: ID
   body: String!
   status: String!
+  reactionCount: Int!
+  viewerLiked: Boolean!
   createdAt: String
   updatedAt: String
 }
@@ -2782,6 +2784,8 @@ type SocialConversation {
   type: String!
   title: String
   avatarUrl: String
+  requestStatus: String!
+  requestedById: ID
   members: [SocialConversationMember!]!
   lastMessage: SocialMessage
   unreadCount: Int!
@@ -3271,9 +3275,12 @@ type Mutation {
   deleteSocialPost(id: ID!): Boolean!
   viewSocialPost(id: ID!): SocialPost!
   reactToSocialPost(id: ID!, kind: String): SocialPost!
+  repostSocialPost(id: ID!): SocialPost!
   addSocialComment(postId: ID!, body: String!, replyToId: ID): SocialComment!
+  reactToSocialComment(id: ID!): SocialComment!
   deleteSocialComment(id: ID!): Boolean!
   createSocialConversation(input: SocialConversationInput!): SocialConversation!
+  respondToSocialMessageRequest(id: ID!, accept: Boolean!): SocialConversation!
   sendSocialMessage(input: SocialMessageInput!): SocialMessage!
   editSocialMessage(id: ID!, body: String!): SocialMessage!
   markSocialConversationRead(id: ID!): SocialConversation!
