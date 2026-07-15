@@ -7,7 +7,7 @@ const socialProfileFields = `
 `;
 
 const socialPostFields = `
-  id authorId type body media thumbnailUrl hlsUrl processingStatus visibility status location
+  id authorId type body media thumbnailUrl hlsUrl processingStatus visibility status moderationStatus moderationReason moderationScore location
   durationSeconds aspectRatio viewCount shareCount reactionCount commentCount viewerReaction
   publishedAt deletedAt createdAt updatedAt
   author: adminAuthor { ${userFields} }
@@ -52,6 +52,17 @@ export async function fetchAdminSocialReportsWithApi(status?: string) {
   return data.adminSocialReports;
 }
 
+export async function fetchAdminSocialModerationEventsWithApi(decision?: string, userId?: string) {
+  const data = await graphQL<{ adminSocialModerationEvents: any[] }>(`
+    query AdminSocialModerationEvents($decision: String, $userId: ID) {
+      adminSocialModerationEvents(decision: $decision, userId: $userId, limit: 200) {
+        id userId postId targetType targetId provider decision category score reason evidence createdAt
+      }
+    }
+  `, { decision, userId });
+  return data.adminSocialModerationEvents;
+}
+
 export async function fetchSocialSettingsWithApi() {
   const data = await graphQL<{ socialSettings: Record<string, any> }>(`query SocialSettings { socialSettings }`);
   return data.socialSettings;
@@ -75,12 +86,12 @@ export async function adminSetSocialBadgeWithApi(userId: string, badgeType: stri
   return data.adminSetSocialBadge;
 }
 
-export async function adminUpdateSocialUserStatusWithApi(userId: string, status: string) {
+export async function adminUpdateSocialUserStatusWithApi(userId: string, status: string, reason?: string) {
   const data = await graphQL<{ adminUpdateSocialUserStatus: any }>(`
-    mutation AdminUpdateSocialUserStatus($userId: ID!, $status: String!) {
-      adminUpdateSocialUserStatus(userId: $userId, status: $status) { ${socialProfileFields} }
+    mutation AdminUpdateSocialUserStatus($userId: ID!, $status: String!, $reason: String) {
+      adminUpdateSocialUserStatus(userId: $userId, status: $status, reason: $reason) { ${socialProfileFields} }
     }
-  `, { userId, status });
+  `, { userId, status, reason });
   return data.adminUpdateSocialUserStatus;
 }
 

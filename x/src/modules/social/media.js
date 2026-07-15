@@ -5,6 +5,7 @@ import { appendFile, mkdir, readFile, rename, rm, writeFile } from 'node:fs/prom
 import express from 'express';
 import multer from 'multer';
 import { getSettings } from './service.js';
+import { moderateMediaFile, recordModerationDecision } from './moderation.js';
 
 const safeId = (value) => String(value || '').replace(/[^a-zA-Z0-9_-]/g, '');
 const safeProcessingId = (value) => String(value || '').replace(/[^a-zA-Z0-9._-]/g, '');
@@ -155,7 +156,7 @@ export const registerSocialRoutes = (app, { prisma, userFromRequest, rootDir }) 
     }
   };
 
-  const finishUpload = async ({ userId, filename, filePath, mimeType, size, kind }) => {
+  const finishUpload = async ({ user, userId, filename, filePath, mimeType, size, kind }) => {
     const publicRoot = '/api/social/media/files';
     const sourceUrl = `${publicRoot}/${userId}/${filename}`;
     const isVideo = String(mimeType || '').startsWith('video/');
@@ -166,6 +167,21 @@ export const registerSocialRoutes = (app, { prisma, userFromRequest, rootDir }) 
     const statusFile = join(outputDir, 'status.json');
     const hlsUrl = `${publicRoot}/${userId}/${outputName}/master.m3u8`;
     const thumbnailUrl = `${publicRoot}/${userId}/${outputName}/thumbnail.jpg`;
+    let moderation = await moderateMediaFile({
+      filePath, mimeType, targetType: boundedKind(kind),
+      thresholds: { explicit: settings.moderation?.explicitThreshold, review: settings.moderation?.reviewThreshold }
+    });
+    if (moderation.decision === 'block' && settings.moderation?.autoDisableExplicit === false) {
+      moderation = { ...moderation, decision: 'review', reason: `${moderation.reason} (automatic disable is turned off)` };
+    }
+    if (moderation.decision !== 'allow') await recordModerationDecision(
+      { prisma, user },
+      { userId, targetType: boundedKind(kind), targetId: processingId, result: moderation }
+    );
+    if (moderation.decision === 'block') {
+      await rm(filePath, { force: true }).catch(() => undefined);
+      throw new Error('MEDIA_BLOCKED: Explicit sexual content detected. The account was disabled for administrator review.');
+    }
     if (isVideo && settings.autoTranscode) {
       await mkdir(outputDir, { recursive: true });
       await writeStatus(statusFile, { status: 'queued', progress: 0, sourceUrl, hlsUrl, thumbnailUrl: null });
@@ -234,14 +250,15 @@ export const registerSocialRoutes = (app, { prisma, userFromRequest, rootDir }) 
         return;
       }
       const userId = safeId(req.socialUser.id);
-      res.status(201).json(await finishUpload({
-        userId,
-        filename: req.file.filename,
-        filePath: req.file.path,
-        mimeType: req.file.mimetype,
-        size: req.file.size,
-        kind: req.body?.kind
-      }));
+      try {
+        res.status(201).json(await finishUpload({
+          user: req.socialUser, userId, filename: req.file.filename, filePath: req.file.path,
+          mimeType: req.file.mimetype, size: req.file.size, kind: req.body?.kind
+        }));
+      } catch (failure) {
+        const blocked = String(failure?.message || '').startsWith('MEDIA_BLOCKED:');
+        res.status(blocked ? 403 : 422).json({ error: String(failure?.message || 'Media validation failed').replace(/^MEDIA_BLOCKED:\s*/, '') });
+      }
     });
   });
 
@@ -330,15 +347,13 @@ export const registerSocialRoutes = (app, { prisma, userFromRequest, rootDir }) 
       await rename(partPath, finalPath);
       await rm(metadataPath, { force: true });
       res.status(201).json(await finishUpload({
-        userId,
-        filename: metadata.filename,
-        filePath: finalPath,
-        mimeType: metadata.mimeType,
-        size: metadata.size,
-        kind: metadata.kind
+        user: req.socialUser, userId, filename: metadata.filename, filePath: finalPath,
+        mimeType: metadata.mimeType, size: metadata.size, kind: metadata.kind
       }));
-    } catch {
-      res.status(404).json({ error: 'Chunked upload was not found' });
+    } catch (failure) {
+      const message = String(failure?.message || '');
+      const blocked = message.startsWith('MEDIA_BLOCKED:');
+      res.status(blocked ? 403 : message ? 422 : 404).json({ error: blocked ? message.replace(/^MEDIA_BLOCKED:\s*/, '') : (message || 'Chunked upload was not found') });
     }
   });
 

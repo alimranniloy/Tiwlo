@@ -8,6 +8,10 @@ type User {
   credits: Float
   role: String!
   status: String
+  socialRestrictionCode: String
+  socialRestrictionReason: String
+  socialRestrictedAt: String
+  socialModerationScore: Float
   signupSource: String
   phone: String
   mobileCountryCode: String
@@ -2755,6 +2759,9 @@ type SocialPost {
   groupId: ID
   saved: Boolean!
   status: String!
+  moderationStatus: String!
+  moderationReason: String
+  moderationScore: Float
   location: String
   durationSeconds: Int
   aspectRatio: Float
@@ -2767,6 +2774,21 @@ type SocialPost {
   deletedAt: String
   createdAt: String
   updatedAt: String
+}
+
+type SocialModerationEvent {
+  id: ID!
+  userId: ID!
+  postId: ID
+  targetType: String!
+  targetId: String
+  provider: String!
+  decision: String!
+  category: String
+  score: Float
+  reason: String!
+  evidence: JSON!
+  createdAt: String
 }
 
 type SocialGroupMember {
@@ -3157,6 +3179,7 @@ type Query {
   adminSocialUsers(search: String, status: String, verified: Boolean): [SocialProfile!]!
   adminSocialPosts(type: String, status: String, search: String, limit: Int): [SocialPost!]!
   adminSocialReports(status: String): [SocialReport!]!
+  adminSocialModerationEvents(decision: String, userId: ID, limit: Int): [SocialModerationEvent!]!
 }
 
 type Mutation {
@@ -3351,6 +3374,7 @@ type Mutation {
   saveSocialPost(id: ID!, save: Boolean!): SocialPost!
   favoriteSocialUser(userId: ID!, favorite: Boolean!): Boolean!
   snoozeSocialUser(userId: ID!, days: Int!): Boolean!
+  blockSocialUser(userId: ID!, block: Boolean!, reason: String): Boolean!
   addSocialComment(postId: ID!, body: String!, replyToId: ID): SocialComment!
   reactToSocialComment(id: ID!): SocialComment!
   deleteSocialComment(id: ID!): Boolean!
@@ -3376,7 +3400,7 @@ type Mutation {
   startSocialVerificationCheckout(packageId: String!, provider: String!, currency: String): CheckoutSession!
   adminVerifySocialProfile(userId: ID!, verified: Boolean!): SocialProfile!
   adminSetSocialBadge(userId: ID!, badgeType: String!, badgePlan: String): SocialProfile!
-  adminUpdateSocialUserStatus(userId: ID!, status: String!): SocialProfile!
+  adminUpdateSocialUserStatus(userId: ID!, status: String!, reason: String): SocialProfile!
   adminDeleteSocialPost(id: ID!): Boolean!
   adminResolveSocialReport(id: ID!, status: String!, resolution: String): SocialReport!
   adminUpdateSocialSettings(input: SocialAdminSettingsInput!): JSON!

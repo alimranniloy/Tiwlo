@@ -10,6 +10,10 @@ data class SocialUser(
     val avatar: String? = null,
     val role: String = "user",
     val status: String = "active",
+    val socialRestrictionCode: String? = null,
+    val socialRestrictionReason: String? = null,
+    val socialRestrictedAt: String? = null,
+    val socialModerationScore: Double? = null,
     val signupSource: String = "web",
     val emailVerifiedAt: String? = null,
     val phone: String? = null,
@@ -71,7 +75,8 @@ data class SocialMedia(
     val sharedMediaType: String? = null,
     val sharedViews: Int = 0,
     val sharedReactions: Int = 0,
-    val sharedComments: Int = 0
+    val sharedComments: Int = 0,
+    val sharedPublishedAt: String? = null
 )
 
 @JsonClass(generateAdapter = true)

@@ -79,12 +79,14 @@ export const socialResolvers = {
     adminSocialOverview: (_, __, ctx) => api(service.adminOverview(ctx)),
     adminSocialUsers: (_, args, ctx) => api(service.adminUsers(ctx, args)),
     adminSocialPosts: (_, args, ctx) => api(service.adminPosts(ctx, args)),
-    adminSocialReports: (_, { status }, ctx) => api(service.adminReports(ctx, status))
+    adminSocialReports: (_, { status }, ctx) => api(service.adminReports(ctx, status)),
+    adminSocialModerationEvents: (_, args, ctx) => api(service.adminModerationEvents(ctx, args))
   },
   Mutation: {
     upsertSocialProfile: (_, { input }, ctx) => api(service.upsertProfile(ctx, input)),
     followSocialUser: (_, { userId }, ctx) => api(service.followUser(ctx, userId, true)),
     unfollowSocialUser: (_, { userId }, ctx) => api(service.followUser(ctx, userId, false)),
+    blockSocialUser: (_, { userId, block, reason }, ctx) => service.blockUser(ctx, userId, block, reason),
     createSocialPost: (_, { input }, ctx) => api(service.createPost(ctx, input)),
     updateSocialPost: (_, { input }, ctx) => api(service.updatePost(ctx, input)),
     deleteSocialPost: (_, { id }, ctx) => service.deletePost(ctx, id),
@@ -119,7 +121,7 @@ export const socialResolvers = {
     startSocialVerificationCheckout: (_, { packageId, provider, currency }, ctx) => api(service.startVerificationCheckout(ctx, packageId, provider, currency)),
     adminVerifySocialProfile: (_, { userId, verified }, ctx) => api(service.adminVerifyProfile(ctx, userId, verified)),
     adminSetSocialBadge: (_, { userId, badgeType, badgePlan }, ctx) => api(service.adminSetSocialBadge(ctx, userId, badgeType, badgePlan)),
-    adminUpdateSocialUserStatus: (_, { userId, status }, ctx) => api(service.adminUpdateUserStatus(ctx, userId, status)),
+    adminUpdateSocialUserStatus: (_, { userId, status, reason }, ctx) => api(service.adminUpdateUserStatus(ctx, userId, status, reason)),
     adminDeleteSocialPost: (_, { id }, ctx) => service.deletePost(ctx, id, true),
     adminResolveSocialReport: (_, { id, status, resolution }, ctx) => api(service.adminResolveReport(ctx, id, status, resolution)),
     adminUpdateSocialSettings: (_, { input }, ctx) => service.adminUpdateSettings(ctx, input)

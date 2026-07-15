@@ -24,6 +24,10 @@ export const userFields = `
   credits
   role
   status
+  socialRestrictionCode
+  socialRestrictionReason
+  socialRestrictedAt
+  socialModerationScore
   signupSource
   phone
   mobileCountryCode

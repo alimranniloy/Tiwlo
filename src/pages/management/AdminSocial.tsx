@@ -23,13 +23,14 @@ import {
   adminSetSocialBadgeWithApi,
   deleteUserWithApi,
   fetchAdminSocialOverviewWithApi,
+  fetchAdminSocialModerationEventsWithApi,
   fetchAdminSocialPostsWithApi,
   fetchAdminSocialReportsWithApi,
   fetchAdminSocialUsersWithApi,
   fetchSocialSettingsWithApi
 } from '../../lib/tiwloApi';
 
-type Tab = 'users' | 'posts' | 'reports' | 'settings';
+type Tab = 'users' | 'posts' | 'reports' | 'automation' | 'settings';
 
 const dateLabel = (value?: string) => {
   const date = value ? new Date(value) : null;
@@ -52,6 +53,7 @@ export default function AdminSocial() {
   const [users, setUsers] = React.useState<any[]>([]);
   const [posts, setPosts] = React.useState<any[]>([]);
   const [reports, setReports] = React.useState<any[]>([]);
+  const [moderationEvents, setModerationEvents] = React.useState<any[]>([]);
   const [settings, setSettings] = React.useState<any>({});
   const [stunJson, setStunJson] = React.useState('[]');
   const [search, setSearch] = React.useState('');
@@ -64,17 +66,19 @@ export default function AdminSocial() {
     setLoading(true);
     setError('');
     try {
-      const [summary, socialUsers, socialPosts, socialReports, socialSettings] = await Promise.all([
+      const [summary, socialUsers, socialPosts, socialReports, automationEvents, socialSettings] = await Promise.all([
         fetchAdminSocialOverviewWithApi(),
         fetchAdminSocialUsersWithApi(search || undefined),
         fetchAdminSocialPostsWithApi(undefined, undefined, search || undefined),
         fetchAdminSocialReportsWithApi(),
+        fetchAdminSocialModerationEventsWithApi(),
         fetchSocialSettingsWithApi()
       ]);
       setOverview(summary || {});
       setUsers(socialUsers || []);
       setPosts(socialPosts || []);
       setReports(socialReports || []);
+      setModerationEvents(automationEvents || []);
       setSettings(socialSettings || {});
       setStunJson(JSON.stringify(socialSettings?.stunServers || [], null, 2));
     } catch (err) {
@@ -177,6 +181,7 @@ export default function AdminSocial() {
             ['users', 'Users', Users],
             ['posts', 'Posts & Reels', Film],
             ['reports', 'Reports', Flag],
+            ['automation', 'Automation', Ban],
             ['settings', 'Settings', Settings]
           ] as const).map(([key, label, Icon]) => (
             <button key={key} onClick={() => setTab(key)} className={`flex items-center gap-2 rounded px-4 py-2 text-[12px] font-bold ${tab === key ? 'bg-[#0069ff] text-white' : 'text-[#4a4a4a] hover:bg-gray-50'}`}>
@@ -202,7 +207,7 @@ export default function AdminSocial() {
                   <td className="p-4"><div className="flex items-center gap-3"><img src={profile.user?.avatar || '/brand/icon.png'} className="h-10 w-10 rounded-full border object-cover" /><div><p className="font-black text-[#2e3d49]">{profile.user?.name} {profile.verified && <BadgeCheck className={`inline h-4 w-4 ${profile.badgeType === 'gold' ? 'text-amber-500' : 'text-[#0069ff]'}`} />}</p><p className="text-gray-500">@{profile.username} · {profile.user?.email}</p></div></div></td>
                   <td className="p-4 text-gray-600"><span className="font-bold">{profile.followerCount}</span> followers · <span className="font-bold">{profile.postCount}</span> posts</td>
                   <td className="p-4"><select value={profile.badgeType || (profile.verified ? 'blue' : 'none')} disabled={saving} onChange={(event) => perform(() => adminSetSocialBadgeWithApi(profile.userId, event.target.value, 'admin'), 'Social badge updated.')} className={`rounded border px-3 py-1.5 font-bold ${profile.badgeType === 'gold' ? 'border-amber-200 bg-amber-50 text-amber-700' : profile.verified ? 'border-blue-200 bg-blue-50 text-blue-700' : 'border-gray-200 bg-white text-gray-500'}`}><option value="none">No badge</option><option value="blue">Blue badge</option><option value="gold">Gold badge</option></select></td>
-                  <td className="p-4"><select value={profile.user?.status || 'active'} disabled={saving} onChange={(event) => perform(() => adminUpdateSocialUserStatusWithApi(profile.userId, event.target.value), 'Social user status updated.')} className="rounded border border-[#e5e8ed] bg-white px-2 py-1.5 font-bold"><option value="active">active</option><option value="suspended">suspended</option><option value="banned">banned</option><option value="disabled">disabled</option></select></td>
+                  <td className="p-4"><select value={profile.user?.status || 'active'} disabled={saving} onChange={(event) => perform(() => adminUpdateSocialUserStatusWithApi(profile.userId, event.target.value, event.target.value === 'active' ? 'Restriction cleared by administrator' : `Manually ${event.target.value} by Social administrator`), 'Social user status updated.')} className="rounded border border-[#e5e8ed] bg-white px-2 py-1.5 font-bold"><option value="active">active</option><option value="suspended">suspended</option><option value="banned">banned</option><option value="disabled">disabled</option></select>{profile.user?.socialRestrictionReason && <div className="mt-2 max-w-[260px] rounded border border-red-100 bg-red-50 p-2 text-[10px] font-bold text-red-700"><p>{profile.user.socialRestrictionReason}</p><p className="mt-1 font-normal text-red-500">{profile.user.socialRestrictionCode || 'restriction'} · score {profile.user.socialModerationScore ?? '-'} · {dateLabel(profile.user.socialRestrictedAt)}</p></div>}</td>
                   <td className="p-4 text-gray-500">{dateLabel(profile.createdAt)}</td>
                   <td className="p-4 text-right"><button disabled={saving} onClick={() => deleteUser(profile)} className="rounded border border-red-100 p-2 text-red-600 hover:bg-red-50" title="Delete user"><Trash2 className="h-4 w-4" /></button></td>
                 </tr>
@@ -231,6 +236,27 @@ export default function AdminSocial() {
         </div>
       )}
 
+      {tab === 'automation' && (
+        <div className="space-y-3">
+          <div className="rounded border border-blue-100 bg-blue-50 p-4 text-[12px] text-blue-800">
+            <p className="font-black">Server-side Social safety decisions</p>
+            <p className="mt-1">Public profile, post, comment and uploaded visual media decisions are recorded here. Private chat messages are not inspected by this pipeline.</p>
+          </div>
+          {moderationEvents.length === 0 ? <div className="rounded border bg-white p-12 text-center text-sm font-bold text-gray-400">No automated moderation decisions recorded.</div> : moderationEvents.map((event) => (
+            <div key={event.id} className={`rounded border bg-white p-5 ${event.decision === 'block' ? 'border-red-200' : event.decision === 'review' ? 'border-amber-200' : 'border-[#e5e8ed]'}`}>
+              <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                <div>
+                  <div className="flex flex-wrap items-center gap-2"><Ban className={`h-4 w-4 ${event.decision === 'block' ? 'text-red-600' : 'text-amber-600'}`} /><span className="font-black text-[#2e3d49]">{event.reason}</span><span className={`rounded px-2 py-0.5 text-[10px] font-black uppercase ${event.decision === 'block' ? 'bg-red-50 text-red-700' : event.decision === 'review' ? 'bg-amber-50 text-amber-700' : 'bg-green-50 text-green-700'}`}>{event.decision}</span></div>
+                  <p className="mt-2 text-[11px] text-gray-600">User {event.userId} · {event.targetType}{event.targetId ? ` / ${event.targetId}` : ''}{event.postId ? ` · post ${event.postId}` : ''}</p>
+                  <p className="mt-1 text-[11px] text-gray-400">{event.provider} · {event.category || 'unclassified'} · confidence {event.score ?? 0} · {dateLabel(event.createdAt)}</p>
+                </div>
+                {event.decision === 'block' && <button disabled={saving} onClick={() => perform(() => adminUpdateSocialUserStatusWithApi(event.userId, 'active', `Restriction cleared after reviewing moderation event ${event.id}`), 'User restored after moderation review.')} className="rounded border border-green-200 px-3 py-2 text-[12px] font-bold text-green-700">Review and restore</button>}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
       {tab === 'settings' && (
         <div className="space-y-5 rounded border border-[#e5e8ed] bg-[#f8f9fa] p-5">
           <div className="grid gap-3 md:grid-cols-2">
@@ -243,6 +269,16 @@ export default function AdminSocial() {
             <Toggle checked={Boolean(settings.autoTranscode)} onChange={(value) => setSettings({ ...settings, autoTranscode: value })} label="Automatic FFmpeg quality" detail="Create 360p, 480p and 720p HLS variants after video upload." />
             <label className="rounded border border-[#e5e8ed] bg-white p-4"><span className="block text-[13px] font-bold text-[#2e3d49]">Maximum upload size (MB)</span><input type="number" min={1} max={2048} value={settings.mediaMaxMb || 500} onChange={(event) => setSettings({ ...settings, mediaMaxMb: Number(event.target.value) })} className="mt-3 w-full rounded border border-[#e5e8ed] px-3 py-2 text-sm outline-none focus:border-[#0069ff]" /></label>
           </div>
+          <section className="rounded border border-[#e5e8ed] bg-white p-4">
+            <h2 className="text-[14px] font-black text-[#2e3d49]">Automated public-content moderation</h2>
+            <p className="mt-1 text-[11px] text-gray-500">High-confidence explicit adult nudity is blocked and the account is disabled with an auditable reason. Possible matches go to review; swimwear/racy-only classification does not auto-ban.</p>
+            <div className="mt-4 grid gap-3 md:grid-cols-3">
+              <Toggle checked={settings.moderation?.autoDisableExplicit !== false} onChange={(value) => setSettings({ ...settings, moderation: { ...(settings.moderation || {}), autoDisableExplicit: value } })} label="Auto-disable explicit uploads" detail="Applied by the API before publication." />
+              <label className="rounded border border-[#e5e8ed] p-4"><span className="block text-[12px] font-bold">Block threshold</span><input type="number" min={0.8} max={1} step={0.01} value={settings.moderation?.explicitThreshold ?? 0.95} onChange={(event) => setSettings({ ...settings, moderation: { ...(settings.moderation || {}), explicitThreshold: Number(event.target.value) } })} className="mt-2 w-full rounded border px-3 py-2" /></label>
+              <label className="rounded border border-[#e5e8ed] p-4"><span className="block text-[12px] font-bold">Review threshold</span><input type="number" min={0.5} max={0.95} step={0.01} value={settings.moderation?.reviewThreshold ?? 0.72} onChange={(event) => setSettings({ ...settings, moderation: { ...(settings.moderation || {}), reviewThreshold: Number(event.target.value) } })} className="mt-2 w-full rounded border px-3 py-2" /></label>
+            </div>
+            <p className="mt-3 rounded bg-amber-50 p-3 text-[11px] font-bold text-amber-800">A production classifier must be configured on the API server with GOOGLE_CLOUD_VISION_API_KEY or SOCIAL_MODERATION_WEBHOOK_URL. Without one, files are decoded and validated but no visual AI decision is claimed.</p>
+          </section>
           <label className="block rounded border border-[#e5e8ed] bg-white p-4"><span className="text-[13px] font-bold text-[#2e3d49]">WebRTC STUN/TURN servers</span><p className="mt-1 text-[11px] text-gray-500">JSON array passed to Android PeerConnection configuration. Add production TURN credentials here.</p><textarea rows={8} value={stunJson} onChange={(event) => setStunJson(event.target.value)} className="mt-3 w-full rounded border border-[#e5e8ed] p-3 font-mono text-[12px] outline-none focus:border-[#0069ff]" /></label>
           <section className="rounded border border-[#e5e8ed] bg-white p-4">
             <div className="mb-4"><h2 className="text-[14px] font-black text-[#2e3d49]">Social verification packages</h2><p className="mt-1 text-[11px] text-gray-500">Separate from Tiwlo plans. USD prices are converted by the live platform currency API during checkout.</p></div>

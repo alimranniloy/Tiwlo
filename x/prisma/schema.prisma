@@ -16,6 +16,10 @@ model User {
   credits                  Float     @default(0)
   role                     String    @default("user")
   status                   String    @default("active")
+  socialRestrictionCode    String?
+  socialRestrictionReason  String?
+  socialRestrictedAt       DateTime?
+  socialModerationScore    Float?
   signupSource             String    @default("web")
   phone                    String?
   mobileCountryCode        String?
@@ -89,6 +93,9 @@ model User {
   socialSnoozesReceived      SocialSnooze[]              @relation("SocialSnoozeTarget")
   socialGroupsOwned          SocialGroup[]               @relation("SocialGroupOwner")
   socialGroupMemberships     SocialGroupMember[]
+  socialBlocksGiven          SocialBlock[]               @relation("SocialBlockOwner")
+  socialBlocksReceived       SocialBlock[]               @relation("SocialBlockTarget")
+  socialModerationEvents     SocialModerationEvent[]
 }
 
 model WhatsAppOtpChallenge {
@@ -1436,38 +1443,77 @@ model SocialFollow {
 }
 
 model SocialPost {
-  id                String               @id @default(cuid())
+  id                String                  @id @default(cuid())
   authorId          String
-  author            User                 @relation("SocialPostAuthor", fields: [authorId], references: [id], onDelete: Cascade)
-  type              String               @default("post")
+  author            User                    @relation("SocialPostAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+  type              String                  @default("post")
   body              String?
-  media             Json                 @default("[]")
+  media             Json                    @default("[]")
   thumbnailUrl      String?
   hlsUrl            String?
-  processingStatus  String               @default("ready")
-  visibility        String               @default("public")
-  commentPermission String               @default("everyone")
-  pinned            Boolean              @default(false)
+  processingStatus  String                  @default("ready")
+  visibility        String                  @default("public")
+  commentPermission String                  @default("everyone")
+  pinned            Boolean                 @default(false)
   groupId           String?
-  group             SocialGroup?         @relation(fields: [groupId], references: [id], onDelete: SetNull)
-  status            String               @default("published")
+  group             SocialGroup?            @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  status            String                  @default("published")
+  moderationStatus  String                  @default("approved")
+  moderationReason  String?
+  moderationScore   Float?
+  rankingSignals    Json                    @default("{}")
   location          String?
   durationSeconds   Int?
   aspectRatio       Float?
-  viewCount         Int                  @default(0)
-  shareCount        Int                  @default(0)
-  publishedAt       DateTime             @default(now())
+  viewCount         Int                     @default(0)
+  shareCount        Int                     @default(0)
+  publishedAt       DateTime                @default(now())
   deletedAt         DateTime?
-  createdAt         DateTime             @default(now())
-  updatedAt         DateTime             @updatedAt
+  createdAt         DateTime                @default(now())
+  updatedAt         DateTime                @updatedAt
   comments          SocialComment[]
   reactions         SocialPostReaction[]
   reports           SocialReport[]
   savedBy           SocialSavedPost[]
+  moderationEvents  SocialModerationEvent[]
 
   @@index([status, type, publishedAt])
   @@index([authorId, status, publishedAt])
   @@index([groupId, status, publishedAt])
+}
+
+model SocialBlock {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation("SocialBlockOwner", fields: [userId], references: [id], onDelete: Cascade)
+  targetUserId String
+  targetUser   User     @relation("SocialBlockTarget", fields: [targetUserId], references: [id], onDelete: Cascade)
+  reason       String?
+  createdAt    DateTime @default(now())
+
+  @@unique([userId, targetUserId])
+  @@index([targetUserId, createdAt])
+}
+
+model SocialModerationEvent {
+  id         String      @id @default(cuid())
+  userId     String
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  postId     String?
+  post       SocialPost? @relation(fields: [postId], references: [id], onDelete: SetNull)
+  targetType String
+  targetId   String?
+  provider   String      @default("policy-engine")
+  decision   String
+  category   String?
+  score      Float?
+  reason     String
+  evidence   Json        @default("{}")
+  createdAt  DateTime    @default(now())
+
+  @@index([userId, createdAt])
+  @@index([decision, createdAt])
+  @@index([postId, createdAt])
 }
 
 model SocialSavedPost {

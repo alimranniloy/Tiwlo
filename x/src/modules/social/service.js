@@ -4,6 +4,7 @@ import { AppError, forbidden, notFound } from '../../core/errors.js';
 import { removeUndefined } from '../../core/format.js';
 import { writeAudit } from '../../core/audit.js';
 import { convertMoneyForCtx, startInvoicePayment } from '../billing/service.js';
+import { enforceTextModeration } from './moderation.js';
 
 export const SOCIAL_SETTING_KEY = 'social';
 
@@ -21,7 +22,14 @@ const SOCIAL_DEFAULTS = Object.freeze({
     { id: 'blue_plus', name: 'Blue Badge Plus', badgeType: 'blue', priceUsd: 30, periodMonths: 1, enabled: true, notableOnly: false, features: ['Everything in Pro', 'Enhanced profile support', 'Priority review'] },
     { id: 'gold_notable', name: 'Gold Notable', badgeType: 'gold', priceUsd: 0, periodMonths: 0, enabled: true, notableOnly: true, features: ['For notable people and organizations', 'Administrator review required'] }
   ],
-  moderation: { reportsEnabled: true, blockedWords: [] },
+  moderation: {
+    reportsEnabled: true,
+    autoDisableExplicit: true,
+    explicitThreshold: 0.95,
+    reviewThreshold: 0.72,
+    blockedWords: [],
+    provider: 'google-safe-search-or-webhook'
+  },
   stunServers: [{ urls: 'stun:stun.l.google.com:19302' }]
 });
 
@@ -46,6 +54,20 @@ const safeDate = (value) => {
 };
 
 const boundedLimit = (value, fallback = 30, max = 100) => Math.max(1, Math.min(Number(value) || fallback, max));
+
+const validateOwnedMedia = (actorId, media) => {
+  const prefix = `/api/social/media/files/${actorId}/`;
+  for (const item of media) {
+    if (!item || !['image', 'video', 'audio', 'file'].includes(String(item.type || '').toLowerCase())) continue;
+    const values = [item.url, item.hlsUrl, item.thumbnailUrl].filter(Boolean);
+    if (!values.length) throw new AppError('Media URL is missing', 'BAD_USER_INPUT');
+    for (const value of values) {
+      let path = '';
+      try { path = new URL(String(value), 'https://tiwlo.invalid').pathname; } catch { /* rejected below */ }
+      if (!path.startsWith(prefix)) throw new AppError('Posts can only use media uploaded by this account', 'FORBIDDEN');
+    }
+  }
+};
 
 const usernameFrom = (value) => String(value || '')
   .trim()
@@ -147,6 +169,12 @@ export const getProfile = async (ctx, { userId, username }) => {
   if (!profile && username) profile = await ctx.prisma.socialProfile.findUnique({ where: { username: usernameFrom(username) }, include: profileInclude });
   if (!profile && (!userId && !username)) profile = await ensureProfile(ctx, actor);
   if (!profile) return null;
+  if (profile.userId !== actor.id && !isAdmin(actor)) {
+    const blocked = await ctx.prisma.socialBlock.findFirst({ where: { OR: [
+      { userId: actor.id, targetUserId: profile.userId }, { userId: profile.userId, targetUserId: actor.id }
+    ] } });
+    if (blocked) forbidden('This profile is unavailable');
+  }
   const visibility = profile.privacy?.profileVisibility || 'public';
   if (visibility === 'private' && profile.userId !== actor.id && !isAdmin(actor)) forbidden('This profile is private');
   return mapProfile(ctx, profile, actor.id);
@@ -156,6 +184,10 @@ export const upsertProfile = async (ctx, input) => {
   const actor = await requireAuth(ctx);
   await requireSocialFeature(ctx, 'registrationsEnabled');
   const existing = await ensureProfile(ctx, actor);
+  await enforceTextModeration(ctx, {
+    userId: actor.id, targetType: 'profile', targetId: existing.id,
+    text: [input.username, input.bio, input.about, input.category, input.website, input.location].filter(Boolean).join(' ')
+  });
   const username = input.username === undefined ? undefined : await uniqueUsername(ctx, actor, input.username);
   const profile = await ctx.prisma.$transaction(async (tx) => {
     if (input.avatar !== undefined) {
@@ -184,9 +216,15 @@ export const searchProfiles = async (ctx, query, limit) => {
   const actor = await requireAuth(ctx);
   await requireSocialFeature(ctx);
   const search = bounded(query, 120);
+  const [blocks, following] = await Promise.all([
+    ctx.prisma.socialBlock.findMany({ where: { OR: [{ userId: actor.id }, { targetUserId: actor.id }] }, select: { userId: true, targetUserId: true } }),
+    ctx.prisma.socialFollow.findMany({ where: { followerId: actor.id }, select: { followingId: true } })
+  ]);
+  const blockedIds = new Set(blocks.flatMap((row) => [row.userId, row.targetUserId]).filter((id) => id !== actor.id));
+  const followingIds = new Set(following.map((row) => row.followingId));
   const rows = await ctx.prisma.socialProfile.findMany({
     where: {
-      userId: { not: actor.id },
+      userId: { notIn: [actor.id, ...blockedIds] },
       user: { status: 'active' },
       ...(search ? {
         OR: [
@@ -199,9 +237,17 @@ export const searchProfiles = async (ctx, query, limit) => {
     },
     include: profileInclude,
     orderBy: [{ verified: 'desc' }, { updatedAt: 'desc' }],
-    take: boundedLimit(limit, 30, 100)
+    take: Math.min(boundedLimit(limit, 30, 100) * 3, 100)
   });
-  return Promise.all(rows.map((row) => mapProfile(ctx, row, actor.id)));
+  const ranked = rows.map((row) => ({
+    row,
+    score: (row.user?.country && actor.country && row.user.country === actor.country ? 40 : 0)
+      + (row.user?.primaryRegion && actor.primaryRegion && row.user.primaryRegion === actor.primaryRegion ? 15 : 0)
+      + (row.verified ? 18 : 0)
+      + Math.log1p(row.user?._count?.socialFollowers || 0) * 5
+      - (followingIds.has(row.userId) ? 30 : 0)
+  })).sort((left, right) => right.score - left.score).slice(0, boundedLimit(limit, 30, 100));
+  return Promise.all(ranked.map(({ row }) => mapProfile(ctx, row, actor.id)));
 };
 
 export const followUser = async (ctx, userId, follow) => {
@@ -210,6 +256,10 @@ export const followUser = async (ctx, userId, follow) => {
   if (actor.id === userId) throw new AppError('You cannot follow yourself', 'BAD_USER_INPUT');
   const target = await ctx.prisma.user.findUnique({ where: { id: userId } });
   if (!target) notFound('User');
+  const blocked = await ctx.prisma.socialBlock.findFirst({ where: { OR: [
+    { userId: actor.id, targetUserId: userId }, { userId, targetUserId: actor.id }
+  ] } });
+  if (blocked) forbidden('This account is unavailable');
   await ensureProfile(ctx, actor);
   await ensureProfile(ctx, target);
   if (follow) {
@@ -222,6 +272,33 @@ export const followUser = async (ctx, userId, follow) => {
     await ctx.prisma.socialFollow.deleteMany({ where: { followerId: actor.id, followingId: userId } });
   }
   return profileForUser(ctx, userId);
+};
+
+export const blockUser = async (ctx, userId, block, reason) => {
+  const actor = await requireAuth(ctx);
+  await requireSocialFeature(ctx);
+  if (actor.id === userId) throw new AppError('You cannot block yourself', 'BAD_USER_INPUT');
+  const target = await ctx.prisma.user.findUnique({ where: { id: userId }, select: { id: true } });
+  if (!target) notFound('User');
+  await ctx.prisma.$transaction(async (tx) => {
+    if (block) {
+      await tx.socialBlock.upsert({
+        where: { userId_targetUserId: { userId: actor.id, targetUserId: userId } },
+        create: { userId: actor.id, targetUserId: userId, reason: bounded(reason, 500) },
+        update: { reason: bounded(reason, 500) }
+      });
+      await tx.socialFollow.deleteMany({ where: { OR: [
+        { followerId: actor.id, followingId: userId }, { followerId: userId, followingId: actor.id }
+      ] } });
+      await tx.socialFavorite.deleteMany({ where: { OR: [
+        { userId: actor.id, targetUserId: userId }, { userId, targetUserId: actor.id }
+      ] } });
+    } else {
+      await tx.socialBlock.deleteMany({ where: { userId: actor.id, targetUserId: userId } });
+    }
+  });
+  await writeAudit(ctx, block ? 'block_social_user' : 'unblock_social_user', 'user', userId, { reason: bounded(reason, 500) });
+  return Boolean(block);
 };
 
 const postInclude = (viewerId) => ({
@@ -264,36 +341,73 @@ export const listFeed = async (ctx, args = {}) => {
   await requireSocialFeature(ctx);
   if (args.groupId && !await getGroup(ctx, args.groupId)) notFound('Group');
   const take = boundedLimit(args.limit);
-  const favorites = !args.authorId && !args.groupId ? await ctx.prisma.socialFavorite.findMany({
-    where: { userId: actor.id }, select: { targetUserId: true }
-  }) : [];
+  const [favorites, snoozed, blocks, following, recentReactions] = await Promise.all([
+    ctx.prisma.socialFavorite.findMany({ where: { userId: actor.id }, select: { targetUserId: true } }),
+    ctx.prisma.socialSnooze.findMany({ where: { userId: actor.id, until: { gt: new Date() } }, select: { targetUserId: true } }),
+    ctx.prisma.socialBlock.findMany({ where: { OR: [{ userId: actor.id }, { targetUserId: actor.id }] }, select: { userId: true, targetUserId: true } }),
+    ctx.prisma.socialFollow.findMany({ where: { followerId: actor.id }, select: { followingId: true } }),
+    ctx.prisma.socialPostReaction.findMany({
+      where: { userId: actor.id }, select: { post: { select: { type: true, authorId: true } } }, orderBy: { updatedAt: 'desc' }, take: 100
+    })
+  ]);
   const favoriteIds = new Set(favorites.map((row) => row.targetUserId));
-  const snoozed = args.authorId ? [] : await ctx.prisma.socialSnooze.findMany({
-    where: { userId: actor.id, until: { gt: new Date() } },
-    select: { targetUserId: true }
-  });
+  const followingIds = new Set(following.map((row) => row.followingId));
+  const hiddenAuthorIds = new Set([
+    ...snoozed.map((row) => row.targetUserId),
+    ...blocks.flatMap((row) => [row.userId, row.targetUserId]).filter((id) => id !== actor.id)
+  ]);
+  const typeAffinity = recentReactions.reduce((scores, row) => scores.set(row.post.type, (scores.get(row.post.type) || 0) + 1), new Map());
+  const authorAffinity = recentReactions.reduce((scores, row) => scores.set(row.post.authorId, (scores.get(row.post.authorId) || 0) + 1), new Map());
   const where = {
     status: 'published',
+    moderationStatus: 'approved',
     deletedAt: null,
-    OR: await feedVisibility(ctx, actor),
+    OR: [
+      { visibility: 'public' }, { authorId: actor.id },
+      { visibility: 'followers', authorId: { in: [...followingIds] } }
+    ],
     ...(args.type ? { type: String(args.type).toLowerCase() } : {}),
     ...(args.authorId ? { authorId: args.authorId } : {}),
     ...(args.groupId ? { groupId: args.groupId } : {}),
-    ...(!args.authorId && snoozed.length ? { authorId: { notIn: snoozed.map((row) => row.targetUserId) } } : {}),
+    ...(!args.authorId && hiddenAuthorIds.size ? { authorId: { notIn: [...hiddenAuthorIds] } } : {}),
     ...(args.before ? { publishedAt: { lt: safeDate(args.before) } } : {})
   };
   const rows = await ctx.prisma.socialPost.findMany({
     where,
     include: postInclude(actor.id),
     orderBy: [...(args.authorId ? [{ pinned: 'desc' }] : []), { publishedAt: 'desc' }, { id: 'desc' }],
-    take: favorites.length ? Math.min(take * 2, 100) : take
+    take: args.authorId || args.groupId ? take : Math.min(take * 4, 200)
   });
-  if (favoriteIds.size) rows.sort((left, right) => {
-    const priority = Number(favoriteIds.has(right.authorId)) - Number(favoriteIds.has(left.authorId));
-    if (priority) return priority;
-    return new Date(right.publishedAt).getTime() - new Date(left.publishedAt).getTime();
-  });
-  return rows.slice(0, take).map(mapPost);
+  if (args.authorId || args.groupId) return rows.map(mapPost);
+  const now = Date.now();
+  const ranked = rows.map((row) => {
+    const ageHours = Math.max(0, (now - new Date(row.publishedAt).getTime()) / 3_600_000);
+    const reactions = row._count?.reactions || 0;
+    const comments = row._count?.comments || 0;
+    const engagement = Math.log1p(reactions + comments * 2.2 + (row.shareCount || 0) * 3 + Math.min(row.viewCount || 0, 50_000) * .025) * 10;
+    const signals = {
+      favorite: favoriteIds.has(row.authorId) ? 90 : 0,
+      following: followingIds.has(row.authorId) ? 48 : 0,
+      country: actor.country && row.author?.country === actor.country ? 28 : 0,
+      region: actor.primaryRegion && row.author?.primaryRegion === actor.primaryRegion ? 12 : 0,
+      contentAffinity: Math.min(typeAffinity.get(row.type) || 0, 12) * 2.5,
+      creatorAffinity: Math.min(authorAffinity.get(row.authorId) || 0, 10) * 3,
+      engagement,
+      freshness: 75 / (1 + ageHours / 18),
+      verified: row.author?.socialProfile?.verified ? 5 : 0
+    };
+    return { row, score: Object.values(signals).reduce((sum, value) => sum + value, 0), signals };
+  }).sort((left, right) => right.score - left.score);
+  const diversified = [];
+  const authorFrequency = new Map();
+  for (const item of ranked) {
+    const seen = authorFrequency.get(item.row.authorId) || 0;
+    item.score -= seen * 22;
+    authorFrequency.set(item.row.authorId, seen + 1);
+    diversified.push(item);
+  }
+  diversified.sort((left, right) => right.score - left.score);
+  return diversified.slice(0, take).map(({ row, signals }) => mapPost({ ...row, rankingSignals: signals }));
 };
 
 export const getPost = async (ctx, id) => {
@@ -301,6 +415,13 @@ export const getPost = async (ctx, id) => {
   await requireSocialFeature(ctx);
   const post = await ctx.prisma.socialPost.findUnique({ where: { id }, include: postInclude(actor.id) });
   if (!post || post.deletedAt || (post.status !== 'published' && post.authorId !== actor.id && !isAdmin(actor))) return null;
+  if (post.moderationStatus !== 'approved' && post.authorId !== actor.id && !isAdmin(actor)) return null;
+  if (post.authorId !== actor.id && !isAdmin(actor)) {
+    const blocked = await ctx.prisma.socialBlock.findFirst({ where: { OR: [
+      { userId: actor.id, targetUserId: post.authorId }, { userId: post.authorId, targetUserId: actor.id }
+    ] } });
+    if (blocked) forbidden('This post is unavailable');
+  }
   if (post.visibility === 'private' && post.authorId !== actor.id && !isAdmin(actor)) forbidden();
   return mapPost(post);
 };
@@ -321,7 +442,14 @@ export const createPost = async (ctx, input) => {
   }
   const body = bounded(input.body, 10000);
   const media = Array.isArray(input.media) ? input.media.slice(0, 20) : [];
+  await enforceTextModeration(ctx, { userId: actor.id, targetType: 'post', text: body });
+  validateOwnedMedia(actor.id, media);
   if (!body && media.length === 0) throw new AppError('A post needs text or media', 'BAD_USER_INPUT');
+  const processingIds = media.map((item) => bounded(item?.processingId, 240)).filter(Boolean);
+  const reviewEvents = processingIds.length ? await ctx.prisma.socialModerationEvent.findMany({
+    where: { userId: actor.id, targetId: { in: processingIds }, decision: 'review', postId: null },
+    select: { id: true, reason: true, score: true }
+  }) : [];
   const post = await ctx.prisma.socialPost.create({
     data: {
       authorId: actor.id,
@@ -334,11 +462,17 @@ export const createPost = async (ctx, input) => {
       visibility,
       commentPermission,
       groupId: input.groupId || null,
+      moderationStatus: reviewEvents.length ? 'pending_review' : 'approved',
+      moderationReason: reviewEvents[0]?.reason || null,
+      moderationScore: reviewEvents.reduce((score, event) => Math.max(score, event.score || 0), 0),
       location: bounded(input.location, 160),
       durationSeconds: input.durationSeconds,
       aspectRatio: input.aspectRatio
     },
     include: postInclude(actor.id)
+  });
+  if (reviewEvents.length) await ctx.prisma.socialModerationEvent.updateMany({
+    where: { id: { in: reviewEvents.map((event) => event.id) } }, data: { postId: post.id }
   });
   return mapPost(post);
 };
@@ -350,6 +484,8 @@ export const updatePost = async (ctx, input) => {
   if (existing.authorId !== actor.id && !isAdmin(actor)) forbidden();
   if (input.visibility && !VISIBILITIES.has(String(input.visibility).toLowerCase())) throw new AppError('Invalid visibility', 'BAD_USER_INPUT');
   if (input.commentPermission && !COMMENT_PERMISSIONS.has(String(input.commentPermission).toLowerCase())) throw new AppError('Invalid comment permission', 'BAD_USER_INPUT');
+  if (input.body !== undefined) await enforceTextModeration(ctx, { userId: actor.id, targetType: 'post', targetId: input.id, text: input.body });
+  if (input.media !== undefined) validateOwnedMedia(actor.id, Array.isArray(input.media) ? input.media.slice(0, 20) : []);
   const post = await ctx.prisma.socialPost.update({
     where: { id: input.id },
     data: removeUndefined({
@@ -361,7 +497,10 @@ export const updatePost = async (ctx, input) => {
       visibility: input.visibility?.toLowerCase(),
       commentPermission: input.commentPermission?.toLowerCase(),
       pinned: input.pinned,
-      location: input.location === undefined ? undefined : bounded(input.location, 160)
+      location: input.location === undefined ? undefined : bounded(input.location, 160),
+      moderationStatus: 'approved',
+      moderationReason: null,
+      moderationScore: 0
     }),
     include: postInclude(actor.id)
   });
@@ -437,7 +576,8 @@ export const repostPost = async (ctx, id) => {
         sharedMediaType: preview.type || original.type,
         sharedViews: original.viewCount || 0,
         sharedReactions: original.reactionCount || 0,
-        sharedComments: original.commentCount || 0
+        sharedComments: original.commentCount || 0,
+        sharedPublishedAt: original.publishedAt?.toISOString?.() || String(original.publishedAt || '')
       }]
     },
     include: postInclude(actor.id)
@@ -664,6 +804,7 @@ export const addComment = async (ctx, postId, body, replyToId) => {
   }
   const text = bounded(body, 2000);
   if (!text) throw new AppError('Comment cannot be empty', 'BAD_USER_INPUT');
+  await enforceTextModeration(ctx, { userId: actor.id, targetType: 'comment', targetId: postId, text });
   if (replyToId) {
     const parent = await ctx.prisma.socialComment.findUnique({ where: { id: replyToId } });
     if (!parent || parent.postId !== postId) throw new AppError('Reply target is not part of this post', 'BAD_USER_INPUT');
@@ -760,6 +901,11 @@ export const createConversation = async (ctx, input) => {
   if (memberIds.length < 2) throw new AppError('Select at least one other user', 'BAD_USER_INPUT');
   const users = await ctx.prisma.user.findMany({ where: { id: { in: memberIds }, status: 'active' }, select: { id: true } });
   if (users.length !== memberIds.length) throw new AppError('One or more users cannot receive messages', 'BAD_USER_INPUT');
+  const blocked = await ctx.prisma.socialBlock.findFirst({ where: { OR: [
+    { userId: actor.id, targetUserId: { in: memberIds.filter((id) => id !== actor.id) } },
+    { targetUserId: actor.id, userId: { in: memberIds.filter((id) => id !== actor.id) } }
+  ] } });
+  if (blocked) forbidden('A blocked account cannot start or receive this conversation');
   const type = input.type || (memberIds.length === 2 ? 'direct' : 'group');
   if (type === 'direct' && memberIds.length === 2) {
     const existing = await ctx.prisma.socialConversation.findFirst({
@@ -1142,6 +1288,18 @@ export const adminReports = async (ctx, status) => {
   });
 };
 
+export const adminModerationEvents = async (ctx, args = {}) => {
+  await requireAdmin(ctx);
+  return ctx.prisma.socialModerationEvent.findMany({
+    where: {
+      ...(args.decision ? { decision: bounded(args.decision, 30).toLowerCase() } : {}),
+      ...(args.userId ? { userId: args.userId } : {})
+    },
+    orderBy: { createdAt: 'desc' },
+    take: boundedLimit(args.limit, 100, 300)
+  });
+};
+
 export const adminVerifyProfile = async (ctx, userId, verified) => {
   const actor = await requireAdmin(ctx);
   const user = await ctx.prisma.user.findUnique({ where: { id: userId } });
@@ -1239,14 +1397,23 @@ export const startVerificationCheckout = async (ctx, packageId, provider, curren
   return startInvoicePayment(ctx, { invoiceId: invoice.id, provider });
 };
 
-export const adminUpdateUserStatus = async (ctx, userId, status) => {
+export const adminUpdateUserStatus = async (ctx, userId, status, reason) => {
   const actor = await requireAdmin(ctx);
-  if (actor.id === userId && status !== 'active') throw new AppError('You cannot restrict your own account', 'BAD_USER_INPUT');
+  const normalizedStatus = bounded(status, 30).toLowerCase();
+  if (!['active', 'suspended', 'banned', 'disabled'].includes(normalizedStatus)) throw new AppError('Invalid account status', 'BAD_USER_INPUT');
+  if (actor.id === userId && normalizedStatus !== 'active') throw new AppError('You cannot restrict your own account', 'BAD_USER_INPUT');
   const user = await ctx.prisma.user.findUnique({ where: { id: userId } });
   if (!user) notFound('User');
-  await ctx.prisma.user.update({ where: { id: userId }, data: { status: bounded(status, 30).toLowerCase() } });
+  const restrictionReason = normalizedStatus === 'active' ? null : bounded(reason, 1000) || 'Restricted by a Tiwi Social administrator';
+  await ctx.prisma.user.update({ where: { id: userId }, data: {
+    status: normalizedStatus,
+    socialRestrictionCode: normalizedStatus === 'active' ? null : `admin_${normalizedStatus}`,
+    socialRestrictionReason: restrictionReason,
+    socialRestrictedAt: normalizedStatus === 'active' ? null : new Date(),
+    socialModerationScore: normalizedStatus === 'active' ? null : user.socialModerationScore
+  } });
   await ensureProfile(ctx, user);
-  await writeAudit(ctx, 'admin_update_social_user_status', 'user', userId, { status });
+  await writeAudit(ctx, 'admin_update_social_user_status', 'user', userId, { status: normalizedStatus, reason: restrictionReason });
   return profileForUser(ctx, userId);
 };
 

@@ -248,9 +248,18 @@ class SocialRepository(context: Context) {
     }
 
     suspend fun updatePost(id: String, body: String): SocialPost {
+        return updatePost(id, body, null)
+    }
+
+    suspend fun updatePost(id: String, body: String, media: List<SocialMedia>?): SocialPost {
+        val input = mutableMapOf<String, Any?>("id" to id, "body" to body.trim())
+        media?.let { items -> input["media"] = items.map { mapOf(
+            "url" to it.url, "type" to it.type, "hlsUrl" to it.hlsUrl, "thumbnailUrl" to it.thumbnailUrl,
+            "mimeType" to it.mimeType, "processingId" to it.processingId, "processingStatus" to it.processingStatus
+        ) } }
         val data = client.execute(
             """mutation EditTiwiPost(${D}input: SocialPostUpdateInput!) { updateSocialPost(input: ${D}input) { $POST_FIELDS } }""",
-            mapOf("input" to mapOf("id" to id, "body" to body.trim()))
+            mapOf("input" to input)
         )
         return mapPost(data.objectValue("updateSocialPost") ?: throw SocialApiException("Post update failed")).also(::replacePost)
     }
@@ -291,6 +300,18 @@ class SocialRepository(context: Context) {
         cache.saveFeed(_feed.value)
     }
 
+    suspend fun blockUser(userId: String, block: Boolean = true, reason: String? = null): Boolean {
+        val data = client.execute(
+            """mutation BlockTiwiUser(${D}id: ID!, ${D}block: Boolean!, ${D}reason: String) { blockSocialUser(userId: ${D}id, block: ${D}block, reason: ${D}reason) }""",
+            mapOf("id" to userId, "block" to block, "reason" to reason)
+        )
+        if (block) {
+            _feed.value = _feed.value.filterNot { it.authorId == userId }
+            cache.saveFeed(_feed.value)
+        }
+        return data.boolean("blockSocialUser")
+    }
+
     suspend fun savedPosts(): List<SocialPost> {
         val data = client.execute("query TiwiSavedPosts { socialSavedPosts(limit: 100) { $POST_FIELDS } }")
         return data.list("socialSavedPosts").mapNotNull { it.objectMap()?.let(::mapPost) }
@@ -327,18 +348,18 @@ class SocialRepository(context: Context) {
         return data.list("socialFeed").mapNotNull { it.objectMap()?.let(::mapPost) }
     }
 
-    suspend fun createGroup(name: String, description: String, privacy: String): SocialGroup {
+    suspend fun createGroup(name: String, description: String, privacy: String, coverUrl: String? = null): SocialGroup {
         val data = client.execute(
             """mutation CreateTiwiGroup(${D}input: SocialGroupInput!) { createSocialGroup(input: ${D}input) { $GROUP_FIELDS } }""",
-            mapOf("input" to mapOf("name" to name.trim(), "description" to description.trim(), "privacy" to privacy))
+            mapOf("input" to mapOf("name" to name.trim(), "description" to description.trim(), "privacy" to privacy, "coverUrl" to coverUrl))
         )
         return mapGroup(data.objectValue("createSocialGroup") ?: throw SocialApiException("Group was not created"))
     }
 
-    suspend fun updateGroup(id: String, name: String, description: String, privacy: String): SocialGroup {
+    suspend fun updateGroup(id: String, name: String, description: String, privacy: String, coverUrl: String? = null): SocialGroup {
         val data = client.execute(
             """mutation UpdateTiwiGroup(${D}input: SocialGroupUpdateInput!) { updateSocialGroup(input: ${D}input) { $GROUP_FIELDS } }""",
-            mapOf("input" to mapOf("id" to id, "name" to name.trim(), "description" to description.trim(), "privacy" to privacy))
+            mapOf("input" to mapOf("id" to id, "name" to name.trim(), "description" to description.trim(), "privacy" to privacy, "coverUrl" to coverUrl))
         )
         return mapGroup(data.objectValue("updateSocialGroup") ?: throw SocialApiException("Group was not updated"))
     }
@@ -644,6 +665,8 @@ class SocialRepository(context: Context) {
     private fun mapUser(value: Map<String, Any?>) = SocialUser(
         id = value.string("id").orEmpty(), email = value.string("email").orEmpty(), name = value.string("name").orEmpty(),
         avatar = absoluteUrl(value.string("avatar")), role = value.string("role") ?: "user", status = value.string("status") ?: "active",
+        socialRestrictionCode = value.string("socialRestrictionCode"), socialRestrictionReason = value.string("socialRestrictionReason"),
+        socialRestrictedAt = value.string("socialRestrictedAt"), socialModerationScore = value.number("socialModerationScore")?.toDouble(),
         signupSource = value.string("signupSource") ?: "web", emailVerifiedAt = value.string("emailVerifiedAt"),
         phone = value.string("phone"), mobileCountryCode = value.string("mobileCountryCode"), primaryRegion = value.string("primaryRegion"),
         country = value.string("country"), addressLine1 = value.string("addressLine1"), city = value.string("city"), state = value.string("state"),
@@ -679,7 +702,8 @@ class SocialRepository(context: Context) {
         sharedBody = value.string("sharedBody"), sharedMediaType = value.string("sharedMediaType"),
         sharedViews = value.number("sharedViews")?.toInt() ?: 0,
         sharedReactions = value.number("sharedReactions")?.toInt() ?: 0,
-        sharedComments = value.number("sharedComments")?.toInt() ?: 0
+        sharedComments = value.number("sharedComments")?.toInt() ?: 0,
+        sharedPublishedAt = value.string("sharedPublishedAt")
     )
 
     private fun mapPost(value: Map<String, Any?>): SocialPost {
@@ -766,7 +790,7 @@ class SocialRepository(context: Context) {
         val RESTRICTED_STATUSES = setOf("disabled", "banned", "blocked", "suspended")
         const val FEED_TTL = 60_000L
         const val CHAT_TTL = 20_000L
-        const val USER_FIELDS = "id email name avatar role status signupSource emailVerifiedAt phone mobileCountryCode primaryRegion country addressLine1 city state postalCode billingName"
+        const val USER_FIELDS = "id email name avatar role status socialRestrictionCode socialRestrictionReason socialRestrictedAt socialModerationScore signupSource emailVerifiedAt phone mobileCountryCode primaryRegion country addressLine1 city state postalCode billingName"
         const val PUBLIC_USER_FIELDS = "id name avatar status"
         const val PROFILE_FIELDS = "id userId username bio about category website location coverUrl verified badgeType badgePlan badgeExpiresAt privacy preferences followerCount followingCount postCount isFollowing user { $PUBLIC_USER_FIELDS }"
         const val POST_FIELDS = "id authorId type body media thumbnailUrl hlsUrl processingStatus visibility commentPermission pinned groupId saved status viewCount shareCount reactionCount commentCount viewerReaction publishedAt author { $PUBLIC_USER_FIELDS } authorProfile { id userId username verified badgeType isFollowing }"
