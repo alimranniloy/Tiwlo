@@ -126,6 +126,14 @@ class SocialRepository(context: Context) {
         return value
     }
 
+    suspend fun connections(userId: String? = null, limit: Int = 30): List<SocialProfile> {
+        val data = client.execute(
+            """query TiwiConnections(${D}userId: ID, ${D}limit: Int) { socialConnections(userId: ${D}userId, limit: ${D}limit) { $PROFILE_FIELDS } }""",
+            mapOf("userId" to userId, "limit" to limit.coerceIn(1, 100))
+        )
+        return data.list("socialConnections").mapNotNull { it.objectMap()?.let(::mapProfile) }
+    }
+
     suspend fun updateProfile(input: Map<String, Any?>): SocialProfile {
         val data = client.execute(
             """mutation UpdateTiwiProfile(${D}input: SocialProfileInput!) { upsertSocialProfile(input: ${D}input) { $PROFILE_FIELDS } }""",

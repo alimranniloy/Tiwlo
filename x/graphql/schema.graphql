@@ -3204,6 +3204,7 @@ type Query {
   aiModelOverview: AiModelOverview!
   socialProfile(userId: ID, username: String): SocialProfile
   socialSearch(query: String, limit: Int): [SocialProfile!]!
+  socialConnections(userId: ID, limit: Int): [SocialProfile!]!
   socialFeed(type: String, authorId: ID, groupId: ID, before: String, limit: Int): [SocialPost!]!
   socialStories(limit: Int): [SocialPost!]!
   socialProfileDecorations: [SocialProfileDecoration!]!

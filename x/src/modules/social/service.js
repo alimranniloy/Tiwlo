@@ -341,6 +341,32 @@ export const searchProfiles = async (ctx, query, limit) => {
   return Promise.all(ranked.map(({ row }) => mapProfile(ctx, row, actor.id)));
 };
 
+export const listConnections = async (ctx, userId, limit) => {
+  const actor = await requireAuth(ctx);
+  await requireSocialFeature(ctx);
+  const targetId = userId || actor.id;
+  await getProfile(ctx, { userId: targetId });
+  const [following, followers] = await Promise.all([
+    ctx.prisma.socialFollow.findMany({ where: { followerId: targetId }, select: { followingId: true } }),
+    ctx.prisma.socialFollow.findMany({ where: { followingId: targetId }, select: { followerId: true } })
+  ]);
+  const followerIds = new Set(followers.map((row) => row.followerId));
+  const connectionIds = following.map((row) => row.followingId).filter((id) => followerIds.has(id));
+  if (!connectionIds.length) return [];
+  const blocks = await ctx.prisma.socialBlock.findMany({
+    where: { OR: [{ userId: actor.id }, { targetUserId: actor.id }] },
+    select: { userId: true, targetUserId: true }
+  });
+  const blockedIds = new Set(blocks.flatMap((row) => [row.userId, row.targetUserId]).filter((id) => id !== actor.id));
+  const rows = await ctx.prisma.socialProfile.findMany({
+    where: { userId: { in: connectionIds.filter((id) => !blockedIds.has(id)) }, user: { status: 'active' } },
+    include: profileInclude,
+    orderBy: [{ verified: 'desc' }, { updatedAt: 'desc' }],
+    take: boundedLimit(limit, 12, 100)
+  });
+  return Promise.all(rows.map((row) => mapProfile(ctx, row, actor.id)));
+};
+
 export const followUser = async (ctx, userId, follow) => {
   const actor = await requireAuth(ctx);
   await requireSocialFeature(ctx);

@@ -67,6 +67,7 @@ export const socialResolvers = {
   Query: {
     socialProfile: (_, args, ctx) => api(service.getProfile(ctx, args)),
     socialSearch: (_, { query, limit }, ctx) => api(service.searchProfiles(ctx, query, limit)),
+    socialConnections: (_, { userId, limit }, ctx) => api(service.listConnections(ctx, userId, limit)),
     socialFeed: (_, args, ctx) => api(service.listFeed(ctx, args)),
     socialStories: (_, args, ctx) => api(service.listStories(ctx, args)),
     socialProfileDecorations: (_, __, ctx) => api(service.listProfileDecorations(ctx)),
