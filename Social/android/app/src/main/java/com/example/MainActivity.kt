@@ -13,6 +13,7 @@ import android.media.RingtoneManager
 import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
+import android.widget.ImageView
 import androidx.activity.compose.BackHandler
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -120,6 +121,7 @@ import com.example.social.SocialMedia
 import com.example.social.SocialMessage
 import com.example.social.SocialPost
 import com.example.social.SocialProfile
+import com.example.social.SocialProfileDecoration
 import com.example.social.SocialRepository
 import com.example.social.SocialUser
 import com.example.social.SocialVerificationOptions
@@ -127,11 +129,16 @@ import com.example.social.SocialVerificationPackage
 import com.example.social.PasswordResetChallenge
 import com.example.social.WebRtcCallManager
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import com.github.penfeizhou.animation.apng.APNGDrawable
 import org.webrtc.EglBase
 import org.webrtc.SurfaceViewRenderer
 import org.webrtc.VideoTrack
 import java.io.File
+import java.net.URL
+import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -549,6 +556,7 @@ data class Post(
     val author: String,
     val authorAvatar: Int,
     val authorAvatarUrl: String? = null,
+    val authorDecoration: SocialProfileDecoration? = null,
     val content: String,
     val image: Int? = null,
     val imageUrl: String? = null,
@@ -574,6 +582,7 @@ data class Reel(
     val authorId: String,
     val author: String,
     val authorAvatarUrl: String? = null,
+    val authorDecoration: SocialProfileDecoration? = null,
     val thumbnail: Int,
     val thumbnailUrl: String? = null,
     val videoUrl: String? = null,
@@ -688,6 +697,7 @@ private fun toUiPost(value: SocialPost): Post {
         author = value.author.name.ifBlank { value.authorProfile?.username ?: "Tiwi User" },
         authorAvatar = R.drawable.img_tiwi_logo,
         authorAvatarUrl = value.author.avatar,
+        authorDecoration = value.authorProfile?.avatarDecoration,
         content = value.body,
         imageUrl = media?.takeUnless { it.type == "video" }?.url,
         videoUrl = if (media?.type == "video") media.hlsUrl.takeIf { media.processingStatus == "ready" } ?: media.url else null,
@@ -715,6 +725,7 @@ private fun toUiReel(value: SocialPost): Reel {
         authorId = value.authorId,
         author = value.author.name.ifBlank { value.authorProfile?.username ?: "Tiwi User" },
         authorAvatarUrl = value.author.avatar,
+        authorDecoration = value.authorProfile?.avatarDecoration,
         thumbnail = R.drawable.img_tiwi_logo,
         thumbnailUrl = value.thumbnailUrl ?: media?.thumbnailUrl ?: media?.takeUnless { it.type == "video" }?.url,
         videoUrl = media?.hlsUrl?.takeIf { media.processingStatus == "ready" } ?: media?.url ?: value.hlsUrl,
@@ -734,6 +745,69 @@ private fun toUiReel(value: SocialPost): Reel {
 private fun TiwiAvatar(url: String?, fallback: Int, modifier: Modifier, contentScale: ContentScale = ContentScale.Crop) {
     if (!url.isNullOrBlank()) AsyncImage(model = url, contentDescription = null, modifier = modifier, contentScale = contentScale)
     else Image(painter = painterResource(fallback), contentDescription = null, modifier = modifier, contentScale = contentScale)
+}
+
+@Composable
+private fun AnimatedProfileDecoration(url: String, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    var localFile by remember(url) { mutableStateOf<File?>(null) }
+    LaunchedEffect(url) {
+        localFile = withContext(Dispatchers.IO) {
+            runCatching {
+                val digest = MessageDigest.getInstance("SHA-256").digest(url.toByteArray()).joinToString("") { "%02x".format(it) }
+                val directory = File(context.cacheDir, "profile-decorations").apply { mkdirs() }
+                val output = File(directory, "$digest.png")
+                if (!output.exists() || output.length() == 0L) {
+                    val temporary = File(directory, "$digest.download")
+                    URL(url).openConnection().apply {
+                        connectTimeout = 15_000
+                        readTimeout = 30_000
+                        setRequestProperty("User-Agent", "Tiwi-Social-Android")
+                    }.getInputStream().use { input -> temporary.outputStream().use { outputStream -> input.copyTo(outputStream) } }
+                    if (!temporary.renameTo(output)) {
+                        temporary.copyTo(output, overwrite = true)
+                        temporary.delete()
+                    }
+                }
+                output
+            }.getOrNull()
+        }
+    }
+    val file = localFile
+    if (file == null) {
+        AsyncImage(url, "Profile decoration", modifier, contentScale = ContentScale.Fit)
+    } else {
+        AndroidView(
+            factory = { ImageView(it).apply { scaleType = ImageView.ScaleType.FIT_CENTER } },
+            update = { imageView ->
+                if (imageView.tag != file.absolutePath) {
+                    (imageView.drawable as? APNGDrawable)?.stop()
+                    imageView.setImageDrawable(APNGDrawable.fromFile(file.absolutePath))
+                    imageView.tag = file.absolutePath
+                }
+            },
+            modifier = modifier
+        )
+    }
+}
+
+@Composable
+private fun DecoratedAvatar(
+    url: String?,
+    fallback: Int,
+    decoration: SocialProfileDecoration?,
+    modifier: Modifier,
+    contentScale: ContentScale = ContentScale.Crop
+) {
+    Box(modifier, contentAlignment = Alignment.Center) {
+        TiwiAvatar(
+            url,
+            fallback,
+            Modifier.fillMaxSize(if (decoration != null) .74f else 1f).clip(CircleShape),
+            contentScale
+        )
+        decoration?.assetUrl?.takeIf { it.isNotBlank() }?.let { AnimatedProfileDecoration(it, Modifier.fillMaxSize()) }
+    }
 }
 
 @Composable
@@ -947,6 +1021,7 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
     
     val apiPosts by repository.feed.collectAsState()
     val currentUser by repository.currentUser.collectAsState()
+    val currentProfile by repository.profile.collectAsState()
     val incomingCalls by repository.incomingCalls.collectAsState()
     val posts = remember(apiPosts) { apiPosts.map(::toUiPost) }
     val reels = remember(apiPosts) { apiPosts.filter { it.type == "reel" || it.type == "video" }.map(::toUiReel) }
@@ -1071,6 +1146,7 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
             if (selectedTab != 2 && selectedTab != 4 && !showProfile && !showCreatePost && !showMessages && !showConnect && selectedProfileUserId == null && selectedChat == null && selectedPostId == null && selectedEditPostId == null) {
                 TiwiTopBar(
                     avatarUrl = currentUser?.avatar,
+                    avatarDecoration = currentProfile?.avatarDecoration,
                     onProfileClick = { showProfile = true },
                     onCreateClick = { showCreatePost = true },
                     onMessagesClick = { showMessages = true },
@@ -1080,7 +1156,7 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
         },
         bottomBar = { 
             if (!showProfile && !showCreatePost && !showMessages && !showConnect && selectedProfileUserId == null && selectedChat == null && selectedPostId == null && selectedEditPostId == null) {
-                TiwiBottomBar(selectedTab, dark = selectedTab == 2, avatarUrl = currentUser?.avatar) {
+                TiwiBottomBar(selectedTab, dark = selectedTab == 2, avatarUrl = currentUser?.avatar, avatarDecoration = currentProfile?.avatarDecoration) {
                     selectedTab = it
                 } 
             }
@@ -1144,7 +1220,7 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
 }
 
 @Composable
-fun TiwiTopBar(avatarUrl: String?, onProfileClick: () -> Unit, onCreateClick: () -> Unit, onMessagesClick: () -> Unit, onConnectClick: () -> Unit) {
+fun TiwiTopBar(avatarUrl: String?, avatarDecoration: SocialProfileDecoration? = null, onProfileClick: () -> Unit, onCreateClick: () -> Unit, onMessagesClick: () -> Unit, onConnectClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1174,13 +1250,11 @@ fun TiwiTopBar(avatarUrl: String?, onProfileClick: () -> Unit, onCreateClick: ()
                 Icon(Icons.AutoMirrored.Outlined.Send, contentDescription = "Messages", tint = MaterialTheme.colorScheme.onBackground, modifier = Modifier.size(23.dp))
             }
             Spacer(modifier = Modifier.width(2.dp))
-            TiwiAvatar(
+            DecoratedAvatar(
                 url = avatarUrl,
                 fallback = R.drawable.img_tiwi_avatar_1,
-                modifier = Modifier
-                    .size(32.dp)
-                    .clip(CircleShape)
-                    .clickable { onProfileClick() },
+                decoration = avatarDecoration,
+                modifier = Modifier.size(38.dp).clickable { onProfileClick() },
                 contentScale = ContentScale.Crop
             )
         }
@@ -1266,7 +1340,7 @@ private fun SuggestedFriendsSection(
                     Modifier.width(136.dp).background(Color(0xFFF7F7F7), RoundedCornerShape(10.dp)).clickable { onProfileClick(profile.userId) }.padding(10.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    TiwiAvatar(profile.user.avatar, R.drawable.img_tiwi_avatar_1, Modifier.size(72.dp).clip(CircleShape))
+                    DecoratedAvatar(profile.user.avatar, R.drawable.img_tiwi_avatar_1, profile.avatarDecoration, Modifier.size(78.dp))
                     Spacer(Modifier.height(6.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(profile.user.name, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Bold, fontSize = 13.sp)
@@ -1362,13 +1436,11 @@ fun PostCard(post: Post, repository: SocialRepository, onShareClick: () -> Unit 
             modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            TiwiAvatar(
+            DecoratedAvatar(
                 url = post.authorAvatarUrl,
                 fallback = post.authorAvatar,
-                modifier = Modifier
-                    .size(38.dp)
-                    .clip(CircleShape)
-                    .clickable { onAuthorClick() },
+                decoration = post.authorDecoration,
+                modifier = Modifier.size(42.dp).clickable { onAuthorClick() },
                 contentScale = ContentScale.Crop
             )
             Spacer(modifier = Modifier.width(8.dp))
@@ -1487,7 +1559,7 @@ fun PostCard(post: Post, repository: SocialRepository, onShareClick: () -> Unit 
     if (showReport) AlertDialog(onDismissRequest = { showReport = false }, containerColor = Color.White, tonalElevation = 0.dp, title = { Text("Report post") }, text = { Text("Report spam, harassment, false information or inappropriate content to Tiwlo administrators.") },
         confirmButton = { TextButton(onClick = { showReport = false; scope.launch { runCatching { repository.reportContent("post", post.id, "inappropriate_content") }.onSuccess { Toast.makeText(context, "Report sent", Toast.LENGTH_SHORT).show() } } }) { Text("Send report") } },
         dismissButton = { TextButton(onClick = { showReport = false }) { Text("Cancel") } })
-    if (showVerified) VerifiedInfoSheet(post.author, post.authorAvatarUrl, post.badgeType, onDismiss = { showVerified = false })
+    if (showVerified) VerifiedInfoSheet(post.author, post.authorAvatarUrl, post.badgeType, post.authorDecoration, onDismiss = { showVerified = false })
     if (showMenu) PostActionsSheet(
         post = post, isOwn = isOwn, onDismiss = { showMenu = false },
         onEdit = { showMenu = false; if (onEditRequest != null) onEditRequest(post) else showEdit = true }, onDelete = { showMenu = false; showDelete = true },
@@ -1656,10 +1728,10 @@ private fun SharedPostCard(media: SocialMedia, onOpen: () -> Unit) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun VerifiedInfoSheet(name: String, avatar: String?, badgeType: String = "blue", onDismiss: () -> Unit) {
+private fun VerifiedInfoSheet(name: String, avatar: String?, badgeType: String = "blue", decoration: SocialProfileDecoration? = null, onDismiss: () -> Unit) {
     ModalBottomSheet(onDismissRequest = onDismiss, dragHandle = null, containerColor = Color.White, contentColor = Color.Black, tonalElevation = 0.dp) {
         Column(Modifier.fillMaxWidth().padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            TiwiAvatar(avatar, R.drawable.img_tiwi_avatar_1, Modifier.size(72.dp).clip(CircleShape))
+            DecoratedAvatar(avatar, R.drawable.img_tiwi_avatar_1, decoration, Modifier.size(82.dp))
             Spacer(Modifier.height(8.dp))
             Row(verticalAlignment = Alignment.CenterVertically) { Text(name, fontWeight = FontWeight.Bold, fontSize = 18.sp); Spacer(Modifier.width(3.dp)); VerifiedBadge(badgeType, 24.dp) }
             Spacer(Modifier.height(10.dp))
@@ -1748,7 +1820,7 @@ private fun PostDetailScreen(repository: SocialRepository, postId: String, onBac
             }
         }
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-            TiwiAvatar(repository.currentUser.value?.avatar, R.drawable.img_tiwi_avatar_1, Modifier.size(34.dp).clip(CircleShape))
+            DecoratedAvatar(repository.currentUser.value?.avatar, R.drawable.img_tiwi_avatar_1, repository.profile.value?.avatarDecoration, Modifier.size(38.dp))
             BasicTextField(
                 value = text,
                 onValueChange = { text = it },
@@ -1780,7 +1852,7 @@ private fun PostMediaViewerPage(post: Post, repository: SocialRepository, onBack
         Row(Modifier.fillMaxWidth().height(50.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.White) }
             Row(Modifier.weight(1f).clickable { onProfileClick(post.authorId) }, verticalAlignment = Alignment.CenterVertically) {
-                TiwiAvatar(post.authorAvatarUrl, post.authorAvatar, Modifier.size(34.dp).clip(CircleShape))
+                DecoratedAvatar(post.authorAvatarUrl, post.authorAvatar, post.authorDecoration, Modifier.size(38.dp))
                 Text(post.author, color = Color.White, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 8.dp))
             }
             if (visualMedia.size > 1) Text("${pager.currentPage + 1}/${visualMedia.size}", color = Color.White, modifier = Modifier.padding(end = 14.dp), fontWeight = FontWeight.Bold)
@@ -1851,7 +1923,7 @@ private fun EditPostPage(repository: SocialRepository, post: Post, onBack: () ->
         HorizontalDivider(color = Color(0xFFE4E7EC))
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                TiwiAvatar(repository.currentUser.value?.avatar, R.drawable.img_tiwi_avatar_1, Modifier.size(44.dp).clip(CircleShape))
+                DecoratedAvatar(repository.currentUser.value?.avatar, R.drawable.img_tiwi_avatar_1, repository.profile.value?.avatarDecoration, Modifier.size(48.dp))
                 Column(Modifier.padding(start = 10.dp)) { Text(repository.currentUser.value?.name.orEmpty(), fontWeight = FontWeight.Bold); Text(post.visibility.replaceFirstChar { it.uppercase() }, color = Color.Gray, fontSize = 12.sp) }
             }
             BasicTextField(
@@ -1904,7 +1976,7 @@ private fun CommentRow(
         Modifier.fillMaxWidth().padding(start = if (comment.replyToId == null) 10.dp else 46.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
         verticalAlignment = Alignment.Top
     ) {
-        TiwiAvatar(comment.author.avatar, R.drawable.img_tiwi_avatar_1, Modifier.size(34.dp).clip(CircleShape).clickable(onClick = onProfile))
+        DecoratedAvatar(comment.author.avatar, R.drawable.img_tiwi_avatar_1, comment.authorProfile?.avatarDecoration, Modifier.size(38.dp).clickable(onClick = onProfile))
         Spacer(Modifier.width(8.dp))
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1967,7 +2039,7 @@ fun TiwiShareSheet(repository: SocialRepository, post: Post, onDismiss: () -> Un
             ) {
                 Column {
                     Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                        TiwiAvatar(post.authorAvatarUrl, post.authorAvatar, Modifier.size(40.dp).clip(CircleShape))
+                        DecoratedAvatar(post.authorAvatarUrl, post.authorAvatar, post.authorDecoration, Modifier.size(44.dp))
                         Spacer(Modifier.width(8.dp))
                         Column(Modifier.weight(1f)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -2011,15 +2083,7 @@ fun TiwiShareSheet(repository: SocialRepository, post: Post, onDismiss: () -> Un
                             }
                         }
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(56.dp)
-                                .clip(CircleShape)
-                                .background(TiwiBlue.copy(alpha = 0.1f)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            TiwiAvatar(contact?.user?.avatar, R.drawable.img_tiwi_avatar_1, Modifier.fillMaxSize().clip(CircleShape))
-                        }
+                        DecoratedAvatar(contact?.user?.avatar, R.drawable.img_tiwi_avatar_1, contact?.profile?.avatarDecoration, Modifier.size(60.dp))
                         Text(name, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 4.dp))
                     }
                 }
@@ -2253,7 +2317,7 @@ fun CreatePostScreen(repository: SocialRepository, onBack: () -> Unit) {
 }
 
 @Composable
-fun TiwiBottomBar(selectedTab: Int, dark: Boolean = false, avatarUrl: String? = null, onTabSelected: (Int) -> Unit) {
+fun TiwiBottomBar(selectedTab: Int, dark: Boolean = false, avatarUrl: String? = null, avatarDecoration: SocialProfileDecoration? = null, onTabSelected: (Int) -> Unit) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
         color = if (dark) Color.Black else MaterialTheme.colorScheme.background,
@@ -2282,12 +2346,11 @@ fun TiwiBottomBar(selectedTab: Int, dark: Boolean = false, avatarUrl: String? = 
                     modifier = Modifier.size(48.dp)
                 ) {
                     if (index == 4) {
-                        TiwiAvatar(
+                        DecoratedAvatar(
                             avatarUrl,
                             R.drawable.img_tiwi_avatar_1,
-                            Modifier.size(27.dp).graphicsLayer(scaleX = iconScale, scaleY = iconScale)
-                                .border(if (isSelected) 2.dp else 1.dp, if (dark) Color.White else if (isSelected) Color.Black else Color.Gray, CircleShape)
-                                .padding(2.dp).clip(CircleShape)
+                            avatarDecoration,
+                            Modifier.size(34.dp).graphicsLayer(scaleX = iconScale, scaleY = iconScale)
                         )
                     } else Icon(
                         imageVector = if (isSelected) filled else outlined,
@@ -2350,7 +2413,7 @@ fun SearchScreen(repository: SocialRepository, onProfileClick: (String) -> Unit,
                                 border = BorderStroke(.5.dp, Color.LightGray.copy(alpha = .55f))
                             ) {
                                 Column(Modifier.padding(9.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                                    TiwiAvatar(profile.user.avatar, R.drawable.img_tiwi_avatar_1, Modifier.size(66.dp).clip(CircleShape))
+                                    DecoratedAvatar(profile.user.avatar, R.drawable.img_tiwi_avatar_1, profile.avatarDecoration, Modifier.size(72.dp))
                                     Spacer(Modifier.height(5.dp))
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         Text(profile.user.name, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -2374,7 +2437,7 @@ fun SearchScreen(repository: SocialRepository, onProfileClick: (String) -> Unit,
                 items(profiles, key = { it.userId }) { profile ->
                     ListItem(
                         modifier = Modifier.clickable { onProfileClick(profile.userId) },
-                        leadingContent = { TiwiAvatar(profile.user.avatar, R.drawable.img_tiwi_avatar_1, Modifier.size(48.dp).clip(CircleShape)) },
+                        leadingContent = { DecoratedAvatar(profile.user.avatar, R.drawable.img_tiwi_avatar_1, profile.avatarDecoration, Modifier.size(52.dp)) },
                         headlineContent = { Row(verticalAlignment = Alignment.CenterVertically) { Text(profile.user.name, fontWeight = FontWeight.Bold); if (profile.verified) VerifiedBadge(profile.badgeType, 15.dp, Modifier.padding(start = 3.dp)) } },
                         supportingContent = { Text("@${profile.username}") },
                         trailingContent = {
@@ -2491,7 +2554,7 @@ fun ReelsScreen(reels: List<Reel>, repository: SocialRepository, onOpen: (String
             Column(modifier = Modifier.align(Alignment.BottomStart).padding(start = 12.dp, end = 62.dp, bottom = 14.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { onAuthor(reel.authorId) }) {
-                        TiwiAvatar(reel.authorAvatarUrl, R.drawable.img_tiwi_avatar_1, Modifier.size(32.dp).clip(CircleShape))
+                        DecoratedAvatar(reel.authorAvatarUrl, R.drawable.img_tiwi_avatar_1, reel.authorDecoration, Modifier.size(38.dp))
                         Spacer(modifier = Modifier.width(7.dp))
                         Text(reel.author, color = Color.White, fontWeight = FontWeight.Bold, maxLines = 1)
                         if (reel.verified) VerifiedBadge(reel.badgeType, 16.dp)
@@ -2736,6 +2799,10 @@ fun MenuScreen(repository: SocialRepository, name: String, avatarUrl: String?, o
     var showEditProfile by remember { mutableStateOf(false) }
     val profile by repository.profile.collectAsState()
     val context = LocalContext.current
+    var decorationCatalogAvailable by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        decorationCatalogAvailable = runCatching { repository.profileDecorations().isNotEmpty() }.getOrDefault(false)
+    }
     selectedSetting?.let { setting ->
         BackHandler { selectedSetting = null }
         SocialSettingsPage(repository, profile, setting, onBack = { selectedSetting = null })
@@ -2762,10 +2829,11 @@ fun MenuScreen(repository: SocialRepository, name: String, avatarUrl: String?, o
             Column {
                 Box(Modifier.fillMaxWidth().height(142.dp)) {
                     TiwiAvatar(profile?.coverUrl, R.drawable.img_tiwi_cover, Modifier.fillMaxWidth().height(105.dp).clip(RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)), ContentScale.Crop)
-                    TiwiAvatar(
+                    DecoratedAvatar(
                         avatarUrl,
                         R.drawable.img_tiwi_avatar_1,
-                        Modifier.align(Alignment.BottomStart).padding(start = 12.dp).size(76.dp).border(4.dp, Color.White, CircleShape).clip(CircleShape)
+                        profile?.avatarDecoration,
+                        Modifier.align(Alignment.BottomStart).padding(start = 10.dp).size(86.dp)
                     )
                     FilledTonalIconButton(
                         onClick = { showEditProfile = true },
@@ -2805,7 +2873,30 @@ fun MenuScreen(repository: SocialRepository, name: String, avatarUrl: String?, o
             }
         }
 
-        Spacer(modifier = Modifier.height(10.dp))
+        if (decorationCatalogAvailable) {
+            Spacer(modifier = Modifier.height(10.dp))
+            Surface(
+                modifier = Modifier.fillMaxWidth().clickable { selectedSetting = "Profile decoration" },
+                color = Color.White,
+                shape = RoundedCornerShape(12.dp),
+                border = BorderStroke(1.dp, Color(0xFFD8CCFF)),
+                tonalElevation = 0.dp
+            ) {
+                Row(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(44.dp).background(Color(0xFFF3EFFF), CircleShape), contentAlignment = Alignment.Center) {
+                        val activeDecoration = profile?.avatarDecoration
+                        if (activeDecoration != null) AnimatedProfileDecoration(activeDecoration.assetUrl, Modifier.size(42.dp))
+                        else Icon(Icons.Outlined.AutoAwesome, null, tint = Color(0xFF7F56D9))
+                    }
+                    Column(Modifier.weight(1f).padding(start = 11.dp)) {
+                        Text("Decorate your profile", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                        Text(profile?.avatarDecoration?.name ?: "Animated avatar decorations · Free and premium", color = Color.Gray, fontSize = 12.sp)
+                    }
+                    Icon(Icons.Default.ChevronRight, null, tint = Color.Gray)
+                }
+            }
+            Spacer(modifier = Modifier.height(10.dp))
+        }
 
         LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             item {
@@ -2993,7 +3084,7 @@ private fun GroupShortcutContent(repository: SocialRepository, onBack: () -> Uni
                 item { Text("Members", fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) }
                 items(members, key = { "member-${it.id}" }) { member ->
                     Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        TiwiAvatar(member.user.avatar, R.drawable.img_tiwi_avatar_1, Modifier.size(40.dp).clip(CircleShape)); Column(Modifier.weight(1f).padding(start = 9.dp)) { Text(member.user.name, fontWeight = FontWeight.SemiBold); Text(member.role.replaceFirstChar { it.uppercase() }, color = Color.Gray, fontSize = 11.sp) }
+                        DecoratedAvatar(member.user.avatar, R.drawable.img_tiwi_avatar_1, member.profile?.avatarDecoration, Modifier.size(44.dp)); Column(Modifier.weight(1f).padding(start = 9.dp)) { Text(member.user.name, fontWeight = FontWeight.SemiBold); Text(member.role.replaceFirstChar { it.uppercase() }, color = Color.Gray, fontSize = 11.sp) }
                         if (group.viewerRole == "admin" && member.userId != repository.currentUserId() && member.userId != group.ownerId) {
                             TextButton(onClick = { scope.launch { val next = if (member.role == "member") "editor" else "member"; runCatching { repository.updateGroupMember(group.id, member.userId, next) }.onSuccess { members = repository.groupMembers(group.id) } } }) { Text(if (member.role == "member") "Make editor" else "Make member", fontSize = 11.sp) }
                             IconButton(onClick = { scope.launch { runCatching { repository.updateGroupMember(group.id, member.userId, remove = true) }.onSuccess { members = repository.groupMembers(group.id) } } }) { Icon(Icons.Outlined.PersonRemove, "Remove") }
@@ -3126,6 +3217,10 @@ private fun SocialSettingsPage(repository: SocialRepository, profile: SocialProf
     var packageBusy by remember { mutableStateOf<String?>(null) }
     var optionsLoading by remember { mutableStateOf(false) }
 
+    if (page == "Profile decoration") {
+        ProfileDecorationPage(repository, profile, onBack)
+        return
+    }
     if (page == "Account Center") {
         AccountCenterPage(repository, currentUser, onBack)
         return
@@ -3319,7 +3414,7 @@ private fun AccountCenterPage(repository: SocialRepository, user: SocialUser?, o
                 }
                 Surface(color = Color.White, border = BorderStroke(1.dp, Color(0xFFE3E6EA)), shape = RoundedCornerShape(12.dp), tonalElevation = 0.dp) {
                     Column(Modifier.padding(14.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) { TiwiAvatar(user?.avatar, R.drawable.img_tiwi_avatar_1, Modifier.size(48.dp).clip(CircleShape)); Column(Modifier.padding(start = 10.dp)) { Text(user?.name.orEmpty(), fontWeight = FontWeight.Bold); Text(user?.email.orEmpty(), color = Color.Gray, fontSize = 12.sp) } }
+                        Row(verticalAlignment = Alignment.CenterVertically) { DecoratedAvatar(user?.avatar, R.drawable.img_tiwi_avatar_1, repository.profile.value?.avatarDecoration, Modifier.size(54.dp)); Column(Modifier.padding(start = 10.dp)) { Text(user?.name.orEmpty(), fontWeight = FontWeight.Bold); Text(user?.email.orEmpty(), color = Color.Gray, fontSize = 12.sp) } }
                         HorizontalDivider(Modifier.padding(vertical = 12.dp), color = Color(0xFFE9EAED))
                         Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.Link, null, tint = TiwiBlue); Text("Linked to Tiwlo", Modifier.weight(1f).padding(start = 9.dp), fontWeight = FontWeight.SemiBold); Icon(Icons.Default.CheckCircle, null, tint = Color(0xFF12B76A), modifier = Modifier.size(20.dp)) }
                     }
@@ -3711,7 +3806,7 @@ fun ProfileScreen(
                     ) { Icon(Icons.Default.CameraAlt, "Change cover", Modifier.size(18.dp)) }
                 }
                 Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    TiwiAvatar(profile?.user?.avatar ?: if (isOwn) ownUser?.avatar else null, R.drawable.img_tiwi_avatar_1, Modifier.size(86.dp).clip(CircleShape))
+                    DecoratedAvatar(profile?.user?.avatar ?: if (isOwn) ownUser?.avatar else null, R.drawable.img_tiwi_avatar_1, profile?.avatarDecoration, Modifier.size(96.dp))
                     Row(Modifier.weight(1f), horizontalArrangement = Arrangement.SpaceEvenly) {
                         ProfileStatItem("Posts", (profile?.postCount ?: posts.size).toString())
                         ProfileStatItem("Followers", (profile?.followerCount ?: 0).toString())
@@ -3767,7 +3862,7 @@ fun ProfileScreen(
         }
         }
     }
-    if (showVerified) VerifiedInfoSheet(name, profile?.user?.avatar, profile?.badgeType ?: "blue", onDismiss = { showVerified = false })
+    if (showVerified) VerifiedInfoSheet(name, profile?.user?.avatar, profile?.badgeType ?: "blue", profile?.avatarDecoration, onDismiss = { showVerified = false })
 }
 
 @Composable
@@ -3823,7 +3918,7 @@ private fun ProfileOptionsPage(
         }
         HorizontalDivider(color = Color(0xFFE4E7EC))
         Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            TiwiAvatar(profile?.user?.avatar, R.drawable.img_tiwi_avatar_1, Modifier.size(58.dp).clip(CircleShape))
+            DecoratedAvatar(profile?.user?.avatar, R.drawable.img_tiwi_avatar_1, profile?.avatarDecoration, Modifier.size(64.dp))
             Column(Modifier.padding(start = 12.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) { Text(name, fontWeight = FontWeight.Bold, fontSize = 17.sp); if (profile?.verified == true) VerifiedBadge(profile.badgeType, 17.dp, Modifier.padding(start = 4.dp)) }
                 Text("@${profile?.username.orEmpty()}", color = Color.Gray)
@@ -3866,7 +3961,13 @@ private fun EditProfilePage(repository: SocialRepository, profile: SocialProfile
     var location by remember(profile) { mutableStateOf(profile?.location.orEmpty()) }
     var avatarUrl by remember(profile) { mutableStateOf(profile?.user?.avatar) }
     var coverUrl by remember(profile) { mutableStateOf(profile?.coverUrl) }
+    var avatarDecoration by remember(profile) { mutableStateOf(profile?.avatarDecoration) }
+    var showDecorations by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
+    var decorationCatalogAvailable by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        decorationCatalogAvailable = runCatching { repository.profileDecorations().isNotEmpty() }.getOrDefault(false)
+    }
     val avatarPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) scope.launch { busy = true; runCatching { repository.uploadMedia(context.contentResolver, uri, "profile").url }.onSuccess { avatarUrl = it }.onFailure { Toast.makeText(context, it.message ?: "Photo upload failed", Toast.LENGTH_LONG).show() }; busy = false }
     }
@@ -3897,10 +3998,25 @@ private fun EditProfilePage(repository: SocialRepository, profile: SocialProfile
                 Surface(Modifier.align(Alignment.BottomEnd).padding(10.dp), color = Color.White, shape = CircleShape, tonalElevation = 0.dp) { Icon(Icons.Default.CameraAlt, "Edit cover", Modifier.padding(9.dp)) }
             }
             Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-                TiwiAvatar(avatarUrl, R.drawable.img_tiwi_avatar_1, Modifier.offset(y = (-42).dp).size(88.dp).border(4.dp, Color.White, CircleShape).clip(CircleShape))
+                DecoratedAvatar(avatarUrl, R.drawable.img_tiwi_avatar_1, avatarDecoration, Modifier.offset(y = (-46).dp).size(104.dp))
                 TextButton(onClick = { avatarPicker.launch("image/*") }, modifier = Modifier.offset(y = (-42).dp)) { Text("Edit picture", fontWeight = FontWeight.Bold) }
             }
             Column(Modifier.padding(horizontal = 16.dp).offset(y = (-28).dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (decorationCatalogAvailable) {
+                    Surface(
+                        Modifier.fillMaxWidth().clickable { showDecorations = true },
+                        color = Color(0xFFFAF9FF),
+                        border = BorderStroke(1.dp, Color(0xFFD8CCFF)),
+                        shape = RoundedCornerShape(12.dp),
+                        tonalElevation = 0.dp
+                    ) {
+                        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Box(Modifier.size(42.dp).background(Color(0xFFF0EBFF), CircleShape), contentAlignment = Alignment.Center) { if (avatarDecoration != null) AnimatedProfileDecoration(avatarDecoration!!.assetUrl, Modifier.fillMaxSize()) else Icon(Icons.Outlined.AutoAwesome, null, tint = Color(0xFF7F56D9)) }
+                            Column(Modifier.weight(1f).padding(start = 11.dp)) { Text("Avatar decoration", fontWeight = FontWeight.Bold); Text(avatarDecoration?.name ?: "Choose an animated profile effect", color = Color.Gray, fontSize = 12.sp) }
+                            Icon(Icons.Default.ChevronRight, null, tint = Color.Gray)
+                        }
+                    }
+                }
                 Text("Public profile", fontWeight = FontWeight.Bold, fontSize = 17.sp)
                 OutlinedTextField(username, { username = it.take(30) }, label = { Text("Username") }, supportingText = { Text("${username.length}/30") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(bio, { bio = it.take(240) }, label = { Text("Bio") }, supportingText = { Text("${bio.length}/240") }, minLines = 3, modifier = Modifier.fillMaxWidth())
@@ -3912,6 +4028,203 @@ private fun EditProfilePage(repository: SocialRepository, profile: SocialProfile
                 Text("Changes are validated and saved through the Tiwi API.", color = Color.Gray, fontSize = 12.sp)
                 Spacer(Modifier.navigationBarsPadding().height(22.dp))
             }
+        }
+    }
+    if (showDecorations) ProfileDecorationSheet(
+        repository = repository,
+        avatarUrl = avatarUrl,
+        current = avatarDecoration,
+        onDismiss = { showDecorations = false },
+        onApplied = { avatarDecoration = it; showDecorations = false }
+    )
+}
+
+@Composable
+private fun ProfileDecorationPage(repository: SocialRepository, profile: SocialProfile?, onBack: () -> Unit) {
+    Column(Modifier.fillMaxSize().background(Color.White).statusBarsPadding()) {
+        Row(Modifier.fillMaxWidth().height(52.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
+            Column { Text("Decorate your profile", fontWeight = FontWeight.Bold, fontSize = 19.sp); Text("Animated avatar decorations", color = Color.Gray, fontSize = 11.sp) }
+        }
+        HorizontalDivider(color = Color(0xFFE4E7EC), thickness = .5.dp)
+        ProfileDecorationMarketplace(repository, profile?.user?.avatar, profile?.avatarDecoration, Modifier.weight(1f)) { }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ProfileDecorationSheet(
+    repository: SocialRepository,
+    avatarUrl: String?,
+    current: SocialProfileDecoration?,
+    onDismiss: () -> Unit,
+    onApplied: (SocialProfileDecoration?) -> Unit
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = Color.White,
+        contentColor = Color.Black,
+        tonalElevation = 0.dp,
+        dragHandle = { BottomSheetDefaults.DragHandle(color = Color(0xFFD0D5DD)) }
+    ) {
+        Column(Modifier.fillMaxWidth().fillMaxHeight(.92f)) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) { Text("Avatar decoration", fontWeight = FontWeight.ExtraBold, fontSize = 21.sp); Text("Preview, choose and apply without leaving Edit profile", color = Color.Gray, fontSize = 12.sp) }
+                IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, "Close") }
+            }
+            ProfileDecorationMarketplace(repository, avatarUrl, current, Modifier.weight(1f), onApplied)
+        }
+    }
+}
+
+@Composable
+private fun ProfileDecorationMarketplace(
+    repository: SocialRepository,
+    avatarUrl: String?,
+    current: SocialProfileDecoration?,
+    modifier: Modifier = Modifier,
+    onApplied: (SocialProfileDecoration?) -> Unit
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var decorations by remember { mutableStateOf<List<SocialProfileDecoration>>(emptyList()) }
+    var paymentOptions by remember { mutableStateOf<SocialVerificationOptions?>(null) }
+    var loading by remember { mutableStateOf(true) }
+    var busy by remember { mutableStateOf(false) }
+    var selectedId by remember(current?.id) { mutableStateOf(current?.id) }
+    var activeId by remember(current?.id) { mutableStateOf(current?.id) }
+    var selectedGateway by remember { mutableStateOf("") }
+
+    suspend fun refreshDecorations() {
+        loading = true
+        decorations = runCatching { repository.profileDecorations() }
+            .onFailure { Toast.makeText(context, it.message ?: "Decorations could not load", Toast.LENGTH_LONG).show() }
+            .getOrDefault(emptyList())
+        val serverApplied = decorations.firstOrNull { it.applied }
+        activeId = serverApplied?.id
+        if (selectedId == null && serverApplied != null) selectedId = serverApplied.id
+        loading = false
+    }
+    LaunchedEffect(Unit) {
+        refreshDecorations()
+        paymentOptions = runCatching { repository.verificationOptions() }.getOrNull()
+        if (selectedGateway.isBlank()) selectedGateway = paymentOptions?.gateways?.firstOrNull()?.key.orEmpty()
+    }
+
+    val selected = decorations.firstOrNull { it.id == selectedId }
+    val previewDecoration = selected
+    val options = paymentOptions
+    val convertedPrice = selected?.let { item ->
+        if (options?.currency == "BDT") "BDT ${String.format(Locale.US, "%.0f", item.priceUsd * options.usdRate)}"
+        else "\$${String.format(Locale.US, "%.2f", item.priceUsd)} USD"
+    }.orEmpty()
+    val yourDecorations = decorations.filter { it.owned || it.priceUsd <= 0 }
+
+    Column(modifier.background(Color(0xFFF8F9FC))) {
+        Surface(
+            Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
+            color = Color.Transparent,
+            shape = RoundedCornerShape(22.dp),
+            tonalElevation = 0.dp
+        ) {
+            Box(Modifier.fillMaxWidth().background(Brush.linearGradient(listOf(Color(0xFF201A33), Color(0xFF4C2D80), Color(0xFF7F56D9)))).padding(vertical = 18.dp), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    DecoratedAvatar(avatarUrl, R.drawable.img_tiwi_avatar_1, previewDecoration, Modifier.size(148.dp))
+                    Text(repository.currentUser.value?.name.orEmpty(), color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
+                    Text(previewDecoration?.name ?: "No decoration", color = Color.White.copy(alpha = .76f), fontSize = 12.sp)
+                    Surface(Modifier.padding(top = 8.dp), color = Color.White.copy(alpha = .14f), shape = RoundedCornerShape(20.dp), tonalElevation = 0.dp) { Text("LIVE PROFILE PREVIEW", Modifier.padding(horizontal = 12.dp, vertical = 5.dp), color = Color.White, fontWeight = FontWeight.Black, fontSize = 9.sp, letterSpacing = 1.sp) }
+                }
+            }
+        }
+        if (loading) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(Modifier.size(30.dp), strokeWidth = 2.5.dp) }
+        else LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 14.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            item {
+                Row(verticalAlignment = Alignment.CenterVertically) { Text("Your decorations", Modifier.weight(1f), fontWeight = FontWeight.ExtraBold, fontSize = 17.sp); IconButton(onClick = { scope.launch { refreshDecorations() } }, modifier = Modifier.size(34.dp)) { Icon(Icons.Default.Refresh, "Refresh", tint = TiwiBlue, modifier = Modifier.size(19.dp)) } }
+                Text("Purchased items and every free decoration available to your account.", color = Color.Gray, fontSize = 11.sp)
+            }
+            item {
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                    item {
+                        Surface(
+                            Modifier.width(116.dp).height(142.dp).clickable { selectedId = null },
+                            color = if (selectedId == null) Color(0xFFEAF2FF) else Color.White,
+                            border = BorderStroke(if (selectedId == null) 2.dp else 1.dp, if (selectedId == null) TiwiBlue else Color(0xFFE4E7EC)),
+                            shape = RoundedCornerShape(14.dp), tonalElevation = 0.dp
+                        ) { Column(Modifier.padding(10.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) { Box(Modifier.size(76.dp).background(Color(0xFFF0F2F5), CircleShape), contentAlignment = Alignment.Center) { Icon(Icons.Outlined.Block, null, tint = Color.Gray) }; Text("None", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 7.dp)) } }
+                    }
+                    items(yourDecorations, key = { "owned-${it.id}" }) { item -> DecorationStoreCard(item, selectedId == item.id, Modifier.width(116.dp).height(142.dp)) { selectedId = item.id } }
+                }
+            }
+            item { Text("Explore all", fontWeight = FontWeight.ExtraBold, fontSize = 17.sp); Text("Scroll and tap any decoration to see it on your profile.", color = Color.Gray, fontSize = 11.sp) }
+            items(decorations.chunked(2), key = { row -> row.joinToString("-") { it.id } }) { row ->
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    row.forEach { item -> DecorationStoreCard(item, selectedId == item.id, Modifier.weight(1f).height(190.dp)) { selectedId = item.id; selectedGateway = options?.gateways?.firstOrNull()?.key.orEmpty() } }
+                    if (row.size == 1) Spacer(Modifier.weight(1f))
+                }
+            }
+            if (selected != null && !selected.owned && selected.priceUsd > 0) item {
+                Surface(color = Color.White, shape = RoundedCornerShape(14.dp), border = BorderStroke(1.dp, Color(0xFFD8CCFF)), tonalElevation = 0.dp) {
+                    Column(Modifier.padding(14.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Outlined.Payment, null, tint = Color(0xFF7F56D9)); Column(Modifier.weight(1f).padding(start = 9.dp)) { Text("Choose payment method", fontWeight = FontWeight.Bold); Text("${selected.name} · $convertedPrice", color = Color.Gray, fontSize = 11.sp) } }
+                        options?.gateways.orEmpty().forEach { gateway ->
+                            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).clickable { selectedGateway = gateway.key }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) { RadioButton(selectedGateway == gateway.key, { selectedGateway = gateway.key }); Text(gateway.name, fontWeight = FontWeight.SemiBold) }
+                        }
+                    }
+                }
+            }
+            item { Spacer(Modifier.height(6.dp)) }
+        }
+        val canApply = selected == null || selected.owned || selected.priceUsd <= 0
+        Button(
+            enabled = !busy && (canApply || selectedGateway.isNotBlank()),
+            onClick = {
+                scope.launch {
+                    busy = true
+                    if (canApply) {
+                        runCatching { repository.applyProfileDecoration(selected?.id) }
+                            .onSuccess { profile -> activeId = profile.avatarDecoration?.id; onApplied(profile.avatarDecoration); Toast.makeText(context, if (profile.avatarDecoration == null) "Decoration removed" else "${profile.avatarDecoration.name} applied", Toast.LENGTH_SHORT).show() }
+                            .onFailure { Toast.makeText(context, it.message ?: "Decoration could not be applied", Toast.LENGTH_LONG).show() }
+                    } else if (selected != null && options != null) {
+                        runCatching { repository.startProfileDecorationCheckout(selected.id, selectedGateway, options.currency) }
+                            .onSuccess { checkout ->
+                                if (!checkout.paymentUrl.isNullOrBlank()) context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(checkout.paymentUrl)))
+                                else Toast.makeText(context, checkout.message ?: "Decoration added", Toast.LENGTH_LONG).show()
+                                refreshDecorations()
+                            }
+                            .onFailure { Toast.makeText(context, it.message ?: "Checkout failed", Toast.LENGTH_LONG).show() }
+                    }
+                    busy = false
+                }
+            },
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp).navigationBarsPadding(),
+            shape = RoundedCornerShape(12.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6E3CBC))
+        ) {
+            if (busy) CircularProgressIndicator(Modifier.size(19.dp), color = Color.White, strokeWidth = 2.dp)
+            else Text(when { selected?.id == activeId -> "Applied"; canApply -> "Apply decoration"; else -> "Continue · $convertedPrice" }, fontWeight = FontWeight.ExtraBold)
+        }
+    }
+}
+
+@Composable
+private fun DecorationStoreCard(item: SocialProfileDecoration, selected: Boolean, modifier: Modifier, onClick: () -> Unit) {
+    Surface(
+        modifier.clickable(onClick = onClick),
+        color = if (selected) Color(0xFFF1ECFF) else Color.White,
+        shape = RoundedCornerShape(14.dp),
+        border = BorderStroke(if (selected) 2.dp else 1.dp, if (selected) Color(0xFF7F56D9) else Color(0xFFE4E7EC)),
+        tonalElevation = 0.dp
+    ) {
+        Column(Modifier.padding(9.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                Box(Modifier.fillMaxSize(.66f).background(Brush.linearGradient(listOf(Color(0xFFDDEBFF), Color(0xFFEADFFF))), CircleShape))
+                AnimatedProfileDecoration(item.assetUrl, Modifier.fillMaxSize())
+                if (item.applied) Icon(Icons.Default.CheckCircle, "Applied", tint = Color(0xFF12B76A), modifier = Modifier.align(Alignment.TopEnd).size(20.dp))
+            }
+            Text(item.name, fontWeight = FontWeight.Bold, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(when { item.applied -> "APPLIED"; item.priceUsd <= 0 -> "FREE"; item.owned -> "OWNED"; else -> "\$${String.format(Locale.US, "%.2f", item.priceUsd)}" }, color = if (item.priceUsd <= 0 || item.owned) Color(0xFF067647) else Color(0xFF6941C6), fontWeight = FontWeight.Black, fontSize = 9.sp)
         }
     }
 }
@@ -4070,17 +4383,16 @@ fun MessagesScreen(repository: SocialRepository, onBack: () -> Unit, onChatClick
             item {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Box(
-                        modifier = Modifier.size(64.dp).clip(CircleShape)
-                            .background(if (myStory != null) TiwiBlue else Color(0xFFF0F2F5))
-                            .padding(if (myStory != null) 3.dp else 0.dp)
-                            .clip(CircleShape).background(Color.White)
+                        modifier = Modifier.size(68.dp)
+                            .border(if (myStory != null) 3.dp else 1.dp, if (myStory != null) TiwiBlue else Color(0xFFD0D5DD), CircleShape)
+                            .padding(2.dp)
                             .clickable(enabled = !storyUploading) {
                                 if (myStory != null) selectedStory = myStory
                                 else storyPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo))
                             },
                         contentAlignment = Alignment.Center
                     ) {
-                        TiwiAvatar(currentUser?.avatar, R.drawable.img_tiwi_avatar_1, Modifier.fillMaxSize().clip(CircleShape))
+                        DecoratedAvatar(currentUser?.avatar, R.drawable.img_tiwi_avatar_1, repository.profile.value?.avatarDecoration, Modifier.fillMaxSize())
                         Surface(Modifier.align(Alignment.BottomEnd).size(22.dp), shape = CircleShape, color = TiwiBlue, border = BorderStroke(2.dp, Color.White)) {
                             Box(contentAlignment = Alignment.Center) {
                                 if (storyUploading) CircularProgressIndicator(Modifier.size(13.dp), color = Color.White, strokeWidth = 2.dp)
@@ -4093,12 +4405,11 @@ fun MessagesScreen(repository: SocialRepository, onBack: () -> Unit, onChatClick
             }
             items(storyCards, key = { "story-${it.authorId}" }) { story ->
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    TiwiAvatar(
+                    DecoratedAvatar(
                         story.author.avatar,
                         R.drawable.img_tiwi_avatar_1,
-                        Modifier.size(64.dp).clip(CircleShape).background(TiwiBlue, CircleShape).padding(3.dp)
-                            .clip(CircleShape).background(Color.White).padding(2.dp).clip(CircleShape)
-                            .clickable { selectedStory = story }
+                        story.authorProfile?.avatarDecoration,
+                        Modifier.size(68.dp).border(3.dp, TiwiBlue, CircleShape).padding(2.dp).clickable { selectedStory = story }
                     )
                     Text(story.author.name.substringBefore(' ').take(11), style = MaterialTheme.typography.labelSmall, maxLines = 1)
                 }
@@ -4135,7 +4446,7 @@ fun MessagesScreen(repository: SocialRepository, onBack: () -> Unit, onChatClick
                 val lastMsg = messagePreview(chat.lastMessage, currentUserId)
                 ListItem(
                     modifier = Modifier.clickable(enabled = chat.requestStatus == "accepted" || chat.requestedById == currentUserId) { onChatClick(chat) },
-                    leadingContent = { TiwiAvatar(contact?.user?.avatar ?: chat.avatarUrl, R.drawable.img_tiwi_avatar_1, Modifier.size(56.dp).clip(CircleShape)) },
+                    leadingContent = { DecoratedAvatar(contact?.user?.avatar ?: chat.avatarUrl, R.drawable.img_tiwi_avatar_1, contact?.profile?.avatarDecoration, Modifier.size(62.dp)) },
                     headlineContent = { Text(name, fontWeight = FontWeight.Bold) },
                     supportingContent = { Text(lastMsg, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                     trailingContent = {
@@ -4186,7 +4497,7 @@ private fun MessengerStoryViewer(story: SocialPost, repository: SocialRepository
             trackColor = Color.White.copy(alpha = .35f)
         )
         Row(Modifier.fillMaxWidth().align(Alignment.TopStart).padding(top = 14.dp, start = 12.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            TiwiAvatar(story.author.avatar, R.drawable.img_tiwi_avatar_1, Modifier.size(38.dp).clip(CircleShape))
+            DecoratedAvatar(story.author.avatar, R.drawable.img_tiwi_avatar_1, story.authorProfile?.avatarDecoration, Modifier.size(42.dp))
             Column(Modifier.weight(1f).padding(start = 9.dp)) {
                 Text(story.author.name, color = Color.White, fontWeight = FontWeight.Bold)
                 Text(relativePostTime(story.publishedAt), color = Color.White.copy(alpha = .78f), fontSize = 11.sp)
@@ -4229,7 +4540,7 @@ private fun NewMessageDialog(repository: SocialRepository, onDismiss: () -> Unit
                                         .onFailure { Toast.makeText(context, it.message ?: "Chat failed", Toast.LENGTH_SHORT).show() }
                                 }
                             },
-                            leadingContent = { TiwiAvatar(profile.user.avatar, R.drawable.img_tiwi_avatar_1, Modifier.size(42.dp).clip(CircleShape)) },
+                            leadingContent = { DecoratedAvatar(profile.user.avatar, R.drawable.img_tiwi_avatar_1, profile.avatarDecoration, Modifier.size(46.dp)) },
                             headlineContent = { Text(profile.user.name) },
                             supportingContent = { Text("@${profile.username}") },
                             colors = ListItemDefaults.colors(containerColor = Color.Transparent)
@@ -4306,7 +4617,7 @@ fun ChatDetailScreen(
                     }
                 } else {
                     IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "Back") }
-                    TiwiAvatar(contact?.user?.avatar, R.drawable.img_tiwi_avatar_1, Modifier.size(36.dp).clip(CircleShape).clickable { contact?.userId?.let(onProfileClick) })
+                    DecoratedAvatar(contact?.user?.avatar, R.drawable.img_tiwi_avatar_1, contact?.profile?.avatarDecoration, Modifier.size(42.dp).clickable { contact?.userId?.let(onProfileClick) })
                     Spacer(modifier = Modifier.width(7.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(name, fontWeight = FontWeight.Bold)
@@ -4334,7 +4645,7 @@ fun ChatDetailScreen(
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Box(contentAlignment = Alignment.BottomEnd) {
-                            TiwiAvatar(contact?.user?.avatar, R.drawable.img_tiwi_avatar_1, Modifier.size(100.dp).clip(CircleShape).border(3.dp, Color.White, CircleShape))
+                            DecoratedAvatar(contact?.user?.avatar, R.drawable.img_tiwi_avatar_1, contact?.profile?.avatarDecoration, Modifier.size(112.dp))
                             Surface(
                                 modifier = Modifier.size(24.dp).offset(x = 4.dp, y = 4.dp),
                                 shape = CircleShape,
@@ -4829,6 +5140,7 @@ fun RandomConnectScreen(repository: SocialRepository, onBack: () -> Unit, onChat
     var isSearching by remember { mutableStateOf(true) }
     var matchedUser by remember { mutableStateOf<SocialProfile?>(null) }
     val currentUser by repository.currentUser.collectAsState()
+    val currentProfile by repository.profile.collectAsState()
     
     val infiniteTransition = rememberInfiniteTransition()
     
@@ -4940,14 +5252,7 @@ fun RandomConnectScreen(repository: SocialRepository, onBack: () -> Unit, onChat
                     }
 
                     // Central Avatar
-                    Surface(
-                        modifier = Modifier.size(100.dp),
-                        shape = CircleShape,
-                        color = Color.White,
-                        tonalElevation = 4.dp
-                    ) {
-                        TiwiAvatar(currentUser?.avatar, R.drawable.img_tiwi_avatar_1, Modifier.fillMaxSize().padding(4.dp).clip(CircleShape), ContentScale.Crop)
-                    }
+                    DecoratedAvatar(currentUser?.avatar, R.drawable.img_tiwi_avatar_1, currentProfile?.avatarDecoration, Modifier.size(108.dp))
                 }
                 
                 Spacer(modifier = Modifier.height(48.dp))
@@ -4984,15 +5289,7 @@ fun RandomConnectScreen(repository: SocialRepository, onBack: () -> Unit, onChat
                         )
                         
                         // Avatar Frame
-                        Surface(
-                            modifier = Modifier.size(140.dp),
-                            shape = CircleShape,
-                            color = Color.White,
-                            border = BorderStroke(4.dp, Brush.linearGradient(listOf(FriendPurple, FriendOrange))),
-                            shadowElevation = 12.dp
-                        ) {
-                            TiwiAvatar(matchedUser?.user?.avatar, R.drawable.img_tiwi_avatar_1, Modifier.fillMaxSize().padding(4.dp).clip(CircleShape), ContentScale.Crop)
-                        }
+                        DecoratedAvatar(matchedUser?.user?.avatar, R.drawable.img_tiwi_avatar_1, matchedUser?.avatarDecoration, Modifier.size(148.dp))
                         
                         // Verification Badge
                         Surface(
@@ -5226,7 +5523,7 @@ fun OnboardingFollow(repository: SocialRepository, onFinished: () -> Unit) {
         LazyColumn(modifier = Modifier.weight(1f)) {
             items(profiles, key = { it.userId }) { profile ->
                 ListItem(
-                    leadingContent = { TiwiAvatar(profile.user.avatar, R.drawable.img_tiwi_avatar_1, Modifier.size(48.dp).clip(CircleShape)) },
+                    leadingContent = { DecoratedAvatar(profile.user.avatar, R.drawable.img_tiwi_avatar_1, profile.avatarDecoration, Modifier.size(52.dp)) },
                     headlineContent = { Text(profile.user.name, fontWeight = FontWeight.Bold) },
                     supportingContent = { Text("Suggested for you") },
                     trailingContent = {

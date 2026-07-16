@@ -22,8 +22,8 @@ android {
     applicationId = "com.aistudio.tiwi.social.nqpzm"
     minSdk = 24
     targetSdk = 36
-    versionCode = 9
-    versionName = "2.7"
+    versionCode = 10
+    versionName = "2.8"
     buildConfigField("String", "TIWLO_API_BASE_URL", "\"${tiwloApiBaseUrl.trimEnd('/')}/\"")
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -100,6 +100,8 @@ dependencies {
   implementation(libs.androidx.room.ktx)
   implementation(libs.androidx.room.runtime)
   implementation(libs.coil.compose)
+  implementation("androidx.vectordrawable:vectordrawable-animated:1.2.0")
+  implementation("com.github.penfeizhou.android.animation:apng:3.0.5")
   implementation(libs.converter.moshi)
   implementation(libs.firebase.ai)
   // Uncomment to use Firestore:

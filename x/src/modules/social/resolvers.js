@@ -5,11 +5,18 @@ import * as service from './service.js';
 const api = async (promise) => toApi(await promise);
 
 export const socialResolvers = {
+  SocialProfileDecoration: {
+    owned: (parent) => typeof parent.owned === 'boolean' ? parent.owned : Number(parent.priceUsd || 0) <= 0,
+    applied: (parent) => Boolean(parent.applied),
+    ownershipCount: (parent) => Number(parent.ownershipCount ?? parent._count?.ownerships ?? 0),
+    appliedCount: (parent) => parent.appliedCount === undefined ? null : Number(parent.appliedCount)
+  },
   User: {
     socialProfile: (parent, _, ctx) => ctx.prisma.socialProfile.findUnique({ where: { userId: parent.id } })
   },
   SocialProfile: {
     user: (parent, _, ctx) => parent.user || ctx.prisma.user.findUnique({ where: { id: parent.userId } }),
+    avatarDecoration: (parent, _, ctx) => parent.avatarDecoration || (parent.avatarDecorationId ? ctx.prisma.socialProfileDecoration.findUnique({ where: { id: parent.avatarDecorationId } }) : null),
     verified: (parent) => Boolean(parent.verified && (!parent.badgeExpiresAt || new Date(parent.badgeExpiresAt) > new Date())),
     badgeType: (parent) => {
       const active = parent.verified && (!parent.badgeExpiresAt || new Date(parent.badgeExpiresAt) > new Date());
@@ -61,6 +68,7 @@ export const socialResolvers = {
     socialSearch: (_, { query, limit }, ctx) => api(service.searchProfiles(ctx, query, limit)),
     socialFeed: (_, args, ctx) => api(service.listFeed(ctx, args)),
     socialStories: (_, args, ctx) => api(service.listStories(ctx, args)),
+    socialProfileDecorations: (_, __, ctx) => api(service.listProfileDecorations(ctx)),
     socialPost: (_, { id }, ctx) => api(service.getPost(ctx, id)),
     socialComments: (_, args, ctx) => api(service.listComments(ctx, args)),
     socialSavedPosts: (_, { limit }, ctx) => api(service.listSavedPosts(ctx, limit)),
@@ -81,7 +89,8 @@ export const socialResolvers = {
     adminSocialUsers: (_, args, ctx) => api(service.adminUsers(ctx, args)),
     adminSocialPosts: (_, args, ctx) => api(service.adminPosts(ctx, args)),
     adminSocialReports: (_, { status }, ctx) => api(service.adminReports(ctx, status)),
-    adminSocialModerationEvents: (_, args, ctx) => api(service.adminModerationEvents(ctx, args))
+    adminSocialModerationEvents: (_, args, ctx) => api(service.adminModerationEvents(ctx, args)),
+    adminSocialProfileDecorations: (_, __, ctx) => api(service.adminProfileDecorations(ctx))
   },
   Mutation: {
     upsertSocialProfile: (_, { input }, ctx) => api(service.upsertProfile(ctx, input)),
@@ -120,11 +129,15 @@ export const socialResolvers = {
     updateSocialLiveStream: (_, { id, status, viewerCount }, ctx) => api(service.updateLiveStream(ctx, id, status, viewerCount)),
     reportSocialContent: (_, { targetType, targetId, reason, details }, ctx) => api(service.reportContent(ctx, targetType, targetId, reason, details)),
     startSocialVerificationCheckout: (_, { packageId, provider, currency }, ctx) => api(service.startVerificationCheckout(ctx, packageId, provider, currency)),
+    applySocialProfileDecoration: (_, { id }, ctx) => api(service.applyProfileDecoration(ctx, id)),
+    startSocialProfileDecorationCheckout: (_, { id, provider, currency }, ctx) => api(service.startProfileDecorationCheckout(ctx, id, provider, currency)),
     adminVerifySocialProfile: (_, { userId, verified }, ctx) => api(service.adminVerifyProfile(ctx, userId, verified)),
     adminSetSocialBadge: (_, { userId, badgeType, badgePlan }, ctx) => api(service.adminSetSocialBadge(ctx, userId, badgeType, badgePlan)),
     adminUpdateSocialUserStatus: (_, { userId, status, reason }, ctx) => api(service.adminUpdateUserStatus(ctx, userId, status, reason)),
     adminDeleteSocialPost: (_, { id }, ctx) => service.deletePost(ctx, id, true),
     adminResolveSocialReport: (_, { id, status, resolution }, ctx) => api(service.adminResolveReport(ctx, id, status, resolution)),
-    adminUpdateSocialSettings: (_, { input }, ctx) => service.adminUpdateSettings(ctx, input)
+    adminUpdateSocialSettings: (_, { input }, ctx) => service.adminUpdateSettings(ctx, input),
+    adminUpsertSocialProfileDecoration: (_, { input }, ctx) => api(service.adminUpsertProfileDecoration(ctx, input)),
+    adminArchiveSocialProfileDecoration: (_, { id }, ctx) => service.adminArchiveProfileDecoration(ctx, id)
   }
 };

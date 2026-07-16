@@ -2715,6 +2715,28 @@ input AiModelChatInput {
   reset: Boolean
 }
 
+type SocialProfileDecoration {
+  id: ID!
+  slug: String!
+  name: String!
+  assetUrl: String!
+  fileName: String!
+  mimeType: String!
+  animated: Boolean!
+  width: Int!
+  height: Int!
+  priceUsd: Float!
+  status: String!
+  sortOrder: Int!
+  owned: Boolean!
+  applied: Boolean!
+  ownershipSource: String
+  ownershipCount: Int!
+  appliedCount: Int
+  createdAt: String
+  updatedAt: String
+}
+
 type SocialProfile {
   id: ID!
   userId: ID!
@@ -2731,6 +2753,7 @@ type SocialProfile {
   badgeType: String!
   badgePlan: String
   badgeExpiresAt: String
+  avatarDecoration: SocialProfileDecoration
   privacy: JSON!
   preferences: JSON!
   followerCount: Int!
@@ -2974,6 +2997,21 @@ input SocialProfileInput {
   preferences: JSON
 }
 
+input SocialProfileDecorationAdminInput {
+  id: ID
+  slug: String
+  name: String!
+  assetUrl: String!
+  fileName: String
+  mimeType: String
+  animated: Boolean
+  width: Int
+  height: Int
+  priceUsd: Float
+  status: String
+  sortOrder: Int
+}
+
 input SocialPostInput {
   type: String
   body: String
@@ -3163,6 +3201,7 @@ type Query {
   socialSearch(query: String, limit: Int): [SocialProfile!]!
   socialFeed(type: String, authorId: ID, groupId: ID, before: String, limit: Int): [SocialPost!]!
   socialStories(limit: Int): [SocialPost!]!
+  socialProfileDecorations: [SocialProfileDecoration!]!
   socialPost(id: ID!): SocialPost
   socialComments(postId: ID!, before: String, limit: Int): [SocialComment!]!
   socialSavedPosts(limit: Int): [SocialPost!]!
@@ -3181,6 +3220,7 @@ type Query {
   adminSocialPosts(type: String, status: String, search: String, limit: Int): [SocialPost!]!
   adminSocialReports(status: String): [SocialReport!]!
   adminSocialModerationEvents(decision: String, userId: ID, limit: Int): [SocialModerationEvent!]!
+  adminSocialProfileDecorations: [SocialProfileDecoration!]!
 }
 
 type Mutation {
@@ -3399,10 +3439,14 @@ type Mutation {
   updateSocialLiveStream(id: ID!, status: String!, viewerCount: Int): SocialLiveStream!
   reportSocialContent(targetType: String!, targetId: ID!, reason: String!, details: String): SocialReport!
   startSocialVerificationCheckout(packageId: String!, provider: String!, currency: String): CheckoutSession!
+  applySocialProfileDecoration(id: ID): SocialProfile!
+  startSocialProfileDecorationCheckout(id: ID!, provider: String!, currency: String): CheckoutSession!
   adminVerifySocialProfile(userId: ID!, verified: Boolean!): SocialProfile!
   adminSetSocialBadge(userId: ID!, badgeType: String!, badgePlan: String): SocialProfile!
   adminUpdateSocialUserStatus(userId: ID!, status: String!, reason: String): SocialProfile!
   adminDeleteSocialPost(id: ID!): Boolean!
   adminResolveSocialReport(id: ID!, status: String!, resolution: String): SocialReport!
   adminUpdateSocialSettings(input: SocialAdminSettingsInput!): JSON!
+  adminUpsertSocialProfileDecoration(input: SocialProfileDecorationAdminInput!): SocialProfileDecoration!
+  adminArchiveSocialProfileDecoration(id: ID!): Boolean!
 }

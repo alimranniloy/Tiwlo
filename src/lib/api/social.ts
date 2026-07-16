@@ -1,4 +1,9 @@
-import { graphQL, userFields } from './client';
+import { GRAPHQL_URL, getAuthToken, graphQL, userFields } from './client';
+
+const socialDecorationFields = `
+  id slug name assetUrl fileName mimeType animated width height priceUsd status sortOrder
+  owned applied ownershipSource ownershipCount appliedCount createdAt updatedAt
+`;
 
 const socialProfileFields = `
   id userId username bio about category website location coverUrl verified badgeType badgePlan badgeExpiresAt
@@ -120,4 +125,43 @@ export async function adminUpdateSocialSettingsWithApi(input: Record<string, unk
     }
   `, { input });
   return data.adminUpdateSocialSettings;
+}
+
+export async function fetchAdminSocialProfileDecorationsWithApi() {
+  const data = await graphQL<{ adminSocialProfileDecorations: any[] }>(`
+    query AdminSocialProfileDecorations { adminSocialProfileDecorations { ${socialDecorationFields} } }
+  `);
+  return data.adminSocialProfileDecorations;
+}
+
+export async function adminUpsertSocialProfileDecorationWithApi(input: Record<string, unknown>) {
+  const data = await graphQL<{ adminUpsertSocialProfileDecoration: any }>(`
+    mutation AdminUpsertSocialProfileDecoration($input: SocialProfileDecorationAdminInput!) {
+      adminUpsertSocialProfileDecoration(input: $input) { ${socialDecorationFields} }
+    }
+  `, { input });
+  return data.adminUpsertSocialProfileDecoration;
+}
+
+export async function adminArchiveSocialProfileDecorationWithApi(id: string) {
+  const data = await graphQL<{ adminArchiveSocialProfileDecoration: boolean }>(`
+    mutation AdminArchiveSocialProfileDecoration($id: ID!) { adminArchiveSocialProfileDecoration(id: $id) }
+  `, { id });
+  return data.adminArchiveSocialProfileDecoration;
+}
+
+export async function uploadSocialProfileDecorationWithApi(file: File) {
+  const body = new FormData();
+  body.append('file', file);
+  body.append('kind', 'profile-decoration');
+  const endpoint = GRAPHQL_URL.startsWith('http') ? new URL('/api/social/media', GRAPHQL_URL).toString() : '/api/social/media';
+  const token = getAuthToken();
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || `Decoration upload failed: ${response.status}`);
+  return payload as { sourceUrl: string; mimeType: string; size: number };
 }

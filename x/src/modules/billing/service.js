@@ -505,6 +505,21 @@ const fulfillPaidInvoice = async (tx, invoice, paidAt = new Date()) => {
     }
   }
 
+  if (invoice.scope === 'social_profile_decoration') {
+    const decorationId = items?.profileDecoration?.decorationId || invoice.scopeId;
+    if (decorationId) {
+      const decoration = await tx.socialProfileDecoration.findUnique({ where: { id: decorationId } });
+      if (decoration) {
+        await tx.socialProfileDecorationOwnership.upsert({
+          where: { userId_decorationId: { userId: invoice.ownerId, decorationId } },
+          create: { userId: invoice.ownerId, decorationId, source: 'purchase', invoiceId: invoice.id, acquiredAt: paidAt },
+          update: { source: 'purchase', invoiceId: invoice.id, acquiredAt: paidAt }
+        });
+        items = { ...items, decorationOwnedAt: paidAt.toISOString(), decorationId };
+      }
+    }
+  }
+
   if (invoice.scope === 'cloud_order' && items.pendingResource && !items.fulfilledResourceId) {
     resource = await createBillingResource(tx, invoice.ownerId, items.pendingResource, invoice, paidAt);
     items = {

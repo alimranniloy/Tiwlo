@@ -33,6 +33,16 @@ const SOCIAL_DEFAULTS = Object.freeze({
   stunServers: [{ urls: 'stun:stun.l.google.com:19302' }]
 });
 
+const DEFAULT_PROFILE_DECORATIONS = Object.freeze([
+  { slug: 'angry', name: 'Angry Energy', assetUrl: '/brand/decorations/angry.png', fileName: 'angry.png', animated: true, sortOrder: 10 },
+  { slug: 'spirit-embers', name: 'Spirit Embers', assetUrl: '/brand/decorations/spirit_embers.png', fileName: 'spirit_embers.png', animated: true, sortOrder: 20 },
+  { slug: 'strawberry-vine', name: 'Strawberry Vine', assetUrl: '/brand/decorations/strawberry_vine.png', fileName: 'strawberry_vine.png', animated: true, sortOrder: 30 },
+  { slug: 'wizards-staff', name: "Wizard's Staff", assetUrl: '/brand/decorations/wizards_staff.png', fileName: 'wizards_staff.png', animated: true, sortOrder: 40 },
+  { slug: 'pumpkin-spice', name: 'Pumpkin Spice', assetUrl: '/brand/decorations/pumpkin_spice.png', fileName: 'pumpkin_spice.png', animated: true, sortOrder: 50 },
+  { slug: 'soul-leaving-body', name: 'Soul Leaving Body', assetUrl: '/brand/decorations/soul_leaving_body.png', fileName: 'soul_leaving_body.png', animated: true, sortOrder: 60 },
+  { slug: 'treasure-and-key', name: 'Treasure and Key', assetUrl: '/brand/decorations/treasure_and_key.png', fileName: 'treasure_and_key.png', animated: true, sortOrder: 70 }
+]);
+
 const POST_TYPES = new Set(['post', 'news', 'reel', 'video', 'live', 'story']);
 const VISIBILITIES = new Set(['public', 'followers', 'private']);
 const COMMENT_PERMISSIONS = new Set(['everyone', 'followers', 'none']);
@@ -112,11 +122,46 @@ const requireSocialFeature = async (ctx, key) => {
 };
 
 const profileInclude = {
+  avatarDecoration: true,
   user: {
     include: {
       _count: { select: { socialFollowers: true, socialFollowing: true, socialPosts: true } }
     }
   }
+};
+
+const decorationSlug = (value) => String(value || '')
+  .trim()
+  .toLowerCase()
+  .replace(/[^a-z0-9]+/g, '-')
+  .replace(/^-+|-+$/g, '')
+  .slice(0, 80);
+
+const ensureDefaultProfileDecorations = async (ctx) => {
+  const count = await ctx.prisma.socialProfileDecoration.count();
+  if (count > 0) return;
+  await ctx.prisma.socialProfileDecoration.createMany({
+    data: DEFAULT_PROFILE_DECORATIONS.map((item) => ({
+      ...item,
+      mimeType: 'image/png',
+      width: 288,
+      height: 288,
+      priceUsd: 0,
+      status: 'active'
+    })),
+    skipDuplicates: true
+  });
+};
+
+const mapDecoration = (decoration, actorId, appliedId) => {
+  const ownership = decoration.ownerships?.find((row) => row.userId === actorId);
+  return {
+    ...decoration,
+    owned: Number(decoration.priceUsd || 0) <= 0 || Boolean(ownership),
+    applied: decoration.id === appliedId,
+    ownershipSource: Number(decoration.priceUsd || 0) <= 0 ? 'free' : ownership?.source || null,
+    ownershipCount: decoration._count?.ownerships || 0
+  };
 };
 
 const mapProfile = async (ctx, profile, viewerId) => {
@@ -1435,6 +1480,166 @@ export const startVerificationCheckout = async (ctx, packageId, provider, curren
   }
   await writeAudit(ctx, 'start_social_verification_checkout', 'invoice', invoice.id, { packageId: plan.id, provider, currency: requestedCurrency });
   return startInvoicePayment(ctx, { invoiceId: invoice.id, provider });
+};
+
+export const listProfileDecorations = async (ctx) => {
+  const actor = await requireAuth(ctx);
+  await requireSocialFeature(ctx);
+  await ensureDefaultProfileDecorations(ctx);
+  const [profile, decorations] = await Promise.all([
+    ctx.prisma.socialProfile.findUnique({ where: { userId: actor.id }, select: { avatarDecorationId: true } }),
+    ctx.prisma.socialProfileDecoration.findMany({
+      where: { status: 'active' },
+      include: {
+        ownerships: { where: { userId: actor.id }, take: 1 },
+        _count: { select: { ownerships: true } }
+      },
+      orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }]
+    })
+  ]);
+  return decorations.map((item) => mapDecoration(item, actor.id, profile?.avatarDecorationId));
+};
+
+export const applyProfileDecoration = async (ctx, id) => {
+  const actor = await requireAuth(ctx);
+  await requireSocialFeature(ctx);
+  await ensureProfile(ctx, actor);
+  if (!id) {
+    const profile = await ctx.prisma.socialProfile.update({
+      where: { userId: actor.id },
+      data: { avatarDecorationId: null },
+      include: profileInclude
+    });
+    await writeAudit(ctx, 'remove_social_profile_decoration', 'socialProfile', profile.id, {});
+    return mapProfile(ctx, profile, actor.id);
+  }
+  const decoration = await ctx.prisma.socialProfileDecoration.findUnique({ where: { id } });
+  if (!decoration || decoration.status !== 'active') notFound('Profile decoration');
+  const free = Number(decoration.priceUsd || 0) <= 0;
+  const ownership = free ? null : await ctx.prisma.socialProfileDecorationOwnership.findUnique({
+    where: { userId_decorationId: { userId: actor.id, decorationId: decoration.id } }
+  });
+  if (!free && !ownership) throw new AppError('Purchase this decoration before applying it', 'PAYMENT_REQUIRED');
+  if (free) await ctx.prisma.socialProfileDecorationOwnership.upsert({
+    where: { userId_decorationId: { userId: actor.id, decorationId: decoration.id } },
+    create: { userId: actor.id, decorationId: decoration.id, source: 'free' },
+    update: { source: 'free', acquiredAt: new Date() }
+  });
+  const profile = await ctx.prisma.socialProfile.update({
+    where: { userId: actor.id },
+    data: { avatarDecorationId: decoration.id },
+    include: profileInclude
+  });
+  await writeAudit(ctx, 'apply_social_profile_decoration', 'socialProfile', profile.id, { decorationId: decoration.id, decorationName: decoration.name });
+  return mapProfile(ctx, profile, actor.id);
+};
+
+export const startProfileDecorationCheckout = async (ctx, id, provider, currency = 'USD') => {
+  const actor = await requireAuth(ctx);
+  await requireSocialFeature(ctx);
+  await ensureDefaultProfileDecorations(ctx);
+  await ensureProfile(ctx, actor);
+  const decoration = await ctx.prisma.socialProfileDecoration.findUnique({ where: { id } });
+  if (!decoration || decoration.status !== 'active') notFound('Profile decoration');
+  const existingOwnership = await ctx.prisma.socialProfileDecorationOwnership.findUnique({
+    where: { userId_decorationId: { userId: actor.id, decorationId: decoration.id } }
+  });
+  if (existingOwnership) return { status: 'owned', provider: 'existing', message: 'This decoration is already in Your decorations.' };
+  if (Number(decoration.priceUsd || 0) <= 0) {
+    await ctx.prisma.socialProfileDecorationOwnership.create({
+      data: { userId: actor.id, decorationId: decoration.id, source: 'free' }
+    });
+    return { status: 'owned', provider: 'free', message: 'Free decoration added to Your decorations.' };
+  }
+  const requestedCurrency = bounded(currency || 'USD', 3).toUpperCase();
+  const amount = Math.round((await convertMoneyForCtx(ctx, Number(decoration.priceUsd), 'USD', requestedCurrency)) * 100) / 100;
+  let invoice = await ctx.prisma.invoice.findFirst({
+    where: { ownerId: actor.id, scope: 'social_profile_decoration', scopeId: decoration.id, status: { in: ['open', 'payment_failed'] } },
+    orderBy: { createdAt: 'desc' }
+  });
+  const items = {
+    profileDecoration: { decorationId: decoration.id, name: decoration.name, assetUrl: decoration.assetUrl, priceUsd: Number(decoration.priceUsd) },
+    lineItems: [{ label: `${decoration.name} profile decoration`, amount, currency: requestedCurrency }]
+  };
+  if (invoice) invoice = await ctx.prisma.invoice.update({
+    where: { id: invoice.id },
+    data: { amount, currency: requestedCurrency, status: 'open', dueDate: new Date(), items }
+  });
+  else invoice = await ctx.prisma.invoice.create({
+    data: {
+      ownerId: actor.id,
+      number: `DEC-${Date.now()}-${randomBytes(3).toString('hex').toUpperCase()}`,
+      amount,
+      currency: requestedCurrency,
+      scope: 'social_profile_decoration',
+      scopeId: decoration.id,
+      dueDate: new Date(),
+      items
+    }
+  });
+  await writeAudit(ctx, 'start_social_profile_decoration_checkout', 'invoice', invoice.id, { decorationId: decoration.id, provider, currency: requestedCurrency });
+  return startInvoicePayment(ctx, { invoiceId: invoice.id, provider });
+};
+
+export const adminProfileDecorations = async (ctx) => {
+  await requireAdmin(ctx);
+  await ensureDefaultProfileDecorations(ctx);
+  const rows = await ctx.prisma.socialProfileDecoration.findMany({
+    include: { _count: { select: { ownerships: true, appliedProfiles: true } } },
+    orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }]
+  });
+  return rows.map((item) => ({ ...item, owned: false, applied: false, ownershipCount: item._count.ownerships, appliedCount: item._count.appliedProfiles }));
+};
+
+export const adminUpsertProfileDecoration = async (ctx, input) => {
+  const actor = await requireAdmin(ctx);
+  const name = bounded(input.name, 120);
+  if (!name) throw new AppError('Decoration name is required', 'BAD_USER_INPUT');
+  const assetUrl = bounded(input.assetUrl, 2000);
+  if (!assetUrl || (!assetUrl.startsWith(`/api/social/media/files/${actor.id}/`) && !assetUrl.startsWith('/brand/decorations/'))) {
+    throw new AppError('Upload the PNG/APNG file from this administrator account first', 'BAD_USER_INPUT');
+  }
+  const mimeType = bounded(input.mimeType || 'image/png', 100).toLowerCase();
+  if (mimeType !== 'image/png' || !assetUrl.toLowerCase().endsWith('.png')) throw new AppError('Profile decorations must be PNG or animated PNG files', 'BAD_USER_INPUT');
+  const priceUsd = Math.max(0, Math.min(Number(input.priceUsd || 0), 10000));
+  const status = ['active', 'inactive'].includes(String(input.status || '').toLowerCase()) ? String(input.status).toLowerCase() : 'active';
+  const data = {
+    name,
+    assetUrl,
+    fileName: bounded(input.fileName || assetUrl.split('/').pop() || 'decoration.png', 255),
+    mimeType,
+    animated: Boolean(input.animated),
+    width: Math.max(64, Math.min(Number(input.width || 288), 2048)),
+    height: Math.max(64, Math.min(Number(input.height || 288), 2048)),
+    priceUsd,
+    status,
+    sortOrder: Math.max(0, Math.min(Number(input.sortOrder || 0), 100000))
+  };
+  let decoration;
+  if (input.id) {
+    const current = await ctx.prisma.socialProfileDecoration.findUnique({ where: { id: input.id } });
+    if (!current) notFound('Profile decoration');
+    decoration = await ctx.prisma.socialProfileDecoration.update({ where: { id: input.id }, data });
+  } else {
+    const base = decorationSlug(input.slug || name) || `decoration-${Date.now()}`;
+    let slug = base;
+    for (let attempt = 1; await ctx.prisma.socialProfileDecoration.findUnique({ where: { slug } }); attempt += 1) slug = `${base.slice(0, 72)}-${attempt}`;
+    decoration = await ctx.prisma.socialProfileDecoration.create({ data: { ...data, slug } });
+  }
+  await writeAudit(ctx, input.id ? 'admin_update_social_profile_decoration' : 'admin_create_social_profile_decoration', 'socialProfileDecoration', decoration.id, { name, priceUsd, animated: data.animated });
+  return { ...decoration, owned: false, applied: false, ownershipCount: 0, appliedCount: 0 };
+};
+
+export const adminArchiveProfileDecoration = async (ctx, id) => {
+  await requireAdmin(ctx);
+  const decoration = await ctx.prisma.socialProfileDecoration.findUnique({ where: { id } });
+  if (!decoration) notFound('Profile decoration');
+  await ctx.prisma.$transaction([
+    ctx.prisma.socialProfile.updateMany({ where: { avatarDecorationId: id }, data: { avatarDecorationId: null } }),
+    ctx.prisma.socialProfileDecoration.update({ where: { id }, data: { status: 'archived' } })
+  ]);
+  await writeAudit(ctx, 'admin_archive_social_profile_decoration', 'socialProfileDecoration', id, { name: decoration.name });
+  return true;
 };
 
 export const adminUpdateUserStatus = async (ctx, userId, status, reason) => {

@@ -35,6 +35,25 @@ data class SocialSignupResult(
 )
 
 @JsonClass(generateAdapter = true)
+data class SocialProfileDecoration(
+    val id: String = "",
+    val slug: String = "",
+    val name: String = "",
+    val assetUrl: String = "",
+    val fileName: String = "",
+    val mimeType: String = "image/png",
+    val animated: Boolean = false,
+    val width: Int = 288,
+    val height: Int = 288,
+    val priceUsd: Double = 0.0,
+    val status: String = "active",
+    val sortOrder: Int = 0,
+    val owned: Boolean = false,
+    val applied: Boolean = false,
+    val ownershipSource: String? = null
+)
+
+@JsonClass(generateAdapter = true)
 data class SocialProfile(
     val id: String = "",
     val userId: String = "",
@@ -50,6 +69,7 @@ data class SocialProfile(
     val badgeType: String = "none",
     val badgePlan: String? = null,
     val badgeExpiresAt: String? = null,
+    val avatarDecoration: SocialProfileDecoration? = null,
     val privacy: Map<String, Any?> = emptyMap(),
     val preferences: Map<String, Any?> = emptyMap(),
     val followerCount: Int = 0,
@@ -128,6 +148,7 @@ data class SocialMessage(
     val conversationId: String = "",
     val senderId: String = "",
     val sender: SocialUser = SocialUser(),
+    val senderProfile: SocialProfile? = null,
     val type: String = "text",
     val body: String = "",
     val media: List<SocialMedia> = emptyList(),

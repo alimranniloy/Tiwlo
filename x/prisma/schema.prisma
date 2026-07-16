@@ -52,10 +52,10 @@ model User {
   domains                    Domain[]
   invoices                   Invoice[]
   supportTickets             SupportTicket[]
-  assignedSupportTickets     SupportTicket[]             @relation("SupportTicketAssignee")
+  assignedSupportTickets     SupportTicket[]                    @relation("SupportTicketAssignee")
   supportTicketMessages      SupportTicketMessage[]
   liveChatSessions           LiveChatSession[]
-  assignedLiveChatSessions   LiveChatSession[]           @relation("LiveChatAssignee")
+  assignedLiveChatSessions   LiveChatSession[]                  @relation("LiveChatAssignee")
   liveChatMessages           LiveChatMessage[]
   stores                     Store[]
   ispSites                   IspSite[]
@@ -72,30 +72,31 @@ model User {
   whatsAppOtps               WhatsAppOtpChallenge[]
   passwordResetOtps          PasswordResetOtpChallenge[]
   socialProfile              SocialProfile?
-  socialPosts                SocialPost[]                @relation("SocialPostAuthor")
-  socialComments             SocialComment[]             @relation("SocialCommentAuthor")
+  socialPosts                SocialPost[]                       @relation("SocialPostAuthor")
+  socialComments             SocialComment[]                    @relation("SocialCommentAuthor")
   socialPostReactions        SocialPostReaction[]
   socialCommentReactions     SocialCommentReaction[]
-  socialFollowers            SocialFollow[]              @relation("SocialFollowTarget")
-  socialFollowing            SocialFollow[]              @relation("SocialFollowFollower")
+  socialFollowers            SocialFollow[]                     @relation("SocialFollowTarget")
+  socialFollowing            SocialFollow[]                     @relation("SocialFollowFollower")
   socialConversationLinks    SocialConversationMember[]
-  socialConversationRequests SocialConversation[]        @relation("SocialConversationRequester")
-  socialMessages             SocialMessage[]             @relation("SocialMessageSender")
+  socialConversationRequests SocialConversation[]               @relation("SocialConversationRequester")
+  socialMessages             SocialMessage[]                    @relation("SocialMessageSender")
   socialMessageReactions     SocialMessageReaction[]
   socialMessageDeletions     SocialMessageDeletion[]
-  socialCallsPlaced          SocialCallSession[]         @relation("SocialCallCaller")
-  socialCallsReceived        SocialCallSession[]         @relation("SocialCallCallee")
-  socialLiveStreams          SocialLiveStream[]          @relation("SocialLiveHost")
+  socialCallsPlaced          SocialCallSession[]                @relation("SocialCallCaller")
+  socialCallsReceived        SocialCallSession[]                @relation("SocialCallCallee")
+  socialLiveStreams          SocialLiveStream[]                 @relation("SocialLiveHost")
   socialSavedPosts           SocialSavedPost[]
-  socialFavoritesGiven       SocialFavorite[]            @relation("SocialFavoriteOwner")
-  socialFavoritesReceived    SocialFavorite[]            @relation("SocialFavoriteTarget")
-  socialSnoozesGiven         SocialSnooze[]              @relation("SocialSnoozeOwner")
-  socialSnoozesReceived      SocialSnooze[]              @relation("SocialSnoozeTarget")
-  socialGroupsOwned          SocialGroup[]               @relation("SocialGroupOwner")
+  socialFavoritesGiven       SocialFavorite[]                   @relation("SocialFavoriteOwner")
+  socialFavoritesReceived    SocialFavorite[]                   @relation("SocialFavoriteTarget")
+  socialSnoozesGiven         SocialSnooze[]                     @relation("SocialSnoozeOwner")
+  socialSnoozesReceived      SocialSnooze[]                     @relation("SocialSnoozeTarget")
+  socialGroupsOwned          SocialGroup[]                      @relation("SocialGroupOwner")
   socialGroupMemberships     SocialGroupMember[]
-  socialBlocksGiven          SocialBlock[]               @relation("SocialBlockOwner")
-  socialBlocksReceived       SocialBlock[]               @relation("SocialBlockTarget")
+  socialBlocksGiven          SocialBlock[]                      @relation("SocialBlockOwner")
+  socialBlocksReceived       SocialBlock[]                      @relation("SocialBlockTarget")
   socialModerationEvents     SocialModerationEvent[]
+  socialDecorationOwnerships SocialProfileDecorationOwnership[]
 }
 
 model WhatsAppOtpChallenge {
@@ -1410,24 +1411,66 @@ model DdosBlockRule {
 // Tiwlo Social reuses the platform User identity and authentication tables.
 // User-owned media files are stored under public/uploads/social/<userId>/.
 model SocialProfile {
-  id             String    @id @default(cuid())
-  userId         String    @unique
-  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  username       String    @unique
-  bio            String?
-  about          String?
-  category       String?
-  website        String?
-  location       String?
-  coverUrl       String?
-  verified       Boolean   @default(false)
-  badgeType      String    @default("none")
-  badgePlan      String?
-  badgeExpiresAt DateTime?
-  privacy        Json      @default("{\"profileVisibility\":\"public\",\"messagePermission\":\"everyone\",\"showActivityStatus\":true,\"allowCalls\":true}")
-  preferences    Json      @default("{\"autoplay\":true,\"dataSaver\":false,\"videoQuality\":\"auto\",\"notifications\":true}")
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  id                 String                   @id @default(cuid())
+  userId             String                   @unique
+  user               User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  username           String                   @unique
+  bio                String?
+  about              String?
+  category           String?
+  website            String?
+  location           String?
+  coverUrl           String?
+  verified           Boolean                  @default(false)
+  badgeType          String                   @default("none")
+  badgePlan          String?
+  badgeExpiresAt     DateTime?
+  avatarDecorationId String?
+  avatarDecoration   SocialProfileDecoration? @relation("AppliedProfileDecoration", fields: [avatarDecorationId], references: [id], onDelete: SetNull)
+  privacy            Json                     @default("{\"profileVisibility\":\"public\",\"messagePermission\":\"everyone\",\"showActivityStatus\":true,\"allowCalls\":true}")
+  preferences        Json                     @default("{\"autoplay\":true,\"dataSaver\":false,\"videoQuality\":\"auto\",\"notifications\":true}")
+  createdAt          DateTime                 @default(now())
+  updatedAt          DateTime                 @updatedAt
+
+  @@index([avatarDecorationId])
+}
+
+model SocialProfileDecoration {
+  id              String                             @id @default(cuid())
+  slug            String                             @unique
+  name            String
+  assetUrl        String
+  fileName        String
+  mimeType        String                             @default("image/png")
+  animated        Boolean                            @default(false)
+  width           Int                                @default(288)
+  height          Int                                @default(288)
+  priceUsd        Float                              @default(0)
+  status          String                             @default("active")
+  sortOrder       Int                                @default(0)
+  createdAt       DateTime                           @default(now())
+  updatedAt       DateTime                           @updatedAt
+  ownerships      SocialProfileDecorationOwnership[]
+  appliedProfiles SocialProfile[]                    @relation("AppliedProfileDecoration")
+
+  @@index([status, sortOrder])
+}
+
+model SocialProfileDecorationOwnership {
+  id           String                  @id @default(cuid())
+  userId       String
+  user         User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  decorationId String
+  decoration   SocialProfileDecoration @relation(fields: [decorationId], references: [id], onDelete: Cascade)
+  source       String                  @default("purchase")
+  invoiceId    String?
+  acquiredAt   DateTime                @default(now())
+  createdAt    DateTime                @default(now())
+  updatedAt    DateTime                @updatedAt
+
+  @@unique([userId, decorationId])
+  @@index([userId, acquiredAt])
+  @@index([decorationId, acquiredAt])
 }
 
 model SocialFollow {

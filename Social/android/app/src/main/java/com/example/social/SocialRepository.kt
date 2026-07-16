@@ -587,6 +587,33 @@ class SocialRepository(context: Context) {
         return SocialCheckout(checkout.string("status") ?: "pending", checkout.string("provider") ?: provider, checkout.string("paymentUrl"), checkout.string("message"))
     }
 
+    suspend fun profileDecorations(): List<SocialProfileDecoration> {
+        val data = client.execute("query TiwiProfileDecorations { socialProfileDecorations { $DECORATION_FIELDS } }")
+        return data.list("socialProfileDecorations").mapNotNull { it.objectMap()?.let(::mapDecoration) }
+    }
+
+    suspend fun applyProfileDecoration(id: String?): SocialProfile {
+        val data = client.execute(
+            """mutation ApplyTiwiProfileDecoration(${D}id: ID) { applySocialProfileDecoration(id: ${D}id) { $PROFILE_FIELDS } }""",
+            mapOf("id" to id)
+        )
+        return mapProfile(data.objectValue("applySocialProfileDecoration") ?: throw SocialApiException("Decoration was not applied")).also {
+            _profile.value = it
+            cache.saveProfile(it)
+        }
+    }
+
+    suspend fun startProfileDecorationCheckout(id: String, provider: String, currency: String): SocialCheckout {
+        val data = client.execute(
+            """mutation TiwiProfileDecorationCheckout(${D}id: ID!, ${D}provider: String!, ${D}currency: String) {
+                startSocialProfileDecorationCheckout(id: ${D}id, provider: ${D}provider, currency: ${D}currency) { status provider paymentUrl message }
+            }""",
+            mapOf("id" to id, "provider" to provider, "currency" to currency)
+        )
+        val checkout = data.objectValue("startSocialProfileDecorationCheckout") ?: throw SocialApiException("Decoration checkout did not start")
+        return SocialCheckout(checkout.string("status") ?: "pending", checkout.string("provider") ?: provider, checkout.string("paymentUrl"), checkout.string("message"))
+    }
+
     suspend fun signalCall(id: String, status: String? = null, offer: Map<String, Any?>? = null, answer: Map<String, Any?>? = null, candidate: Map<String, Any?>? = null): SocialCallSession {
         val data = client.execute(
             """mutation SignalTiwiCall(${D}input: SocialCallSignalInput!) { signalSocialCall(input: ${D}input) { $CALL_FIELDS } }""",
@@ -680,6 +707,16 @@ class SocialRepository(context: Context) {
         postalCode = value.string("postalCode"), billingName = value.string("billingName")
     )
 
+    private fun mapDecoration(value: Map<String, Any?>) = SocialProfileDecoration(
+        id = value.string("id").orEmpty(), slug = value.string("slug").orEmpty(), name = value.string("name").orEmpty(),
+        assetUrl = absoluteUrl(value.string("assetUrl")).orEmpty(), fileName = value.string("fileName").orEmpty(),
+        mimeType = value.string("mimeType") ?: "image/png", animated = value.boolean("animated"),
+        width = value.number("width")?.toInt() ?: 288, height = value.number("height")?.toInt() ?: 288,
+        priceUsd = value.number("priceUsd")?.toDouble() ?: 0.0, status = value.string("status") ?: "active",
+        sortOrder = value.number("sortOrder")?.toInt() ?: 0, owned = value.boolean("owned"), applied = value.boolean("applied"),
+        ownershipSource = value.string("ownershipSource")
+    )
+
     private fun mapProfile(value: Map<String, Any?>, fallback: SocialUser? = null): SocialProfile {
         val publicUser = value.objectValue("user")?.let(::mapUser) ?: fallback ?: SocialUser(id = value.string("userId").orEmpty(), name = value.string("username").orEmpty())
         val user = if (publicUser.id == currentUserId()) {
@@ -693,6 +730,7 @@ class SocialRepository(context: Context) {
             coverUrl = absoluteUrl(value.string("coverUrl")), verified = value.boolean("verified"),
             badgeType = value.string("badgeType") ?: if (value.boolean("verified")) "blue" else "none",
             badgePlan = value.string("badgePlan"), badgeExpiresAt = value.string("badgeExpiresAt"),
+            avatarDecoration = value.objectValue("avatarDecoration")?.let(::mapDecoration),
             privacy = value.objectValue("privacy") ?: emptyMap(), preferences = value.objectValue("preferences") ?: emptyMap(),
             followerCount = value.number("followerCount")?.toInt() ?: 0, followingCount = value.number("followingCount")?.toInt() ?: 0,
             postCount = value.number("postCount")?.toInt() ?: 0, isFollowing = value.boolean("isFollowing")
@@ -731,7 +769,7 @@ class SocialRepository(context: Context) {
 
     private fun mapMessage(value: Map<String, Any?>) = SocialMessage(
         id = value.string("id").orEmpty(), conversationId = value.string("conversationId").orEmpty(), senderId = value.string("senderId").orEmpty(),
-        sender = mapUser(value.objectValue("sender") ?: emptyMap()), type = value.string("type") ?: "text", body = value.string("body").orEmpty(),
+        sender = mapUser(value.objectValue("sender") ?: emptyMap()), senderProfile = value.objectValue("senderProfile")?.let { mapProfile(it) }, type = value.string("type") ?: "text", body = value.string("body").orEmpty(),
         media = value.list("media").mapNotNull { it.objectMap()?.let(::mapMedia) }, replyToId = value.string("replyToId"),
         deliveryStatus = value.string("deliveryStatus") ?: "sent", sentAt = value.string("sentAt"), deliveredAt = value.string("deliveredAt"),
         readAt = value.string("readAt"), editedAt = value.string("editedAt"), unsentAt = value.string("unsentAt"),
@@ -799,13 +837,14 @@ class SocialRepository(context: Context) {
         const val CHAT_TTL = 20_000L
         const val USER_FIELDS = "id email name avatar role status socialRestrictionCode socialRestrictionReason socialRestrictedAt socialModerationScore signupSource emailVerifiedAt phone mobileCountryCode primaryRegion country addressLine1 city state postalCode billingName"
         const val PUBLIC_USER_FIELDS = "id name avatar status"
-        const val PROFILE_FIELDS = "id userId username bio about category website location coverUrl verified badgeType badgePlan badgeExpiresAt privacy preferences followerCount followingCount postCount isFollowing user { $PUBLIC_USER_FIELDS }"
-        const val POST_FIELDS = "id authorId type body media thumbnailUrl hlsUrl processingStatus visibility commentPermission pinned groupId saved status viewCount shareCount reactionCount commentCount viewerReaction publishedAt author { $PUBLIC_USER_FIELDS } authorProfile { id userId username verified badgeType isFollowing }"
-        const val COMMENT_FIELDS = "id postId authorId replyToId body status reactionCount viewerLiked createdAt author { $PUBLIC_USER_FIELDS } authorProfile { id userId username verified badgeType }"
-        const val MESSAGE_FIELDS = "id conversationId senderId type body media replyToId deliveryStatus sentAt deliveredAt readAt editedAt unsentAt reactions { id userId emoji } sender { $PUBLIC_USER_FIELDS }"
-        const val CONVERSATION_FIELDS = "id type title avatarUrl requestStatus requestedById unreadCount updatedAt members { id userId role lastReadAt user { $PUBLIC_USER_FIELDS } profile { id userId username verified badgeType } } lastMessage { $MESSAGE_FIELDS }"
+        const val DECORATION_FIELDS = "id slug name assetUrl fileName mimeType animated width height priceUsd status sortOrder owned applied ownershipSource"
+        const val PROFILE_FIELDS = "id userId username bio about category website location coverUrl verified badgeType badgePlan badgeExpiresAt avatarDecoration { $DECORATION_FIELDS } privacy preferences followerCount followingCount postCount isFollowing user { $PUBLIC_USER_FIELDS }"
+        const val POST_FIELDS = "id authorId type body media thumbnailUrl hlsUrl processingStatus visibility commentPermission pinned groupId saved status viewCount shareCount reactionCount commentCount viewerReaction publishedAt author { $PUBLIC_USER_FIELDS } authorProfile { id userId username verified badgeType isFollowing avatarDecoration { $DECORATION_FIELDS } }"
+        const val COMMENT_FIELDS = "id postId authorId replyToId body status reactionCount viewerLiked createdAt author { $PUBLIC_USER_FIELDS } authorProfile { id userId username verified badgeType avatarDecoration { $DECORATION_FIELDS } }"
+        const val MESSAGE_FIELDS = "id conversationId senderId type body media replyToId deliveryStatus sentAt deliveredAt readAt editedAt unsentAt reactions { id userId emoji } sender { $PUBLIC_USER_FIELDS } senderProfile { id userId username avatarDecoration { $DECORATION_FIELDS } }"
+        const val CONVERSATION_FIELDS = "id type title avatarUrl requestStatus requestedById unreadCount updatedAt members { id userId role lastReadAt user { $PUBLIC_USER_FIELDS } profile { id userId username verified badgeType avatarDecoration { $DECORATION_FIELDS } } } lastMessage { $MESSAGE_FIELDS }"
         const val CALL_FIELDS = "id conversationId callerId calleeId type status offer answer iceCandidates caller { $PUBLIC_USER_FIELDS } callee { $PUBLIC_USER_FIELDS }"
         const val GROUP_FIELDS = "id ownerId name description coverUrl privacy status memberCount viewerRole viewerJoined createdAt owner { $PUBLIC_USER_FIELDS }"
-        const val GROUP_MEMBER_FIELDS = "id groupId userId role status joinedAt user { $PUBLIC_USER_FIELDS } profile { id userId username verified badgeType }"
+        const val GROUP_MEMBER_FIELDS = "id groupId userId role status joinedAt user { $PUBLIC_USER_FIELDS } profile { id userId username verified badgeType avatarDecoration { $DECORATION_FIELDS } }"
     }
 }

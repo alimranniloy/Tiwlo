@@ -12,7 +12,9 @@ import {
   Save,
   Search,
   Settings,
+  Sparkles,
   Trash2,
+  Upload,
   Users
 } from 'lucide-react';
 import {
@@ -21,16 +23,22 @@ import {
   adminUpdateSocialSettingsWithApi,
   adminUpdateSocialUserStatusWithApi,
   adminSetSocialBadgeWithApi,
+  adminArchiveSocialProfileDecorationWithApi,
+  adminUpsertSocialProfileDecorationWithApi,
   deleteUserWithApi,
   fetchAdminSocialOverviewWithApi,
   fetchAdminSocialModerationEventsWithApi,
   fetchAdminSocialPostsWithApi,
   fetchAdminSocialReportsWithApi,
   fetchAdminSocialUsersWithApi,
-  fetchSocialSettingsWithApi
+  fetchAdminSocialProfileDecorationsWithApi,
+  fetchSocialSettingsWithApi,
+  uploadSocialProfileDecorationWithApi
 } from '../../lib/tiwloApi';
 
-type Tab = 'users' | 'posts' | 'reports' | 'automation' | 'settings';
+type Tab = 'users' | 'posts' | 'reports' | 'automation' | 'decorations' | 'settings';
+
+const emptyDecoration = { id: '', name: '', assetUrl: '', fileName: '', mimeType: 'image/png', animated: false, width: 288, height: 288, priceUsd: 0, status: 'active', sortOrder: 0 };
 
 const dateLabel = (value?: string) => {
   const date = value ? new Date(value) : null;
@@ -54,6 +62,10 @@ export default function AdminSocial() {
   const [posts, setPosts] = React.useState<any[]>([]);
   const [reports, setReports] = React.useState<any[]>([]);
   const [moderationEvents, setModerationEvents] = React.useState<any[]>([]);
+  const [decorations, setDecorations] = React.useState<any[]>([]);
+  const [decorationForm, setDecorationForm] = React.useState<any>(emptyDecoration);
+  const [decorationFile, setDecorationFile] = React.useState<File | null>(null);
+  const [decorationPreview, setDecorationPreview] = React.useState('');
   const [settings, setSettings] = React.useState<any>({});
   const [stunJson, setStunJson] = React.useState('[]');
   const [search, setSearch] = React.useState('');
@@ -66,12 +78,13 @@ export default function AdminSocial() {
     setLoading(true);
     setError('');
     try {
-      const [summary, socialUsers, socialPosts, socialReports, automationEvents, socialSettings] = await Promise.all([
+      const [summary, socialUsers, socialPosts, socialReports, automationEvents, socialDecorations, socialSettings] = await Promise.all([
         fetchAdminSocialOverviewWithApi(),
         fetchAdminSocialUsersWithApi(search || undefined),
         fetchAdminSocialPostsWithApi(undefined, undefined, search || undefined),
         fetchAdminSocialReportsWithApi(),
         fetchAdminSocialModerationEventsWithApi(),
+        fetchAdminSocialProfileDecorationsWithApi(),
         fetchSocialSettingsWithApi()
       ]);
       setOverview(summary || {});
@@ -79,6 +92,7 @@ export default function AdminSocial() {
       setPosts(socialPosts || []);
       setReports(socialReports || []);
       setModerationEvents(automationEvents || []);
+      setDecorations(socialDecorations || []);
       setSettings(socialSettings || {});
       setStunJson(JSON.stringify(socialSettings?.stunServers || [], null, 2));
     } catch (err) {
@@ -142,6 +156,54 @@ export default function AdminSocial() {
     }), 'Social settings saved.');
   };
 
+  const chooseDecorationFile = async (file?: File) => {
+    if (!file) return;
+    if (file.type !== 'image/png' && !file.name.toLowerCase().endsWith('.png')) {
+      setError('Choose a PNG or animated PNG (APNG) file.');
+      return;
+    }
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const animated = bytes.some((value, index) => value === 0x61 && bytes[index + 1] === 0x63 && bytes[index + 2] === 0x54 && bytes[index + 3] === 0x4c);
+    let width = 288;
+    let height = 288;
+    try {
+      const bitmap = await createImageBitmap(file);
+      width = bitmap.width;
+      height = bitmap.height;
+      bitmap.close();
+    } catch { /* dimensions stay at the recommended default */ }
+    if (decorationPreview.startsWith('blob:')) URL.revokeObjectURL(decorationPreview);
+    const preview = URL.createObjectURL(file);
+    setDecorationFile(file);
+    setDecorationPreview(preview);
+    setDecorationForm((current: any) => ({ ...current, name: current.name || file.name.replace(/\.png$/i, '').replace(/[_-]+/g, ' '), fileName: file.name, mimeType: 'image/png', animated, width, height }));
+  };
+
+  const resetDecorationForm = () => {
+    if (decorationPreview.startsWith('blob:')) URL.revokeObjectURL(decorationPreview);
+    setDecorationForm(emptyDecoration);
+    setDecorationFile(null);
+    setDecorationPreview('');
+  };
+
+  const saveDecoration = async () => {
+    if (!decorationForm.name.trim()) { setError('Decoration name is required.'); return; }
+    if (!decorationFile && !decorationForm.assetUrl) { setError('Choose a PNG or APNG file.'); return; }
+    await perform(async () => {
+      const upload = decorationFile ? await uploadSocialProfileDecorationWithApi(decorationFile) : null;
+      await adminUpsertSocialProfileDecorationWithApi({
+        ...decorationForm,
+        id: decorationForm.id || undefined,
+        assetUrl: upload?.sourceUrl || decorationForm.assetUrl,
+        fileName: decorationFile?.name || decorationForm.fileName,
+        mimeType: upload?.mimeType || decorationForm.mimeType || 'image/png',
+        priceUsd: Number(decorationForm.priceUsd || 0),
+        sortOrder: Number(decorationForm.sortOrder || 0)
+      });
+      resetDecorationForm();
+    }, decorationForm.id ? 'Profile decoration updated.' : 'Profile decoration uploaded.');
+  };
+
   const stats = [
     { label: 'Social Users', value: overview.profiles || 0, icon: Users },
     { label: 'Verified', value: overview.verifiedProfiles || 0, icon: BadgeCheck },
@@ -182,6 +244,7 @@ export default function AdminSocial() {
             ['posts', 'Posts & Reels', Film],
             ['reports', 'Reports', Flag],
             ['automation', 'Automation', Ban],
+            ['decorations', 'Profile decor', Sparkles],
             ['settings', 'Settings', Settings]
           ] as const).map(([key, label, Icon]) => (
             <button key={key} onClick={() => setTab(key)} className={`flex items-center gap-2 rounded px-4 py-2 text-[12px] font-bold ${tab === key ? 'bg-[#0069ff] text-white' : 'text-[#4a4a4a] hover:bg-gray-50'}`}>
@@ -189,7 +252,7 @@ export default function AdminSocial() {
             </button>
           ))}
         </div>
-        {tab !== 'settings' && (
+        {tab !== 'settings' && tab !== 'decorations' && (
           <label className="flex min-w-[260px] items-center gap-2 rounded border border-[#e5e8ed] px-3 py-2">
             <Search className="h-4 w-4 text-gray-400" />
             <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search real database records" className="w-full text-[12px] outline-none" />
@@ -254,6 +317,45 @@ export default function AdminSocial() {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {tab === 'decorations' && (
+        <div className="space-y-5">
+          <div className="grid gap-5 xl:grid-cols-[390px_1fr]">
+            <section className="rounded border border-[#dfe4ea] bg-white p-5">
+              <div className="flex items-start gap-3">
+                <span className="rounded-xl bg-violet-50 p-2.5 text-violet-600"><Sparkles className="h-5 w-5" /></span>
+                <div><h2 className="text-[15px] font-black text-[#2e3d49]">{decorationForm.id ? 'Edit profile decoration' : 'Upload profile decoration'}</h2><p className="mt-1 text-[11px] leading-5 text-gray-500">Accepted file: <strong>PNG or animated PNG (APNG)</strong>. Transparent 288×288 artwork is recommended. Animation is preserved and delivered through the Social API.</p></div>
+              </div>
+              <label className="mt-5 flex cursor-pointer flex-col items-center justify-center overflow-hidden rounded-xl border-2 border-dashed border-[#cdd5df] bg-[#f8fafc] p-5 text-center hover:border-[#0069ff]">
+                {(decorationPreview || decorationForm.assetUrl) ? <img src={decorationPreview || decorationForm.assetUrl} className="h-40 w-40 object-contain" /> : <><Upload className="h-8 w-8 text-[#0069ff]" /><span className="mt-2 text-[12px] font-black text-[#344054]">Choose one PNG/APNG file</span></>}
+                <input type="file" accept=".png,image/png" className="hidden" onChange={(event) => chooseDecorationFile(event.target.files?.[0])} />
+              </label>
+              <div className="mt-4 grid gap-3">
+                <label className="text-[10px] font-black uppercase tracking-wide text-gray-500">Decoration name<input value={decorationForm.name} onChange={(event) => setDecorationForm({ ...decorationForm, name: event.target.value })} placeholder="Example: Spirit Embers" className="mt-1 w-full rounded-lg border border-[#dfe4ea] px-3 py-2.5 text-[13px] normal-case text-[#2e3d49] outline-none focus:border-[#0069ff]" /></label>
+                <div className="grid grid-cols-2 gap-3">
+                  <label className="text-[10px] font-black uppercase tracking-wide text-gray-500">Price (USD)<input type="number" min={0} step="0.01" value={decorationForm.priceUsd} onChange={(event) => setDecorationForm({ ...decorationForm, priceUsd: Math.max(0, Number(event.target.value)) })} className="mt-1 w-full rounded-lg border border-[#dfe4ea] px-3 py-2.5 text-[13px] text-[#2e3d49] outline-none focus:border-[#0069ff]" /><span className="mt-1 block text-[9px] font-normal normal-case">Set 0 to make it Free.</span></label>
+                  <label className="text-[10px] font-black uppercase tracking-wide text-gray-500">Sort order<input type="number" min={0} value={decorationForm.sortOrder} onChange={(event) => setDecorationForm({ ...decorationForm, sortOrder: Math.max(0, Number(event.target.value)) })} className="mt-1 w-full rounded-lg border border-[#dfe4ea] px-3 py-2.5 text-[13px] text-[#2e3d49] outline-none focus:border-[#0069ff]" /></label>
+                </div>
+                <div className="flex items-center justify-between rounded-lg border border-[#dfe4ea] px-3 py-2.5 text-[11px]"><span><strong>{decorationForm.fileName || 'No file selected'}</strong><span className="block text-gray-500">{decorationForm.width}×{decorationForm.height} · {decorationForm.animated ? 'Animated APNG' : 'Static PNG'}</span></span><span className={`rounded px-2 py-1 text-[9px] font-black uppercase ${decorationForm.animated ? 'bg-violet-50 text-violet-700' : 'bg-gray-100 text-gray-600'}`}>{decorationForm.animated ? 'Animated' : 'PNG'}</span></div>
+                <label className="flex items-center justify-between rounded-lg border border-[#dfe4ea] px-3 py-2.5 text-[12px] font-bold text-[#344054]">Available in app<input type="checkbox" checked={decorationForm.status !== 'inactive'} onChange={(event) => setDecorationForm({ ...decorationForm, status: event.target.checked ? 'active' : 'inactive' })} className="h-4 w-4 accent-[#0069ff]" /></label>
+              </div>
+              <div className="mt-5 flex gap-2"><button onClick={saveDecoration} disabled={saving} className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-[#0069ff] px-4 py-2.5 text-[12px] font-black text-white disabled:opacity-50"><Save className="h-4 w-4" /> {saving ? 'Saving...' : decorationForm.id ? 'Save changes' : 'Upload decoration'}</button>{decorationForm.id && <button onClick={resetDecorationForm} className="rounded-lg border px-4 py-2.5 text-[12px] font-bold text-gray-600">Cancel</button>}</div>
+            </section>
+
+            <section>
+              <div className="mb-3 flex items-center justify-between"><div><h2 className="text-[15px] font-black text-[#2e3d49]">Decoration catalog</h2><p className="text-[11px] text-gray-500">Free and paid items shown by the real Social API.</p></div><span className="rounded-full bg-white px-3 py-1.5 text-[11px] font-black text-gray-600">{decorations.filter((item) => item.status !== 'archived').length} items</span></div>
+              <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-3">
+                {decorations.filter((item) => item.status !== 'archived').map((item) => (
+                  <article key={item.id} className="overflow-hidden rounded-xl border border-[#dfe4ea] bg-white">
+                    <div className="relative flex h-52 items-center justify-center bg-[radial-gradient(circle_at_center,#eef4ff_0,#f8fafc_62%,#fff_100%)]"><div className="absolute h-28 w-28 rounded-full bg-gradient-to-br from-[#dbeafe] to-[#c4b5fd]" /><img src={item.assetUrl} className="relative h-44 w-44 object-contain" /><span className={`absolute left-3 top-3 rounded-full px-2.5 py-1 text-[9px] font-black uppercase ${item.animated ? 'bg-violet-600 text-white' : 'bg-white text-gray-600'}`}>{item.animated ? 'Animated APNG' : 'PNG'}</span></div>
+                    <div className="p-4"><div className="flex items-start justify-between gap-2"><div><h3 className="font-black text-[#2e3d49]">{item.name}</h3><p className="mt-1 text-[10px] text-gray-500">{item.fileName} · {item.width}×{item.height}</p></div><span className={`rounded px-2 py-1 text-[11px] font-black ${Number(item.priceUsd) === 0 ? 'bg-green-50 text-green-700' : 'bg-blue-50 text-blue-700'}`}>{Number(item.priceUsd) === 0 ? 'FREE' : `$${Number(item.priceUsd).toFixed(2)}`}</span></div><p className="mt-3 text-[10px] text-gray-500">{item.ownershipCount || 0} owned · {item.appliedCount || 0} currently applied · {item.status}</p><div className="mt-4 flex gap-2"><button onClick={() => { resetDecorationForm(); setDecorationForm({ ...item }); setDecorationPreview(item.assetUrl); window.scrollTo({ top: 0, behavior: 'smooth' }); }} className="flex-1 rounded-lg border border-[#dfe4ea] px-3 py-2 text-[11px] font-black text-[#344054] hover:bg-gray-50">Edit</button><button disabled={saving} onClick={() => { if (window.confirm(`Archive ${item.name}? It will be removed from profiles using it.`)) perform(() => adminArchiveSocialProfileDecorationWithApi(item.id), 'Profile decoration archived.'); }} className="rounded-lg border border-red-100 p-2 text-red-600 hover:bg-red-50"><Trash2 className="h-4 w-4" /></button></div></div>
+                  </article>
+                ))}
+              </div>
+            </section>
+          </div>
         </div>
       )}
 
