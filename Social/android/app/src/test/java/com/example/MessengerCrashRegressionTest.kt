@@ -57,6 +57,26 @@ class MessengerCrashRegressionTest {
         }
     }
 
+    @Test
+    fun profileCropUsesSquareViewportAndKeepsDragPosition() {
+        val centered = calculateProfileCropRect(1600, 900, 900, 900, 1f, 0f, 0f)
+        assertEquals(900, centered.width)
+        assertEquals(900, centered.height)
+        assertEquals(350, centered.left)
+
+        val zoomedCentered = calculateProfileCropRect(1600, 900, 900, 900, 1.5f, 0f, 0f)
+        val moved = calculateProfileCropRect(1600, 900, 900, 900, 1.5f, 180f, 0f)
+        assertTrue(moved.left < zoomedCentered.left)
+        assertEquals(moved.width, moved.height)
+    }
+
+    @Test
+    fun coverCropKeepsSixteenBySevenViewport() {
+        val crop = calculateProfileCropRect(900, 1600, 1600, 700, 1f, 0f, -250f)
+        assertTrue(kotlin.math.abs(crop.width.toFloat() / crop.height - 16f / 7f) < .02f)
+        assertTrue(crop.top > 0)
+    }
+
     private fun createImage(context: Context, name: String, width: Int, height: Int): File {
         val file = File(context.cacheDir, "$name-test.jpg")
         Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also { bitmap ->

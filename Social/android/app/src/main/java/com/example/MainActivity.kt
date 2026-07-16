@@ -10,8 +10,12 @@ import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.ImageDecoder
 import android.media.RingtoneManager
 import android.media.MediaRecorder
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
@@ -37,6 +41,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -68,6 +73,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.Canvas
 import androidx.compose.ui.geometry.Offset
@@ -5456,6 +5462,213 @@ private fun ProfileSocialLinksEditorPage(
     }
 }
 
+private data class PreparedProfilePhoto(val uri: Uri, val file: File)
+
+internal data class ProfileCropRect(val left: Int, val top: Int, val width: Int, val height: Int)
+
+internal fun calculateProfileCropRect(
+    sourceWidth: Int,
+    sourceHeight: Int,
+    viewportWidth: Int,
+    viewportHeight: Int,
+    zoom: Float,
+    translationX: Float,
+    translationY: Float
+): ProfileCropRect {
+    val safeSourceWidth = sourceWidth.coerceAtLeast(1)
+    val safeSourceHeight = sourceHeight.coerceAtLeast(1)
+    val viewWidth = viewportWidth.coerceAtLeast(1).toFloat()
+    val viewHeight = viewportHeight.coerceAtLeast(1).toFloat()
+    val effectiveScale = maxOf(viewWidth / safeSourceWidth, viewHeight / safeSourceHeight) * zoom.coerceIn(1f, 5f)
+    val cropWidth = (viewWidth / effectiveScale).toInt().coerceIn(1, safeSourceWidth)
+    val cropHeight = (viewHeight / effectiveScale).toInt().coerceIn(1, safeSourceHeight)
+    val centerX = safeSourceWidth / 2f - translationX / effectiveScale
+    val centerY = safeSourceHeight / 2f - translationY / effectiveScale
+    return ProfileCropRect(
+        left = (centerX - cropWidth / 2f).toInt().coerceIn(0, (safeSourceWidth - cropWidth).coerceAtLeast(0)),
+        top = (centerY - cropHeight / 2f).toInt().coerceIn(0, (safeSourceHeight - cropHeight).coerceAtLeast(0)),
+        width = cropWidth,
+        height = cropHeight
+    )
+}
+
+private suspend fun prepareProfilePhotoCrop(
+    context: Context,
+    uri: Uri,
+    kind: String,
+    zoom: Float,
+    translationX: Float,
+    translationY: Float,
+    viewportWidth: Int,
+    viewportHeight: Int
+): PreparedProfilePhoto = withContext(Dispatchers.IO) {
+    val resolver = context.contentResolver
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) throw IllegalArgumentException("Selected photo could not be opened")
+    var sample = 1
+    while (bounds.outWidth / sample > 4096 || bounds.outHeight / sample > 4096) sample *= 2
+    val source = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+        ImageDecoder.decodeBitmap(ImageDecoder.createSource(resolver, uri)) { decoder, _, _ ->
+            decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+            decoder.setTargetSampleSize(sample)
+        }
+    } else {
+        resolver.openInputStream(uri)?.use {
+            BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = sample })
+        } ?: throw IllegalArgumentException("Selected photo could not be decoded")
+    }
+    try {
+        val crop = calculateProfileCropRect(
+            source.width,
+            source.height,
+            viewportWidth,
+            viewportHeight,
+            zoom,
+            translationX,
+            translationY
+        )
+        val cropped = Bitmap.createBitmap(source, crop.left, crop.top, crop.width, crop.height)
+        try {
+            val maxWidth = if (kind == "cover") 1600 else 1080
+            val maxHeight = if (kind == "cover") 700 else 1080
+            val outputScale = minOf(1f, maxWidth.toFloat() / cropped.width, maxHeight.toFloat() / cropped.height)
+            val output = if (outputScale < 1f) {
+                Bitmap.createScaledBitmap(
+                    cropped,
+                    (cropped.width * outputScale).toInt().coerceAtLeast(1),
+                    (cropped.height * outputScale).toInt().coerceAtLeast(1),
+                    true
+                )
+            } else cropped
+            try {
+                val file = File(context.cacheDir, "tiwi-${kind}-crop-${System.currentTimeMillis()}.jpg")
+                file.outputStream().use { stream ->
+                    if (!output.compress(Bitmap.CompressFormat.JPEG, 92, stream)) {
+                        throw IllegalStateException("Photo crop could not be saved")
+                    }
+                }
+                PreparedProfilePhoto(
+                    FileProvider.getUriForFile(context, "${context.packageName}.files", file),
+                    file
+                )
+            } finally {
+                if (output !== cropped) output.recycle()
+            }
+        } finally {
+            if (cropped !== source) cropped.recycle()
+        }
+    } finally {
+        source.recycle()
+    }
+}
+
+@Composable
+private fun ProfilePhotoCropPage(
+    uri: Uri,
+    kind: String,
+    busy: Boolean,
+    onCancel: () -> Unit,
+    onApply: (Float, Float, Float, Int, Int) -> Unit
+) {
+    val context = LocalContext.current
+    val cover = kind == "cover"
+    var zoom by remember(uri) { mutableFloatStateOf(1f) }
+    var translationX by remember(uri) { mutableFloatStateOf(0f) }
+    var translationY by remember(uri) { mutableFloatStateOf(0f) }
+    var viewportWidth by remember(uri) { mutableIntStateOf(1) }
+    var viewportHeight by remember(uri) { mutableIntStateOf(1) }
+    var sourceWidth by remember(uri) { mutableIntStateOf(1) }
+    var sourceHeight by remember(uri) { mutableIntStateOf(1) }
+
+    LaunchedEffect(uri) {
+        val size = withContext(Dispatchers.IO) {
+            val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, options) }
+            options.outWidth.coerceAtLeast(1) to options.outHeight.coerceAtLeast(1)
+        }
+        sourceWidth = size.first
+        sourceHeight = size.second
+    }
+    BackHandler(enabled = !busy, onBack = onCancel)
+
+    fun clampTranslation(nextZoom: Float, nextX: Float, nextY: Float): Pair<Float, Float> {
+        val width = viewportWidth.coerceAtLeast(1).toFloat()
+        val height = viewportHeight.coerceAtLeast(1).toFloat()
+        val baseScale = maxOf(width / sourceWidth.coerceAtLeast(1), height / sourceHeight.coerceAtLeast(1))
+        val maxX = ((sourceWidth * baseScale * nextZoom - width) / 2f).coerceAtLeast(0f)
+        val maxY = ((sourceHeight * baseScale * nextZoom - height) / 2f).coerceAtLeast(0f)
+        return nextX.coerceIn(-maxX, maxX) to nextY.coerceIn(-maxY, maxY)
+    }
+
+    Column(Modifier.fillMaxSize().background(Color.White).statusBarsPadding().navigationBarsPadding()) {
+        Row(Modifier.fillMaxWidth().height(56.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(enabled = !busy, onClick = onCancel) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Cancel") }
+            Text(
+                if (cover) "Adjust cover photo" else "Adjust profile photo",
+                modifier = Modifier.weight(1f),
+                textAlign = TextAlign.Center,
+                fontWeight = FontWeight.ExtraBold,
+                fontSize = 18.sp
+            )
+            TextButton(
+                enabled = !busy,
+                onClick = { onApply(zoom, translationX, translationY, viewportWidth, viewportHeight) }
+            ) {
+                if (busy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                else Text("Use photo", color = TiwiBlue, fontWeight = FontWeight.Bold)
+            }
+        }
+        HorizontalDivider(thickness = .5.dp, color = Color(0xFFE4E7EC))
+        Column(
+            Modifier.fillMaxSize().padding(horizontal = if (cover) 12.dp else 30.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            val shape = if (cover) RoundedCornerShape(18.dp) else CircleShape
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(if (cover) 16f / 7f else 1f)
+                    .onGloballyPositioned {
+                        viewportWidth = it.size.width.coerceAtLeast(1)
+                        viewportHeight = it.size.height.coerceAtLeast(1)
+                    }
+                    .clip(shape)
+                    .background(Color.Black)
+                    .pointerInput(uri, sourceWidth, sourceHeight, viewportWidth, viewportHeight) {
+                        detectTransformGestures { _, pan, gestureZoom, _ ->
+                            val nextZoom = (zoom * gestureZoom).coerceIn(1f, 5f)
+                            val clamped = clampTranslation(nextZoom, translationX + pan.x, translationY + pan.y)
+                            zoom = nextZoom
+                            translationX = clamped.first
+                            translationY = clamped.second
+                        }
+                    }
+            ) {
+                AsyncImage(
+                    model = uri,
+                    contentDescription = "Photo crop preview",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize().graphicsLayer(
+                        scaleX = zoom,
+                        scaleY = zoom,
+                        translationX = translationX,
+                        translationY = translationY
+                    )
+                )
+                Box(Modifier.fillMaxSize().border(2.dp, Color.White.copy(alpha = .9f), shape))
+            }
+            Text("Pinch to zoom · drag to reposition", color = Color(0xFF65676B), fontSize = 13.sp, modifier = Modifier.padding(top = 18.dp))
+            TextButton(enabled = !busy && (zoom != 1f || translationX != 0f || translationY != 0f), onClick = {
+                zoom = 1f
+                translationX = 0f
+                translationY = 0f
+            }) { Text("Reset", color = TiwiBlue, fontWeight = FontWeight.Bold) }
+        }
+    }
+}
+
 @Composable
 private fun EditProfilePage(repository: SocialRepository, profile: SocialProfile?, onBack: () -> Unit) {
     val context = LocalContext.current
@@ -5474,6 +5687,7 @@ private fun EditProfilePage(repository: SocialRepository, profile: SocialProfile
     var showDecorations by remember { mutableStateOf(false) }
     var showEffects by remember { mutableStateOf(false) }
     var activeEditor by remember { mutableStateOf<String?>(null) }
+    var pendingPhoto by remember { mutableStateOf<Pair<Uri, String>?>(null) }
     var busy by remember { mutableStateOf(false) }
     var decorationCatalogAvailable by remember { mutableStateOf(false) }
     var effectCatalogAvailable by remember { mutableStateOf(false) }
@@ -5485,20 +5699,38 @@ private fun EditProfilePage(repository: SocialRepository, profile: SocialProfile
     LaunchedEffect(profile?.userId) {
         availableConnections = runCatching { repository.connections(profile?.userId, 100) }.getOrDefault(emptyList())
     }
-    fun uploadAdjustedPhoto(uri: android.net.Uri, kind: String, onUploaded: (String) -> Unit) {
-        scope.launch {
-            busy = true
-            runCatching { repository.uploadMedia(context.contentResolver, uri, kind).url }
-                .onSuccess(onUploaded)
-                .onFailure { Toast.makeText(context, it.message ?: "Photo upload failed", Toast.LENGTH_LONG).show() }
-            busy = false
-        }
-    }
     val avatarPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-        uri?.let { uploadAdjustedPhoto(it, "profile") { uploaded -> avatarUrl = uploaded } }
+        uri?.let { pendingPhoto = it to "profile" }
     }
     val coverPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-        uri?.let { uploadAdjustedPhoto(it, "cover") { uploaded -> coverUrl = uploaded } }
+        uri?.let { pendingPhoto = it to "cover" }
+    }
+    pendingPhoto?.let { (uri, kind) ->
+        ProfilePhotoCropPage(
+            uri = uri,
+            kind = kind,
+            busy = busy,
+            onCancel = { pendingPhoto = null },
+            onApply = { zoom, translationX, translationY, width, height ->
+                if (!busy) scope.launch {
+                    busy = true
+                    var prepared: PreparedProfilePhoto? = null
+                    runCatching {
+                        prepareProfilePhotoCrop(context, uri, kind, zoom, translationX, translationY, width, height).also { prepared = it }
+                    }.mapCatching {
+                        repository.uploadMedia(context.contentResolver, it.uri, kind).url
+                    }.onSuccess { uploaded ->
+                        if (kind == "cover") coverUrl = uploaded else avatarUrl = uploaded
+                        pendingPhoto = null
+                    }.onFailure {
+                        Toast.makeText(context, it.message ?: "Photo upload failed", Toast.LENGTH_LONG).show()
+                    }
+                    prepared?.file?.delete()
+                    busy = false
+                }
+            }
+        )
+        return
     }
     fun save() {
         if (busy || username.isBlank()) return
@@ -6230,6 +6462,7 @@ fun MessagesScreen(repository: SocialRepository, onBack: () -> Unit, onChatClick
 
     Scaffold(
         containerColor = Color.White,
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         bottomBar = {
             ExactMessengerBottomNavigation(
                 selected = tab,
@@ -6333,6 +6566,15 @@ private fun ExactMessengerChatsPage(
 ) {
     val storyCards = remember(stories, currentUserId) { stories.filter { it.authorId != currentUserId }.distinctBy { it.authorId }.take(16) }
     val myStory = remember(stories, currentUserId) { stories.firstOrNull { it.authorId == currentUserId } }
+    var inboxFilter by remember { mutableStateOf("all") }
+    val unreadTotal = remember(chats) { chats.sumOf { it.unreadCount } }
+    val visibleChats = remember(chats, inboxFilter) {
+        when (inboxFilter) {
+            "unread" -> chats.filter { it.unreadCount > 0 }
+            "groups" -> chats.filter { it.type == "group" }
+            else -> chats
+        }
+    }
     Box(Modifier.fillMaxSize().padding(contentPadding).background(Color.White)) {
         PullToRefreshBox(
             isRefreshing = refreshing,
@@ -6342,12 +6584,12 @@ private fun ExactMessengerChatsPage(
             LazyColumn(Modifier.fillMaxSize().statusBarsPadding()) {
                 item {
                     Row(
-                        Modifier.fillMaxWidth().height(66.dp).padding(start = 18.dp, end = 8.dp),
+                        Modifier.fillMaxWidth().height(54.dp).padding(start = 17.dp, end = 7.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("tiwi messenger", color = Color(0xFF0866FF), fontSize = 28.sp, fontWeight = FontWeight.Black, letterSpacing = (-1).sp, modifier = Modifier.weight(1f))
-                        IconButton(onClick = onNewMessage) { Icon(Icons.Outlined.Edit, "New message", modifier = Modifier.size(27.dp)) }
-                        IconButton(onClick = onNewGroup) { Icon(Icons.Outlined.Groups, "Tiwi communities", modifier = Modifier.size(27.dp)) }
+                        Text("Tiwi Chats", color = Color(0xFF0866FF), fontSize = 22.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-.4).sp, modifier = Modifier.weight(1f))
+                        IconButton(onClick = onNewMessage, modifier = Modifier.size(42.dp)) { Icon(Icons.Outlined.Edit, "New message", modifier = Modifier.size(24.dp)) }
+                        IconButton(onClick = onNewGroup, modifier = Modifier.size(42.dp)) { Icon(Icons.Outlined.GroupAdd, "New group", modifier = Modifier.size(25.dp)) }
                     }
                 }
                 item {
@@ -6405,14 +6647,49 @@ private fun ExactMessengerChatsPage(
                         }
                     }
                 }
-                if (chats.isEmpty()) item {
-                    Column(Modifier.fillParentMaxHeight(.55f).fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                        Icon(Icons.Outlined.Forum, null, tint = Color(0xFF8A8D91), modifier = Modifier.size(54.dp))
-                        Text("No conversations yet", fontWeight = FontWeight.Bold, fontSize = 18.sp, modifier = Modifier.padding(top = 10.dp))
-                        Text("Tap the compose button to start messaging.", color = Color(0xFF65676B), fontSize = 13.sp)
+                item {
+                    LazyRow(
+                        modifier = Modifier.fillMaxWidth().height(55.dp),
+                        contentPadding = PaddingValues(horizontal = 15.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        item {
+                            MessengerInboxFilterChip("All", inboxFilter == "all") { inboxFilter = "all" }
+                        }
+                        item {
+                            MessengerInboxFilterChip(
+                                if (unreadTotal > 0) "Unread $unreadTotal" else "Unread",
+                                inboxFilter == "unread"
+                            ) { inboxFilter = "unread" }
+                        }
+                        item {
+                            MessengerInboxFilterChip("Groups", inboxFilter == "groups") { inboxFilter = "groups" }
+                        }
+                        item {
+                            IconButton(onClick = onNewGroup, modifier = Modifier.size(40.dp)) {
+                                Icon(Icons.Default.MoreVert, "More chat shortcuts", tint = Color(0xFF65676B))
+                            }
+                        }
                     }
                 }
-                items(chats, key = { "exact-chat-${it.id}" }) { chat ->
+                if (visibleChats.isEmpty()) item {
+                    Column(Modifier.fillParentMaxHeight(.55f).fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                        Icon(Icons.Outlined.Forum, null, tint = Color(0xFF8A8D91), modifier = Modifier.size(54.dp))
+                        Text(
+                            when (inboxFilter) {
+                                "unread" -> "No unread chats"
+                                "groups" -> "No group chats"
+                                else -> "No conversations yet"
+                            },
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 18.sp,
+                            modifier = Modifier.padding(top = 10.dp)
+                        )
+                        if (inboxFilter == "all") Text("Tap the compose button to start messaging.", color = Color(0xFF65676B), fontSize = 13.sp)
+                    }
+                }
+                items(visibleChats, key = { "exact-chat-${it.id}" }) { chat ->
                     val contact = chat.members.firstOrNull { it.userId != currentUserId }
                     val name = chat.title ?: contact?.user?.name ?: "Tiwi conversation"
                     val preview = messagePreview(chat.lastMessage, currentUserId)
@@ -6432,7 +6709,7 @@ private fun ExactMessengerChatsPage(
                         Column(Modifier.weight(1f).padding(start = 12.dp, end = 8.dp)) {
                             Text(name, fontWeight = if (chat.unreadCount > 0) FontWeight.Black else FontWeight.Medium, fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Text(
-                                if (chat.unreadCount > 1) "${chat.unreadCount} new messages" else preview,
+                                if (chat.unreadCount > 0) "${chat.unreadCount} new ${if (chat.unreadCount == 1) "message" else "messages"}" else preview,
                                 color = if (chat.unreadCount > 0) Color(0xFF050505) else Color(0xFF65676B),
                                 fontWeight = if (chat.unreadCount > 0) FontWeight.Bold else FontWeight.Normal,
                                 fontSize = 14.sp,
@@ -6454,6 +6731,25 @@ private fun ExactMessengerChatsPage(
             }
         }
         ExactMessengerFloatingButton(Modifier.align(Alignment.BottomEnd).padding(end = 17.dp, bottom = 14.dp))
+    }
+}
+
+@Composable
+private fun MessengerInboxFilterChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    Surface(
+        modifier = Modifier.height(42.dp).clickable(onClick = onClick),
+        shape = RoundedCornerShape(22.dp),
+        color = if (selected) Color(0xFFE7F3FF) else Color(0xFFE4E6EB),
+        tonalElevation = 0.dp
+    ) {
+        Box(Modifier.padding(horizontal = 18.dp), contentAlignment = Alignment.Center) {
+            Text(
+                label,
+                color = if (selected) Color(0xFF0866FF) else Color(0xFF4B4F56),
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
     }
 }
 
@@ -7461,66 +7757,80 @@ private fun MessengerConversationActions(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val membership = conversation.members.firstOrNull { it.userId == repository.currentUserId() }
-    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = Color.White, tonalElevation = 0.dp) {
-        MessengerActionRow(Icons.Outlined.PushPin, if (pinned) "Unpin" else "Pin", onPin)
-        MessengerActionRow(Icons.Outlined.Archive, "Archive", onClick = {
-            scope.launch {
-                runCatching { repository.updateConversationMember(conversation.id, archived = true) }
-                    .onSuccess { onDismiss() }
-                    .onFailure { Toast.makeText(context, it.message ?: "Archive failed", Toast.LENGTH_SHORT).show() }
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        dragHandle = null,
+        containerColor = Color.White,
+        tonalElevation = 0.dp
+    ) {
+        Column(Modifier.fillMaxWidth().fillMaxHeight(.9f).navigationBarsPadding()) {
+            Row(Modifier.fillMaxWidth().height(48.dp).padding(horizontal = 18.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Chat options", fontSize = 18.sp, fontWeight = FontWeight.ExtraBold, modifier = Modifier.weight(1f))
+                IconButton(onClick = onDismiss, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.Close, "Close") }
             }
-        })
-        MessengerActionRow(Icons.Outlined.VisibilityOff, "Ignore", onClick = {
-            scope.launch {
-                runCatching {
-                    if (conversation.requestStatus == "pending" && conversation.requestedById != repository.currentUserId()) {
-                        repository.respondToMessageRequest(conversation.id, false)
-                    } else {
-                        repository.updateConversationMember(conversation.id, muted = true, archived = true)
-                    }
-                }.onSuccess { onDismiss() }
-                    .onFailure { Toast.makeText(context, it.message ?: "Ignore failed", Toast.LENGTH_SHORT).show() }
-            }
-        })
-        if (onAddMembers != null) MessengerActionRow(Icons.Outlined.PersonAdd, "Add members", onClick = onAddMembers)
-        MessengerActionRow(if (membership?.muted == true) Icons.Outlined.NotificationsActive else Icons.Outlined.NotificationsOff, if (membership?.muted == true) "Unmute" else "Mute", onClick = {
-            scope.launch {
-                runCatching { repository.updateConversationMember(conversation.id, muted = membership?.muted != true) }
-                    .onSuccess { onDismiss() }
-                    .onFailure { Toast.makeText(context, it.message ?: "Mute failed", Toast.LENGTH_SHORT).show() }
-            }
-        })
-        MessengerActionRow(Icons.Outlined.Forum, "Open chat thread", onOpen)
-        MessengerActionRow(Icons.Outlined.MarkEmailUnread, "Mark as unread", onClick = {
-            scope.launch {
-                runCatching { repository.updateConversationMember(conversation.id, markUnread = true) }
-                    .onSuccess { onDismiss() }
-                    .onFailure { Toast.makeText(context, it.message ?: "Could not mark unread", Toast.LENGTH_SHORT).show() }
-            }
-        })
-        if (conversation.type == "group") MessengerActionRow(Icons.Outlined.ExitToApp, "Leave group", {
-            scope.launch {
-                runCatching { repository.updateConversationMember(conversation.id, leave = true) }
-                    .onSuccess { onDismiss() }
-                    .onFailure { Toast.makeText(context, it.message ?: "Could not leave group", Toast.LENGTH_SHORT).show() }
-            }
-        }, destructive = true)
-        MessengerActionRow(Icons.Outlined.Delete, "Delete from inbox", {
-            scope.launch {
-                runCatching { repository.updateConversationMember(conversation.id, archived = true) }
-                    .onSuccess { onDismiss() }
-                    .onFailure { Toast.makeText(context, it.message ?: "Delete failed", Toast.LENGTH_SHORT).show() }
-            }
-        }, destructive = true)
-        Spacer(Modifier.height(16.dp))
+            HorizontalDivider(thickness = .5.dp, color = Color(0xFFE4E7EC))
+            MessengerActionRow(Icons.Outlined.PushPin, if (pinned) "Unpin" else "Pin", onPin)
+            MessengerActionRow(Icons.Outlined.Archive, "Archive", onClick = {
+                scope.launch {
+                    runCatching { repository.updateConversationMember(conversation.id, archived = true) }
+                        .onSuccess { onDismiss() }
+                        .onFailure { Toast.makeText(context, it.message ?: "Archive failed", Toast.LENGTH_SHORT).show() }
+                }
+            })
+            MessengerActionRow(Icons.Outlined.VisibilityOff, "Ignore", onClick = {
+                scope.launch {
+                    runCatching {
+                        if (conversation.requestStatus == "pending" && conversation.requestedById != repository.currentUserId()) {
+                            repository.respondToMessageRequest(conversation.id, false)
+                        } else {
+                            repository.updateConversationMember(conversation.id, muted = true, archived = true)
+                        }
+                    }.onSuccess { onDismiss() }
+                        .onFailure { Toast.makeText(context, it.message ?: "Ignore failed", Toast.LENGTH_SHORT).show() }
+                }
+            })
+            if (onAddMembers != null) MessengerActionRow(Icons.Outlined.PersonAdd, "Add members", onClick = onAddMembers)
+            MessengerActionRow(if (membership?.muted == true) Icons.Outlined.NotificationsActive else Icons.Outlined.NotificationsOff, if (membership?.muted == true) "Unmute" else "Mute", onClick = {
+                scope.launch {
+                    runCatching { repository.updateConversationMember(conversation.id, muted = membership?.muted != true) }
+                        .onSuccess { onDismiss() }
+                        .onFailure { Toast.makeText(context, it.message ?: "Mute failed", Toast.LENGTH_SHORT).show() }
+                }
+            })
+            MessengerActionRow(Icons.Outlined.Forum, "Open chat thread", onOpen)
+            MessengerActionRow(Icons.Outlined.MarkEmailUnread, "Mark as unread", onClick = {
+                scope.launch {
+                    runCatching { repository.updateConversationMember(conversation.id, markUnread = true) }
+                        .onSuccess { onDismiss() }
+                        .onFailure { Toast.makeText(context, it.message ?: "Could not mark unread", Toast.LENGTH_SHORT).show() }
+                }
+            })
+            if (conversation.type == "group") MessengerActionRow(Icons.Outlined.ExitToApp, "Leave group", {
+                scope.launch {
+                    runCatching { repository.updateConversationMember(conversation.id, leave = true) }
+                        .onSuccess { onDismiss() }
+                        .onFailure { Toast.makeText(context, it.message ?: "Could not leave group", Toast.LENGTH_SHORT).show() }
+                }
+            }, destructive = true)
+            MessengerActionRow(Icons.Outlined.Delete, "Delete from inbox", {
+                scope.launch {
+                    runCatching { repository.updateConversationMember(conversation.id, archived = true) }
+                        .onSuccess { onDismiss() }
+                        .onFailure { Toast.makeText(context, it.message ?: "Delete failed", Toast.LENGTH_SHORT).show() }
+                }
+            }, destructive = true)
+            Spacer(Modifier.weight(1f))
+        }
     }
 }
 
 @Composable
 private fun MessengerActionRow(icon: ImageVector, label: String, onClick: () -> Unit, destructive: Boolean = false) {
-    Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 22.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-        Icon(icon, null, tint = if (destructive) Color(0xFFD92D20) else Color.Black, modifier = Modifier.size(25.dp))
-        Text(label, color = if (destructive) Color(0xFFD92D20) else Color.Black, fontSize = 16.sp, modifier = Modifier.padding(start = 18.dp))
+    Row(Modifier.fillMaxWidth().height(46.dp).clickable(onClick = onClick).padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
+        Icon(icon, null, tint = if (destructive) Color(0xFFD92D20) else Color.Black, modifier = Modifier.size(23.dp))
+        Text(label, color = if (destructive) Color(0xFFD92D20) else Color.Black, fontSize = 15.sp, modifier = Modifier.padding(start = 17.dp))
     }
 }
 
@@ -7999,9 +8309,9 @@ fun ChatDetailScreen(
                                 selectedMessageId = message.id
                             }
                         ),
-                        color = if (selectedMessageId == message.id) Color(0xFFE5F0FF) else Color(0xFFF7F8FA),
+                        color = Color(0xFFF7F8FA),
                         shape = RoundedCornerShape(14.dp),
-                        border = BorderStroke(1.dp, if (selectedMessageId == message.id) TiwiBlue.copy(alpha = .45f) else Color(0xFFE4E7EC)),
+                        border = BorderStroke(.7.dp, Color(0xFFE4E7EC)),
                         tonalElevation = 0.dp
                     ) {
                         Row(Modifier.padding(horizontal = 13.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -8016,9 +8326,7 @@ fun ChatDetailScreen(
                     return@itemsIndexed
                 }
                 Box(
-                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
-                        .background(if (selectedMessageId == message.id) TiwiBlue.copy(alpha = .09f) else Color.Transparent)
-                        .padding(horizontal = 3.dp, vertical = 2.dp),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 3.dp, vertical = 2.dp),
                     contentAlignment = if (isMe) Alignment.CenterEnd else Alignment.CenterStart
                 ) {
                     Row(verticalAlignment = Alignment.Bottom) {
@@ -8063,6 +8371,7 @@ fun ChatDetailScreen(
                             }
                         }
                     }
+                    Box(Modifier.padding(bottom = if (message.reactions.isNotEmpty()) 9.dp else 0.dp)) {
                     Surface(
                         color = when {
                             message.unsentAt != null -> Color.White
@@ -8072,12 +8381,13 @@ fun ChatDetailScreen(
                         shape = RoundedCornerShape(19.dp),
                         border = if (message.unsentAt != null) BorderStroke(.7.dp, Color(0xFFDADDE1)) else null,
                         modifier = Modifier.widthIn(max = 270.dp).combinedClickable(
-                        onClick = {},
-                        onLongClick = {
-                            chatHaptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                            selectedMessageId = message.id
-                        }
-                    )) {
+                            onClick = {},
+                            onLongClick = {
+                                chatHaptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                                selectedMessageId = message.id
+                            }
+                        )
+                    ) {
                         Column {
                             message.replyToId?.let { targetId ->
                                 val quoted = messages.firstOrNull { it.id == targetId }
@@ -8121,19 +8431,44 @@ fun ChatDetailScreen(
                             )
                         }
                     }
-                    if (isMe) Text(when (message.deliveryStatus) { "read" -> "Seen"; "delivered" -> "Delivered"; "sending" -> "Sending…"; "failed" -> "Failed"; else -> "Sent" }, color = Color.Gray, fontSize = 10.sp, modifier = Modifier.padding(end = 5.dp, top = 2.dp))
                     if (message.reactions.isNotEmpty()) Surface(
-                        color = Color.White,
-                        shape = RoundedCornerShape(20.dp),
-                        border = BorderStroke(.5.dp, Color(0xFFE4E7EC)),
+                        color = Color(0xFFF0F2F5),
+                        shape = RoundedCornerShape(18.dp),
+                        border = BorderStroke(2.dp, Color.White),
                         tonalElevation = 0.dp,
-                        modifier = Modifier.offset(y = (-5).dp)
+                        modifier = Modifier
+                            .align(if (isMe) Alignment.BottomEnd else Alignment.BottomStart)
+                            .offset(x = if (isMe) 5.dp else (-5).dp, y = 9.dp)
                     ) {
                         Text(
                             message.reactions.groupingBy { it.emoji }.eachCount().entries.joinToString(" ") { (emoji, count) -> if (count > 1) "$emoji$count" else emoji },
-                            fontSize = 12.sp,
+                            fontSize = 13.sp,
                             modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
                         )
+                    }
+                    }
+                    val isLatestOutgoing = isMe && messages.drop(index + 1).none { it.senderId == repository.currentUserId() }
+                    if (isLatestOutgoing) {
+                        if (message.deliveryStatus == "read" || message.readAt != null) {
+                            DecoratedAvatar(
+                                contact?.user?.avatar,
+                                R.drawable.img_tiwi_avatar_1,
+                                contact?.profile?.avatarDecoration,
+                                Modifier.padding(end = 3.dp, top = 3.dp).size(15.dp)
+                            )
+                        } else {
+                            Text(
+                                when (message.deliveryStatus) {
+                                    "delivered" -> "Delivered"
+                                    "sending" -> "Sending…"
+                                    "failed" -> "Failed"
+                                    else -> "Sent"
+                                },
+                                color = Color.Gray,
+                                fontSize = 10.sp,
+                                modifier = Modifier.padding(end = 5.dp, top = 2.dp)
+                            )
+                        }
                     }
                     if (selectedMessageId == message.id) Text("${messageDay(message.sentAt)} · ${messageClock(message.sentAt)}", color = Color.Gray, fontSize = 10.sp, modifier = Modifier.padding(horizontal = 5.dp).padding(top = 2.dp))
                     }
@@ -8229,30 +8564,35 @@ fun ChatDetailScreen(
                     Icon(if (recording) Icons.Default.StopCircle else Icons.Default.Mic, if (recording) "Stop recording" else "Voice message", tint = if (recording) Color(0xFFD92D20) else TiwiBlue)
                 }
                 Surface(
-                    modifier = Modifier.weight(1f).height(40.dp),
+                    modifier = Modifier.weight(1f).heightIn(min = 42.dp, max = 96.dp),
                     color = if (recording) Color(0xFFFFEBEE) else Color(0xFFF1F1F1),
-                    shape = RoundedCornerShape(20.dp)
+                    shape = RoundedCornerShape(22.dp)
                 ) {
-                    TextField(
-                        value = messageText,
-                        onValueChange = { if (!recording) messageText = it },
-                        placeholder = { Text(if (recording) "Recording voice message…" else "Message", color = if (recording) Color(0xFFD92D20) else Color.Gray) },
-                        trailingIcon = {
-                            IconButton(onClick = { showEmojiPicker = !showEmojiPicker }, modifier = Modifier.size(34.dp)) {
-                                Icon(Icons.Outlined.EmojiEmotions, "Emoji", tint = TiwiBlue, modifier = Modifier.size(20.dp))
+                    Row(
+                        Modifier.fillMaxWidth().padding(start = 15.dp, end = 3.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        BasicTextField(
+                            value = messageText,
+                            onValueChange = { if (!recording) messageText = it.take(8000) },
+                            enabled = !recording,
+                            textStyle = MaterialTheme.typography.bodyLarge.copy(color = Color(0xFF1C1E21), fontSize = 16.sp),
+                            modifier = Modifier.weight(1f).padding(vertical = 10.dp),
+                            decorationBox = { inner ->
+                                if (messageText.isBlank()) {
+                                    Text(
+                                        if (recording) "Recording voice message…" else "Message",
+                                        color = if (recording) Color(0xFFD92D20) else Color(0xFF65676B),
+                                        fontSize = 16.sp
+                                    )
+                                }
+                                inner()
                             }
-                        },
-                        modifier = Modifier.fillMaxSize(),
-                        colors = TextFieldDefaults.colors(
-                            focusedTextColor = Color.Black,
-                            unfocusedTextColor = Color.Black,
-                            cursorColor = TiwiBlue,
-                            focusedContainerColor = Color.Transparent,
-                            unfocusedContainerColor = Color.Transparent,
-                            focusedIndicatorColor = Color.Transparent,
-                            unfocusedIndicatorColor = Color.Transparent
                         )
-                    )
+                        IconButton(onClick = { showEmojiPicker = !showEmojiPicker }, modifier = Modifier.size(36.dp)) {
+                            Icon(Icons.Outlined.EmojiEmotions, "Emoji", tint = TiwiBlue, modifier = Modifier.size(23.dp))
+                        }
+                    }
                 }
                 IconButton(onClick = {
                     chatHaptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
