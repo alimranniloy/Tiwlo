@@ -150,18 +150,76 @@ export async function adminArchiveSocialProfileDecorationWithApi(id: string) {
   return data.adminArchiveSocialProfileDecoration;
 }
 
+type SocialMediaUpload = {
+  sourceUrl: string;
+  mimeType: string;
+  size: number;
+};
+
+const socialMediaUrl = (suffix = '') => {
+  const path = `/api/social/media${suffix}`;
+  return GRAPHQL_URL.startsWith('http') ? new URL(path, GRAPHQL_URL).toString() : path;
+};
+
+const socialUploadHeaders = (headers: Record<string, string> = {}) => {
+  const token = getAuthToken();
+  return token ? { ...headers, Authorization: `Bearer ${token}` } : headers;
+};
+
+const socialUploadPayload = async (response: Response) => {
+  const payload = await response.json().catch(() => ({})) as Record<string, any>;
+  if (!response.ok) throw new Error(payload.error || `Decoration upload failed: ${response.status}`);
+  return payload;
+};
+
+async function uploadSocialProfileDecorationInChunks(file: File): Promise<SocialMediaUpload> {
+  const started = await fetch(socialMediaUrl('/chunks/start'), {
+    method: 'POST',
+    headers: socialUploadHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({
+      name: file.name,
+      mimeType: file.type || 'image/png',
+      size: file.size,
+      kind: 'profile-decoration'
+    })
+  }).then(socialUploadPayload);
+
+  const uploadId = String(started.uploadId || '');
+  if (!uploadId) throw new Error('Decoration upload did not start');
+  // Keep every request below the common 1 MB reverse-proxy default.
+  const chunkSize = Math.min(900 * 1024, Math.max(64 * 1024, Number(started.chunkSize) || 768 * 1024));
+  let offset = 0;
+  let index = 0;
+  while (offset < file.size) {
+    const chunk = file.slice(offset, Math.min(offset + chunkSize, file.size));
+    await fetch(socialMediaUrl(`/chunks/${encodeURIComponent(uploadId)}/${index}`), {
+      method: 'POST',
+      headers: socialUploadHeaders({ 'Content-Type': 'application/octet-stream' }),
+      body: chunk
+    }).then(socialUploadPayload);
+    offset += chunk.size;
+    index += 1;
+  }
+
+  return fetch(socialMediaUrl(`/chunks/${encodeURIComponent(uploadId)}/complete`), {
+    method: 'POST',
+    headers: socialUploadHeaders()
+  }).then(socialUploadPayload) as Promise<SocialMediaUpload>;
+}
+
 export async function uploadSocialProfileDecorationWithApi(file: File) {
+  // APNG files can easily exceed Nginx/CDN single-request limits. Use the
+  // resumable media API before reaching that boundary.
+  if (file.size > 512 * 1024) return uploadSocialProfileDecorationInChunks(file);
+
   const body = new FormData();
   body.append('file', file);
   body.append('kind', 'profile-decoration');
-  const endpoint = GRAPHQL_URL.startsWith('http') ? new URL('/api/social/media', GRAPHQL_URL).toString() : '/api/social/media';
-  const token = getAuthToken();
-  const response = await fetch(endpoint, {
+  const response = await fetch(socialMediaUrl(), {
     method: 'POST',
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    headers: socialUploadHeaders(),
     body
   });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.error || `Decoration upload failed: ${response.status}`);
-  return payload as { sourceUrl: string; mimeType: string; size: number };
+  if (response.status === 413) return uploadSocialProfileDecorationInChunks(file);
+  return socialUploadPayload(response) as Promise<SocialMediaUpload>;
 }
