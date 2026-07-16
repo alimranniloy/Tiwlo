@@ -792,21 +792,38 @@ private fun AnimatedProfileDecoration(url: String, modifier: Modifier = Modifier
 }
 
 @Composable
+private fun ProfileDecorationImage(url: String, modifier: Modifier = Modifier, animated: Boolean = false) {
+    if (animated) AnimatedProfileDecoration(url, modifier)
+    else AsyncImage(url, "Profile decoration", modifier, contentScale = ContentScale.Fit)
+}
+
+@Composable
 private fun DecoratedAvatar(
     url: String?,
     fallback: Int,
     decoration: SocialProfileDecoration?,
     modifier: Modifier,
-    contentScale: ContentScale = ContentScale.Crop
+    contentScale: ContentScale = ContentScale.Crop,
+    animateDecoration: Boolean = false
 ) {
+    val decorationUrl = decoration?.assetUrl?.takeIf { it.isNotBlank() }
     Box(modifier, contentAlignment = Alignment.Center) {
+        if (decorationUrl != null) {
+            Box(Modifier.fillMaxSize(.74f).clip(CircleShape).background(Color.White))
+        }
         TiwiAvatar(
             url,
             fallback,
-            Modifier.fillMaxSize(if (decoration != null) .74f else 1f).clip(CircleShape),
+            Modifier.fillMaxSize(if (decorationUrl != null) .68f else 1f).clip(CircleShape),
             contentScale
         )
-        decoration?.assetUrl?.takeIf { it.isNotBlank() }?.let { AnimatedProfileDecoration(it, Modifier.fillMaxSize()) }
+        decorationUrl?.let {
+            ProfileDecorationImage(
+                it,
+                Modifier.matchParentSize().graphicsLayer(scaleX = 1.16f, scaleY = 1.16f),
+                animated = animateDecoration
+            )
+        }
     }
 }
 
@@ -2847,7 +2864,7 @@ fun MenuScreen(repository: SocialRepository, name: String, avatarUrl: String?, o
                             Text(name, style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
                             if (profile?.verified == true) VerifiedBadge(profile?.badgeType, 17.dp, Modifier.padding(start = 3.dp))
                         }
-                        Text("@${profile?.username.orEmpty()} · View profile", style = MaterialTheme.typography.labelMedium, color = Color.Gray)
+                        Text("@${profile?.username.orEmpty()} - View profile", style = MaterialTheme.typography.labelMedium, color = Color.Gray)
                     }
                     Icon(Icons.Default.ChevronRight, contentDescription = null)
                 }
@@ -2877,22 +2894,23 @@ fun MenuScreen(repository: SocialRepository, name: String, avatarUrl: String?, o
             Spacer(modifier = Modifier.height(10.dp))
             Surface(
                 modifier = Modifier.fillMaxWidth().clickable { selectedSetting = "Profile decoration" },
-                color = Color.White,
-                shape = RoundedCornerShape(12.dp),
-                border = BorderStroke(1.dp, Color(0xFFD8CCFF)),
+                color = Color(0xFFF7F4FF),
+                shape = RoundedCornerShape(16.dp),
                 tonalElevation = 0.dp
             ) {
-                Row(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.size(44.dp).background(Color(0xFFF3EFFF), CircleShape), contentAlignment = Alignment.Center) {
+                Row(Modifier.padding(horizontal = 13.dp, vertical = 11.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(48.dp).clip(RoundedCornerShape(14.dp)).background(Color.White), contentAlignment = Alignment.Center) {
                         val activeDecoration = profile?.avatarDecoration
-                        if (activeDecoration != null) AnimatedProfileDecoration(activeDecoration.assetUrl, Modifier.size(42.dp))
+                        if (activeDecoration != null) ProfileDecorationImage(activeDecoration.assetUrl, Modifier.size(46.dp))
                         else Icon(Icons.Outlined.AutoAwesome, null, tint = Color(0xFF7F56D9))
                     }
                     Column(Modifier.weight(1f).padding(start = 11.dp)) {
                         Text("Decorate your profile", fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                        Text(profile?.avatarDecoration?.name ?: "Animated avatar decorations · Free and premium", color = Color.Gray, fontSize = 12.sp)
+                        Text(profile?.avatarDecoration?.name ?: "Avatar frames, free and premium", color = Color(0xFF625B71), fontSize = 12.sp)
                     }
-                    Icon(Icons.Default.ChevronRight, null, tint = Color.Gray)
+                    Surface(color = Color.White, shape = CircleShape, tonalElevation = 0.dp) {
+                        Icon(Icons.Default.ChevronRight, null, tint = Color(0xFF7F56D9), modifier = Modifier.padding(6.dp).size(18.dp))
+                    }
                 }
             }
             Spacer(modifier = Modifier.height(10.dp))
@@ -3806,7 +3824,7 @@ fun ProfileScreen(
                     ) { Icon(Icons.Default.CameraAlt, "Change cover", Modifier.size(18.dp)) }
                 }
                 Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    DecoratedAvatar(profile?.user?.avatar ?: if (isOwn) ownUser?.avatar else null, R.drawable.img_tiwi_avatar_1, profile?.avatarDecoration, Modifier.size(96.dp))
+                    DecoratedAvatar(profile?.user?.avatar ?: if (isOwn) ownUser?.avatar else null, R.drawable.img_tiwi_avatar_1, profile?.avatarDecoration, Modifier.size(96.dp), animateDecoration = true)
                     Row(Modifier.weight(1f), horizontalArrangement = Arrangement.SpaceEvenly) {
                         ProfileStatItem("Posts", (profile?.postCount ?: posts.size).toString())
                         ProfileStatItem("Followers", (profile?.followerCount ?: 0).toString())
@@ -3918,7 +3936,7 @@ private fun ProfileOptionsPage(
         }
         HorizontalDivider(color = Color(0xFFE4E7EC))
         Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            DecoratedAvatar(profile?.user?.avatar, R.drawable.img_tiwi_avatar_1, profile?.avatarDecoration, Modifier.size(64.dp))
+            DecoratedAvatar(profile?.user?.avatar, R.drawable.img_tiwi_avatar_1, profile?.avatarDecoration, Modifier.size(64.dp), animateDecoration = true)
             Column(Modifier.padding(start = 12.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) { Text(name, fontWeight = FontWeight.Bold, fontSize = 17.sp); if (profile?.verified == true) VerifiedBadge(profile.badgeType, 17.dp, Modifier.padding(start = 4.dp)) }
                 Text("@${profile?.username.orEmpty()}", color = Color.Gray)
@@ -3998,7 +4016,7 @@ private fun EditProfilePage(repository: SocialRepository, profile: SocialProfile
                 Surface(Modifier.align(Alignment.BottomEnd).padding(10.dp), color = Color.White, shape = CircleShape, tonalElevation = 0.dp) { Icon(Icons.Default.CameraAlt, "Edit cover", Modifier.padding(9.dp)) }
             }
             Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-                DecoratedAvatar(avatarUrl, R.drawable.img_tiwi_avatar_1, avatarDecoration, Modifier.offset(y = (-46).dp).size(104.dp))
+                DecoratedAvatar(avatarUrl, R.drawable.img_tiwi_avatar_1, avatarDecoration, Modifier.offset(y = (-46).dp).size(104.dp), animateDecoration = true)
                 TextButton(onClick = { avatarPicker.launch("image/*") }, modifier = Modifier.offset(y = (-42).dp)) { Text("Edit picture", fontWeight = FontWeight.Bold) }
             }
             Column(Modifier.padding(horizontal = 16.dp).offset(y = (-28).dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -4011,7 +4029,7 @@ private fun EditProfilePage(repository: SocialRepository, profile: SocialProfile
                         tonalElevation = 0.dp
                     ) {
                         Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Box(Modifier.size(42.dp).background(Color(0xFFF0EBFF), CircleShape), contentAlignment = Alignment.Center) { if (avatarDecoration != null) AnimatedProfileDecoration(avatarDecoration!!.assetUrl, Modifier.fillMaxSize()) else Icon(Icons.Outlined.AutoAwesome, null, tint = Color(0xFF7F56D9)) }
+                            Box(Modifier.size(42.dp).background(Color(0xFFF0EBFF), CircleShape), contentAlignment = Alignment.Center) { if (avatarDecoration != null) ProfileDecorationImage(avatarDecoration!!.assetUrl, Modifier.fillMaxSize(), animated = true) else Icon(Icons.Outlined.AutoAwesome, null, tint = Color(0xFF7F56D9)) }
                             Column(Modifier.weight(1f).padding(start = 11.dp)) { Text("Avatar decoration", fontWeight = FontWeight.Bold); Text(avatarDecoration?.name ?: "Choose an animated profile effect", color = Color.Gray, fontSize = 12.sp) }
                             Icon(Icons.Default.ChevronRight, null, tint = Color.Gray)
                         }
@@ -4131,7 +4149,7 @@ private fun ProfileDecorationMarketplace(
         ) {
             Box(Modifier.fillMaxWidth().background(Brush.linearGradient(listOf(Color(0xFF201A33), Color(0xFF4C2D80), Color(0xFF7F56D9)))).padding(vertical = 18.dp), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    DecoratedAvatar(avatarUrl, R.drawable.img_tiwi_avatar_1, previewDecoration, Modifier.size(148.dp))
+                    DecoratedAvatar(avatarUrl, R.drawable.img_tiwi_avatar_1, previewDecoration, Modifier.size(148.dp), animateDecoration = true)
                     Text(repository.currentUser.value?.name.orEmpty(), color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
                     Text(previewDecoration?.name ?: "No decoration", color = Color.White.copy(alpha = .76f), fontSize = 12.sp)
                     Surface(Modifier.padding(top = 8.dp), color = Color.White.copy(alpha = .14f), shape = RoundedCornerShape(20.dp), tonalElevation = 0.dp) { Text("LIVE PROFILE PREVIEW", Modifier.padding(horizontal = 12.dp, vertical = 5.dp), color = Color.White, fontWeight = FontWeight.Black, fontSize = 9.sp, letterSpacing = 1.sp) }
@@ -4220,7 +4238,7 @@ private fun DecorationStoreCard(item: SocialProfileDecoration, selected: Boolean
         Column(Modifier.padding(9.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                 Box(Modifier.fillMaxSize(.66f).background(Brush.linearGradient(listOf(Color(0xFFDDEBFF), Color(0xFFEADFFF))), CircleShape))
-                AnimatedProfileDecoration(item.assetUrl, Modifier.fillMaxSize())
+                ProfileDecorationImage(item.assetUrl, Modifier.fillMaxSize().graphicsLayer(scaleX = 1.12f, scaleY = 1.12f), animated = true)
                 if (item.applied) Icon(Icons.Default.CheckCircle, "Applied", tint = Color(0xFF12B76A), modifier = Modifier.align(Alignment.TopEnd).size(20.dp))
             }
             Text(item.name, fontWeight = FontWeight.Bold, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -4617,7 +4635,7 @@ fun ChatDetailScreen(
                     }
                 } else {
                     IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "Back") }
-                    DecoratedAvatar(contact?.user?.avatar, R.drawable.img_tiwi_avatar_1, contact?.profile?.avatarDecoration, Modifier.size(42.dp).clickable { contact?.userId?.let(onProfileClick) })
+                    DecoratedAvatar(contact?.user?.avatar, R.drawable.img_tiwi_avatar_1, contact?.profile?.avatarDecoration, Modifier.size(42.dp).clickable { contact?.userId?.let(onProfileClick) }, animateDecoration = true)
                     Spacer(modifier = Modifier.width(7.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(name, fontWeight = FontWeight.Bold)
@@ -4645,7 +4663,7 @@ fun ChatDetailScreen(
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Box(contentAlignment = Alignment.BottomEnd) {
-                            DecoratedAvatar(contact?.user?.avatar, R.drawable.img_tiwi_avatar_1, contact?.profile?.avatarDecoration, Modifier.size(112.dp))
+                            DecoratedAvatar(contact?.user?.avatar, R.drawable.img_tiwi_avatar_1, contact?.profile?.avatarDecoration, Modifier.size(112.dp), animateDecoration = true)
                             Surface(
                                 modifier = Modifier.size(24.dp).offset(x = 4.dp, y = 4.dp),
                                 shape = CircleShape,

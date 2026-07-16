@@ -40,6 +40,22 @@ type Tab = 'users' | 'posts' | 'reports' | 'automation' | 'decorations' | 'setti
 
 const emptyDecoration = { id: '', name: '', assetUrl: '', fileName: '', mimeType: 'image/png', animated: false, width: 288, height: 288, priceUsd: 0, status: 'active', sortOrder: 0 };
 
+const editableDecoration = (item: any = {}) => ({
+  ...emptyDecoration,
+  id: item.id || '',
+  slug: item.slug || '',
+  name: item.name || '',
+  assetUrl: item.assetUrl || '',
+  fileName: item.fileName || '',
+  mimeType: item.mimeType || 'image/png',
+  animated: Boolean(item.animated),
+  width: Number(item.width || 288),
+  height: Number(item.height || 288),
+  priceUsd: Number(item.priceUsd || 0),
+  status: item.status || 'active',
+  sortOrder: Number(item.sortOrder || 0)
+});
+
 const dateLabel = (value?: string) => {
   const date = value ? new Date(value) : null;
   return date && !Number.isNaN(date.getTime()) ? date.toLocaleString() : '-';
@@ -192,12 +208,17 @@ export default function AdminSocial() {
     await perform(async () => {
       const upload = decorationFile ? await uploadSocialProfileDecorationWithApi(decorationFile) : null;
       await adminUpsertSocialProfileDecorationWithApi({
-        ...decorationForm,
         id: decorationForm.id || undefined,
+        slug: decorationForm.slug || undefined,
+        name: decorationForm.name.trim(),
         assetUrl: upload?.sourceUrl || decorationForm.assetUrl,
         fileName: decorationFile?.name || decorationForm.fileName,
         mimeType: upload?.mimeType || decorationForm.mimeType || 'image/png',
+        animated: Boolean(decorationForm.animated),
+        width: Number(decorationForm.width || 288),
+        height: Number(decorationForm.height || 288),
         priceUsd: Number(decorationForm.priceUsd || 0),
+        status: decorationForm.status || 'active',
         sortOrder: Number(decorationForm.sortOrder || 0)
       });
       resetDecorationForm();
@@ -350,7 +371,7 @@ export default function AdminSocial() {
                 {decorations.filter((item) => item.status !== 'archived').map((item) => (
                   <article key={item.id} className="overflow-hidden rounded-xl border border-[#dfe4ea] bg-white">
                     <div className="relative flex h-52 items-center justify-center bg-[radial-gradient(circle_at_center,#eef4ff_0,#f8fafc_62%,#fff_100%)]"><div className="absolute h-28 w-28 rounded-full bg-gradient-to-br from-[#dbeafe] to-[#c4b5fd]" /><img src={item.assetUrl} className="relative h-44 w-44 object-contain" /><span className={`absolute left-3 top-3 rounded-full px-2.5 py-1 text-[9px] font-black uppercase ${item.animated ? 'bg-violet-600 text-white' : 'bg-white text-gray-600'}`}>{item.animated ? 'Animated APNG' : 'PNG'}</span></div>
-                    <div className="p-4"><div className="flex items-start justify-between gap-2"><div><h3 className="font-black text-[#2e3d49]">{item.name}</h3><p className="mt-1 text-[10px] text-gray-500">{item.fileName} · {item.width}×{item.height}</p></div><span className={`rounded px-2 py-1 text-[11px] font-black ${Number(item.priceUsd) === 0 ? 'bg-green-50 text-green-700' : 'bg-blue-50 text-blue-700'}`}>{Number(item.priceUsd) === 0 ? 'FREE' : `$${Number(item.priceUsd).toFixed(2)}`}</span></div><p className="mt-3 text-[10px] text-gray-500">{item.ownershipCount || 0} owned · {item.appliedCount || 0} currently applied · {item.status}</p><div className="mt-4 flex gap-2"><button onClick={() => { resetDecorationForm(); setDecorationForm({ ...item }); setDecorationPreview(item.assetUrl); window.scrollTo({ top: 0, behavior: 'smooth' }); }} className="flex-1 rounded-lg border border-[#dfe4ea] px-3 py-2 text-[11px] font-black text-[#344054] hover:bg-gray-50">Edit</button><button disabled={saving} onClick={() => { if (window.confirm(`Archive ${item.name}? It will be removed from profiles using it.`)) perform(() => adminArchiveSocialProfileDecorationWithApi(item.id), 'Profile decoration archived.'); }} className="rounded-lg border border-red-100 p-2 text-red-600 hover:bg-red-50"><Trash2 className="h-4 w-4" /></button></div></div>
+                    <div className="p-4"><div className="flex items-start justify-between gap-2"><div><h3 className="font-black text-[#2e3d49]">{item.name}</h3><p className="mt-1 text-[10px] text-gray-500">{item.fileName} · {item.width}×{item.height}</p></div><span className={`rounded px-2 py-1 text-[11px] font-black ${Number(item.priceUsd) === 0 ? 'bg-green-50 text-green-700' : 'bg-blue-50 text-blue-700'}`}>{Number(item.priceUsd) === 0 ? 'FREE' : `$${Number(item.priceUsd).toFixed(2)}`}</span></div><p className="mt-3 text-[10px] text-gray-500">{item.ownershipCount || 0} owned · {item.appliedCount || 0} currently applied · {item.status}</p><div className="mt-4 flex gap-2"><button onClick={() => { resetDecorationForm(); setDecorationForm(editableDecoration(item)); setDecorationPreview(item.assetUrl); window.scrollTo({ top: 0, behavior: 'smooth' }); }} className="flex-1 rounded-lg border border-[#dfe4ea] px-3 py-2 text-[11px] font-black text-[#344054] hover:bg-gray-50">Edit</button><button disabled={saving} onClick={() => { if (window.confirm(`Archive ${item.name}? It will be removed from profiles using it.`)) perform(() => adminArchiveSocialProfileDecorationWithApi(item.id), 'Profile decoration archived.'); }} className="rounded-lg border border-red-100 p-2 text-red-600 hover:bg-red-50"><Trash2 className="h-4 w-4" /></button></div></div>
                   </article>
                 ))}
               </div>
