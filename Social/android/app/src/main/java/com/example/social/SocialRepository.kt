@@ -108,6 +108,11 @@ class SocialRepository(context: Context) {
         }
     }
 
+    suspend fun stories(): List<SocialPost> {
+        val data = client.execute("query TiwiStories { socialStories(limit: 80) { $POST_FIELDS } }")
+        return data.list("socialStories").mapNotNull { it.objectMap()?.let(::mapPost) }
+    }
+
     suspend fun refreshProfile(userId: String? = null): SocialProfile? {
         val data = client.execute(
             """query TiwiProfile(${D}userId: ID) { socialProfile(userId: ${D}userId) { $PROFILE_FIELDS } }""",
@@ -197,9 +202,11 @@ class SocialRepository(context: Context) {
             mapOf("input" to input)
         )
         val post = mapPost(data.objectValue("createSocialPost") ?: throw SocialApiException("Post was not created"))
-        val next = listOf(post) + _feed.value.filterNot { it.id == post.id }
-        _feed.value = next
-        cache.saveFeed(next)
+        if (type != "story") {
+            val next = listOf(post) + _feed.value.filterNot { it.id == post.id }
+            _feed.value = next
+            cache.saveFeed(next)
+        }
         return post
     }
 

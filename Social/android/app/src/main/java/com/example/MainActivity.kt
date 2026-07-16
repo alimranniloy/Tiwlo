@@ -32,6 +32,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.pager.VerticalPager
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -624,6 +625,59 @@ private fun formatCount(value: Int): String = when {
     value < 1_000 -> value.toString()
     value < 1_000_000 -> String.format(Locale.US, if (value < 10_000 && value % 1_000 != 0) "%.1fK" else "%.0fK", value / 1_000.0)
     else -> String.format(Locale.US, if (value < 10_000_000 && value % 1_000_000 != 0) "%.1fM" else "%.0fM", value / 1_000_000.0)
+}
+
+private fun parseSocialDate(value: String?): Date? {
+    if (value.isNullOrBlank()) return null
+    return listOf("yyyy-MM-dd'T'HH:mm:ss.SSSX", "yyyy-MM-dd'T'HH:mm:ssX", "yyyy-MM-dd'T'HH:mm:ss.SSSXXX", "yyyy-MM-dd'T'HH:mm:ssXXX")
+        .firstNotNullOfOrNull { pattern ->
+            runCatching { SimpleDateFormat(pattern, Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }.parse(value) }.getOrNull()
+        }
+}
+
+private fun messageClock(value: String?): String = parseSocialDate(value)?.let {
+    SimpleDateFormat("h:mm a", Locale.US).format(it)
+} ?: ""
+
+private fun messageDay(value: String?): String = parseSocialDate(value)?.let {
+    val today = SimpleDateFormat("yyyyMMdd", Locale.US).format(Date())
+    val day = SimpleDateFormat("yyyyMMdd", Locale.US).format(it)
+    if (today == day) "Today" else SimpleDateFormat("EEE, MMM d", Locale.US).format(it)
+} ?: ""
+
+private data class TiwiCallEvent(val type: String, val status: String, val startedAt: String, val endedAt: String, val callerId: String)
+
+private fun parseCallEvent(body: String): TiwiCallEvent? {
+    val parts = body.split('|')
+    if (parts.size != 6 || parts.first() != "__tiwi_call__") return null
+    return TiwiCallEvent(parts[1], parts[2], parts[3], parts[4], parts[5])
+}
+
+private fun callEventLabel(event: TiwiCallEvent, currentUserId: String?): String {
+    val type = if (event.type == "video") "Video call" else "Audio call"
+    if (event.status in listOf("missed", "declined", "failed")) {
+        val incoming = event.callerId != currentUserId
+        return when (event.status) {
+            "missed" -> if (incoming) "Missed $type" else "No answer"
+            "declined" -> if (incoming) "Declined $type" else "$type declined"
+            else -> "$type failed"
+        }
+    }
+    val durationSeconds = (((parseSocialDate(event.endedAt)?.time ?: 0L) - (parseSocialDate(event.startedAt)?.time ?: 0L)) / 1000L).coerceAtLeast(0L)
+    val duration = when {
+        durationSeconds < 60 -> "${durationSeconds}s"
+        durationSeconds < 3600 -> "${durationSeconds / 60}m ${durationSeconds % 60}s"
+        else -> "${durationSeconds / 3600}h ${(durationSeconds % 3600) / 60}m"
+    }
+    return "$type · $duration"
+}
+
+private fun messagePreview(message: SocialMessage?, currentUserId: String?): String {
+    if (message == null) return "Start a conversation"
+    if (message.unsentAt != null) return "Message unsent"
+    parseCallEvent(message.body)?.let { return callEventLabel(it, currentUserId) }
+    if (message.body.isNotBlank()) return message.body
+    return when (message.media.firstOrNull()?.type) { "video" -> "Video"; "image" -> "Photo"; "audio" -> "Voice message"; else -> "Attachment" }
 }
 
 private fun toUiPost(value: SocialPost): Post {
@@ -2825,6 +2879,10 @@ fun MenuScreen(repository: SocialRepository, name: String, avatarUrl: String?, o
 
 @Composable
 private fun ShortcutScreen(repository: SocialRepository, shortcut: String, onBack: () -> Unit) {
+    if (shortcut == "Groups") {
+        GroupShortcutContent(repository, onBack)
+        return
+    }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     var loading by remember(shortcut) { mutableStateOf(true) }
@@ -2843,8 +2901,7 @@ private fun ShortcutScreen(repository: SocialRepository, shortcut: String, onBac
             Text(shortcut, fontWeight = FontWeight.Bold, fontSize = 19.sp)
         }
         HorizontalDivider(color = Color(0xFFE9EAED), thickness = .5.dp)
-        if (shortcut == "Groups") GroupShortcutContent(repository)
-        else when {
+        when {
             loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 2.5.dp) }
             posts.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Column(horizontalAlignment = Alignment.CenterHorizontally) { Icon(if (shortcut == "Saved") Icons.Outlined.BookmarkBorder else Icons.Outlined.History, null, tint = Color.Gray, modifier = Modifier.size(44.dp)); Text(if (shortcut == "Saved") "No saved posts yet" else "No memories yet", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 10.dp)); Text(if (shortcut == "Saved") "Use a post menu to save it here." else "Posts older than 30 days will appear here.", color = Color.Gray, fontSize = 12.sp) } }
             else -> LazyColumn(Modifier.fillMaxSize()) { items(posts, key = { it.id }) { value -> PostCard(toUiPost(value), repository) } }
@@ -2853,7 +2910,7 @@ private fun ShortcutScreen(repository: SocialRepository, shortcut: String, onBac
 }
 
 @Composable
-private fun GroupShortcutContent(repository: SocialRepository) {
+private fun GroupShortcutContent(repository: SocialRepository, onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     var query by remember { mutableStateOf("") }
@@ -2912,7 +2969,7 @@ private fun GroupShortcutContent(repository: SocialRepository) {
     val group = selectedGroup
     if (group != null) {
         BackHandler { selectedGroup = null }
-        Column(Modifier.fillMaxSize()) {
+        Column(Modifier.fillMaxSize().background(Color.White).statusBarsPadding()) {
             Row(Modifier.fillMaxWidth().height(48.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = { selectedGroup = null }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Groups") }
                 Text(group.name, Modifier.weight(1f), fontWeight = FontWeight.Bold, maxLines = 1)
@@ -2948,10 +3005,15 @@ private fun GroupShortcutContent(repository: SocialRepository) {
                 item { Spacer(Modifier.navigationBarsPadding().height(16.dp)) }
             }
         }
-    } else Column(Modifier.fillMaxSize()) {
+    } else Column(Modifier.fillMaxSize().background(Color.White).statusBarsPadding()) {
+        Row(Modifier.fillMaxWidth().height(52.dp).padding(horizontal = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
+            Text("Groups", Modifier.weight(1f), fontWeight = FontWeight.ExtraBold, fontSize = 21.sp)
+            IconButton(onClick = { showCreate = true }) { Icon(Icons.Default.Add, "Create group", tint = TiwiBlue) }
+        }
+        HorizontalDivider(color = Color(0xFFE4E7EC), thickness = .5.dp)
         Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(query, { query = it }, placeholder = { Text("Search groups") }, leadingIcon = { Icon(Icons.Default.Search, null) }, singleLine = true, modifier = Modifier.weight(1f), shape = RoundedCornerShape(24.dp))
-            IconButton(onClick = { showCreate = true }) { Icon(Icons.Default.AddCircle, "Create group", tint = TiwiBlue) }
         }
         Row(Modifier.padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically) { FilterChip(selected = !mineOnly, onClick = { mineOnly = false }, label = { Text("Discover") }); Spacer(Modifier.width(8.dp)); FilterChip(selected = mineOnly, onClick = { mineOnly = true }, label = { Text("Your groups") }) }
         when { loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 2.5.dp) }; groups.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(if (mineOnly) "You haven't joined a group yet" else "No groups found", color = Color.Gray) }; else -> LazyColumn { items(groups, key = { it.id }) { value -> Surface(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 5.dp).clickable { selectedGroup = value }, color = Color.White, border = BorderStroke(1.dp, Color(0xFFE3E6EA)), shape = RoundedCornerShape(12.dp), tonalElevation = 0.dp) { Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) { Box(Modifier.size(58.dp).background(Color(0xFFEAF3FF), RoundedCornerShape(10.dp)), contentAlignment = Alignment.Center) { if (!value.coverUrl.isNullOrBlank()) AsyncImage(value.coverUrl, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) else Icon(Icons.Default.Group, null, tint = TiwiBlue) }; Column(Modifier.weight(1f).padding(start = 11.dp)) { Text(value.name, fontWeight = FontWeight.Bold); Text("${formatCount(value.memberCount)} members • ${value.privacy}", color = Color.Gray, fontSize = 12.sp) }; if (value.viewerJoined) AssistChip(onClick = { selectedGroup = value }, label = { Text("Joined") }) else Icon(Icons.Default.ChevronRight, null) } } } }
@@ -2991,7 +3053,7 @@ private fun GroupEditorPage(
             IconButton(enabled = !busy, onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
             Text(title, Modifier.weight(1f), fontWeight = FontWeight.Bold, fontSize = 19.sp)
             TextButton(enabled = !busy && name.isNotBlank(), onClick = { onSave(name, description, privacy, coverUrl) }) {
-                if (busy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Text("Save", fontWeight = FontWeight.Bold)
+                if (busy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Text(if (title == "Create group") "Create" else "Save", fontWeight = FontWeight.Bold)
             }
         }
         HorizontalDivider(color = Color(0xFFE4E7EC))
@@ -3004,6 +3066,17 @@ private fun GroupEditorPage(
                 }
             }
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                if (title == "Create group") {
+                    Surface(color = Color(0xFFF7F8FA), shape = RoundedCornerShape(12.dp), border = BorderStroke(1.dp, Color(0xFFE4E7EC)), tonalElevation = 0.dp) {
+                        Row(Modifier.padding(13.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Box(Modifier.size(44.dp).background(Color(0xFFE7F0FF), CircleShape), contentAlignment = Alignment.Center) { Icon(Icons.Outlined.Groups, null, tint = TiwiBlue) }
+                            Column(Modifier.padding(start = 11.dp)) {
+                                Text("Build your community", fontWeight = FontWeight.Bold)
+                                Text("Choose a name, cover and privacy. You can invite people after creating the group.", color = Color.Gray, fontSize = 12.sp, lineHeight = 16.sp)
+                            }
+                        }
+                    }
+                }
                 Text("Group details", fontWeight = FontWeight.Bold, fontSize = 17.sp)
                 OutlinedTextField(name, { name = it.take(120) }, label = { Text("Group name") }, supportingText = { Text("${name.length}/120") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(description, { description = it.take(2000) }, label = { Text("Description") }, supportingText = { Text("Tell people what this group is about") }, minLines = 4, modifier = Modifier.fillMaxWidth())
@@ -3053,6 +3126,11 @@ private fun SocialSettingsPage(repository: SocialRepository, profile: SocialProf
     var packageBusy by remember { mutableStateOf<String?>(null) }
     var optionsLoading by remember { mutableStateOf(false) }
 
+    if (page == "Account Center") {
+        AccountCenterPage(repository, currentUser, onBack)
+        return
+    }
+
     var saving by remember { mutableStateOf(false) }
     LaunchedEffect(page) {
         if (page == "Verified badge") {
@@ -3070,7 +3148,6 @@ private fun SocialSettingsPage(repository: SocialRepository, profile: SocialProf
         }
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 14.dp, vertical = 10.dp)) {
             when {
-                page == "Account Center" -> AccountCenterPage(repository, currentUser)
                 page == "Account Settings" -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Playback", fontWeight = FontWeight.Bold, color = Color.Gray)
                     SettingSwitch("Autoplay videos", autoplay) { autoplay = it }
@@ -3164,7 +3241,7 @@ private fun SocialSettingsPage(repository: SocialRepository, profile: SocialProf
 }
 
 @Composable
-private fun AccountCenterPage(repository: SocialRepository, user: SocialUser?) {
+private fun AccountCenterPage(repository: SocialRepository, user: SocialUser?, onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     var section by remember { mutableStateOf<String?>(null) }
@@ -3190,13 +3267,20 @@ private fun AccountCenterPage(repository: SocialRepository, user: SocialUser?) {
     var state by remember(user?.id) { mutableStateOf(user?.state.orEmpty()) }
     var postalCode by remember(user?.id) { mutableStateOf(user?.postalCode.orEmpty()) }
 
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        if (section != null) {
-            Row(Modifier.fillMaxWidth().clickable { section = null }.padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back"); Text(section.orEmpty(), Modifier.padding(start = 9.dp), fontWeight = FontWeight.Bold, fontSize = 19.sp)
+    BackHandler { if (section != null) section = null else onBack() }
+    Column(Modifier.fillMaxSize().background(Color.White).statusBarsPadding()) {
+        Row(Modifier.fillMaxWidth().height(52.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = { if (section != null) section = null else onBack() }) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
             }
+            Text(section ?: "Account Center", fontWeight = FontWeight.Bold, fontSize = 19.sp)
         }
-        when (section) {
+        HorizontalDivider(color = Color(0xFFE4E7EC), thickness = .5.dp)
+        Column(
+            Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            when (section) {
             "Personal details" -> {
                 Text("Your name is shared with your linked Tiwlo identity. Your email can be changed only after verification.", color = Color.Gray, fontSize = 12.sp)
                 AccountField("Full name", name) { name = it }
@@ -3244,6 +3328,7 @@ private fun AccountCenterPage(repository: SocialRepository, user: SocialUser?) {
                 listOf("Personal details" to Icons.Outlined.Person, "Password and security" to Icons.Outlined.Security, "Billing profile" to Icons.Outlined.Payment, "Your information and permissions" to Icons.Outlined.FolderShared).forEach { item ->
                     AccountMenuRow(item.second, item.first, "Manage in the Tiwi app") { section = item.first }
                 }
+            }
             }
         }
     }
@@ -3916,19 +4001,45 @@ private fun EditProfileDialog(repository: SocialRepository, profile: SocialProfi
 @Composable
 fun MessagesScreen(repository: SocialRepository, onBack: () -> Unit, onChatClick: (SocialConversation) -> Unit) {
     val chats by repository.conversations.collectAsState()
+    val currentUser by repository.currentUser.collectAsState()
     var chatQuery by remember { mutableStateOf("") }
     var showNewMessage by remember { mutableStateOf(false) }
     var messageTab by remember { mutableIntStateOf(0) }
+    var stories by remember { mutableStateOf<List<SocialPost>>(emptyList()) }
+    var selectedStory by remember { mutableStateOf<SocialPost?>(null) }
+    var storyUploading by remember { mutableStateOf(false) }
     val currentUserId = repository.currentUserId()
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     val contacts = remember(chats, currentUserId) { chats.mapNotNull { it.members.firstOrNull { member -> member.userId != currentUserId } }.distinctBy { it.userId } }
+    val storyCards = remember(stories, currentUserId) { stories.filter { it.authorId != currentUserId }.distinctBy { it.authorId } }
+    val myStory = remember(stories, currentUserId) { stories.firstOrNull { it.authorId == currentUserId } }
     val visibleChats = remember(chats, chatQuery, currentUserId, messageTab) {
         val byRequest = chats.filter { chat -> if (messageTab == 0) chat.requestStatus == "accepted" || chat.requestedById == currentUserId else chat.requestStatus == "pending" && chat.requestedById != currentUserId }
         if (chatQuery.isBlank()) byRequest else byRequest.filter { chat ->
             chat.title?.contains(chatQuery, true) == true || chat.members.any { it.userId != currentUserId && it.user.name.contains(chatQuery, true) }
         }
     }
-    LaunchedEffect(Unit) { runCatching { repository.refreshConversations() } }
+    val storyPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) scope.launch {
+            storyUploading = true
+            runCatching {
+                val media = repository.uploadMedia(context.contentResolver, uri, "story")
+                repository.createPost("", type = "story", media = listOf(media), visibility = "public")
+            }.onSuccess { stories = repository.stories(); selectedStory = it }
+                .onFailure { Toast.makeText(context, it.message ?: "Story upload failed", Toast.LENGTH_LONG).show() }
+            storyUploading = false
+        }
+    }
+    LaunchedEffect(Unit) {
+        runCatching { repository.refreshConversations() }
+        stories = runCatching { repository.stories() }.getOrDefault(emptyList())
+    }
+    selectedStory?.let { story ->
+        BackHandler { selectedStory = null }
+        MessengerStoryViewer(story = story, repository = repository, onClose = { selectedStory = null })
+        return
+    }
     Column(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         Row(
             modifier = Modifier
@@ -3950,7 +4061,7 @@ fun MessagesScreen(repository: SocialRepository, onBack: () -> Unit, onChatClick
             Tab(selected = messageTab == 1, onClick = { messageTab = 1 }, text = { Text("Requests${chats.count { it.requestStatus == "pending" && it.requestedById != currentUserId }.let { if (it > 0) " ($it)" else "" }}", fontWeight = FontWeight.Bold) })
         }
 
-        // Stories in Messenger style
+        // Real 24-hour stories, shared through the Social API.
         if (messageTab == 0) LazyRow(
             contentPadding = PaddingValues(horizontal = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(16.dp),
@@ -3958,16 +4069,38 @@ fun MessagesScreen(repository: SocialRepository, onBack: () -> Unit, onChatClick
         ) {
             item {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Box(modifier = Modifier.size(60.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surface), contentAlignment = Alignment.Center) {
-                        Icon(Icons.Default.Add, contentDescription = null, tint = TiwiBlue)
+                    Box(
+                        modifier = Modifier.size(64.dp).clip(CircleShape)
+                            .background(if (myStory != null) TiwiBlue else Color(0xFFF0F2F5))
+                            .padding(if (myStory != null) 3.dp else 0.dp)
+                            .clip(CircleShape).background(Color.White)
+                            .clickable(enabled = !storyUploading) {
+                                if (myStory != null) selectedStory = myStory
+                                else storyPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo))
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        TiwiAvatar(currentUser?.avatar, R.drawable.img_tiwi_avatar_1, Modifier.fillMaxSize().clip(CircleShape))
+                        Surface(Modifier.align(Alignment.BottomEnd).size(22.dp), shape = CircleShape, color = TiwiBlue, border = BorderStroke(2.dp, Color.White)) {
+                            Box(contentAlignment = Alignment.Center) {
+                                if (storyUploading) CircularProgressIndicator(Modifier.size(13.dp), color = Color.White, strokeWidth = 2.dp)
+                                else Icon(Icons.Default.Add, contentDescription = "Add story", tint = Color.White, modifier = Modifier.size(15.dp))
+                            }
+                        }
                     }
-                    Text("Your Story", style = MaterialTheme.typography.labelSmall)
+                    Text(if (myStory != null) "Your story" else "Add story", style = MaterialTheme.typography.labelSmall, maxLines = 1)
                 }
             }
-            items(contacts, key = { it.userId }) { contact ->
+            items(storyCards, key = { "story-${it.authorId}" }) { story ->
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    TiwiAvatar(contact.user.avatar, R.drawable.img_tiwi_avatar_1, Modifier.size(60.dp).clip(CircleShape).background(TiwiBlue, CircleShape).padding(2.dp).clip(CircleShape))
-                    Text(contact.user.name, style = MaterialTheme.typography.labelSmall)
+                    TiwiAvatar(
+                        story.author.avatar,
+                        R.drawable.img_tiwi_avatar_1,
+                        Modifier.size(64.dp).clip(CircleShape).background(TiwiBlue, CircleShape).padding(3.dp)
+                            .clip(CircleShape).background(Color.White).padding(2.dp).clip(CircleShape)
+                            .clickable { selectedStory = story }
+                    )
+                    Text(story.author.name.substringBefore(' ').take(11), style = MaterialTheme.typography.labelSmall, maxLines = 1)
                 }
             }
         }
@@ -3999,7 +4132,7 @@ fun MessagesScreen(repository: SocialRepository, onBack: () -> Unit, onChatClick
             items(visibleChats, key = { it.id }) { chat ->
                 val contact = chat.members.firstOrNull { it.userId != currentUserId }
                 val name = chat.title ?: contact?.user?.name.orEmpty()
-                val lastMsg = chat.lastMessage?.body.orEmpty()
+                val lastMsg = messagePreview(chat.lastMessage, currentUserId)
                 ListItem(
                     modifier = Modifier.clickable(enabled = chat.requestStatus == "accepted" || chat.requestedById == currentUserId) { onChatClick(chat) },
                     leadingContent = { TiwiAvatar(contact?.user?.avatar ?: chat.avatarUrl, R.drawable.img_tiwi_avatar_1, Modifier.size(56.dp).clip(CircleShape)) },
@@ -4021,6 +4154,51 @@ fun MessagesScreen(repository: SocialRepository, onBack: () -> Unit, onChatClick
     if (showNewMessage) NewMessageDialog(repository, onDismiss = { showNewMessage = false }) { conversation ->
         showNewMessage = false
         onChatClick(conversation)
+    }
+}
+
+@Composable
+private fun MessengerStoryViewer(story: SocialPost, repository: SocialRepository, onClose: () -> Unit) {
+    val media = story.media.firstOrNull()
+    Box(Modifier.fillMaxSize().background(Color.Black).statusBarsPadding().navigationBarsPadding()) {
+        when (media?.type) {
+            "video" -> TiwiVideo(
+                media.hlsUrl?.takeIf { media.processingStatus == "ready" } ?: media.url,
+                Modifier.fillMaxSize(),
+                autoplay = true,
+                fallbackUrl = media.url,
+                posterUrl = media.thumbnailUrl
+            )
+            "image" -> AsyncImage(
+                model = repository.absoluteUrl(media.url),
+                contentDescription = "Story",
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Fit
+            )
+            else -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text(story.body, color = Color.White, fontSize = 24.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(28.dp))
+            }
+        }
+        LinearProgressIndicator(
+            progress = { 1f },
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp).height(3.dp).align(Alignment.TopCenter),
+            color = Color.White,
+            trackColor = Color.White.copy(alpha = .35f)
+        )
+        Row(Modifier.fillMaxWidth().align(Alignment.TopStart).padding(top = 14.dp, start = 12.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            TiwiAvatar(story.author.avatar, R.drawable.img_tiwi_avatar_1, Modifier.size(38.dp).clip(CircleShape))
+            Column(Modifier.weight(1f).padding(start = 9.dp)) {
+                Text(story.author.name, color = Color.White, fontWeight = FontWeight.Bold)
+                Text(relativePostTime(story.publishedAt), color = Color.White.copy(alpha = .78f), fontSize = 11.sp)
+            }
+            IconButton(onClick = onClose) { Icon(Icons.Default.Close, "Close story", tint = Color.White) }
+        }
+        if (story.body.isNotBlank() && media != null) Text(
+            story.body,
+            color = Color.White,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().background(Color.Black.copy(alpha = .45f)).padding(16.dp)
+        )
     }
 }
 
@@ -4077,6 +4255,7 @@ fun ChatDetailScreen(
 ) {
     var messageText by remember { mutableStateOf("") }
     var messageToUnsend by remember { mutableStateOf<SocialMessage?>(null) }
+    var selectedMessageId by remember { mutableStateOf<String?>(null) }
     val messagesByConversation by repository.messages.collectAsState()
     val contact = conversation.members.firstOrNull { it.userId != repository.currentUserId() }
     val name = conversation.title ?: contact?.user?.name.orEmpty()
@@ -4093,6 +4272,9 @@ fun ChatDetailScreen(
     }
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri -> uri?.let(sendAttachment) }
     val mediaPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri -> uri?.let(sendAttachment) }
+    val selectedMessage = messages.firstOrNull { it.id == selectedMessageId }
+
+    BackHandler(enabled = selectedMessageId != null) { selectedMessageId = null }
 
     LaunchedEffect(conversation.id) {
         runCatching { repository.markConversationRead(conversation.id) }
@@ -4113,16 +4295,27 @@ fun ChatDetailScreen(
                     .padding(horizontal = 2.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "Back") }
-                TiwiAvatar(contact?.user?.avatar, R.drawable.img_tiwi_avatar_1, Modifier.size(36.dp).clip(CircleShape).clickable { contact?.userId?.let(onProfileClick) })
-                Spacer(modifier = Modifier.width(7.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(name, fontWeight = FontWeight.Bold)
-                    Text("Active now", style = MaterialTheme.typography.labelSmall, color = TiwiBlue)
+                if (selectedMessage != null) {
+                    IconButton(onClick = { selectedMessageId = null }) { Icon(Icons.Default.Close, contentDescription = "Cancel selection") }
+                    Column(Modifier.weight(1f)) {
+                        Text("1 selected", fontWeight = FontWeight.Bold)
+                        Text("${messageDay(selectedMessage.sentAt)} · ${messageClock(selectedMessage.sentAt)}", color = Color.Gray, fontSize = 11.sp)
+                    }
+                    if (selectedMessage.senderId == repository.currentUserId() && selectedMessage.unsentAt == null && !selectedMessage.id.startsWith("local-")) {
+                        IconButton(onClick = { messageToUnsend = selectedMessage }) { Icon(Icons.Outlined.Delete, "Unsend", tint = Color(0xFFD92D20)) }
+                    }
+                } else {
+                    IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "Back") }
+                    TiwiAvatar(contact?.user?.avatar, R.drawable.img_tiwi_avatar_1, Modifier.size(36.dp).clip(CircleShape).clickable { contact?.userId?.let(onProfileClick) })
+                    Spacer(modifier = Modifier.width(7.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(name, fontWeight = FontWeight.Bold)
+                        Text("Active now", style = MaterialTheme.typography.labelSmall, color = TiwiBlue)
+                    }
+                    IconButton(onClick = { onCall(false) }) { Icon(Icons.Default.Call, contentDescription = "Call", tint = TiwiBlue) }
+                    IconButton(onClick = { onCall(true) }) { Icon(Icons.Default.VideoCall, contentDescription = "Video Call", tint = TiwiBlue) }
+                    IconButton(onClick = { contact?.userId?.let(onProfileClick) }) { Icon(Icons.Default.Info, contentDescription = "Info", tint = TiwiBlue) }
                 }
-                IconButton(onClick = { onCall(false) }) { Icon(Icons.Default.Call, contentDescription = "Call", tint = TiwiBlue) }
-                IconButton(onClick = { onCall(true) }) { Icon(Icons.Default.VideoCall, contentDescription = "Video Call", tint = TiwiBlue) }
-                IconButton(onClick = { contact?.userId?.let(onProfileClick) }) { Icon(Icons.Default.Info, contentDescription = "Info", tint = TiwiBlue) }
             }
         }
         HorizontalDivider(thickness = .5.dp, color = Color.LightGray.copy(alpha = .55f))
@@ -4189,13 +4382,51 @@ fun ChatDetailScreen(
                 }
             }
             
-            items(messages, key = { it.id }) { message ->
+            itemsIndexed(messages, key = { _, item -> item.id }) { index, message ->
+                val previousDay = messages.getOrNull(index - 1)?.sentAt?.let(::messageDay)
+                val currentDay = messageDay(message.sentAt)
+                if (currentDay.isNotBlank() && currentDay != previousDay) {
+                    Box(Modifier.fillMaxWidth().padding(vertical = 7.dp), contentAlignment = Alignment.Center) {
+                        Surface(color = Color(0xFFF0F2F5), shape = RoundedCornerShape(14.dp), tonalElevation = 0.dp) {
+                            Text(currentDay, Modifier.padding(horizontal = 11.dp, vertical = 5.dp), color = Color(0xFF667085), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                }
                 val msg = if (message.unsentAt != null) "Message unsent" else message.body
                 val isMe = message.senderId == repository.currentUserId()
-                Box(modifier = Modifier.fillMaxWidth(), contentAlignment = if (isMe) Alignment.CenterEnd else Alignment.CenterStart) {
+                val callEvent = parseCallEvent(message.body)
+                if (message.type == "system") {
+                    Surface(
+                        modifier = Modifier.align(Alignment.CenterHorizontally).combinedClickable(
+                            onClick = { selectedMessageId = if (selectedMessageId == message.id) null else message.id },
+                            onLongClick = { selectedMessageId = message.id }
+                        ),
+                        color = if (selectedMessageId == message.id) Color(0xFFE5F0FF) else Color(0xFFF7F8FA),
+                        shape = RoundedCornerShape(14.dp),
+                        border = BorderStroke(1.dp, if (selectedMessageId == message.id) TiwiBlue.copy(alpha = .45f) else Color(0xFFE4E7EC)),
+                        tonalElevation = 0.dp
+                    ) {
+                        Row(Modifier.padding(horizontal = 13.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(if (callEvent?.type == "video") Icons.Outlined.Videocam else Icons.Outlined.Call, null, tint = if (callEvent?.status in listOf("missed", "declined", "failed")) Color(0xFFD92D20) else TiwiBlue, modifier = Modifier.size(21.dp))
+                            Column(Modifier.padding(start = 9.dp)) {
+                                Text(callEvent?.let { callEventLabel(it, repository.currentUserId()) } ?: msg, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                                if (callEvent != null) Text("${messageClock(callEvent.startedAt)} – ${messageClock(callEvent.endedAt)}", color = Color.Gray, fontSize = 10.sp)
+                                else Text(messageClock(message.sentAt), color = Color.Gray, fontSize = 10.sp)
+                            }
+                        }
+                    }
+                    return@itemsIndexed
+                }
+                Box(
+                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                        .background(if (selectedMessageId == message.id) TiwiBlue.copy(alpha = .09f) else Color.Transparent)
+                        .padding(horizontal = 3.dp, vertical = 2.dp),
+                    contentAlignment = if (isMe) Alignment.CenterEnd else Alignment.CenterStart
+                ) {
                     Column(horizontalAlignment = if (isMe) Alignment.End else Alignment.Start) {
                     Surface(color = if (isMe) TiwiBlue else Color(0xFFF0F0F0), shape = RoundedCornerShape(18.dp), modifier = Modifier.widthIn(max = 280.dp).combinedClickable(
-                        onClick = {}, onLongClick = { if (isMe && message.unsentAt == null && !message.id.startsWith("local-")) messageToUnsend = message }
+                        onClick = { selectedMessageId = if (selectedMessageId == message.id) null else message.id },
+                        onLongClick = { selectedMessageId = message.id }
                     )) {
                         Column {
                             message.media.forEach { media ->
@@ -4214,6 +4445,7 @@ fun ChatDetailScreen(
                         }
                     }
                     if (isMe) Text(when (message.deliveryStatus) { "read" -> "Seen"; "delivered" -> "Delivered"; "sending" -> "Sending…"; "failed" -> "Failed"; else -> "Sent" }, color = Color.Gray, fontSize = 10.sp, modifier = Modifier.padding(end = 5.dp, top = 2.dp))
+                    if (selectedMessageId == message.id) Text("${messageDay(message.sentAt)} · ${messageClock(message.sentAt)}", color = Color.Gray, fontSize = 10.sp, modifier = Modifier.padding(horizontal = 5.dp).padding(top = 2.dp))
                     }
                 }
             }
@@ -4279,6 +4511,7 @@ fun ChatDetailScreen(
             confirmButton = {
                 TextButton(onClick = {
                     messageToUnsend = null
+                    selectedMessageId = null
                     scope.launch {
                         runCatching { repository.unsendMessage(target.id) }
                             .onFailure { Toast.makeText(context, it.message ?: "Unsend failed", Toast.LENGTH_SHORT).show() }

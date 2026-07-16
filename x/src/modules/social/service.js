@@ -33,7 +33,7 @@ const SOCIAL_DEFAULTS = Object.freeze({
   stunServers: [{ urls: 'stun:stun.l.google.com:19302' }]
 });
 
-const POST_TYPES = new Set(['post', 'news', 'reel', 'video', 'live']);
+const POST_TYPES = new Set(['post', 'news', 'reel', 'video', 'live', 'story']);
 const VISIBILITIES = new Set(['public', 'followers', 'private']);
 const COMMENT_PERMISSIONS = new Set(['everyone', 'followers', 'none']);
 const GROUP_PRIVACIES = new Set(['public', 'private']);
@@ -366,11 +366,12 @@ export const listFeed = async (ctx, args = {}) => {
       { visibility: 'public' }, { authorId: actor.id },
       { visibility: 'followers', authorId: { in: [...followingIds] } }
     ],
-    ...(args.type ? { type: String(args.type).toLowerCase() } : {}),
+    ...(args.type ? { type: String(args.type).toLowerCase() } : { type: { not: 'story' } }),
     ...(args.authorId ? { authorId: args.authorId } : {}),
     ...(args.groupId ? { groupId: args.groupId } : {}),
     ...(!args.authorId && hiddenAuthorIds.size ? { authorId: { notIn: [...hiddenAuthorIds] } } : {}),
-    ...(args.before ? { publishedAt: { lt: safeDate(args.before) } } : {})
+    ...(args.before ? { publishedAt: { lt: safeDate(args.before) } } : {}),
+    ...(String(args.type || '').toLowerCase() === 'story' ? { publishedAt: { gte: new Date(Date.now() - 86_400_000) } } : {})
   };
   const rows = await ctx.prisma.socialPost.findMany({
     where,
@@ -409,6 +410,8 @@ export const listFeed = async (ctx, args = {}) => {
   diversified.sort((left, right) => right.score - left.score);
   return diversified.slice(0, take).map(({ row, signals }) => mapPost({ ...row, rankingSignals: signals }));
 };
+
+export const listStories = async (ctx, args = {}) => listFeed(ctx, { ...args, type: 'story', limit: boundedLimit(args.limit, 50, 100) });
 
 export const getPost = async (ctx, id) => {
   const actor = await requireAuth(ctx);
@@ -1128,19 +1131,56 @@ export const signalCall = async (ctx, input) => {
   const candidates = Array.isArray(call.iceCandidates) ? call.iceCandidates : [];
   if (input.iceCandidate) candidates.push({ ...input.iceCandidate, from: actor.id, at: new Date().toISOString() });
   const status = input.status || call.status;
-  return ctx.prisma.socialCallSession.update({
-    where: { id: input.id },
-    data: removeUndefined({
-      status,
-      offer: input.offer,
-      answer: input.answer,
-      iceCandidates: input.iceCandidate ? candidates.slice(-200) : undefined,
-      startedAt: status === 'connecting' && !call.startedAt ? new Date() : undefined,
-      answeredAt: status === 'active' && !call.answeredAt ? new Date() : undefined,
-      endedAt: ['ended', 'declined', 'missed', 'failed'].includes(status) ? new Date() : undefined
-    }),
-    include: callInclude
+  const terminalStatuses = new Set(['ended', 'declined', 'missed', 'failed']);
+  const updateData = removeUndefined({
+    status,
+    offer: input.offer,
+    answer: input.answer,
+    iceCandidates: input.iceCandidate ? candidates.slice(-200) : undefined,
+    startedAt: status === 'connecting' && !call.startedAt ? new Date() : undefined,
+    answeredAt: status === 'active' && !call.answeredAt ? new Date() : undefined,
+    endedAt: terminalStatuses.has(status) ? new Date() : undefined
   });
+  let terminalTransition = false;
+  let updated;
+  if (terminalStatuses.has(status)) {
+    const result = await ctx.prisma.socialCallSession.updateMany({
+      where: { id: input.id, status: { notIn: [...terminalStatuses] } },
+      data: updateData
+    });
+    terminalTransition = result.count > 0;
+    updated = await ctx.prisma.socialCallSession.findUnique({ where: { id: input.id }, include: callInclude });
+  } else {
+    updated = await ctx.prisma.socialCallSession.update({ where: { id: input.id }, data: updateData, include: callInclude });
+  }
+  if (updated.conversationId && terminalTransition) {
+    const endedAt = updated.endedAt || new Date();
+    const startedAt = updated.answeredAt || updated.startedAt || updated.createdAt;
+    const callEvent = [
+      '__tiwi_call__',
+      updated.type,
+      status,
+      startedAt.toISOString(),
+      endedAt.toISOString(),
+      updated.callerId
+    ].join('|');
+    await ctx.prisma.$transaction([
+      ctx.prisma.socialMessage.create({
+        data: {
+          conversationId: updated.conversationId,
+          senderId: actor.id,
+          type: 'system',
+          body: callEvent,
+          deliveryStatus: 'sent'
+        }
+      }),
+      ctx.prisma.socialConversation.update({
+        where: { id: updated.conversationId },
+        data: { updatedAt: endedAt }
+      })
+    ]);
+  }
+  return updated;
 };
 
 export const endCall = async (ctx, id, status = 'ended') => signalCall(ctx, { id, status: status || 'ended' });

@@ -3162,6 +3162,7 @@ type Query {
   socialProfile(userId: ID, username: String): SocialProfile
   socialSearch(query: String, limit: Int): [SocialProfile!]!
   socialFeed(type: String, authorId: ID, groupId: ID, before: String, limit: Int): [SocialPost!]!
+  socialStories(limit: Int): [SocialPost!]!
   socialPost(id: ID!): SocialPost
   socialComments(postId: ID!, before: String, limit: Int): [SocialComment!]!
   socialSavedPosts(limit: Int): [SocialPost!]!

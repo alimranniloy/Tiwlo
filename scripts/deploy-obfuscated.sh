@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-DEPLOY_SCRIPT_VERSION="2026-06-14-frontend-seo-service"
+DEPLOY_SCRIPT_VERSION="2026-07-16-backend-runtime-health"
 ROOT="${TIWLO_INSTALL_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 BRANCH="${TIWLO_GIT_BRANCH:-main}"
 REPO_URL="${TIWLO_REPO_URL:-}"
@@ -696,11 +696,24 @@ install_dependencies_and_build() {
     npm_install_with_retry "Frontend" "$CHECKOUT_DIR/node_modules" npm install --no-audit --no-fund --progress=false
   fi
   if [ -f x/package-lock.json ]; then
-    npm_install_with_retry "Backend" "$CHECKOUT_DIR/x/node_modules" npm --prefix x ci --omit=optional --no-audit --no-fund --progress=false \
-      || npm_install_with_retry "Backend" "$CHECKOUT_DIR/x/node_modules" npm --prefix x install --omit=optional --no-audit --no-fund --progress=false
+    npm_install_with_retry "Backend" "$CHECKOUT_DIR/x/node_modules" npm --prefix x ci --include=optional --no-audit --no-fund --progress=false \
+      || npm_install_with_retry "Backend" "$CHECKOUT_DIR/x/node_modules" npm --prefix x install --include=optional --no-audit --no-fund --progress=false
   else
-    npm_install_with_retry "Backend" "$CHECKOUT_DIR/x/node_modules" npm --prefix x install --omit=optional --no-audit --no-fund --progress=false
+    npm_install_with_retry "Backend" "$CHECKOUT_DIR/x/node_modules" npm --prefix x install --include=optional --no-audit --no-fund --progress=false
   fi
+
+  step "Verifying backend native media runtime"
+  (
+    cd "$CHECKOUT_DIR/x"
+    node --input-type=module <<'NODE'
+const sharp = (await import('sharp')).default;
+await sharp({
+  create: { width: 2, height: 2, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 1 } }
+}).png().toBuffer();
+await import('./src/modules/social/moderation.js');
+console.log('Backend media runtime is ready.');
+NODE
+  )
 
   step "Preparing Prisma from temporary checkout"
   load_backend_env_for_prisma
@@ -945,6 +958,28 @@ restart_obfuscated_backend() {
   ensure_obfuscated_frontend_service
 }
 
+verify_obfuscated_backend_health() {
+  step "Verifying obfuscated backend health"
+  local health_url="http://127.0.0.1:$BACKEND_PORT/health"
+  local attempt
+  for attempt in $(seq 1 45); do
+    if curl -fsS --max-time 5 "$health_url" 2>/dev/null | grep -q '"ok"[[:space:]]*:[[:space:]]*true'; then
+      echo "Backend health check passed on port $BACKEND_PORT."
+      return 0
+    fi
+    sleep 1
+  done
+
+  echo "Obfuscated backend did not become healthy on port $BACKEND_PORT." >&2
+  if have pm2; then
+    pm2 describe "$PM2_APP_NAME" || true
+    pm2 logs "$PM2_APP_NAME" --lines 100 --nostream || true
+  elif [ -f "$ROOT/.logs/${PM2_APP_NAME}.err.log" ]; then
+    tail -n 100 "$ROOT/.logs/${PM2_APP_NAME}.err.log" || true
+  fi
+  return 1
+}
+
 post_wipe_temporary_source() {
   step "Post-wiping temporary checkout and new .git"
   rm -rf -- "$CHECKOUT_DIR" "$RELEASE_DIR"
@@ -980,6 +1015,7 @@ main() {
   install_obfuscated_release
   stop_readable_source_services
   restart_obfuscated_backend
+  verify_obfuscated_backend_health
   post_wipe_temporary_source
 
   step "Secure obfuscated deployment complete"
