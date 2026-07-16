@@ -25,10 +25,10 @@ const SOCIAL_DEFAULTS = Object.freeze({
   moderation: {
     reportsEnabled: true,
     autoDisableExplicit: true,
-    explicitThreshold: 0.95,
-    reviewThreshold: 0.72,
+    explicitThreshold: 0.85,
+    reviewThreshold: 0.55,
     blockedWords: [],
-    provider: 'google-safe-search-or-webhook'
+    provider: 'local-nsfwjs-mobilenet-v2'
   },
   stunServers: [{ urls: 'stun:stun.l.google.com:19302' }]
 });
@@ -50,6 +50,7 @@ const GROUP_PRIVACIES = new Set(['public', 'private']);
 const GROUP_ROLES = new Set(['admin', 'editor', 'member']);
 const MESSAGE_TYPES = new Set(['text', 'image', 'video', 'audio', 'file', 'system']);
 const CALL_TYPES = new Set(['audio', 'video']);
+const RESTRICTED_SOCIAL_STATUSES = new Set(['disabled', 'banned', 'blocked', 'suspended']);
 
 const bounded = (value, max = 5000) => {
   if (value === null || value === undefined) return value;
@@ -112,6 +113,9 @@ export const getSettings = async (ctx) => {
 };
 
 const requireSocialFeature = async (ctx, key) => {
+  if (RESTRICTED_SOCIAL_STATUSES.has(String(ctx.user?.status || '').trim().toLowerCase())) {
+    throw new AppError(ctx.user?.socialRestrictionReason || 'This account is disabled and cannot use Tiwi Social.', 'FORBIDDEN');
+  }
   if (ctx.user?.signupSource === 'social_app' && !ctx.user?.emailVerifiedAt) {
     throw new AppError('Verify your email before using Tiwi Social', 'FORBIDDEN');
   }
@@ -494,10 +498,11 @@ export const createPost = async (ctx, input) => {
   validateOwnedMedia(actor.id, media);
   if (!body && media.length === 0) throw new AppError('A post needs text or media', 'BAD_USER_INPUT');
   const processingIds = media.map((item) => bounded(item?.processingId, 240)).filter(Boolean);
-  const reviewEvents = processingIds.length ? await ctx.prisma.socialModerationEvent.findMany({
-    where: { userId: actor.id, targetId: { in: processingIds }, decision: 'review', postId: null },
-    select: { id: true, reason: true, score: true }
+  const mediaEvents = processingIds.length ? await ctx.prisma.socialModerationEvent.findMany({
+    where: { userId: actor.id, targetId: { in: processingIds }, postId: null },
+    select: { id: true, decision: true, reason: true, score: true }
   }) : [];
+  const reviewEvents = mediaEvents.filter((event) => event.decision === 'review');
   const post = await ctx.prisma.socialPost.create({
     data: {
       authorId: actor.id,
@@ -519,8 +524,8 @@ export const createPost = async (ctx, input) => {
     },
     include: postInclude(actor.id)
   });
-  if (reviewEvents.length) await ctx.prisma.socialModerationEvent.updateMany({
-    where: { id: { in: reviewEvents.map((event) => event.id) } }, data: { postId: post.id }
+  if (mediaEvents.length) await ctx.prisma.socialModerationEvent.updateMany({
+    where: { id: { in: mediaEvents.map((event) => event.id) } }, data: { postId: post.id }
   });
   return mapPost(post);
 };
@@ -534,11 +539,18 @@ export const updatePost = async (ctx, input) => {
   if (input.commentPermission && !COMMENT_PERMISSIONS.has(String(input.commentPermission).toLowerCase())) throw new AppError('Invalid comment permission', 'BAD_USER_INPUT');
   if (input.body !== undefined) await enforceTextModeration(ctx, { userId: actor.id, targetType: 'post', targetId: input.id, text: input.body });
   if (input.media !== undefined) validateOwnedMedia(actor.id, Array.isArray(input.media) ? input.media.slice(0, 20) : []);
+  const updatedMedia = input.media === undefined ? null : Array.isArray(input.media) ? input.media.slice(0, 20) : [];
+  const processingIds = updatedMedia?.map((item) => bounded(item?.processingId, 240)).filter(Boolean) || [];
+  const mediaEvents = processingIds.length ? await ctx.prisma.socialModerationEvent.findMany({
+    where: { userId: actor.id, targetId: { in: processingIds }, postId: null },
+    select: { id: true, decision: true, reason: true, score: true }
+  }) : [];
+  const reviewEvents = mediaEvents.filter((event) => event.decision === 'review');
   const post = await ctx.prisma.socialPost.update({
     where: { id: input.id },
     data: removeUndefined({
       body: input.body === undefined ? undefined : bounded(input.body, 10000),
-      media: input.media === undefined ? undefined : Array.isArray(input.media) ? input.media.slice(0, 20) : [],
+      media: updatedMedia === null ? undefined : updatedMedia,
       thumbnailUrl: input.thumbnailUrl === undefined ? undefined : bounded(input.thumbnailUrl, 2000),
       hlsUrl: input.hlsUrl === undefined ? undefined : bounded(input.hlsUrl, 2000),
       processingStatus: input.processingStatus === undefined ? undefined : bounded(input.processingStatus, 40),
@@ -546,11 +558,14 @@ export const updatePost = async (ctx, input) => {
       commentPermission: input.commentPermission?.toLowerCase(),
       pinned: input.pinned,
       location: input.location === undefined ? undefined : bounded(input.location, 160),
-      moderationStatus: 'approved',
-      moderationReason: null,
-      moderationScore: 0
+      moderationStatus: updatedMedia === null ? undefined : reviewEvents.length ? 'pending_review' : 'approved',
+      moderationReason: updatedMedia === null ? undefined : reviewEvents[0]?.reason || null,
+      moderationScore: updatedMedia === null ? undefined : reviewEvents.reduce((score, event) => Math.max(score, event.score || 0), 0)
     }),
     include: postInclude(actor.id)
+  });
+  if (mediaEvents.length) await ctx.prisma.socialModerationEvent.updateMany({
+    where: { id: { in: mediaEvents.map((event) => event.id) } }, data: { postId: post.id }
   });
   return mapPost(post);
 };

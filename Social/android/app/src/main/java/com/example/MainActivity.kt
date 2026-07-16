@@ -809,12 +809,12 @@ private fun DecoratedAvatar(
     val decorationUrl = decoration?.assetUrl?.takeIf { it.isNotBlank() }
     Box(modifier, contentAlignment = Alignment.Center) {
         if (decorationUrl != null) {
-            Box(Modifier.fillMaxSize(.84f).clip(CircleShape).background(Color.White))
+            Box(Modifier.fillMaxSize(.87f).clip(CircleShape).background(Color.White))
         }
         TiwiAvatar(
             url,
             fallback,
-            Modifier.fillMaxSize(if (decorationUrl != null) .78f else 1f).clip(CircleShape),
+            Modifier.fillMaxSize(if (decorationUrl != null) .82f else 1f).clip(CircleShape),
             contentScale
         )
         decorationUrl?.let {
@@ -890,7 +890,17 @@ private object TiwiPlaybackCoordinator {
 
 @OptIn(UnstableApi::class)
 @Composable
-private fun TiwiVideo(url: String, modifier: Modifier, autoplay: Boolean = false, fallbackUrl: String? = null, posterUrl: String? = null) {
+private fun TiwiVideo(
+    url: String,
+    modifier: Modifier,
+    autoplay: Boolean = false,
+    fallbackUrl: String? = null,
+    posterUrl: String? = null,
+    muted: Boolean = false,
+    previewClipMs: Long? = null,
+    coordinated: Boolean = true,
+    interactive: Boolean = true
+) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     var activeUrl by remember(url, fallbackUrl) { mutableStateOf(url) }
@@ -906,14 +916,24 @@ private fun TiwiVideo(url: String, modifier: Modifier, autoplay: Boolean = false
         TiwiPlaybackCache.player(context).apply {
             setMediaItem(MediaItem.fromUri(activeUrl))
             prepare()
+            volume = if (muted) 0f else 1f
             repeatMode = if (autoplay) ExoPlayer.REPEAT_MODE_ONE else ExoPlayer.REPEAT_MODE_OFF
         }
     }
-    LaunchedEffect(player, autoplay, visibleEnough, manuallyPaused, isActivePlayer) {
+    LaunchedEffect(player, muted) { player.volume = if (muted) 0f else 1f }
+    LaunchedEffect(player, autoplay, visibleEnough, manuallyPaused, isActivePlayer, coordinated) {
         player.repeatMode = if (autoplay) ExoPlayer.REPEAT_MODE_ONE else ExoPlayer.REPEAT_MODE_OFF
-        if (autoplay && visibleEnough && isActivePlayer && !manuallyPaused) player.play() else if (autoplay || isActivePlayer) player.pause()
+        val allowed = !coordinated || isActivePlayer
+        if (autoplay && visibleEnough && allowed && !manuallyPaused) player.play() else if (autoplay || isActivePlayer || !coordinated) player.pause()
     }
-    LaunchedEffect(playerId, autoplay) { if (!autoplay) TiwiPlaybackCoordinator.remove(playerId) }
+    LaunchedEffect(player, previewClipMs) {
+        val clip = previewClipMs?.coerceAtLeast(1_000L) ?: return@LaunchedEffect
+        while (true) {
+            delay(100)
+            if (player.isPlaying && player.currentPosition >= clip) player.seekTo(0L)
+        }
+    }
+    LaunchedEffect(playerId, autoplay, coordinated) { if (!autoplay || !coordinated) TiwiPlaybackCoordinator.remove(playerId) }
     LaunchedEffect(showPauseOverlay) {
         if (showPauseOverlay) { delay(650); showPauseOverlay = false }
     }
@@ -938,7 +958,7 @@ private fun TiwiVideo(url: String, modifier: Modifier, autoplay: Boolean = false
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_PAUSE, Lifecycle.Event.ON_STOP -> player.pause()
-                Lifecycle.Event.ON_RESUME -> if (autoplay && visibleEnough && isActivePlayer && !manuallyPaused) player.play()
+                Lifecycle.Event.ON_RESUME -> if (autoplay && visibleEnough && (!coordinated || isActivePlayer) && !manuallyPaused) player.play()
                 else -> Unit
             }
         }
@@ -947,7 +967,7 @@ private fun TiwiVideo(url: String, modifier: Modifier, autoplay: Boolean = false
         onDispose {
             player.removeListener(listener)
             lifecycleOwner.lifecycle.removeObserver(observer)
-            TiwiPlaybackCoordinator.remove(playerId)
+            if (coordinated) TiwiPlaybackCoordinator.remove(playerId)
             player.release()
         }
     }
@@ -955,12 +975,16 @@ private fun TiwiVideo(url: String, modifier: Modifier, autoplay: Boolean = false
         modifier.background(Color.Black).onGloballyPositioned { coordinates ->
             val bounds = coordinates.boundsInWindow()
             val screenHeight = context.resources.displayMetrics.heightPixels.toFloat()
+            val screenWidth = context.resources.displayMetrics.widthPixels.toFloat()
             val visibleHeight = (minOf(bounds.bottom, screenHeight) - maxOf(bounds.top, 0f)).coerceAtLeast(0f)
-            val ratio = if (bounds.height > 0f) visibleHeight / bounds.height else 0f
+            val visibleWidth = (minOf(bounds.right, screenWidth) - maxOf(bounds.left, 0f)).coerceAtLeast(0f)
+            val verticalRatio = if (bounds.height > 0f) visibleHeight / bounds.height else 0f
+            val horizontalRatio = if (bounds.width > 0f) visibleWidth / bounds.width else 0f
+            val ratio = verticalRatio * horizontalRatio
             val itemCenter = (bounds.top + bounds.bottom) / 2f
             val centerDistance = kotlin.math.abs(itemCenter - screenHeight / 2f) / screenHeight
-            visibleEnough = ratio >= .55f
-            TiwiPlaybackCoordinator.update(playerId, ratio - centerDistance * .15f, autoplay)
+            visibleEnough = ratio >= .5f
+            if (coordinated) TiwiPlaybackCoordinator.update(playerId, ratio - centerDistance * .15f, autoplay)
         }
     ) {
         AndroidView(
@@ -971,12 +995,12 @@ private fun TiwiVideo(url: String, modifier: Modifier, autoplay: Boolean = false
         if (!renderedFirstFrame && !posterUrl.isNullOrBlank()) {
             AsyncImage(model = posterUrl, contentDescription = "Video thumbnail", modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
         }
-        Box(Modifier.fillMaxSize().clickable {
-            if (playing) { manuallyPaused = true; player.pause() } else { manuallyPaused = false; TiwiPlaybackCoordinator.activate(playerId); player.play() }
+        if (interactive) Box(Modifier.fillMaxSize().clickable {
+            if (playing) { manuallyPaused = true; player.pause() } else { manuallyPaused = false; if (coordinated) TiwiPlaybackCoordinator.activate(playerId); player.play() }
             showPauseOverlay = true
         })
-        if (buffering && visibleEnough) CircularProgressIndicator(Modifier.align(Alignment.Center).size(30.dp), color = Color.White, strokeWidth = 2.5.dp)
-        if ((!playing && !buffering && visibleEnough) || showPauseOverlay) {
+        if (interactive && buffering && visibleEnough) CircularProgressIndicator(Modifier.align(Alignment.Center).size(30.dp), color = Color.White, strokeWidth = 2.5.dp)
+        if (interactive && ((!playing && !buffering && visibleEnough) || showPauseOverlay)) {
             Box(Modifier.align(Alignment.Center).size(58.dp).background(Color.Black.copy(alpha = .48f), CircleShape), contentAlignment = Alignment.Center) {
                 Icon(if (playing) Icons.Default.Pause else Icons.Default.PlayArrow, if (playing) "Pause" else "Play", tint = Color.White, modifier = Modifier.size(34.dp))
             }
@@ -1033,6 +1057,7 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
     var selectedProfileUserId by remember { mutableStateOf<String?>(null) }
     var selectedChat by remember { mutableStateOf<SocialConversation?>(null) }
     var selectedPostId by remember { mutableStateOf<String?>(null) }
+    var initialReelId by remember { mutableStateOf<String?>(null) }
     var selectedEditPostId by remember { mutableStateOf<String?>(null) }
     var callRequest by remember { mutableStateOf<TiwiCallRequest?>(null) }
     
@@ -1101,7 +1126,7 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
             showMessages -> showMessages = false
             showCreatePost -> showCreatePost = false
             showProfile -> showProfile = false
-            selectedTab != 0 -> selectedTab = 0
+            selectedTab != 0 -> { selectedTab = 0; initialReelId = null }
         }
     }
 
@@ -1174,6 +1199,7 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
         bottomBar = { 
             if (!showProfile && !showCreatePost && !showMessages && !showConnect && selectedProfileUserId == null && selectedChat == null && selectedPostId == null && selectedEditPostId == null) {
                 TiwiBottomBar(selectedTab, dark = selectedTab == 2, avatarUrl = currentUser?.avatar, avatarDecoration = currentProfile?.avatarDecoration) {
+                    initialReelId = null
                     selectedTab = it
                 } 
             }
@@ -1224,9 +1250,9 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
                 showProfile -> ProfileScreen(repository, posts.filter { it.authorId == repository.currentUserId() }, reels.filter { it.authorId == repository.currentUserId() }, onBack = { showProfile = false }, onPostClick = { selectedPostId = it }, onShare = { sharedPost = it }, onEditPost = { selectedEditPostId = it })
                 else -> {
                     when (selectedTab) {
-                        0 -> HomeFeed(reels, posts, repository, onShareClick = { sharedPost = it }, onAuthorClick = { selectedProfileUserId = it }, onPostClick = { selectedPostId = it }, onEditPost = { selectedEditPostId = it })
+                        0 -> HomeFeed(reels, posts, repository, onShareClick = { sharedPost = it }, onAuthorClick = { selectedProfileUserId = it }, onPostClick = { selectedPostId = it }, onReelClick = { initialReelId = it; selectedTab = 2 }, onEditPost = { selectedEditPostId = it })
                         1 -> SearchScreen(repository, onProfileClick = { selectedProfileUserId = it }, onPostClick = { selectedPostId = it })
-                        2 -> ReelsScreen(reels, repository, onOpen = { selectedPostId = it }, onShare = { reel -> sharedPost = posts.firstOrNull { it.id == reel.id } }, onAuthor = { selectedProfileUserId = it })
+                        2 -> ReelsScreen(reels, repository, initialReelId = initialReelId, onOpen = { selectedPostId = it }, onShare = { reel -> sharedPost = posts.firstOrNull { it.id == reel.id } }, onAuthor = { selectedProfileUserId = it })
                         3 -> NotificationsScreen(repository)
                         4 -> MenuScreen(repository, currentUser?.name.orEmpty(), currentUser?.avatar, onProfileClick = { showProfile = true }, onLogout = { repository.logout(); onLogout() })
                     }
@@ -1287,6 +1313,7 @@ fun HomeFeed(
     onShareClick: (Post) -> Unit,
     onAuthorClick: (String) -> Unit,
     onPostClick: (String) -> Unit,
+    onReelClick: (String) -> Unit,
     onEditPost: (String) -> Unit = {}
 ) {
     val scope = rememberCoroutineScope()
@@ -1300,7 +1327,7 @@ fun HomeFeed(
     ) {
         if (posts.isEmpty() && syncing) FeedSkeleton()
         else LazyColumn(modifier = Modifier.fillMaxSize()) {
-            item { ReelsSection(reels) }
+            item { ReelsSection(reels, onReelClick) }
             posts.forEachIndexed { index, post ->
                 item(key = post.id) {
                     PostCard(post, repository, { onShareClick(post) }, { onAuthorClick(post.authorId) }, { onPostClick(post.id) }, onEditRequest = { onEditPost(it.id) }, onOpenLinkedPost = onPostClick)
@@ -1378,7 +1405,7 @@ private fun SuggestedFriendsSection(
 }
 
 @Composable
-fun ReelsSection(reels: List<Reel>) {
+fun ReelsSection(reels: List<Reel>, onReelClick: (String) -> Unit = {}) {
     Column(modifier = Modifier.padding(vertical = 8.dp)) {
         Text(
             text = "Trending Reels",
@@ -1389,22 +1416,34 @@ fun ReelsSection(reels: List<Reel>) {
             contentPadding = PaddingValues(horizontal = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            items(reels) { reel ->
-                ReelItem(reel)
+            items(reels.take(3), key = { it.id }) { reel ->
+                ReelItem(reel, autoplayPreview = true) { onReelClick(reel.id) }
             }
         }
     }
 }
 
 @Composable
-fun ReelItem(reel: Reel) {
+fun ReelItem(reel: Reel, autoplayPreview: Boolean = false, onClick: () -> Unit = {}) {
     Box(
         modifier = Modifier
             .size(width = 110.dp, height = 180.dp)
             .clip(RoundedCornerShape(16.dp))
             .background(MaterialTheme.colorScheme.surface)
     ) {
-        TiwiAvatar(reel.thumbnailUrl, reel.thumbnail, Modifier.fillMaxSize(), ContentScale.Crop)
+        if (autoplayPreview && !reel.videoUrl.isNullOrBlank()) {
+            TiwiVideo(
+                reel.videoUrl!!,
+                Modifier.fillMaxSize(),
+                autoplay = true,
+                fallbackUrl = reel.fallbackVideoUrl,
+                posterUrl = reel.thumbnailUrl,
+                muted = true,
+                previewClipMs = 2_500L,
+                coordinated = false,
+                interactive = false
+            )
+        } else TiwiAvatar(reel.thumbnailUrl, reel.thumbnail, Modifier.fillMaxSize(), ContentScale.Crop)
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -1425,6 +1464,7 @@ fun ReelItem(reel: Reel) {
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
+        Box(Modifier.matchParentSize().clickable(onClick = onClick))
     }
 }
 
@@ -2499,7 +2539,7 @@ private fun ExplorePostTile(post: SocialPost, modifier: Modifier, onPostClick: (
 }
 
 @Composable
-fun ReelsScreen(reels: List<Reel>, repository: SocialRepository, onOpen: (String) -> Unit = {}, onShare: (Reel) -> Unit = {}, onAuthor: (String) -> Unit = {}) {
+fun ReelsScreen(reels: List<Reel>, repository: SocialRepository, initialReelId: String? = null, onOpen: (String) -> Unit = {}, onShare: (Reel) -> Unit = {}, onAuthor: (String) -> Unit = {}) {
     if (reels.isEmpty()) {
         Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
             Text("No reels yet", color = Color.White)
@@ -2514,7 +2554,8 @@ fun ReelsScreen(reels: List<Reel>, repository: SocialRepository, onOpen: (String
     var deletePost by remember { mutableStateOf<Post?>(null) }
     var privacyPost by remember { mutableStateOf<Post?>(null) }
     var commentsPost by remember { mutableStateOf<Post?>(null) }
-    val pagerState = rememberPagerState(pageCount = { reels.size })
+    val initialPage = remember(reels, initialReelId) { reels.indexOfFirst { it.id == initialReelId }.coerceAtLeast(0) }
+    val pagerState = rememberPagerState(initialPage = initialPage, pageCount = { reels.size })
     val scope = rememberCoroutineScope()
     val currentReelId = reels.getOrNull(pagerState.currentPage)?.id
     LaunchedEffect(pagerState.currentPage, currentReelId) {
@@ -4114,6 +4155,7 @@ private fun ProfileDecorationMarketplace(
     var selectedId by remember(current?.id) { mutableStateOf(current?.id) }
     var activeId by remember(current?.id) { mutableStateOf(current?.id) }
     var selectedGateway by remember { mutableStateOf("") }
+    var checkoutDecoration by remember { mutableStateOf<SocialProfileDecoration?>(null) }
 
     suspend fun refreshDecorations() {
         loading = true
@@ -4140,6 +4182,33 @@ private fun ProfileDecorationMarketplace(
     }.orEmpty()
     val yourDecorations = decorations.filter { it.owned || it.priceUsd <= 0 }
 
+    checkoutDecoration?.let { checkoutItem ->
+        ProfileDecorationCheckoutPage(
+            item = checkoutItem,
+            avatarUrl = avatarUrl,
+            options = options,
+            selectedGateway = selectedGateway,
+            busy = busy,
+            onBack = { checkoutDecoration = null },
+            onGatewaySelected = { selectedGateway = it },
+            onPay = {
+                val checkoutOptions = options
+                if (checkoutOptions != null && selectedGateway.isNotBlank()) scope.launch {
+                    busy = true
+                    runCatching { repository.startProfileDecorationCheckout(checkoutItem.id, selectedGateway, checkoutOptions.currency) }
+                        .onSuccess { checkout ->
+                            if (!checkout.paymentUrl.isNullOrBlank()) context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(checkout.paymentUrl)))
+                            else Toast.makeText(context, checkout.message ?: "Decoration added", Toast.LENGTH_LONG).show()
+                            refreshDecorations()
+                        }
+                        .onFailure { Toast.makeText(context, it.message ?: "Checkout failed", Toast.LENGTH_LONG).show() }
+                    busy = false
+                }
+            }
+        )
+        return
+    }
+
     Column(modifier.background(Color(0xFFF8F9FC))) {
         Surface(
             Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
@@ -4152,7 +4221,6 @@ private fun ProfileDecorationMarketplace(
                     DecoratedAvatar(avatarUrl, R.drawable.img_tiwi_avatar_1, previewDecoration, Modifier.size(148.dp), animateDecoration = true)
                     Text(repository.currentUser.value?.name.orEmpty(), color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
                     Text(previewDecoration?.name ?: "No decoration", color = Color.White.copy(alpha = .76f), fontSize = 12.sp)
-                    Surface(Modifier.padding(top = 8.dp), color = Color.White.copy(alpha = .14f), shape = RoundedCornerShape(20.dp), tonalElevation = 0.dp) { Text("LIVE PROFILE PREVIEW", Modifier.padding(horizontal = 12.dp, vertical = 5.dp), color = Color.White, fontWeight = FontWeight.Black, fontSize = 9.sp, letterSpacing = 1.sp) }
                 }
             }
         }
@@ -4178,41 +4246,30 @@ private fun ProfileDecorationMarketplace(
             item { Text("Explore all", fontWeight = FontWeight.ExtraBold, fontSize = 17.sp); Text("Scroll and tap any decoration to see it on your profile.", color = Color.Gray, fontSize = 11.sp) }
             items(decorations.chunked(2), key = { row -> row.joinToString("-") { it.id } }) { row ->
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    row.forEach { item -> DecorationStoreCard(item, selectedId == item.id, Modifier.weight(1f).height(190.dp)) { selectedId = item.id; selectedGateway = options?.gateways?.firstOrNull()?.key.orEmpty() } }
-                    if (row.size == 1) Spacer(Modifier.weight(1f))
-                }
-            }
-            if (selected != null && !selected.owned && selected.priceUsd > 0) item {
-                Surface(color = Color.White, shape = RoundedCornerShape(14.dp), border = BorderStroke(1.dp, Color(0xFFD8CCFF)), tonalElevation = 0.dp) {
-                    Column(Modifier.padding(14.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Outlined.Payment, null, tint = Color(0xFF7F56D9)); Column(Modifier.weight(1f).padding(start = 9.dp)) { Text("Choose payment method", fontWeight = FontWeight.Bold); Text("${selected.name} · $convertedPrice", color = Color.Gray, fontSize = 11.sp) } }
-                        options?.gateways.orEmpty().forEach { gateway ->
-                            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).clickable { selectedGateway = gateway.key }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) { RadioButton(selectedGateway == gateway.key, { selectedGateway = gateway.key }); Text(gateway.name, fontWeight = FontWeight.SemiBold) }
+                    row.forEach { item ->
+                        DecorationStoreCard(item, selectedId == item.id, Modifier.weight(1f).height(190.dp)) {
+                            selectedId = item.id
+                            selectedGateway = options?.gateways?.firstOrNull()?.key.orEmpty()
+                            if (!item.owned && item.priceUsd > 0) checkoutDecoration = item
                         }
                     }
+                    if (row.size == 1) Spacer(Modifier.weight(1f))
                 }
             }
             item { Spacer(Modifier.height(6.dp)) }
         }
         val canApply = selected == null || selected.owned || selected.priceUsd <= 0
         Button(
-            enabled = !busy && (canApply || selectedGateway.isNotBlank()),
+            enabled = !busy,
             onClick = {
-                scope.launch {
+                if (!canApply && selected != null) {
+                    selectedGateway = options?.gateways?.firstOrNull()?.key.orEmpty()
+                    checkoutDecoration = selected
+                } else scope.launch {
                     busy = true
-                    if (canApply) {
-                        runCatching { repository.applyProfileDecoration(selected?.id) }
-                            .onSuccess { profile -> activeId = profile.avatarDecoration?.id; onApplied(profile.avatarDecoration); Toast.makeText(context, if (profile.avatarDecoration == null) "Decoration removed" else "${profile.avatarDecoration.name} applied", Toast.LENGTH_SHORT).show() }
-                            .onFailure { Toast.makeText(context, it.message ?: "Decoration could not be applied", Toast.LENGTH_LONG).show() }
-                    } else if (selected != null && options != null) {
-                        runCatching { repository.startProfileDecorationCheckout(selected.id, selectedGateway, options.currency) }
-                            .onSuccess { checkout ->
-                                if (!checkout.paymentUrl.isNullOrBlank()) context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(checkout.paymentUrl)))
-                                else Toast.makeText(context, checkout.message ?: "Decoration added", Toast.LENGTH_LONG).show()
-                                refreshDecorations()
-                            }
-                            .onFailure { Toast.makeText(context, it.message ?: "Checkout failed", Toast.LENGTH_LONG).show() }
-                    }
+                    runCatching { repository.applyProfileDecoration(selected?.id) }
+                        .onSuccess { profile -> activeId = profile.avatarDecoration?.id; onApplied(profile.avatarDecoration); Toast.makeText(context, if (profile.avatarDecoration == null) "Decoration removed" else "${profile.avatarDecoration.name} applied", Toast.LENGTH_SHORT).show() }
+                        .onFailure { Toast.makeText(context, it.message ?: "Decoration could not be applied", Toast.LENGTH_LONG).show() }
                     busy = false
                 }
             },
@@ -4221,7 +4278,94 @@ private fun ProfileDecorationMarketplace(
             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6E3CBC))
         ) {
             if (busy) CircularProgressIndicator(Modifier.size(19.dp), color = Color.White, strokeWidth = 2.dp)
-            else Text(when { selected?.id == activeId -> "Applied"; canApply -> "Apply decoration"; else -> "Continue · $convertedPrice" }, fontWeight = FontWeight.ExtraBold)
+            else Text(when { selected?.id == activeId -> "Applied"; canApply -> "Apply decoration"; else -> "View payment options · $convertedPrice" }, fontWeight = FontWeight.ExtraBold)
+        }
+    }
+}
+
+@Composable
+private fun ProfileDecorationCheckoutPage(
+    item: SocialProfileDecoration,
+    avatarUrl: String?,
+    options: SocialVerificationOptions?,
+    selectedGateway: String,
+    busy: Boolean,
+    onBack: () -> Unit,
+    onGatewaySelected: (String) -> Unit,
+    onPay: () -> Unit
+) {
+    val price = if (options?.currency == "BDT") {
+        "BDT ${String.format(Locale.US, "%.0f", item.priceUsd * options.usdRate)}"
+    } else "\$${String.format(Locale.US, "%.2f", item.priceUsd)} USD"
+    Column(Modifier.fillMaxSize().background(Color(0xFFF8F9FC))) {
+        Row(Modifier.fillMaxWidth().height(54.dp).background(Color.White), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
+            Column {
+                Text("Get avatar decoration", fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
+                Text("Secure Tiwlo checkout", color = Color.Gray, fontSize = 11.sp)
+            }
+        }
+        HorizontalDivider(color = Color(0xFFE4E7EC), thickness = .5.dp)
+        LazyColumn(
+            Modifier.weight(1f),
+            contentPadding = PaddingValues(14.dp),
+            verticalArrangement = Arrangement.spacedBy(13.dp)
+        ) {
+            item {
+                Surface(Modifier.fillMaxWidth(), color = Color(0xFF261A3D), shape = RoundedCornerShape(22.dp), tonalElevation = 0.dp) {
+                    Column(Modifier.padding(22.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                        DecoratedAvatar(avatarUrl, R.drawable.img_tiwi_avatar_1, item, Modifier.size(142.dp), animateDecoration = true)
+                        Text(item.name, color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 20.sp)
+                        Text(price, color = Color(0xFFD9C8FF), fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 4.dp))
+                    }
+                }
+            }
+            item {
+                Text("Choose payment method", fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
+                Text("Your enabled Tiwlo payment gateways appear here.", color = Color.Gray, fontSize = 12.sp, modifier = Modifier.padding(top = 3.dp))
+            }
+            when {
+                options == null -> item {
+                    Box(Modifier.fillMaxWidth().height(90.dp), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 2.5.dp)
+                    }
+                }
+                options.gateways.isEmpty() -> item {
+                    Surface(color = Color(0xFFFFF1F0), shape = RoundedCornerShape(12.dp), tonalElevation = 0.dp) {
+                        Text("No payment gateway is enabled right now.", color = Color(0xFFB42318), modifier = Modifier.padding(14.dp), fontWeight = FontWeight.SemiBold)
+                    }
+                }
+                else -> items(options.gateways, key = { it.key }) { gateway ->
+                    val selected = selectedGateway == gateway.key
+                    Surface(
+                        Modifier.fillMaxWidth().clickable { onGatewaySelected(gateway.key) },
+                        color = if (selected) Color(0xFFF1ECFF) else Color.White,
+                        border = BorderStroke(if (selected) 2.dp else 1.dp, if (selected) Color(0xFF7F56D9) else Color(0xFFE4E7EC)),
+                        shape = RoundedCornerShape(13.dp),
+                        tonalElevation = 0.dp
+                    ) {
+                        Row(Modifier.padding(13.dp), verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(selected, onClick = { onGatewaySelected(gateway.key) })
+                            Icon(Icons.Outlined.Payment, null, tint = Color(0xFF7F56D9), modifier = Modifier.padding(start = 3.dp))
+                            Text(gateway.name, Modifier.weight(1f).padding(start = 10.dp), fontWeight = FontWeight.Bold)
+                            if (selected) Icon(Icons.Default.CheckCircle, "Selected", tint = Color(0xFF12B76A))
+                        }
+                    }
+                }
+            }
+            item {
+                Text("Payment opens on Tiwlo's secure checkout. The decoration is added after confirmed payment.", color = Color.Gray, fontSize = 11.sp, lineHeight = 16.sp)
+            }
+        }
+        Button(
+            onClick = onPay,
+            enabled = !busy && options != null && options.gateways.isNotEmpty() && selectedGateway.isNotBlank(),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp).navigationBarsPadding(),
+            shape = RoundedCornerShape(12.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6E3CBC))
+        ) {
+            if (busy) CircularProgressIndicator(Modifier.size(19.dp), color = Color.White, strokeWidth = 2.dp)
+            else Text(if (selectedGateway.isBlank()) "Select a payment method" else "Continue to pay · $price", fontWeight = FontWeight.ExtraBold)
         }
     }
 }

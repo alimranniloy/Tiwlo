@@ -30,6 +30,7 @@ import { startPowerDnsAutomation } from './modules/powerdns/service.js';
 import { registerDiscordRoutes } from './modules/discord/service.js';
 import { ensureWhatsAppAuthSchema, publicWhatsAppStatus } from './modules/whatsapp/service.js';
 import { registerSocialRoutes } from './modules/social/media.js';
+import { startSocialModerationBackfill } from './modules/social/moderation.js';
 import { publicCurrencyContext } from './core/currency.js';
 import { registerTSecurity } from '../../tSecurity/index.js';
 
@@ -565,6 +566,11 @@ app.use('/graphql', expressMiddleware(server, {
 
 app.listen(port, () => {
   console.log(`Tiwlo X GraphQL API ready at http://localhost:${port}/graphql`);
+  setTimeout(() => {
+    startSocialModerationBackfill({ prisma, rootDir: join(__dirname, '../..') }).catch((error) => {
+      console.warn('[social-moderation] backfill failed:', error?.message || error);
+    });
+  }, 5_000);
   ensureWhatsAppAuthSchema(prisma).catch((error) => {
     console.warn('[whatsapp] schema prepare failed:', error?.message || error);
   });

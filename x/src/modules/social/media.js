@@ -167,20 +167,24 @@ export const registerSocialRoutes = (app, { prisma, userFromRequest, rootDir }) 
     const statusFile = join(outputDir, 'status.json');
     const hlsUrl = `${publicRoot}/${userId}/${outputName}/master.m3u8`;
     const thumbnailUrl = `${publicRoot}/${userId}/${outputName}/thumbnail.jpg`;
-    let moderation = await moderateMediaFile({
+    const moderation = await moderateMediaFile({
       filePath, mimeType, targetType: boundedKind(kind),
       thresholds: { explicit: settings.moderation?.explicitThreshold, review: settings.moderation?.reviewThreshold }
     });
-    if (moderation.decision === 'block' && settings.moderation?.autoDisableExplicit === false) {
-      moderation = { ...moderation, decision: 'review', reason: `${moderation.reason} (automatic disable is turned off)` };
-    }
-    if (moderation.decision !== 'allow') await recordModerationDecision(
+    await recordModerationDecision(
       { prisma, user },
-      { userId, targetType: boundedKind(kind), targetId: processingId, result: moderation }
+      {
+        userId,
+        targetType: boundedKind(kind),
+        targetId: processingId,
+        result: moderation,
+        disableUser: settings.moderation?.autoDisableExplicit !== false
+      }
     );
     if (moderation.decision === 'block') {
       await rm(filePath, { force: true }).catch(() => undefined);
-      throw new Error('MEDIA_BLOCKED: Explicit sexual content detected. The account was disabled for administrator review.');
+      const accountAction = settings.moderation?.autoDisableExplicit === false ? 'The media was permanently deleted.' : 'The media was permanently deleted and the account was disabled for administrator review.';
+      throw new Error(`MEDIA_BLOCKED: Explicit sexual content detected. ${accountAction}`);
     }
     if (isVideo && settings.autoTranscode) {
       await mkdir(outputDir, { recursive: true });

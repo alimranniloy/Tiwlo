@@ -1,8 +1,10 @@
 import { randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { mkdir, readFile, rm } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { access, mkdir, readFile, rm } from 'node:fs/promises';
+import { basename, dirname, join, resolve, sep } from 'node:path';
 import sharp from 'sharp';
+import * as tf from '@tensorflow/tfjs';
+import * as nsfw from 'nsfwjs';
 import { AppError } from '../../core/errors.js';
 import { writeAudit } from '../../core/audit.js';
 
@@ -13,8 +15,9 @@ const explicitTextRules = [
   { category: 'sexual/explicit', score: .98, pattern: /(?:চাইল্ড\s*পর্ন|শিশু\s*পর্ন|হার্ডকোর\s*পর্ন|ধর্ষণ\s*পর্ন|নগ্ন\s*সেক্স)/iu }
 ];
 
-const likelihoodScore = Object.freeze({ UNKNOWN: 0, VERY_UNLIKELY: .02, UNLIKELY: .12, POSSIBLE: .45, LIKELY: .78, VERY_LIKELY: .98 });
 const severity = Object.freeze({ allow: 0, review: 1, block: 2 });
+let localNsfwModelPromise;
+let localNsfwQueue = Promise.resolve();
 
 const normalizeDecision = (value = {}) => {
   const decision = ['allow', 'review', 'block'].includes(String(value.decision || '').toLowerCase())
@@ -50,6 +53,55 @@ const imagePayload = async (filePath) => {
   return { content: content.toString('base64'), metadata: { width: metadata.width, height: metadata.height, format: metadata.format, pages: metadata.pages || 1 } };
 };
 
+const localNsfwModel = () => {
+  if (!localNsfwModelPromise) {
+    localNsfwModelPromise = tf.ready().then(() => nsfw.load('MobileNetV2')).catch((error) => {
+      localNsfwModelPromise = undefined;
+      throw error;
+    });
+  }
+  return localNsfwModelPromise;
+};
+
+const runLocalNsfw = (task) => {
+  const result = localNsfwQueue.then(task, task);
+  localNsfwQueue = result.then(() => undefined, () => undefined);
+  return result;
+};
+
+export const decisionFromNsfwPredictions = (predictions = [], thresholds = {}) => {
+  const scores = Object.fromEntries(predictions.map((item) => [String(item.className || '').toLowerCase(), Number(item.probability) || 0]));
+  const porn = scores.porn || 0;
+  const hentai = scores.hentai || 0;
+  const sexy = scores.sexy || 0;
+  const explicit = Math.min(1, porn + hentai);
+  const blockAt = Math.min(Math.max(Number(thresholds.explicit) || .85, .65), .85);
+  const reviewAt = Math.min(Math.max(Number(thresholds.review) || .55, .3), .55);
+  const evidence = { porn, hentai, sexy, neutral: scores.neutral || 0, drawing: scores.drawing || 0 };
+  if (porn >= blockAt || hentai >= blockAt || explicit >= blockAt) {
+    return normalizeDecision({ decision: 'block', category: 'sexual/explicit', score: Math.max(porn, hentai, explicit), reason: 'Local NSFW classifier detected high-confidence pornographic or explicit content', provider: 'nsfwjs-mobilenet-v2', evidence });
+  }
+  if (explicit >= reviewAt || sexy >= .72) {
+    return normalizeDecision({ decision: 'review', category: 'sexual/possible', score: Math.max(explicit, sexy), reason: 'Local NSFW classifier requires administrator review before publication', provider: 'nsfwjs-mobilenet-v2', evidence });
+  }
+  return normalizeDecision({ decision: 'allow', category: 'safe', score: explicit, reason: 'Local NSFW classifier found no prohibited explicit content', provider: 'nsfwjs-mobilenet-v2', evidence });
+};
+
+const localNsfwClassification = async (payload, thresholds) => runLocalNsfw(async () => {
+  const model = await localNsfwModel();
+  const { data, info } = await sharp(Buffer.from(payload.content, 'base64'))
+    .resize(224, 224, { fit: 'fill' })
+    .removeAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  const tensor = tf.tensor3d(new Uint8Array(data), [info.height, info.width, info.channels], 'int32');
+  try {
+    return decisionFromNsfwPredictions(await model.classify(tensor, 5), thresholds);
+  } finally {
+    tensor.dispose();
+  }
+});
+
 const videoPayloads = async (filePath) => {
   const tempDir = join(dirname(filePath), `.moderation-${randomBytes(8).toString('hex')}`);
   await mkdir(tempDir, { recursive: true });
@@ -69,23 +121,6 @@ const videoPayloads = async (filePath) => {
   } finally {
     await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
   }
-};
-
-const googleSafeSearch = async (payload, thresholds) => {
-  const key = String(process.env.GOOGLE_CLOUD_VISION_API_KEY || '').trim();
-  if (!key) return null;
-  const response = await fetch(`https://vision.googleapis.com/v1/images:annotate?key=${encodeURIComponent(key)}`, {
-    method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ requests: [{ image: { content: payload.content }, features: [{ type: 'SAFE_SEARCH_DETECTION' }] }] }),
-    signal: AbortSignal.timeout(20_000)
-  });
-  if (!response.ok) throw new Error(`Google SafeSearch returned ${response.status}`);
-  const annotation = (await response.json())?.responses?.[0]?.safeSearchAnnotation || {};
-  const adult = likelihoodScore[annotation.adult] || 0;
-  const racy = likelihoodScore[annotation.racy] || 0;
-  if (adult >= thresholds.explicit) return normalizeDecision({ decision: 'block', category: 'sexual/explicit', score: adult, reason: 'High-confidence explicit adult nudity detected', provider: 'google-safe-search', evidence: { adult: annotation.adult, racy: annotation.racy } });
-  if (adult >= thresholds.review) return normalizeDecision({ decision: 'review', category: 'sexual/possible', score: adult, reason: 'Possible explicit nudity requires review', provider: 'google-safe-search', evidence: { adult: annotation.adult, racy: annotation.racy } });
-  return normalizeDecision({ decision: 'allow', category: racy >= .95 ? 'swimwear-or-suggestive' : 'safe', score: adult, reason: 'No high-confidence explicit nudity detected', provider: 'google-safe-search', evidence: { adult: annotation.adult, racy: annotation.racy } });
 };
 
 const moderationWebhook = async ({ payload, mimeType, targetType }) => {
@@ -113,35 +148,126 @@ export const moderateMediaFile = async ({ filePath, mimeType, targetType = 'medi
   if (!/^(image|video)\//i.test(String(mimeType || ''))) return normalizeDecision({ decision: 'allow', category: 'non-visual-media', score: 0, reason: 'No visual moderation required', provider: 'sharp-media-inspector' });
   const payloads = String(mimeType || '').startsWith('video/') ? await videoPayloads(filePath) : [await imagePayload(filePath)];
   const decisions = [];
-  const classifierConfigured = Boolean(String(process.env.GOOGLE_CLOUD_VISION_API_KEY || '').trim() || String(process.env.SOCIAL_MODERATION_WEBHOOK_URL || '').trim());
   const configuredThresholds = {
     explicit: Math.max(.8, Math.min(Number(thresholds.explicit) || .95, 1)),
     review: Math.max(.5, Math.min(Number(thresholds.review) || .72, .95))
   };
   for (const payload of payloads) {
-    const providers = await Promise.allSettled([googleSafeSearch(payload, configuredThresholds), moderationWebhook({ payload, mimeType, targetType })]);
+    const providers = await Promise.allSettled([localNsfwClassification(payload, configuredThresholds), moderationWebhook({ payload, mimeType, targetType })]);
     providers.forEach((result) => { if (result.status === 'fulfilled' && result.value) decisions.push(result.value); });
   }
-  if (!decisions.length && classifierConfigured) return normalizeDecision({ decision: 'review', category: 'classifier-unavailable', score: 0, reason: 'The configured visual classifier was unavailable; publication requires review', provider: 'moderation-fail-safe', evidence: { frames: payloads.length } });
-  if (!decisions.length) return normalizeDecision({ decision: 'allow', category: 'file-validated', score: 0, reason: 'Media decoded safely; no remote classifier is configured', provider: 'sharp-media-inspector', evidence: { frames: payloads.length } });
+  if (!decisions.length) return normalizeDecision({ decision: 'review', category: 'classifier-unavailable', score: 0, reason: 'The local NSFW classifier was unavailable; publication requires administrator review', provider: 'moderation-fail-safe', evidence: { frames: payloads.length } });
   return strongest(decisions);
 };
 
-export const recordModerationDecision = async (ctx, { userId, postId, targetType, targetId, result }) => {
+export const recordModerationDecision = async (ctx, { userId, postId, targetType, targetId, result, disableUser = true }) => {
   const normalized = normalizeDecision(result);
   const event = await ctx.prisma.socialModerationEvent.create({ data: {
     userId, postId: postId || null, targetType, targetId: targetId || null, provider: normalized.provider,
     decision: normalized.decision, category: normalized.category, score: normalized.score, reason: normalized.reason, evidence: normalized.evidence
   } });
-  if (normalized.decision === 'block') {
+  if (normalized.decision === 'block' && disableUser) {
     await ctx.prisma.user.update({ where: { id: userId }, data: {
       status: 'disabled', socialRestrictionCode: `auto_${normalized.category.replace(/[^a-z0-9]+/gi, '_').toLowerCase()}`,
       socialRestrictionReason: normalized.reason, socialRestrictedAt: new Date(), socialModerationScore: normalized.score
     } });
     if (postId) await ctx.prisma.socialPost.update({ where: { id: postId }, data: { status: 'rejected', moderationStatus: 'blocked', moderationReason: normalized.reason, moderationScore: normalized.score } }).catch(() => undefined);
     await writeAudit({ ...ctx, user: ctx.user || { id: userId } }, 'auto_disable_social_user', 'user', userId, { moderationEventId: event.id, category: normalized.category, score: normalized.score, reason: normalized.reason });
+  } else if (normalized.decision === 'block') {
+    if (postId) await ctx.prisma.socialPost.update({ where: { id: postId }, data: { status: 'rejected', moderationStatus: 'blocked', moderationReason: normalized.reason, moderationScore: normalized.score } }).catch(() => undefined);
+    await writeAudit({ ...ctx, user: ctx.user || { id: userId } }, 'auto_block_social_media', targetType, targetId || userId, { moderationEventId: event.id, category: normalized.category, score: normalized.score, reason: normalized.reason });
   }
   return { ...normalized, eventId: event.id };
+};
+
+let moderationBackfillRunning = false;
+
+const localSocialMediaPath = (rootDir, authorId, value) => {
+  let pathname = '';
+  try { pathname = new URL(String(value || ''), 'https://tiwlo.invalid').pathname; } catch { return null; }
+  const prefix = `/api/social/media/files/${authorId}/`;
+  if (!pathname.startsWith(prefix)) return null;
+  const mediaRoot = resolve(rootDir, 'public', 'uploads', 'social');
+  const relativePath = decodeURIComponent(pathname.slice('/api/social/media/files/'.length)).replace(/^[/\\]+/, '');
+  const filePath = resolve(mediaRoot, relativePath);
+  if (filePath !== mediaRoot && !filePath.startsWith(`${mediaRoot}${sep}`)) return null;
+  return filePath;
+};
+
+const removeModeratedAsset = async (filePath) => {
+  await rm(filePath, { force: true }).catch(() => undefined);
+  await rm(join(dirname(filePath), `${basename(filePath)}-hls`), { recursive: true, force: true }).catch(() => undefined);
+};
+
+const backfillPostModeration = async ({ prisma, rootDir }, post) => {
+  const visualMedia = (Array.isArray(post.media) ? post.media : []).filter((item) => ['image', 'video'].includes(String(item?.type || '').toLowerCase()));
+  const evaluated = [];
+  for (const item of visualMedia) {
+    const filePath = localSocialMediaPath(rootDir, post.authorId, item?.url);
+    if (!filePath) continue;
+    const exists = await access(filePath).then(() => true, () => false);
+    if (!exists) continue;
+    const mimeType = String(item.type).toLowerCase() === 'video' ? 'video/mp4' : 'image/jpeg';
+    const result = await moderateMediaFile({ filePath, mimeType, targetType: 'post-backfill' }).catch((error) => normalizeDecision({
+      decision: 'review', category: 'classifier-unavailable', score: 0,
+      reason: `Existing media requires administrator review: ${String(error?.message || error).slice(0, 700)}`,
+      provider: 'moderation-fail-safe'
+    }));
+    evaluated.push({ filePath, result });
+  }
+  const overall = strongest(evaluated.map((item) => item.result));
+  const finalResult = evaluated.length ? overall : normalizeDecision({
+    decision: 'allow', category: 'no-visual-media', score: 0,
+    reason: 'No locally stored visual media required a backfill scan', provider: 'moderation-backfill'
+  });
+  await recordModerationDecision(
+    { prisma, user: { id: post.authorId } },
+    { userId: post.authorId, postId: post.id, targetType: 'post-backfill', targetId: post.id, result: finalResult }
+  );
+  if (finalResult.decision === 'block') {
+    await Promise.all(evaluated.filter((item) => item.result.decision === 'block').map((item) => removeModeratedAsset(item.filePath)));
+  } else if (finalResult.decision === 'review') {
+    await prisma.socialPost.update({ where: { id: post.id }, data: {
+      moderationStatus: 'pending_review', moderationReason: finalResult.reason, moderationScore: finalResult.score
+    } }).catch(() => undefined);
+  }
+};
+
+export const startSocialModerationBackfill = async ({ prisma, rootDir, batchSize = 20 }) => {
+  if (moderationBackfillRunning) return;
+  moderationBackfillRunning = true;
+  try {
+    while (true) {
+      const posts = await prisma.socialPost.findMany({
+        where: { status: 'published', moderationEvents: { none: {} } },
+        select: { id: true, authorId: true, media: true },
+        orderBy: { publishedAt: 'asc' },
+        take: Math.max(1, Math.min(Number(batchSize) || 20, 50))
+      });
+      if (!posts.length) break;
+      for (const post of posts) {
+        await backfillPostModeration({ prisma, rootDir }, post).catch(async (error) => {
+          console.warn('[social-moderation] backfill post failed:', post.id, error?.message || error);
+          const result = normalizeDecision({
+            decision: 'review', category: 'backfill-failed', score: 0,
+            reason: 'Existing media could not be classified and requires administrator review', provider: 'moderation-fail-safe',
+            evidence: { error: String(error?.message || error).slice(0, 500) }
+          });
+          await recordModerationDecision(
+            { prisma, user: { id: post.authorId } },
+            { userId: post.authorId, postId: post.id, targetType: 'post-backfill', targetId: post.id, result }
+          ).catch(() => undefined);
+          await prisma.socialPost.update({ where: { id: post.id }, data: {
+            moderationStatus: 'pending_review', moderationReason: result.reason, moderationScore: 0
+          } }).catch(() => undefined);
+        });
+        await new Promise((resolveDelay) => setTimeout(resolveDelay, 125));
+      }
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 1_000));
+    }
+  } finally {
+    moderationBackfillRunning = false;
+  }
 };
 
 export const enforceTextModeration = async (ctx, { userId, text, targetType, targetId }) => {
