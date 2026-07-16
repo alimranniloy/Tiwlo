@@ -181,6 +181,7 @@ data class SocialConversationMember(
     val role: String = "member",
     val muted: Boolean = false,
     val archived: Boolean = false,
+    val typingAt: String? = null,
     val lastReadAt: String? = null
 )
 
@@ -211,6 +212,20 @@ data class SocialCallSession(
     val offer: Map<String, Any?>? = null,
     val answer: Map<String, Any?>? = null,
     val iceCandidates: List<Map<String, Any?>> = emptyList()
+)
+
+@JsonClass(generateAdapter = true)
+data class SocialNotification(
+    val id: String = "",
+    val scope: String = "social",
+    val scopeId: String? = null,
+    val type: String = "info",
+    val title: String = "",
+    val message: String = "",
+    val status: String = "unread",
+    val metadata: Map<String, Any?> = emptyMap(),
+    val readAt: String? = null,
+    val createdAt: String? = null
 )
 
 @JsonClass(generateAdapter = true)

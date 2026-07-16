@@ -22,8 +22,8 @@ android {
     applicationId = "com.aistudio.tiwi.social.nqpzm"
     minSdk = 24
     targetSdk = 36
-    versionCode = 17
-    versionName = "3.5"
+    versionCode = 18
+    versionName = "3.6"
     buildConfigField("String", "TIWLO_API_BASE_URL", "\"${tiwloApiBaseUrl.trimEnd('/')}/\"")
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

@@ -34,6 +34,8 @@ class SocialRepository(context: Context) {
     val syncing: StateFlow<Boolean> = _syncing.asStateFlow()
     private val _incomingCalls = MutableStateFlow<List<SocialCallSession>>(emptyList())
     val incomingCalls: StateFlow<List<SocialCallSession>> = _incomingCalls.asStateFlow()
+    private val _notifications = MutableStateFlow<List<SocialNotification>>(emptyList())
+    val notifications: StateFlow<List<SocialNotification>> = _notifications.asStateFlow()
 
     fun hasSavedSession(): Boolean = !token.isNullOrBlank() && _currentUser.value != null
     fun currentUserId(): String? = _currentUser.value?.id
@@ -94,7 +96,8 @@ class SocialRepository(context: Context) {
                 val profileJob = async { runCatching { refreshProfile() } }
                 val feedJob = async { runCatching { refreshFeed(force) } }
                 val chatJob = async { runCatching { refreshConversations(force) } }
-                profileJob.await(); feedJob.await(); chatJob.await()
+                val notificationJob = async { runCatching { refreshNotifications() } }
+                profileJob.await(); feedJob.await(); chatJob.await(); notificationJob.await()
             }
         } finally { _syncing.value = false }
     }
@@ -574,6 +577,28 @@ class SocialRepository(context: Context) {
         return updated
     }
 
+    suspend fun addConversationMembers(id: String, userIds: List<String>): SocialConversation {
+        val data = client.execute(
+            """mutation AddTiwiChatMembers(${D}id: ID!, ${D}userIds: [ID!]!) {
+                addSocialConversationMembers(id: ${D}id, userIds: ${D}userIds) { $CONVERSATION_FIELDS }
+            }""",
+            mapOf("id" to id, "userIds" to userIds.distinct())
+        )
+        return mapConversation(data.objectValue("addSocialConversationMembers") ?: throw SocialApiException("Members could not be added")).also { updated ->
+            _conversations.value = _conversations.value.map { if (it.id == id) updated else it }
+            cache.saveConversations(_conversations.value)
+        }
+    }
+
+    suspend fun setConversationTyping(id: String, typing: Boolean) {
+        client.execute(
+            """mutation TiwiTyping(${D}id: ID!, ${D}typing: Boolean!) {
+                setSocialConversationTyping(id: ${D}id, typing: ${D}typing) { id typingAt }
+            }""",
+            mapOf("id" to id, "typing" to typing)
+        )
+    }
+
     suspend fun reactToMessage(id: String, emoji: String): SocialMessage {
         val data = client.execute(
             """mutation ReactTiwiMessage(${D}id: ID!, ${D}emoji: String!) { reactToSocialMessage(id: ${D}id, emoji: ${D}emoji) { $MESSAGE_FIELDS } }""",
@@ -617,6 +642,21 @@ class SocialRepository(context: Context) {
     suspend fun socialSettings(): Map<String, Any?> {
         val data = client.execute("query TiwiSocialSettings { socialSettings }")
         return data.objectValue("socialSettings") ?: emptyMap()
+    }
+
+    suspend fun refreshNotifications(): List<SocialNotification> {
+        val data = client.execute("query TiwiNotifications { notifications(scope: \"social\") { $NOTIFICATION_FIELDS } }")
+        return data.list("notifications").mapNotNull { it.objectMap()?.let(::mapNotification) }.also { _notifications.value = it }
+    }
+
+    suspend fun markNotificationRead(id: String): SocialNotification {
+        val data = client.execute(
+            """mutation ReadTiwiNotification(${D}id: ID!) { markNotificationRead(id: ${D}id) { $NOTIFICATION_FIELDS } }""",
+            mapOf("id" to id)
+        )
+        return mapNotification(data.objectValue("markNotificationRead") ?: throw SocialApiException("Notification could not be updated")).also { updated ->
+            _notifications.value = _notifications.value.map { if (it.id == id) updated else it }
+        }
     }
 
     suspend fun verificationOptions(): SocialVerificationOptions = supervisorScope {
@@ -908,6 +948,7 @@ class SocialRepository(context: Context) {
                 role = member.string("role") ?: "member",
                 muted = member.boolean("muted"),
                 archived = member.boolean("archived"),
+                typingAt = member.string("typingAt"),
                 lastReadAt = member.string("lastReadAt")
             )
         } },
@@ -919,6 +960,19 @@ class SocialRepository(context: Context) {
         caller = mapUser(value.objectValue("caller") ?: emptyMap()), calleeId = value.string("calleeId").orEmpty(),
         callee = mapUser(value.objectValue("callee") ?: emptyMap()), type = value.string("type") ?: "audio", status = value.string("status") ?: "ringing",
         offer = value.objectValue("offer"), answer = value.objectValue("answer"), iceCandidates = value.list("iceCandidates").mapNotNull { it.objectMap() }
+    )
+
+    private fun mapNotification(value: Map<String, Any?>) = SocialNotification(
+        id = value.string("id").orEmpty(),
+        scope = value.string("scope") ?: "social",
+        scopeId = value.string("scopeId"),
+        type = value.string("type") ?: "info",
+        title = value.string("title").orEmpty(),
+        message = value.string("message").orEmpty(),
+        status = value.string("status") ?: "unread",
+        metadata = value.objectValue("metadata") ?: emptyMap(),
+        readAt = value.string("readAt"),
+        createdAt = value.string("createdAt")
     )
 
     private fun mapGroup(value: Map<String, Any?>) = SocialGroup(
@@ -970,8 +1024,9 @@ class SocialRepository(context: Context) {
         const val POST_FIELDS = "id authorId type body media thumbnailUrl hlsUrl processingStatus visibility commentPermission pinned groupId saved status viewCount shareCount reactionCount commentCount viewerReaction publishedAt author { $PUBLIC_USER_FIELDS } authorProfile { id userId username verified badgeType isFollowing avatarDecoration { $DECORATION_FIELDS } }"
         const val COMMENT_FIELDS = "id postId authorId replyToId body status reactionCount viewerLiked createdAt author { $PUBLIC_USER_FIELDS } authorProfile { id userId username verified badgeType avatarDecoration { $DECORATION_FIELDS } }"
         const val MESSAGE_FIELDS = "id conversationId senderId type body media replyToId deliveryStatus sentAt deliveredAt readAt editedAt unsentAt reactions { id userId emoji } sender { $PUBLIC_USER_FIELDS } senderProfile { id userId username avatarDecoration { $DECORATION_FIELDS } }"
-        const val CONVERSATION_FIELDS = "id type title avatarUrl requestStatus requestedById unreadCount updatedAt members { id userId role muted archived lastReadAt user { $PUBLIC_USER_FIELDS } profile { id userId username verified badgeType avatarDecoration { $DECORATION_FIELDS } } } lastMessage { $MESSAGE_FIELDS }"
+        const val CONVERSATION_FIELDS = "id type title avatarUrl requestStatus requestedById unreadCount updatedAt members { id userId role muted archived typingAt lastReadAt user { $PUBLIC_USER_FIELDS } profile { id userId username verified badgeType avatarDecoration { $DECORATION_FIELDS } } } lastMessage { $MESSAGE_FIELDS }"
         const val CALL_FIELDS = "id conversationId callerId calleeId type status offer answer iceCandidates caller { $PUBLIC_USER_FIELDS } callee { $PUBLIC_USER_FIELDS }"
+        const val NOTIFICATION_FIELDS = "id scope scopeId type title message status metadata readAt createdAt"
         const val GROUP_FIELDS = "id ownerId name description coverUrl privacy status memberCount viewerRole viewerJoined createdAt owner { $PUBLIC_USER_FIELDS }"
         const val GROUP_MEMBER_FIELDS = "id groupId userId role status joinedAt user { $PUBLIC_USER_FIELDS } profile { id userId username verified badgeType avatarDecoration { $DECORATION_FIELDS } }"
     }

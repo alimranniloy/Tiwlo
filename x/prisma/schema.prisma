@@ -1704,6 +1704,7 @@ model SocialConversationMember {
   role           String             @default("member")
   muted          Boolean            @default(false)
   archived       Boolean            @default(false)
+  typingAt       DateTime?
   lastReadAt     DateTime?
   joinedAt       DateTime           @default(now())
 

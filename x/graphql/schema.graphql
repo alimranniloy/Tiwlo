@@ -2868,6 +2868,7 @@ type SocialConversationMember {
   role: String!
   muted: Boolean!
   archived: Boolean!
+  typingAt: String
   lastReadAt: String
   joinedAt: String
 }
@@ -3438,6 +3439,8 @@ type Mutation {
   editSocialMessage(id: ID!, body: String!): SocialMessage!
   markSocialConversationRead(id: ID!): SocialConversation!
   updateSocialConversationMember(id: ID!, muted: Boolean, archived: Boolean, markUnread: Boolean, leave: Boolean): SocialConversation
+  addSocialConversationMembers(id: ID!, userIds: [ID!]!): SocialConversation!
+  setSocialConversationTyping(id: ID!, typing: Boolean!): SocialConversationMember!
   reactToSocialMessage(id: ID!, emoji: String!): SocialMessage!
   unsendSocialMessage(id: ID!): SocialMessage!
   deleteSocialMessageForMe(id: ID!): Boolean!

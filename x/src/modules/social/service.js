@@ -66,6 +66,76 @@ const RESTRICTED_SOCIAL_STATUSES = new Set(['disabled', 'banned', 'blocked', 'su
 const SOCIAL_PRESENCE_TOUCH_MS = 60_000;
 const socialPresenceTouches = new Map();
 
+const createSocialNotification = async (ctx, {
+  ownerId,
+  scopeId = '',
+  type = 'info',
+  title,
+  message,
+  metadata = {}
+}) => {
+  if (!ownerId) return null;
+  return ctx.prisma.notification.create({
+    data: {
+      ownerId,
+      scope: 'social',
+      scopeId,
+      type,
+      title: bounded(title, 180) || 'Tiwi',
+      message: bounded(message, 1000) || '',
+      metadata
+    }
+  });
+};
+
+const createMessageNotification = async (ctx, actor, conversation, message) => {
+  const recipients = (conversation.members || []).filter((member) => member.userId !== actor.id && !member.muted);
+  await Promise.all(recipients.map(async (member) => {
+    const existing = await ctx.prisma.notification.findFirst({
+      where: {
+        ownerId: member.userId,
+        scope: 'social',
+        scopeId: conversation.id,
+        type: conversation.requestStatus === 'pending' ? 'message_request' : 'message',
+        status: 'unread'
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+    const count = Number(existing?.metadata?.count || 0) + 1;
+    const metadata = {
+      ...(existing?.metadata && typeof existing.metadata === 'object' ? existing.metadata : {}),
+      count,
+      conversationId: conversation.id,
+      actorId: actor.id,
+      actorName: actor.name,
+      actorAvatar: actor.avatar || null,
+      messageId: message.id,
+      messageType: message.type
+    };
+    const preview = message.body || (message.type === 'audio' ? 'Sent a voice message' : `Sent a ${message.type}`);
+    if (existing) {
+      await ctx.prisma.notification.update({
+        where: { id: existing.id },
+        data: {
+          title: actor.name,
+          message: count > 1 ? `${count} new messages` : preview,
+          metadata,
+          updatedAt: new Date()
+        }
+      });
+    } else {
+      await createSocialNotification(ctx, {
+        ownerId: member.userId,
+        scopeId: conversation.id,
+        type: conversation.requestStatus === 'pending' ? 'message_request' : 'message',
+        title: actor.name,
+        message: conversation.requestStatus === 'pending' ? 'Sent you a message request' : preview,
+        metadata
+      });
+    }
+  }));
+};
+
 const bounded = (value, max = 5000) => {
   if (value === null || value === undefined) return value;
   return String(value).trim().slice(0, max);
@@ -384,6 +454,14 @@ export const followUser = async (ctx, userId, follow) => {
       where: { followerId_followingId: { followerId: actor.id, followingId: userId } },
       create: { followerId: actor.id, followingId: userId },
       update: {}
+    });
+    await createSocialNotification(ctx, {
+      ownerId: userId,
+      scopeId: actor.id,
+      type: 'follow',
+      title: actor.name,
+      message: 'Started following you',
+      metadata: { actorId: actor.id, actorName: actor.name, actorAvatar: actor.avatar || null }
     });
   } else {
     await ctx.prisma.socialFollow.deleteMany({ where: { followerId: actor.id, followingId: userId } });
@@ -1066,6 +1144,16 @@ export const createConversation = async (ctx, input) => {
     },
     include: conversationInclude(actor.id)
   });
+  if (conversation.requestStatus === 'pending' && recipientId) {
+    await createSocialNotification(ctx, {
+      ownerId: recipientId,
+      scopeId: conversation.id,
+      type: 'message_request',
+      title: actor.name,
+      message: 'Sent you a message request',
+      metadata: { conversationId: conversation.id, actorId: actor.id, actorName: actor.name, actorAvatar: actor.avatar || null }
+    });
+  }
   return mapConversation(ctx, conversation, actor.id);
 };
 
@@ -1080,6 +1168,16 @@ export const respondToMessageRequest = async (ctx, id, accept) => {
     data: { requestStatus: accept ? 'accepted' : 'declined' },
     include: conversationInclude(actor.id)
   });
+  if (accept && conversation.requestedById) {
+    await createSocialNotification(ctx, {
+      ownerId: conversation.requestedById,
+      scopeId: id,
+      type: 'connection',
+      title: actor.name,
+      message: 'Accepted your message request. Tap to chat.',
+      metadata: { conversationId: id, actorId: actor.id, actorName: actor.name, actorAvatar: actor.avatar || null }
+    });
+  }
   return mapConversation(ctx, updated, actor.id);
 };
 
@@ -1134,6 +1232,11 @@ export const sendMessage = async (ctx, input) => {
     await tx.socialConversation.update({ where: { id: input.conversationId }, data: { updatedAt: new Date() } });
     return created;
   });
+  const conversation = await ctx.prisma.socialConversation.findUnique({
+    where: { id: input.conversationId },
+    include: { members: true }
+  });
+  if (conversation) await createMessageNotification(ctx, actor, conversation, message);
   return mapMessage(message);
 };
 
@@ -1208,6 +1311,37 @@ export const updateConversationMember = async (ctx, { id, muted, archived, markU
   return mapConversation(ctx, updated, actor.id);
 };
 
+export const addConversationMembers = async (ctx, id, userIds) => {
+  const actor = await requireAuth(ctx);
+  await requireSocialFeature(ctx, 'messagingEnabled');
+  const membership = await requireConversationMember(ctx, id, actor.id);
+  const conversation = await ctx.prisma.socialConversation.findUnique({ where: { id } });
+  if (!conversation) notFound('Conversation');
+  if (conversation.type !== 'group') throw new AppError('Members can only be added to a group chat', 'BAD_USER_INPUT');
+  if (!['owner', 'admin'].includes(membership.role) && !isAdmin(actor)) forbidden('Only group admins can add members');
+  const ids = [...new Set((userIds || []).filter((userId) => userId && userId !== actor.id))].slice(0, 100);
+  if (!ids.length) throw new AppError('Select at least one person', 'BAD_USER_INPUT');
+  const users = await ctx.prisma.user.findMany({ where: { id: { in: ids }, status: 'active' }, select: { id: true } });
+  if (users.length !== ids.length) throw new AppError('One or more people cannot be added', 'BAD_USER_INPUT');
+  await ctx.prisma.socialConversationMember.createMany({
+    data: ids.map((userId) => ({ conversationId: id, userId, role: 'member' })),
+    skipDuplicates: true
+  });
+  await ctx.prisma.socialConversation.update({ where: { id }, data: { updatedAt: new Date() } });
+  const updated = await ctx.prisma.socialConversation.findUnique({ where: { id }, include: conversationInclude(actor.id) });
+  return mapConversation(ctx, updated, actor.id);
+};
+
+export const setConversationTyping = async (ctx, id, typing) => {
+  const actor = await requireAuth(ctx);
+  await requireSocialFeature(ctx, 'messagingEnabled');
+  const membership = await requireConversationMember(ctx, id, actor.id);
+  return ctx.prisma.socialConversationMember.update({
+    where: { id: membership.id },
+    data: { typingAt: typing ? new Date() : null }
+  });
+};
+
 export const reactToMessage = async (ctx, id, emoji) => {
   const actor = await requireAuth(ctx);
   const message = await ctx.prisma.socialMessage.findUnique({ where: { id } });
@@ -1260,7 +1394,7 @@ export const startCall = async (ctx, input) => {
   if (!callee || callee.status !== 'active') throw new AppError('This user is unavailable', 'BAD_USER_INPUT');
   if (callee.socialProfile?.privacy?.allowCalls === false) throw new AppError('This user is not accepting calls', 'FORBIDDEN');
   if (input.conversationId) await requireConversationMember(ctx, input.conversationId, actor.id);
-  return ctx.prisma.socialCallSession.create({
+  const call = await ctx.prisma.socialCallSession.create({
     data: {
       conversationId: input.conversationId,
       callerId: actor.id,
@@ -1270,6 +1404,15 @@ export const startCall = async (ctx, input) => {
     },
     include: callInclude
   });
+  await createSocialNotification(ctx, {
+    ownerId: input.calleeId,
+    scopeId: call.id,
+    type: 'call',
+    title: actor.name,
+    message: type === 'video' ? 'Incoming video call' : 'Incoming audio call',
+    metadata: { callId: call.id, conversationId: input.conversationId || null, actorId: actor.id, actorName: actor.name, actorAvatar: actor.avatar || null, callType: type }
+  });
+  return call;
 };
 
 const requireCallParty = (actor, call) => {
