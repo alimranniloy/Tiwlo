@@ -455,6 +455,21 @@ class SocialRepository(context: Context) {
         return value
     }
 
+    suspend fun createGroupConversation(title: String, memberIds: List<String>): SocialConversation {
+        val data = client.execute(
+            """mutation CreateTiwiGroupChat(${D}input: SocialConversationInput!) { createSocialConversation(input: ${D}input) { $CONVERSATION_FIELDS } }""",
+            mapOf("input" to mapOf(
+                "memberIds" to memberIds.distinct(),
+                "type" to "group",
+                "title" to title.trim().ifBlank { "New group" }
+            ))
+        )
+        val value = mapConversation(data.objectValue("createSocialConversation") ?: throw SocialApiException("Group chat was not created"))
+        _conversations.value = listOf(value) + _conversations.value.filterNot { it.id == value.id }
+        cache.saveConversations(_conversations.value)
+        return value
+    }
+
     suspend fun respondToMessageRequest(id: String, accept: Boolean): SocialConversation {
         val data = client.execute(
             """mutation RespondTiwiRequest(${D}id: ID!, ${D}accept: Boolean!) { respondToSocialMessageRequest(id: ${D}id, accept: ${D}accept) { $CONVERSATION_FIELDS } }""",
@@ -739,7 +754,7 @@ class SocialRepository(context: Context) {
         signupSource = value.string("signupSource") ?: "web", emailVerifiedAt = value.string("emailVerifiedAt"),
         phone = value.string("phone"), mobileCountryCode = value.string("mobileCountryCode"), primaryRegion = value.string("primaryRegion"),
         country = value.string("country"), addressLine1 = value.string("addressLine1"), city = value.string("city"), state = value.string("state"),
-        postalCode = value.string("postalCode"), billingName = value.string("billingName")
+        postalCode = value.string("postalCode"), billingName = value.string("billingName"), socialLastActiveAt = value.string("socialLastActiveAt")
     )
 
     private fun mapDecoration(value: Map<String, Any?>) = SocialProfileDecoration(
@@ -872,8 +887,8 @@ class SocialRepository(context: Context) {
         val RESTRICTED_STATUSES = setOf("disabled", "banned", "blocked", "suspended")
         const val FEED_TTL = 60_000L
         const val CHAT_TTL = 20_000L
-        const val USER_FIELDS = "id email name avatar role status socialRestrictionCode socialRestrictionReason socialRestrictedAt socialModerationScore signupSource emailVerifiedAt phone mobileCountryCode primaryRegion country addressLine1 city state postalCode billingName"
-        const val PUBLIC_USER_FIELDS = "id name avatar status"
+        const val USER_FIELDS = "id email name avatar role status socialRestrictionCode socialRestrictionReason socialRestrictedAt socialModerationScore signupSource emailVerifiedAt phone mobileCountryCode primaryRegion country addressLine1 city state postalCode billingName socialLastActiveAt"
+        const val PUBLIC_USER_FIELDS = "id name avatar status socialLastActiveAt"
         const val DECORATION_FIELDS = "id slug kind name assetUrl fileName mimeType animated width height priceUsd status sortOrder owned applied ownershipSource"
         const val PROFILE_FIELDS = "id userId username bio about category website location coverUrl verified badgeType badgePlan badgeExpiresAt avatarDecoration { $DECORATION_FIELDS } profileEffect { $DECORATION_FIELDS } privacy preferences followerCount followingCount postCount isFollowing user { $PUBLIC_USER_FIELDS }"
         const val POST_FIELDS = "id authorId type body media thumbnailUrl hlsUrl processingStatus visibility commentPermission pinned groupId saved status viewCount shareCount reactionCount commentCount viewerReaction publishedAt author { $PUBLIC_USER_FIELDS } authorProfile { id userId username verified badgeType isFollowing avatarDecoration { $DECORATION_FIELDS } }"

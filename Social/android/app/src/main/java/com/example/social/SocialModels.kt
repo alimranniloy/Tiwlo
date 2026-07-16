@@ -24,7 +24,8 @@ data class SocialUser(
     val city: String? = null,
     val state: String? = null,
     val postalCode: String? = null,
-    val billingName: String? = null
+    val billingName: String? = null,
+    val socialLastActiveAt: String? = null
 )
 
 @JsonClass(generateAdapter = true)

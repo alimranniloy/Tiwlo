@@ -63,6 +63,8 @@ const GROUP_ROLES = new Set(['admin', 'editor', 'member']);
 const MESSAGE_TYPES = new Set(['text', 'image', 'video', 'audio', 'file', 'system']);
 const CALL_TYPES = new Set(['audio', 'video']);
 const RESTRICTED_SOCIAL_STATUSES = new Set(['disabled', 'banned', 'blocked', 'suspended']);
+const SOCIAL_PRESENCE_TOUCH_MS = 60_000;
+const socialPresenceTouches = new Map();
 
 const bounded = (value, max = 5000) => {
   if (value === null || value === undefined) return value;
@@ -77,6 +79,15 @@ const safeDate = (value) => {
 };
 
 const boundedLimit = (value, fallback = 30, max = 100) => Math.max(1, Math.min(Number(value) || fallback, max));
+
+const touchSocialPresence = (ctx, userId) => {
+  if (!userId) return;
+  const now = Date.now();
+  if (now - (socialPresenceTouches.get(userId) || 0) < SOCIAL_PRESENCE_TOUCH_MS) return;
+  socialPresenceTouches.set(userId, now);
+  if (socialPresenceTouches.size > 5000) socialPresenceTouches.delete(socialPresenceTouches.keys().next().value);
+  ctx.prisma.user.update({ where: { id: userId }, data: { socialLastActiveAt: new Date(now) } }).catch(() => undefined);
+};
 
 const validateOwnedMedia = (actorId, media) => {
   const prefix = `/api/social/media/files/${actorId}/`;
@@ -132,6 +143,7 @@ const requireSocialFeature = async (ctx, key) => {
   if (ctx.user?.signupSource === 'social_app' && !ctx.user?.emailVerifiedAt) {
     throw new AppError('Verify your email before using Tiwi Social', 'FORBIDDEN');
   }
+  touchSocialPresence(ctx, ctx.user?.id);
   const settings = await getSettings(ctx);
   if (!settings.enabled) throw new AppError('Tiwlo Social is currently disabled', 'SERVICE_UNAVAILABLE');
   if (key && settings[key] === false) throw new AppError('This Social feature is currently disabled', 'FORBIDDEN');

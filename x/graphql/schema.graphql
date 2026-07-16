@@ -35,6 +35,7 @@ type User {
   promoVerifiedAt: String
   createdAt: String
   updatedAt: String
+  socialLastActiveAt: String
   securitySummary: JSON
   deviceSessions: [UserDeviceSession!]!
   socialProfile: SocialProfile
@@ -2984,6 +2985,7 @@ type SocialPublicUser {
   name: String!
   avatar: String
   status: String
+  socialLastActiveAt: String
 }
 
 input SocialProfileInput {

@@ -47,6 +47,7 @@ model User {
   passwordResetExpires     DateTime?
   createdAt                DateTime  @default(now())
   updatedAt                DateTime  @updatedAt
+  socialLastActiveAt       DateTime?
 
   resources                  CloudResource[]
   domains                    Domain[]
