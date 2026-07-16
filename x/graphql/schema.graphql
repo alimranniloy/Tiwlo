@@ -3104,6 +3104,7 @@ input SocialAdminSettingsInput {
   mediaMaxMb: Int
   autoTranscode: Boolean
   moderation: JSON
+  profileEffects: JSON
   stunServers: JSON
   verificationPackages: JSON
 }

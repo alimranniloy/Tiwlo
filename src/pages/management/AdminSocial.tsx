@@ -179,6 +179,10 @@ export default function AdminSocial() {
       mediaMaxMb: Number(settings.mediaMaxMb || 500),
       autoTranscode: Boolean(settings.autoTranscode),
       moderation: settings.moderation || {},
+      profileEffects: {
+        replayIntervalSeconds: Math.max(0, Math.min(Number(settings.profileEffects?.replayIntervalSeconds) || 0, 3600)),
+        loopCount: Math.max(1, Math.min(Number(settings.profileEffects?.loopCount) || 2, 10))
+      },
       stunServers,
       verificationPackages: Array.isArray(settings.verificationPackages) ? settings.verificationPackages : []
     }), 'Social settings saved.');
@@ -447,11 +451,21 @@ export default function AdminSocial() {
 
       {tab === 'effects' && (
         <div className="space-y-5">
+          <section className="rounded-xl border border-fuchsia-100 bg-gradient-to-r from-fuchsia-50 via-white to-blue-50 p-5">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+              <div><h2 className="text-[15px] font-black text-[#2e3d49]">Effect playback</h2><p className="mt-1 max-w-2xl text-[11px] leading-5 text-gray-500">Control every applied profile effect from the Social API. Set replay to 0 to play only when a profile opens; otherwise the app restarts it after this interval.</p></div>
+              <div className="grid gap-3 sm:grid-cols-2 lg:w-[430px]">
+                <label className="text-[10px] font-black uppercase tracking-wide text-gray-500">Replay every (seconds)<input type="number" min={0} max={3600} value={settings.profileEffects?.replayIntervalSeconds ?? 0} onChange={(event) => setSettings({ ...settings, profileEffects: { ...(settings.profileEffects || {}), replayIntervalSeconds: Math.max(0, Number(event.target.value)) } })} className="mt-1 w-full rounded-lg border border-[#dfe4ea] bg-white px-3 py-2.5 text-[13px] text-[#2e3d49] outline-none focus:border-[#0069ff]" /></label>
+                <label className="text-[10px] font-black uppercase tracking-wide text-gray-500">Loops each time<input type="number" min={1} max={10} value={settings.profileEffects?.loopCount ?? 2} onChange={(event) => setSettings({ ...settings, profileEffects: { ...(settings.profileEffects || {}), loopCount: Math.max(1, Number(event.target.value)) } })} className="mt-1 w-full rounded-lg border border-[#dfe4ea] bg-white px-3 py-2.5 text-[13px] text-[#2e3d49] outline-none focus:border-[#0069ff]" /></label>
+              </div>
+              <button onClick={saveSettings} disabled={saving} className="rounded-lg bg-[#101828] px-5 py-2.5 text-[12px] font-black text-white disabled:opacity-50">{saving ? 'Saving...' : 'Save playback'}</button>
+            </div>
+          </section>
           <div className="grid gap-5 xl:grid-cols-[390px_1fr]">
             <section className="rounded border border-[#dfe4ea] bg-white p-5">
               <div className="flex items-start gap-3">
                 <span className="rounded-xl bg-fuchsia-50 p-2.5 text-fuchsia-600"><Layers3 className="h-5 w-5" /></span>
-                <div><h2 className="text-[15px] font-black text-[#2e3d49]">{effectForm.id ? 'Edit profile effect' : 'Upload profile effect'}</h2><p className="mt-1 text-[11px] leading-5 text-gray-500">Upload a transparent full-profile <strong>PNG or APNG</strong>. A 450×880 portrait canvas is recommended. The app plays an applied effect twice whenever that profile opens.</p></div>
+                <div><h2 className="text-[15px] font-black text-[#2e3d49]">{effectForm.id ? 'Edit profile effect' : 'Upload profile effect'}</h2><p className="mt-1 text-[11px] leading-5 text-gray-500">Upload a transparent full-profile <strong>PNG or APNG</strong>. A 450×880 portrait canvas is recommended. Playback timing is controlled above.</p></div>
               </div>
               <label className="mt-5 flex cursor-pointer items-center justify-center overflow-hidden rounded-xl border-2 border-dashed border-[#cdd5df] bg-[#f8fafc] p-4 hover:border-[#0069ff]">
                 {(effectPreview || effectForm.assetUrl) ? (
@@ -506,13 +520,14 @@ export default function AdminSocial() {
           </div>
           <section className="rounded border border-[#e5e8ed] bg-white p-4">
             <h2 className="text-[14px] font-black text-[#2e3d49]">Automated public-content moderation</h2>
-            <p className="mt-1 text-[11px] text-gray-500">High-confidence explicit adult nudity is blocked and the account is disabled with an auditable reason. Possible matches go to review; swimwear/racy-only classification does not auto-ban.</p>
-            <div className="mt-4 grid gap-3 md:grid-cols-3">
+            <p className="mt-1 text-[11px] text-gray-500">The free local MobileNetV2Mid pipeline blocks high-confidence pornographic or nude media, permanently removes the upload and disables the account for review. Borderline matches stay unpublished.</p>
+            <div className="mt-4 grid gap-3 md:grid-cols-4">
               <Toggle checked={settings.moderation?.autoDisableExplicit !== false} onChange={(value) => setSettings({ ...settings, moderation: { ...(settings.moderation || {}), autoDisableExplicit: value } })} label="Auto-disable explicit uploads" detail="Applied by the API before publication." />
-              <label className="rounded border border-[#e5e8ed] p-4"><span className="block text-[12px] font-bold">Block threshold</span><input type="number" min={0.8} max={1} step={0.01} value={settings.moderation?.explicitThreshold ?? 0.95} onChange={(event) => setSettings({ ...settings, moderation: { ...(settings.moderation || {}), explicitThreshold: Number(event.target.value) } })} className="mt-2 w-full rounded border px-3 py-2" /></label>
-              <label className="rounded border border-[#e5e8ed] p-4"><span className="block text-[12px] font-bold">Review threshold</span><input type="number" min={0.5} max={0.95} step={0.01} value={settings.moderation?.reviewThreshold ?? 0.72} onChange={(event) => setSettings({ ...settings, moderation: { ...(settings.moderation || {}), reviewThreshold: Number(event.target.value) } })} className="mt-2 w-full rounded border px-3 py-2" /></label>
+              <label className="rounded border border-[#e5e8ed] p-4"><span className="block text-[12px] font-bold">Explicit block threshold</span><input type="number" min={0.6} max={0.95} step={0.01} value={settings.moderation?.explicitThreshold ?? 0.68} onChange={(event) => setSettings({ ...settings, moderation: { ...(settings.moderation || {}), explicitThreshold: Number(event.target.value) } })} className="mt-2 w-full rounded border px-3 py-2" /></label>
+              <label className="rounded border border-[#e5e8ed] p-4"><span className="block text-[12px] font-bold">Review threshold</span><input type="number" min={0.25} max={0.8} step={0.01} value={settings.moderation?.reviewThreshold ?? 0.38} onChange={(event) => setSettings({ ...settings, moderation: { ...(settings.moderation || {}), reviewThreshold: Number(event.target.value) } })} className="mt-2 w-full rounded border px-3 py-2" /></label>
+              <label className="rounded border border-[#e5e8ed] p-4"><span className="block text-[12px] font-bold">Visible-nudity block</span><input type="number" min={0.72} max={0.98} step={0.01} value={settings.moderation?.sexyBlockThreshold ?? 0.88} onChange={(event) => setSettings({ ...settings, moderation: { ...(settings.moderation || {}), sexyBlockThreshold: Number(event.target.value) } })} className="mt-2 w-full rounded border px-3 py-2" /></label>
             </div>
-            <p className="mt-3 rounded bg-amber-50 p-3 text-[11px] font-bold text-amber-800">A production classifier must be configured on the API server with GOOGLE_CLOUD_VISION_API_KEY or SOCIAL_MODERATION_WEBHOOK_URL. Without one, files are decoded and validated but no visual AI decision is claimed.</p>
+            <p className="mt-3 rounded bg-blue-50 p-3 text-[11px] font-bold text-blue-800">No paid vision key is required. Classification is serialized, cached and limited to four sampled video frames to keep server CPU and memory bounded. A webhook remains optional as a second opinion.</p>
           </section>
           <label className="block rounded border border-[#e5e8ed] bg-white p-4"><span className="text-[13px] font-bold text-[#2e3d49]">WebRTC STUN/TURN servers</span><p className="mt-1 text-[11px] text-gray-500">JSON array passed to Android PeerConnection configuration. Add production TURN credentials here.</p><textarea rows={8} value={stunJson} onChange={(event) => setStunJson(event.target.value)} className="mt-3 w-full rounded border border-[#e5e8ed] p-3 font-mono text-[12px] outline-none focus:border-[#0069ff]" /></label>
           <section className="rounded border border-[#e5e8ed] bg-white p-4">

@@ -619,6 +619,14 @@ class SocialRepository(context: Context) {
         return data.list("socialProfileEffects").mapNotNull { it.objectMap()?.let(::mapDecoration) }
     }
 
+    suspend fun profileEffectPlayback(): SocialProfileEffectPlayback {
+        val settings = socialSettings().objectValue("profileEffects") ?: emptyMap()
+        return SocialProfileEffectPlayback(
+            replayIntervalSeconds = (settings.number("replayIntervalSeconds")?.toInt() ?: 0).coerceIn(0, 3600),
+            loopCount = (settings.number("loopCount")?.toInt() ?: 2).coerceIn(1, 10)
+        )
+    }
+
     suspend fun applyProfileEffect(id: String?): SocialProfile {
         val data = client.execute(
             """mutation ApplyTiwiProfileEffect(${D}id: ID) { applySocialProfileEffect(id: ${D}id) { $PROFILE_FIELDS } }""",

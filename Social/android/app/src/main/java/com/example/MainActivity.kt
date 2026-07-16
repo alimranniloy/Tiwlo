@@ -122,6 +122,7 @@ import com.example.social.SocialMessage
 import com.example.social.SocialPost
 import com.example.social.SocialProfile
 import com.example.social.SocialProfileDecoration
+import com.example.social.SocialProfileEffectPlayback
 import com.example.social.SocialRepository
 import com.example.social.SocialUser
 import com.example.social.SocialVerificationOptions
@@ -278,6 +279,13 @@ private fun DisabledAccountScreen(repository: SocialRepository, onLogout: () -> 
             runCatching { repository.validateSession() }
         }
     }
+    val restrictionReason = remember(user?.socialRestrictionCode, user?.socialRestrictionReason) {
+        val code = user?.socialRestrictionCode.orEmpty().lowercase()
+        val raw = user?.socialRestrictionReason.orEmpty()
+        if (code.contains("sexual") || code.contains("porn") || raw.contains("porn", true) || raw.contains("nude", true) || raw.contains("sexual", true)) {
+            "Pornographic, nude, or explicitly sexual media was detected by Tiwi automated safety."
+        } else raw.ifBlank { "This account was restricted after an automated safety review." }
+    }
     Column(
         Modifier.fillMaxSize().background(Color.White).statusBarsPadding().navigationBarsPadding().padding(horizontal = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -290,23 +298,30 @@ private fun DisabledAccountScreen(repository: SocialRepository, onLogout: () -> 
         Text("Account disabled", fontSize = 27.sp, fontWeight = FontWeight.ExtraBold, color = Color(0xFF101828))
         Spacer(Modifier.height(10.dp))
         Text(
-            "${user?.name.orEmpty()}, your Tiwi account is currently ${user?.status ?: "restricted"}. Contact support within 180 days to request a review. After that, your account and information may be permanently removed.",
+            "${user?.name.orEmpty()}, your Tiwi account is currently ${user?.status ?: "restricted"}. You can still download your information or request a review.",
             textAlign = TextAlign.Center,
             color = Color(0xFF475467),
             lineHeight = 21.sp
         )
-        if (!user?.socialRestrictionReason.isNullOrBlank()) {
-            Surface(
-                modifier = Modifier.fillMaxWidth().padding(top = 14.dp),
-                color = Color(0xFFFFF4ED),
-                shape = RoundedCornerShape(10.dp),
-                border = BorderStroke(1.dp, Color(0xFFFEC89A)),
-                tonalElevation = 0.dp
-            ) {
-                Column(Modifier.padding(12.dp)) {
-                    Text("Why this happened", fontWeight = FontWeight.Bold, color = Color(0xFF9A3412))
-                    Text(user?.socialRestrictionReason.orEmpty(), color = Color(0xFF7C2D12), fontSize = 13.sp)
+        Surface(
+            modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
+            color = Color(0xFFFFF4ED),
+            shape = RoundedCornerShape(14.dp),
+            border = BorderStroke(1.dp, Color(0xFFFEC89A)),
+            tonalElevation = 0.dp
+        ) {
+            Column(Modifier.padding(16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("180", fontSize = 30.sp, fontWeight = FontWeight.Black, color = Color(0xFFB42318))
+                    Column(Modifier.padding(start = 9.dp)) {
+                        Text("DAYS", fontSize = 11.sp, fontWeight = FontWeight.Black, color = Color(0xFFB42318))
+                        Text("Review period", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF7A271A))
+                    }
                 }
+                HorizontalDivider(Modifier.padding(vertical = 11.dp), color = Color(0xFFFEC89A))
+                Text("Account restriction", fontWeight = FontWeight.Bold, color = Color(0xFF9A3412))
+                Text(restrictionReason, color = Color(0xFF7C2D12), fontSize = 13.sp, lineHeight = 18.sp)
+                Text("Request a review before this period ends. After 180 days, the account and stored information may be permanently removed.", color = Color(0xFF9A3412), fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp), lineHeight = 17.sp)
             }
         }
         Spacer(Modifier.height(24.dp))
@@ -3844,12 +3859,29 @@ fun ProfileScreen(
     val name = profile?.user?.name ?: if (isOwn) ownUser?.name.orEmpty() else ""
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    var effectPlayback by remember { mutableStateOf(SocialProfileEffectPlayback()) }
+    var effectCycle by remember { mutableIntStateOf(0) }
     LaunchedEffect(userId) {
         loadingProfile = true
         val loaded = if (isOwn) runCatching { repository.refreshProfile() }.getOrNull()
         else runCatching { repository.refreshProfile(userId) }.getOrNull().also { remoteProfile = it }
         isFollowing = if (isOwn) false else loaded?.isFollowing == true
         loadingProfile = false
+    }
+    LaunchedEffect(profile?.profileEffect?.id) {
+        if (profile?.profileEffect?.id.isNullOrBlank()) {
+            effectCycle = 0
+            return@LaunchedEffect
+        }
+        effectCycle += 1
+        effectPlayback = runCatching { repository.profileEffectPlayback() }.getOrDefault(SocialProfileEffectPlayback())
+        val interval = effectPlayback.replayIntervalSeconds
+        if (interval > 0) {
+            while (true) {
+                delay(interval * 1_000L)
+                effectCycle += 1
+            }
+        }
     }
 
     if (showEdit && isOwn) {
@@ -3954,7 +3986,9 @@ fun ProfileScreen(
         }
         }
     }
-        ProfileEffectImage(profile?.profileEffect, Modifier.matchParentSize(), loopLimit = 2)
+        if (effectCycle > 0) key("${profile?.profileEffect?.id}:$effectCycle") {
+            ProfileEffectImage(profile?.profileEffect, Modifier.matchParentSize(), loopLimit = effectPlayback.loopCount)
+        }
     }
     if (showVerified) VerifiedInfoSheet(name, profile?.user?.avatar, profile?.badgeType ?: "blue", profile?.avatarDecoration, onDismiss = { showVerified = false })
 }

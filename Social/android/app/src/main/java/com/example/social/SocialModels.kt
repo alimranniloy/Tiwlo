@@ -55,6 +55,12 @@ data class SocialProfileDecoration(
 )
 
 @JsonClass(generateAdapter = true)
+data class SocialProfileEffectPlayback(
+    val replayIntervalSeconds: Int = 0,
+    val loopCount: Int = 2
+)
+
+@JsonClass(generateAdapter = true)
 data class SocialProfile(
     val id: String = "",
     val userId: String = "",

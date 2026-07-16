@@ -17,6 +17,10 @@ const SOCIAL_DEFAULTS = Object.freeze({
   liveEnabled: true,
   mediaMaxMb: 2048,
   autoTranscode: true,
+  profileEffects: {
+    replayIntervalSeconds: 0,
+    loopCount: 2
+  },
   verificationPackages: [
     { id: 'blue_pro', name: 'Blue Badge Pro', badgeType: 'blue', priceUsd: 11, periodMonths: 1, enabled: true, notableOnly: false, features: ['Verified blue badge', 'Account protection', 'Priority support'] },
     { id: 'blue_plus', name: 'Blue Badge Plus', badgeType: 'blue', priceUsd: 30, periodMonths: 1, enabled: true, notableOnly: false, features: ['Everything in Pro', 'Enhanced profile support', 'Priority review'] },
@@ -25,10 +29,11 @@ const SOCIAL_DEFAULTS = Object.freeze({
   moderation: {
     reportsEnabled: true,
     autoDisableExplicit: true,
-    explicitThreshold: 0.85,
-    reviewThreshold: 0.55,
+    explicitThreshold: 0.68,
+    reviewThreshold: 0.38,
+    sexyBlockThreshold: 0.88,
     blockedWords: [],
-    provider: 'local-nsfwjs-mobilenet-v2'
+    provider: 'local-nsfwjs-mobilenet-v2-mid'
   },
   stunServers: [{ urls: 'stun:stun.l.google.com:19302' }]
 });
@@ -114,6 +119,7 @@ export const getSettings = async (ctx) => {
     ...SOCIAL_DEFAULTS,
     ...stored,
     moderation: { ...SOCIAL_DEFAULTS.moderation, ...(stored.moderation || {}) },
+    profileEffects: { ...SOCIAL_DEFAULTS.profileEffects, ...(stored.profileEffects || {}) },
     verificationPackages: Array.isArray(stored.verificationPackages) ? stored.verificationPackages : SOCIAL_DEFAULTS.verificationPackages,
     stunServers: Array.isArray(stored.stunServers) ? stored.stunServers : SOCIAL_DEFAULTS.stunServers
   };
@@ -439,7 +445,9 @@ export const listFeed = async (ctx, args = {}) => {
       { visibility: 'public' }, { authorId: actor.id },
       { visibility: 'followers', authorId: { in: [...followingIds] } }
     ],
-    ...(args.type ? { type: String(args.type).toLowerCase() } : { type: { not: 'story' } }),
+    ...(String(args.type || '').toLowerCase() === 'reel'
+      ? { type: { in: ['reel', 'video'] } }
+      : args.type ? { type: String(args.type).toLowerCase() } : { type: { not: 'story' } }),
     ...(args.authorId ? { authorId: args.authorId } : {}),
     ...(args.groupId ? { groupId: args.groupId } : {}),
     ...(!args.authorId && hiddenAuthorIds.size ? { authorId: { notIn: [...hiddenAuthorIds] } } : {}),
@@ -1765,6 +1773,10 @@ export const adminUpdateSettings = async (ctx, input) => {
     ...current,
     ...removeUndefined(input),
     moderation: input.moderation === undefined ? current.moderation : { ...current.moderation, ...input.moderation },
+    profileEffects: input.profileEffects === undefined ? current.profileEffects : {
+      replayIntervalSeconds: Math.max(0, Math.min(Number(input.profileEffects?.replayIntervalSeconds) || 0, 3600)),
+      loopCount: Math.max(1, Math.min(Number(input.profileEffects?.loopCount) || 2, 10))
+    },
     mediaMaxMb: input.mediaMaxMb === undefined ? current.mediaMaxMb : Math.max(1, Math.min(input.mediaMaxMb, 2048))
   };
   await ctx.prisma.systemSetting.upsert({

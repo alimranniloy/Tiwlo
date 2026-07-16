@@ -1,11 +1,12 @@
 import { randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { extname, join } from 'node:path';
-import { appendFile, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, open, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import express from 'express';
 import multer from 'multer';
 import { getSettings } from './service.js';
 import { moderateMediaFile, recordModerationDecision } from './moderation.js';
+import { resolveSocialFfmpegPath } from './ffmpeg.js';
 
 const safeId = (value) => String(value || '').replace(/[^a-zA-Z0-9_-]/g, '');
 const safeProcessingId = (value) => String(value || '').replace(/[^a-zA-Z0-9._-]/g, '');
@@ -13,6 +14,22 @@ const allowedExtensions = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif', '.m
 const restrictedUserStatuses = new Set(['disabled', 'banned', 'blocked', 'suspended']);
 const isAllowedMime = (mime = '') => /^(image|video|audio)\//i.test(mime) || mime === 'application/pdf' || mime === 'application/octet-stream';
 const chunkBytes = 768 * 1024;
+
+const sniffMediaMime = async (filePath, claimedMime, filename, kind) => {
+  const claimed = String(claimedMime || '').trim().toLowerCase();
+  if (/^(image|video)\//.test(claimed)) return claimed;
+  const handle = await open(filePath, 'r');
+  const header = Buffer.alloc(32);
+  try { await handle.read(header, 0, header.length, 0); } finally { await handle.close(); }
+  if (header[0] === 0xff && header[1] === 0xd8) return 'image/jpeg';
+  if (header.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png';
+  if (header.subarray(0, 3).toString('ascii') === 'GIF') return 'image/gif';
+  if (header.subarray(0, 4).toString('ascii') === 'RIFF' && header.subarray(8, 12).toString('ascii') === 'WEBP') return 'image/webp';
+  if (header.subarray(4, 8).toString('ascii') === 'ftyp') return 'video/mp4';
+  if (header.subarray(0, 4).equals(Buffer.from([0x1a, 0x45, 0xdf, 0xa3]))) return 'video/webm';
+  if (/\.(?:mp4|mov|mkv|webm|m4v)$/i.test(filename) || /^(?:reel|video)$/i.test(String(kind || ''))) return 'video/mp4';
+  return claimed;
+};
 
 const runProcess = (command, args) => new Promise((resolve, reject) => {
   const child = spawn(command, args, { windowsHide: true });
@@ -32,7 +49,7 @@ const writeStatus = async (file, value) => {
 };
 
 const transcodeVideo = async ({ inputPath, outputDir, publicBase, statusFile }) => {
-  const ffmpeg = process.env.SOCIAL_FFMPEG_PATH || 'ffmpeg';
+  const ffmpeg = resolveSocialFfmpegPath();
   let thumbnailReady = false;
   const qualities = [
     { name: '360p', height: 360, bandwidth: 800000, resolution: '640x360' },
@@ -159,7 +176,8 @@ export const registerSocialRoutes = (app, { prisma, userFromRequest, rootDir }) 
   const finishUpload = async ({ user, userId, filename, filePath, mimeType, size, kind }) => {
     const publicRoot = '/api/social/media/files';
     const sourceUrl = `${publicRoot}/${userId}/${filename}`;
-    const isVideo = String(mimeType || '').startsWith('video/');
+    const inspectedMimeType = await sniffMediaMime(filePath, mimeType, filename, kind);
+    const isVideo = inspectedMimeType.startsWith('video/');
     const settings = await getSettings({ prisma });
     const processingId = filename.replace(/[^a-zA-Z0-9._-]/g, '');
     const outputName = `${processingId}-hls`;
@@ -168,8 +186,12 @@ export const registerSocialRoutes = (app, { prisma, userFromRequest, rootDir }) 
     const hlsUrl = `${publicRoot}/${userId}/${outputName}/master.m3u8`;
     const thumbnailUrl = `${publicRoot}/${userId}/${outputName}/thumbnail.jpg`;
     const moderation = await moderateMediaFile({
-      filePath, mimeType, targetType: boundedKind(kind),
-      thresholds: { explicit: settings.moderation?.explicitThreshold, review: settings.moderation?.reviewThreshold }
+      filePath, mimeType: inspectedMimeType, targetType: boundedKind(kind),
+      thresholds: {
+        explicit: settings.moderation?.explicitThreshold,
+        review: settings.moderation?.reviewThreshold,
+        sexyBlock: settings.moderation?.sexyBlockThreshold
+      }
     });
     await recordModerationDecision(
       { prisma, user },
@@ -185,6 +207,10 @@ export const registerSocialRoutes = (app, { prisma, userFromRequest, rootDir }) 
       await rm(filePath, { force: true }).catch(() => undefined);
       const accountAction = settings.moderation?.autoDisableExplicit === false ? 'The media was permanently deleted.' : 'The media was permanently deleted and the account was disabled for administrator review.';
       throw new Error(`MEDIA_BLOCKED: Explicit sexual content detected. ${accountAction}`);
+    }
+    if (moderation.decision === 'review') {
+      await rm(filePath, { force: true }).catch(() => undefined);
+      throw new Error('MEDIA_REVIEW: This upload may contain nudity or sexually suggestive content. It was not published and was removed for safety.');
     }
     if (isVideo && settings.autoTranscode) {
       await mkdir(outputDir, { recursive: true });
@@ -202,7 +228,7 @@ export const registerSocialRoutes = (app, { prisma, userFromRequest, rootDir }) 
       ok: true,
       processingId,
       kind: boundedKind(kind),
-      mimeType,
+      mimeType: inspectedMimeType,
       size,
       sourceUrl,
       hlsUrl: isVideo && settings.autoTranscode ? hlsUrl : null,
@@ -261,7 +287,7 @@ export const registerSocialRoutes = (app, { prisma, userFromRequest, rootDir }) 
         }));
       } catch (failure) {
         const blocked = String(failure?.message || '').startsWith('MEDIA_BLOCKED:');
-        res.status(blocked ? 403 : 422).json({ error: String(failure?.message || 'Media validation failed').replace(/^MEDIA_BLOCKED:\s*/, '') });
+        res.status(blocked ? 403 : 422).json({ error: String(failure?.message || 'Media validation failed').replace(/^MEDIA_(?:BLOCKED|REVIEW):\s*/, '') });
       }
     });
   });
@@ -357,7 +383,7 @@ export const registerSocialRoutes = (app, { prisma, userFromRequest, rootDir }) 
     } catch (failure) {
       const message = String(failure?.message || '');
       const blocked = message.startsWith('MEDIA_BLOCKED:');
-      res.status(blocked ? 403 : message ? 422 : 404).json({ error: blocked ? message.replace(/^MEDIA_BLOCKED:\s*/, '') : (message || 'Chunked upload was not found') });
+      res.status(blocked ? 403 : message ? 422 : 404).json({ error: message ? message.replace(/^MEDIA_(?:BLOCKED|REVIEW):\s*/, '') : 'Chunked upload was not found' });
     }
   });
 

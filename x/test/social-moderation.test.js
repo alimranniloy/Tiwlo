@@ -9,7 +9,7 @@ test('local NSFW predictions block high-confidence pornographic media', () => {
     { className: 'Hentai', probability: .02 }
   ]);
   assert.equal(result.decision, 'block');
-  assert.equal(result.provider, 'nsfwjs-mobilenet-v2');
+  assert.equal(result.provider, 'nsfwjs-mobilenet-v2-mid');
 });
 
 test('local NSFW predictions hold uncertain sexual media for review', () => {
@@ -31,6 +31,16 @@ test('local NSFW predictions allow a strongly neutral image', () => {
 
 test('explicit solicitation text still blocks without a remote provider', () => {
   assert.equal(moderateText('full nude sex video').decision, 'block');
+  assert.equal(moderateText('xxx boobs upload').decision, 'block');
+  assert.equal(moderateText('\u09aa\u09b0\u09cd\u09a8 \u09ad\u09bf\u09a1\u09bf\u0993').decision, 'block');
+});
+
+test('high-confidence visible nudity is blocked even when porn score is low', () => {
+  const result = decisionFromNsfwPredictions([
+    { className: 'Sexy', probability: .92 },
+    { className: 'Porn', probability: .03 }
+  ]);
+  assert.equal(result.decision, 'block');
 });
 
 test('a blocked media decision disables the account and rejects the post', async () => {

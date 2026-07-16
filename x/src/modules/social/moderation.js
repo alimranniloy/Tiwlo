@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { access, mkdir, readFile, rm } from 'node:fs/promises';
 import { basename, dirname, join, resolve, sep } from 'node:path';
@@ -7,8 +7,11 @@ import * as tf from '@tensorflow/tfjs';
 import * as nsfw from 'nsfwjs';
 import { AppError } from '../../core/errors.js';
 import { writeAudit } from '../../core/audit.js';
+import { resolveSocialFfmpegPath } from './ffmpeg.js';
 
 const explicitTextRules = [
+  { category: 'sexual/explicit', score: .99, pattern: /\b(?:porn|porno|pornographic|hardcore|xxx|nudes?|naked|boobs?|tits?|pussy|blowjob|sex\s*video|rape\s*porn)\b/i },
+  { category: 'sexual/explicit', score: .99, pattern: /(?:\u09aa\u09b0\u09cd\u09a8|\u09a8\u09c1\u09a1|\u09a8\u0997\u09cd\u09a8|\u09ac\u09c1\u09ac\u09b8|\u09b8\u09c7\u0995\u09cd\u09b8\s*\u09ad\u09bf\u09a1\u09bf\u0993)/iu },
   { category: 'sexual/minors', score: 1, pattern: /\b(?:child|minor|underage|teen)\s+(?:porn|nude|sex)\b/i },
   { category: 'sexual/explicit', score: .99, pattern: /\b(?:hardcore\s+porn|rape\s+porn|xxx\s+video|pornographic\s+video|full\s+nude\s+sex)\b/i },
   { category: 'sexual/explicit', score: .99, pattern: /(?:\u09b6\u09bf\u09b6\u09c1\s*\u09aa\u09b0\u09cd\u09a8|\u09b9\u09be\u09b0\u09cd\u09a1\u0995\u09cb\u09b0\s*\u09aa\u09b0\u09cd\u09a8|\u09a7\u09b0\u09cd\u09b7\u09a3\s*\u09aa\u09b0\u09cd\u09a8|\u09a8\u0997\u09cd\u09a8\s*\u09b8\u09c7\u0995\u09cd\u09b8)/iu },
@@ -18,6 +21,8 @@ const explicitTextRules = [
 const severity = Object.freeze({ allow: 0, review: 1, block: 2 });
 let localNsfwModelPromise;
 let localNsfwQueue = Promise.resolve();
+const localPredictionCache = new Map();
+const LOCAL_CACHE_LIMIT = 256;
 
 const normalizeDecision = (value = {}) => {
   const decision = ['allow', 'review', 'block'].includes(String(value.decision || '').toLowerCase())
@@ -55,7 +60,7 @@ const imagePayload = async (filePath) => {
 
 const localNsfwModel = () => {
   if (!localNsfwModelPromise) {
-    localNsfwModelPromise = tf.ready().then(() => nsfw.load('MobileNetV2')).catch((error) => {
+    localNsfwModelPromise = tf.ready().then(() => nsfw.load('MobileNetV2Mid')).catch((error) => {
       localNsfwModelPromise = undefined;
       throw error;
     });
@@ -75,31 +80,47 @@ export const decisionFromNsfwPredictions = (predictions = [], thresholds = {}) =
   const hentai = scores.hentai || 0;
   const sexy = scores.sexy || 0;
   const explicit = Math.min(1, porn + hentai);
-  const blockAt = Math.min(Math.max(Number(thresholds.explicit) || .85, .65), .85);
-  const reviewAt = Math.min(Math.max(Number(thresholds.review) || .55, .3), .55);
+  const blockAt = Math.min(Math.max(Number(thresholds.explicit) || .68, .6), .95);
+  const reviewAt = Math.min(Math.max(Number(thresholds.review) || .38, .25), .8);
+  const sexyBlockAt = Math.min(Math.max(Number(thresholds.sexyBlock) || .88, .72), .98);
   const evidence = { porn, hentai, sexy, neutral: scores.neutral || 0, drawing: scores.drawing || 0 };
-  if (porn >= blockAt || hentai >= blockAt || explicit >= blockAt) {
-    return normalizeDecision({ decision: 'block', category: 'sexual/explicit', score: Math.max(porn, hentai, explicit), reason: 'Local NSFW classifier detected high-confidence pornographic or explicit content', provider: 'nsfwjs-mobilenet-v2', evidence });
+  if (porn >= blockAt || hentai >= blockAt || explicit >= blockAt || sexy >= sexyBlockAt) {
+    return normalizeDecision({ decision: 'block', category: 'sexual/explicit', score: Math.max(porn, hentai, explicit, sexy), reason: 'Pornographic, nude, or explicitly sexual media was detected by Tiwi automated safety', provider: 'nsfwjs-mobilenet-v2-mid', evidence });
   }
-  if (explicit >= reviewAt || sexy >= .72) {
-    return normalizeDecision({ decision: 'review', category: 'sexual/possible', score: Math.max(explicit, sexy), reason: 'Local NSFW classifier requires administrator review before publication', provider: 'nsfwjs-mobilenet-v2', evidence });
+  if (explicit >= reviewAt || sexy >= .45) {
+    return normalizeDecision({ decision: 'review', category: 'sexual/possible', score: Math.max(explicit, sexy), reason: 'Possible nude or sexually suggestive media requires administrator review before publication', provider: 'nsfwjs-mobilenet-v2-mid', evidence });
   }
-  return normalizeDecision({ decision: 'allow', category: 'safe', score: explicit, reason: 'Local NSFW classifier found no prohibited explicit content', provider: 'nsfwjs-mobilenet-v2', evidence });
+  return normalizeDecision({ decision: 'allow', category: 'safe', score: Math.max(explicit, sexy * .25), reason: 'Local NSFW classifier found no prohibited explicit content', provider: 'nsfwjs-mobilenet-v2-mid', evidence });
 };
 
-const localNsfwClassification = async (payload, thresholds) => runLocalNsfw(async () => {
-  const model = await localNsfwModel();
-  const { data, info } = await sharp(Buffer.from(payload.content, 'base64'))
-    .resize(224, 224, { fit: 'fill' })
+const classifyLocalBuffer = async (model, source, position = 'centre') => {
+  const cacheKey = createHash('sha256').update(source).update(position).digest('hex');
+  const cached = localPredictionCache.get(cacheKey);
+  if (cached) return cached;
+  const { data, info } = await sharp(source)
+    .resize(224, 224, { fit: 'cover', position })
     .removeAlpha()
     .raw()
     .toBuffer({ resolveWithObject: true });
   const tensor = tf.tensor3d(new Uint8Array(data), [info.height, info.width, info.channels], 'int32');
   try {
-    return decisionFromNsfwPredictions(await model.classify(tensor, 5), thresholds);
+    const predictions = await model.classify(tensor, 5);
+    localPredictionCache.set(cacheKey, predictions);
+    if (localPredictionCache.size > LOCAL_CACHE_LIMIT) localPredictionCache.delete(localPredictionCache.keys().next().value);
+    return predictions;
   } finally {
     tensor.dispose();
   }
+};
+
+const localNsfwClassification = async (payload, thresholds) => runLocalNsfw(async () => {
+  const model = await localNsfwModel();
+  const source = Buffer.from(payload.content, 'base64');
+  const primary = decisionFromNsfwPredictions(await classifyLocalBuffer(model, source), thresholds);
+  const sexualSignal = Number(primary.evidence?.porn || 0) + Number(primary.evidence?.hentai || 0) + Number(primary.evidence?.sexy || 0);
+  if (primary.decision === 'block' || sexualSignal < .2) return primary;
+  const attention = decisionFromNsfwPredictions(await classifyLocalBuffer(model, source, 'attention'), thresholds);
+  return strongest([primary, attention]);
 });
 
 const videoPayloads = async (filePath) => {
@@ -107,12 +128,13 @@ const videoPayloads = async (filePath) => {
   await mkdir(tempDir, { recursive: true });
   const pattern = join(tempDir, 'frame-%02d.jpg');
   try {
-    await run(process.env.SOCIAL_FFMPEG_PATH || 'ffmpeg', [
+    await run(resolveSocialFfmpegPath(), [
       '-hide_banner', '-loglevel', 'error', '-y', '-i', filePath,
-      '-vf', 'fps=1/12,scale=960:-2:force_original_aspect_ratio=decrease', '-frames:v', '6', '-q:v', '4', pattern
+      '-vf', 'select=eq(n\\,0)+gte(t-prev_selected_t\\,8),scale=960:-2:force_original_aspect_ratio=decrease',
+      '-fps_mode', 'vfr', '-frames:v', '4', '-q:v', '4', pattern
     ]);
     const frames = [];
-    for (let index = 1; index <= 6; index += 1) {
+    for (let index = 1; index <= 4; index += 1) {
       const frame = join(tempDir, `frame-${String(index).padStart(2, '0')}.jpg`);
       try { frames.push({ content: (await readFile(frame)).toString('base64'), metadata: { frame: index } }); } catch { /* no frame */ }
     }
@@ -149,8 +171,9 @@ export const moderateMediaFile = async ({ filePath, mimeType, targetType = 'medi
   const payloads = String(mimeType || '').startsWith('video/') ? await videoPayloads(filePath) : [await imagePayload(filePath)];
   const decisions = [];
   const configuredThresholds = {
-    explicit: Math.max(.8, Math.min(Number(thresholds.explicit) || .95, 1)),
-    review: Math.max(.5, Math.min(Number(thresholds.review) || .72, .95))
+    explicit: Math.max(.6, Math.min(Number(thresholds.explicit) || .68, .95)),
+    review: Math.max(.25, Math.min(Number(thresholds.review) || .38, .8)),
+    sexyBlock: Math.max(.72, Math.min(Number(thresholds.sexyBlock) || .88, .98))
   };
   for (const payload of payloads) {
     const providers = await Promise.allSettled([localNsfwClassification(payload, configuredThresholds), moderationWebhook({ payload, mimeType, targetType })]);
@@ -211,14 +234,17 @@ const backfillPostModeration = async ({ prisma, rootDir }, post) => {
     const result = await moderateMediaFile({ filePath, mimeType, targetType: 'post-backfill' }).catch((error) => normalizeDecision({
       decision: 'review', category: 'classifier-unavailable', score: 0,
       reason: `Existing media requires administrator review: ${String(error?.message || error).slice(0, 700)}`,
-      provider: 'moderation-fail-safe'
+      provider: 'moderation-fail-safe-v2-mid'
     }));
-    evaluated.push({ filePath, result });
+    evaluated.push({
+      filePath,
+      result: result.provider === 'moderation-fail-safe' ? { ...result, provider: 'moderation-fail-safe-v2-mid' } : result
+    });
   }
   const overall = strongest(evaluated.map((item) => item.result));
   const finalResult = evaluated.length ? overall : normalizeDecision({
     decision: 'allow', category: 'no-visual-media', score: 0,
-    reason: 'No locally stored visual media required a backfill scan', provider: 'moderation-backfill'
+    reason: 'No locally stored visual media required a backfill scan', provider: 'moderation-backfill-v2-mid'
   });
   await recordModerationDecision(
     { prisma, user: { id: post.authorId } },
@@ -230,6 +256,10 @@ const backfillPostModeration = async ({ prisma, rootDir }, post) => {
     await prisma.socialPost.update({ where: { id: post.id }, data: {
       moderationStatus: 'pending_review', moderationReason: finalResult.reason, moderationScore: finalResult.score
     } }).catch(() => undefined);
+  } else {
+    await prisma.socialPost.update({ where: { id: post.id }, data: {
+      moderationStatus: 'approved', moderationReason: null, moderationScore: finalResult.score
+    } }).catch(() => undefined);
   }
 };
 
@@ -239,7 +269,26 @@ export const startSocialModerationBackfill = async ({ prisma, rootDir, batchSize
   try {
     while (true) {
       const posts = await prisma.socialPost.findMany({
-        where: { status: 'published', moderationEvents: { none: {} } },
+        where: {
+          status: 'published',
+          OR: [
+            { moderationEvents: { none: {} } },
+            {
+              moderationStatus: 'pending_review',
+              moderationEvents: {
+                some: { provider: { in: ['moderation-fail-safe', 'moderation-backfill'] } },
+                none: { provider: { notIn: ['moderation-fail-safe', 'moderation-backfill'] } }
+              }
+            },
+            {
+              moderationStatus: 'approved',
+              moderationEvents: {
+                some: { provider: 'nsfwjs-mobilenet-v2' },
+                none: { provider: { in: ['nsfwjs-mobilenet-v2-mid', 'moderation-backfill-v2-mid'] } }
+              }
+            }
+          ]
+        },
         select: { id: true, authorId: true, media: true },
         orderBy: { publishedAt: 'asc' },
         take: Math.max(1, Math.min(Number(batchSize) || 20, 50))
@@ -250,7 +299,7 @@ export const startSocialModerationBackfill = async ({ prisma, rootDir, batchSize
           console.warn('[social-moderation] backfill post failed:', post.id, error?.message || error);
           const result = normalizeDecision({
             decision: 'review', category: 'backfill-failed', score: 0,
-            reason: 'Existing media could not be classified and requires administrator review', provider: 'moderation-fail-safe',
+            reason: 'Existing media could not be classified and requires administrator review', provider: 'moderation-fail-safe-v2-mid',
             evidence: { error: String(error?.message || error).slice(0, 500) }
           });
           await recordModerationDecision(
