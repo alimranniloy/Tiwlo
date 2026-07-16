@@ -748,7 +748,12 @@ private fun TiwiAvatar(url: String?, fallback: Int, modifier: Modifier, contentS
 }
 
 @Composable
-private fun AnimatedProfileDecoration(url: String, modifier: Modifier = Modifier) {
+private fun AnimatedProfileDecoration(
+    url: String,
+    modifier: Modifier = Modifier,
+    loopLimit: Int = 0,
+    scaleType: ImageView.ScaleType = ImageView.ScaleType.FIT_CENTER
+) {
     val context = LocalContext.current
     var localFile by remember(url) { mutableStateOf<File?>(null) }
     LaunchedEffect(url) {
@@ -778,12 +783,16 @@ private fun AnimatedProfileDecoration(url: String, modifier: Modifier = Modifier
         AsyncImage(url, "Profile decoration", modifier, contentScale = ContentScale.Fit)
     } else {
         AndroidView(
-            factory = { ImageView(it).apply { scaleType = ImageView.ScaleType.FIT_CENTER } },
+            factory = { ImageView(it).apply { this.scaleType = scaleType; isClickable = false; isFocusable = false } },
             update = { imageView ->
-                if (imageView.tag != file.absolutePath) {
+                imageView.scaleType = scaleType
+                val renderKey = "${file.absolutePath}:$loopLimit:${scaleType.name}"
+                if (imageView.tag != renderKey) {
                     (imageView.drawable as? APNGDrawable)?.stop()
-                    imageView.setImageDrawable(APNGDrawable.fromFile(file.absolutePath))
-                    imageView.tag = file.absolutePath
+                    imageView.setImageDrawable(APNGDrawable.fromFile(file.absolutePath).apply {
+                        if (loopLimit > 0) setLoopLimit(loopLimit)
+                    })
+                    imageView.tag = renderKey
                 }
             },
             modifier = modifier
@@ -824,6 +833,42 @@ private fun DecoratedAvatar(
                 animated = animateDecoration
             )
         }
+    }
+}
+
+@Composable
+private fun ProfileEffectImage(effect: SocialProfileDecoration?, modifier: Modifier, loopLimit: Int = 2) {
+    val url = effect?.assetUrl?.takeIf { it.isNotBlank() } ?: return
+    if (effect.animated) AnimatedProfileDecoration(url, modifier, loopLimit, ImageView.ScaleType.FIT_XY)
+    else AsyncImage(url, "Profile effect", modifier, contentScale = ContentScale.FillBounds)
+}
+
+@Composable
+private fun MiniProfileEffectPreview(
+    repository: SocialRepository,
+    avatarUrl: String?,
+    coverUrl: String?,
+    effect: SocialProfileDecoration?,
+    modifier: Modifier = Modifier
+) {
+    Box(modifier.clip(RoundedCornerShape(18.dp)).background(Color.White)) {
+        Column(Modifier.fillMaxSize()) {
+            TiwiAvatar(coverUrl, R.drawable.img_tiwi_cover, Modifier.fillMaxWidth().height(78.dp), ContentScale.Crop)
+            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp).offset(y = (-19).dp), verticalAlignment = Alignment.Bottom) {
+                TiwiAvatar(avatarUrl, R.drawable.img_tiwi_avatar_1, Modifier.size(54.dp).clip(CircleShape), ContentScale.Crop)
+                Column(Modifier.padding(start = 9.dp, bottom = 2.dp)) {
+                    Text(repository.currentUser.value?.name.orEmpty(), fontWeight = FontWeight.ExtraBold, fontSize = 13.sp, maxLines = 1)
+                    Text("@${repository.profile.value?.username.orEmpty()}", color = Color.Gray, fontSize = 9.sp, maxLines = 1)
+                }
+            }
+            Row(Modifier.fillMaxWidth().offset(y = (-10).dp), horizontalArrangement = Arrangement.SpaceEvenly) {
+                listOf("Posts", "Followers", "Following").forEach { label -> Column(horizontalAlignment = Alignment.CenterHorizontally) { Text("12", fontWeight = FontWeight.Bold, fontSize = 11.sp); Text(label, color = Color.Gray, fontSize = 8.sp) } }
+            }
+            Box(Modifier.fillMaxWidth().padding(horizontal = 11.dp).height(28.dp).background(Color(0xFFF0F2F5), RoundedCornerShape(7.dp)))
+            Spacer(Modifier.height(7.dp))
+            repeat(2) { Box(Modifier.fillMaxWidth().padding(horizontal = 11.dp, vertical = 3.dp).height(31.dp).background(Color(0xFFF7F8FA), RoundedCornerShape(7.dp))) }
+        }
+        ProfileEffectImage(effect, Modifier.matchParentSize(), loopLimit = 2)
     }
 }
 
@@ -2857,10 +2902,6 @@ fun MenuScreen(repository: SocialRepository, name: String, avatarUrl: String?, o
     var showEditProfile by remember { mutableStateOf(false) }
     val profile by repository.profile.collectAsState()
     val context = LocalContext.current
-    var decorationCatalogAvailable by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) {
-        decorationCatalogAvailable = runCatching { repository.profileDecorations().isNotEmpty() }.getOrDefault(false)
-    }
     selectedSetting?.let { setting ->
         BackHandler { selectedSetting = null }
         SocialSettingsPage(repository, profile, setting, onBack = { selectedSetting = null })
@@ -2893,11 +2934,6 @@ fun MenuScreen(repository: SocialRepository, name: String, avatarUrl: String?, o
                         profile?.avatarDecoration,
                         Modifier.align(Alignment.BottomStart).padding(start = 10.dp).size(86.dp)
                     )
-                    FilledTonalIconButton(
-                        onClick = { showEditProfile = true },
-                        modifier = Modifier.align(Alignment.BottomEnd).padding(end = 10.dp, bottom = 3.dp).size(36.dp),
-                        colors = IconButtonDefaults.filledTonalIconButtonColors(containerColor = Color(0xFFF0F2F5), contentColor = Color.Black)
-                    ) { Icon(Icons.Default.Edit, "Edit profile", modifier = Modifier.size(18.dp)) }
                 }
                 Row(Modifier.fillMaxWidth().clickable(onClick = onProfileClick).padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
@@ -2907,7 +2943,11 @@ fun MenuScreen(repository: SocialRepository, name: String, avatarUrl: String?, o
                         }
                         Text("@${profile?.username.orEmpty()} - View profile", style = MaterialTheme.typography.labelMedium, color = Color.Gray)
                     }
-                    Icon(Icons.Default.ChevronRight, contentDescription = null)
+                    FilledTonalIconButton(
+                        onClick = { showEditProfile = true },
+                        modifier = Modifier.size(36.dp),
+                        colors = IconButtonDefaults.filledTonalIconButtonColors(containerColor = Color(0xFFF0F2F5), contentColor = Color.Black)
+                    ) { Icon(Icons.Default.Edit, "Edit profile", modifier = Modifier.size(18.dp)) }
                 }
             }
         }
@@ -2931,31 +2971,23 @@ fun MenuScreen(repository: SocialRepository, name: String, avatarUrl: String?, o
             }
         }
 
-        if (decorationCatalogAvailable) {
-            Spacer(modifier = Modifier.height(10.dp))
-            Surface(
-                modifier = Modifier.fillMaxWidth().clickable { selectedSetting = "Profile decoration" },
-                color = Color(0xFFF7F4FF),
-                shape = RoundedCornerShape(16.dp),
-                tonalElevation = 0.dp
-            ) {
-                Row(Modifier.padding(horizontal = 13.dp, vertical = 11.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.size(48.dp).clip(RoundedCornerShape(14.dp)).background(Color.White), contentAlignment = Alignment.Center) {
-                        val activeDecoration = profile?.avatarDecoration
-                        if (activeDecoration != null) ProfileDecorationImage(activeDecoration.assetUrl, Modifier.size(46.dp))
-                        else Icon(Icons.Outlined.AutoAwesome, null, tint = Color(0xFF7F56D9))
-                    }
-                    Column(Modifier.weight(1f).padding(start = 11.dp)) {
-                        Text("Decorate your profile", fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                        Text(profile?.avatarDecoration?.name ?: "Avatar frames, free and premium", color = Color(0xFF625B71), fontSize = 12.sp)
-                    }
-                    Surface(color = Color.White, shape = CircleShape, tonalElevation = 0.dp) {
-                        Icon(Icons.Default.ChevronRight, null, tint = Color(0xFF7F56D9), modifier = Modifier.padding(6.dp).size(18.dp))
-                    }
+        Spacer(modifier = Modifier.height(10.dp))
+        Surface(
+            modifier = Modifier.fillMaxWidth().clickable { showEditProfile = true },
+            color = Color(0xFFF7F4FF),
+            shape = RoundedCornerShape(16.dp),
+            tonalElevation = 0.dp
+        ) {
+            Row(Modifier.padding(horizontal = 13.dp, vertical = 11.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(42.dp).background(Color.White, CircleShape), contentAlignment = Alignment.Center) { Icon(Icons.Outlined.AutoAwesome, null, tint = Color(0xFF7F56D9)) }
+                Column(Modifier.weight(1f).padding(start = 11.dp)) {
+                    Text("Decorate your profile", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                    Text("Avatar decoration and full profile effects", color = Color(0xFF625B71), fontSize = 12.sp)
                 }
+                Icon(Icons.Default.Edit, "Open Edit profile", tint = Color(0xFF7F56D9), modifier = Modifier.size(19.dp))
             }
-            Spacer(modifier = Modifier.height(10.dp))
         }
+        Spacer(modifier = Modifier.height(10.dp))
 
         LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             item {
@@ -3839,7 +3871,8 @@ fun ProfileScreen(
         return
     }
 
-    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+    Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().statusBarsPadding().height(48.dp).padding(horizontal = 2.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
             Text("@${profile?.username.orEmpty()}", modifier = Modifier.weight(1f), textAlign = TextAlign.Center, fontWeight = FontWeight.Bold)
@@ -3920,6 +3953,8 @@ fun ProfileScreen(
             }
         }
         }
+    }
+        ProfileEffectImage(profile?.profileEffect, Modifier.matchParentSize(), loopLimit = 2)
     }
     if (showVerified) VerifiedInfoSheet(name, profile?.user?.avatar, profile?.badgeType ?: "blue", profile?.avatarDecoration, onDismiss = { showVerified = false })
 }
@@ -4021,11 +4056,15 @@ private fun EditProfilePage(repository: SocialRepository, profile: SocialProfile
     var avatarUrl by remember(profile) { mutableStateOf(profile?.user?.avatar) }
     var coverUrl by remember(profile) { mutableStateOf(profile?.coverUrl) }
     var avatarDecoration by remember(profile) { mutableStateOf(profile?.avatarDecoration) }
+    var profileEffect by remember(profile) { mutableStateOf(profile?.profileEffect) }
     var showDecorations by remember { mutableStateOf(false) }
+    var showEffects by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var decorationCatalogAvailable by remember { mutableStateOf(false) }
+    var effectCatalogAvailable by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
         decorationCatalogAvailable = runCatching { repository.profileDecorations().isNotEmpty() }.getOrDefault(false)
+        effectCatalogAvailable = runCatching { repository.profileEffects().isNotEmpty() }.getOrDefault(false)
     }
     val avatarPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) scope.launch { busy = true; runCatching { repository.uploadMedia(context.contentResolver, uri, "profile").url }.onSuccess { avatarUrl = it }.onFailure { Toast.makeText(context, it.message ?: "Photo upload failed", Toast.LENGTH_LONG).show() }; busy = false }
@@ -4076,6 +4115,21 @@ private fun EditProfilePage(repository: SocialRepository, profile: SocialProfile
                         }
                     }
                 }
+                if (effectCatalogAvailable) {
+                    Surface(
+                        Modifier.fillMaxWidth().clickable { showEffects = true },
+                        color = Color(0xFFF7FAFF),
+                        border = BorderStroke(1.dp, Color(0xFFC9D8F4)),
+                        shape = RoundedCornerShape(12.dp),
+                        tonalElevation = 0.dp
+                    ) {
+                        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Box(Modifier.size(42.dp).background(Color(0xFFEAF3FF), RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) { Icon(Icons.Outlined.Layers, null, tint = Color(0xFF2457A7)) }
+                            Column(Modifier.weight(1f).padding(start = 11.dp)) { Text("Profile effect", fontWeight = FontWeight.Bold); Text(profileEffect?.name ?: "Animate your full profile when it opens", color = Color.Gray, fontSize = 12.sp) }
+                            Icon(Icons.Default.ChevronRight, null, tint = Color.Gray)
+                        }
+                    }
+                }
                 Text("Public profile", fontWeight = FontWeight.Bold, fontSize = 17.sp)
                 OutlinedTextField(username, { username = it.take(30) }, label = { Text("Username") }, supportingText = { Text("${username.length}/30") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(bio, { bio = it.take(240) }, label = { Text("Bio") }, supportingText = { Text("${bio.length}/240") }, minLines = 3, modifier = Modifier.fillMaxWidth())
@@ -4095,6 +4149,14 @@ private fun EditProfilePage(repository: SocialRepository, profile: SocialProfile
         current = avatarDecoration,
         onDismiss = { showDecorations = false },
         onApplied = { avatarDecoration = it; showDecorations = false }
+    )
+    if (showEffects) ProfileEffectSheet(
+        repository = repository,
+        avatarUrl = avatarUrl,
+        coverUrl = coverUrl,
+        current = profileEffect,
+        onDismiss = { showEffects = false },
+        onApplied = { profileEffect = it; showEffects = false }
     )
 }
 
@@ -4133,7 +4195,44 @@ private fun ProfileDecorationSheet(
                 Column(Modifier.weight(1f)) { Text("Avatar decoration", fontWeight = FontWeight.ExtraBold, fontSize = 21.sp); Text("Preview, choose and apply without leaving Edit profile", color = Color.Gray, fontSize = 12.sp) }
                 IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, "Close") }
             }
-            ProfileDecorationMarketplace(repository, avatarUrl, current, Modifier.weight(1f), onApplied)
+            ProfileDecorationMarketplace(repository = repository, avatarUrl = avatarUrl, current = current, modifier = Modifier.weight(1f), onApplied = onApplied)
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ProfileEffectSheet(
+    repository: SocialRepository,
+    avatarUrl: String?,
+    coverUrl: String?,
+    current: SocialProfileDecoration?,
+    onDismiss: () -> Unit,
+    onApplied: (SocialProfileDecoration?) -> Unit
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = Color.White,
+        contentColor = Color.Black,
+        tonalElevation = 0.dp,
+        dragHandle = { BottomSheetDefaults.DragHandle(color = Color(0xFFD0D5DD)) }
+    ) {
+        Column(Modifier.fillMaxWidth().fillMaxHeight(.94f)) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) { Text("Profile effect", fontWeight = FontWeight.ExtraBold, fontSize = 21.sp); Text("Preview the full profile, choose and apply", color = Color.Gray, fontSize = 12.sp) }
+                IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, "Close") }
+            }
+            ProfileDecorationMarketplace(
+                repository = repository,
+                avatarUrl = avatarUrl,
+                current = current,
+                modifier = Modifier.weight(1f),
+                effectMode = true,
+                coverUrl = coverUrl,
+                onApplied = onApplied
+            )
         }
     }
 }
@@ -4144,6 +4243,8 @@ private fun ProfileDecorationMarketplace(
     avatarUrl: String?,
     current: SocialProfileDecoration?,
     modifier: Modifier = Modifier,
+    effectMode: Boolean = false,
+    coverUrl: String? = null,
     onApplied: (SocialProfileDecoration?) -> Unit
 ) {
     val context = LocalContext.current
@@ -4159,8 +4260,8 @@ private fun ProfileDecorationMarketplace(
 
     suspend fun refreshDecorations() {
         loading = true
-        decorations = runCatching { repository.profileDecorations() }
-            .onFailure { Toast.makeText(context, it.message ?: "Decorations could not load", Toast.LENGTH_LONG).show() }
+        decorations = runCatching { if (effectMode) repository.profileEffects() else repository.profileDecorations() }
+            .onFailure { Toast.makeText(context, it.message ?: if (effectMode) "Profile effects could not load" else "Decorations could not load", Toast.LENGTH_LONG).show() }
             .getOrDefault(emptyList())
         val serverApplied = decorations.firstOrNull { it.applied }
         activeId = serverApplied?.id
@@ -4184,8 +4285,11 @@ private fun ProfileDecorationMarketplace(
 
     checkoutDecoration?.let { checkoutItem ->
         ProfileDecorationCheckoutPage(
+            repository = repository,
             item = checkoutItem,
             avatarUrl = avatarUrl,
+            coverUrl = coverUrl,
+            effectMode = effectMode,
             options = options,
             selectedGateway = selectedGateway,
             busy = busy,
@@ -4195,10 +4299,13 @@ private fun ProfileDecorationMarketplace(
                 val checkoutOptions = options
                 if (checkoutOptions != null && selectedGateway.isNotBlank()) scope.launch {
                     busy = true
-                    runCatching { repository.startProfileDecorationCheckout(checkoutItem.id, selectedGateway, checkoutOptions.currency) }
+                    runCatching {
+                        if (effectMode) repository.startProfileEffectCheckout(checkoutItem.id, selectedGateway, checkoutOptions.currency)
+                        else repository.startProfileDecorationCheckout(checkoutItem.id, selectedGateway, checkoutOptions.currency)
+                    }
                         .onSuccess { checkout ->
                             if (!checkout.paymentUrl.isNullOrBlank()) context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(checkout.paymentUrl)))
-                            else Toast.makeText(context, checkout.message ?: "Decoration added", Toast.LENGTH_LONG).show()
+                            else Toast.makeText(context, checkout.message ?: if (effectMode) "Profile effect added" else "Decoration added", Toast.LENGTH_LONG).show()
                             refreshDecorations()
                         }
                         .onFailure { Toast.makeText(context, it.message ?: "Checkout failed", Toast.LENGTH_LONG).show() }
@@ -4216,8 +4323,13 @@ private fun ProfileDecorationMarketplace(
             shape = RoundedCornerShape(22.dp),
             tonalElevation = 0.dp
         ) {
-            Box(Modifier.fillMaxWidth().background(Brush.linearGradient(listOf(Color(0xFF201A33), Color(0xFF4C2D80), Color(0xFF7F56D9)))).padding(vertical = 18.dp), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Box(Modifier.fillMaxWidth().background(Brush.linearGradient(listOf(Color(0xFF201A33), Color(0xFF4C2D80), Color(0xFF7F56D9)))).padding(vertical = 14.dp), contentAlignment = Alignment.Center) {
+                if (effectMode) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        MiniProfileEffectPreview(repository, avatarUrl, coverUrl, previewDecoration, Modifier.width(150.dp).height(258.dp))
+                        Text(previewDecoration?.name ?: "No profile effect", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 15.sp, modifier = Modifier.padding(top = 7.dp))
+                    }
+                } else Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     DecoratedAvatar(avatarUrl, R.drawable.img_tiwi_avatar_1, previewDecoration, Modifier.size(148.dp), animateDecoration = true)
                     Text(repository.currentUser.value?.name.orEmpty(), color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
                     Text(previewDecoration?.name ?: "No decoration", color = Color.White.copy(alpha = .76f), fontSize = 12.sp)
@@ -4227,8 +4339,8 @@ private fun ProfileDecorationMarketplace(
         if (loading) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(Modifier.size(30.dp), strokeWidth = 2.5.dp) }
         else LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 14.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             item {
-                Row(verticalAlignment = Alignment.CenterVertically) { Text("Your decorations", Modifier.weight(1f), fontWeight = FontWeight.ExtraBold, fontSize = 17.sp); IconButton(onClick = { scope.launch { refreshDecorations() } }, modifier = Modifier.size(34.dp)) { Icon(Icons.Default.Refresh, "Refresh", tint = TiwiBlue, modifier = Modifier.size(19.dp)) } }
-                Text("Purchased items and every free decoration available to your account.", color = Color.Gray, fontSize = 11.sp)
+                Row(verticalAlignment = Alignment.CenterVertically) { Text(if (effectMode) "Your profile effects" else "Your decorations", Modifier.weight(1f), fontWeight = FontWeight.ExtraBold, fontSize = 17.sp); IconButton(onClick = { scope.launch { refreshDecorations() } }, modifier = Modifier.size(34.dp)) { Icon(Icons.Default.Refresh, "Refresh", tint = TiwiBlue, modifier = Modifier.size(19.dp)) } }
+                Text(if (effectMode) "Purchased and free full-profile effects available to your account." else "Purchased items and every free decoration available to your account.", color = Color.Gray, fontSize = 11.sp)
             }
             item {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
@@ -4240,18 +4352,23 @@ private fun ProfileDecorationMarketplace(
                             shape = RoundedCornerShape(14.dp), tonalElevation = 0.dp
                         ) { Column(Modifier.padding(10.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) { Box(Modifier.size(76.dp).background(Color(0xFFF0F2F5), CircleShape), contentAlignment = Alignment.Center) { Icon(Icons.Outlined.Block, null, tint = Color.Gray) }; Text("None", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 7.dp)) } }
                     }
-                    items(yourDecorations, key = { "owned-${it.id}" }) { item -> DecorationStoreCard(item, selectedId == item.id, Modifier.width(116.dp).height(142.dp)) { selectedId = item.id } }
+                    items(yourDecorations, key = { "owned-${it.id}" }) { item ->
+                        if (effectMode) ProfileEffectStoreCard(repository, avatarUrl, coverUrl, item, selectedId == item.id, Modifier.width(116.dp).height(142.dp)) { selectedId = item.id }
+                        else DecorationStoreCard(item, selectedId == item.id, Modifier.width(116.dp).height(142.dp)) { selectedId = item.id }
+                    }
                 }
             }
-            item { Text("Explore all", fontWeight = FontWeight.ExtraBold, fontSize = 17.sp); Text("Scroll and tap any decoration to see it on your profile.", color = Color.Gray, fontSize = 11.sp) }
+            item { Text("Explore all", fontWeight = FontWeight.ExtraBold, fontSize = 17.sp); Text(if (effectMode) "Tap an effect to preview your complete profile." else "Scroll and tap any decoration to see it on your profile.", color = Color.Gray, fontSize = 11.sp) }
             items(decorations.chunked(2), key = { row -> row.joinToString("-") { it.id } }) { row ->
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     row.forEach { item ->
-                        DecorationStoreCard(item, selectedId == item.id, Modifier.weight(1f).height(190.dp)) {
+                        val cardClick = {
                             selectedId = item.id
                             selectedGateway = options?.gateways?.firstOrNull()?.key.orEmpty()
                             if (!item.owned && item.priceUsd > 0) checkoutDecoration = item
                         }
+                        if (effectMode) ProfileEffectStoreCard(repository, avatarUrl, coverUrl, item, selectedId == item.id, Modifier.weight(1f).height(210.dp), cardClick)
+                        else DecorationStoreCard(item, selectedId == item.id, Modifier.weight(1f).height(190.dp), cardClick)
                     }
                     if (row.size == 1) Spacer(Modifier.weight(1f))
                 }
@@ -4267,9 +4384,14 @@ private fun ProfileDecorationMarketplace(
                     checkoutDecoration = selected
                 } else scope.launch {
                     busy = true
-                    runCatching { repository.applyProfileDecoration(selected?.id) }
-                        .onSuccess { profile -> activeId = profile.avatarDecoration?.id; onApplied(profile.avatarDecoration); Toast.makeText(context, if (profile.avatarDecoration == null) "Decoration removed" else "${profile.avatarDecoration.name} applied", Toast.LENGTH_SHORT).show() }
-                        .onFailure { Toast.makeText(context, it.message ?: "Decoration could not be applied", Toast.LENGTH_LONG).show() }
+                    runCatching { if (effectMode) repository.applyProfileEffect(selected?.id) else repository.applyProfileDecoration(selected?.id) }
+                        .onSuccess { profile ->
+                            val appliedItem = if (effectMode) profile.profileEffect else profile.avatarDecoration
+                            activeId = appliedItem?.id
+                            onApplied(appliedItem)
+                            Toast.makeText(context, appliedItem?.let { "${it.name} applied" } ?: if (effectMode) "Profile effect removed" else "Decoration removed", Toast.LENGTH_SHORT).show()
+                        }
+                        .onFailure { Toast.makeText(context, it.message ?: if (effectMode) "Profile effect could not be applied" else "Decoration could not be applied", Toast.LENGTH_LONG).show() }
                     busy = false
                 }
             },
@@ -4278,15 +4400,18 @@ private fun ProfileDecorationMarketplace(
             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6E3CBC))
         ) {
             if (busy) CircularProgressIndicator(Modifier.size(19.dp), color = Color.White, strokeWidth = 2.dp)
-            else Text(when { selected?.id == activeId -> "Applied"; canApply -> "Apply decoration"; else -> "View payment options · $convertedPrice" }, fontWeight = FontWeight.ExtraBold)
+            else Text(when { selected?.id == activeId -> "Applied"; canApply -> if (effectMode) "Apply profile effect" else "Apply decoration"; else -> "View payment options · $convertedPrice" }, fontWeight = FontWeight.ExtraBold)
         }
     }
 }
 
 @Composable
 private fun ProfileDecorationCheckoutPage(
+    repository: SocialRepository,
     item: SocialProfileDecoration,
     avatarUrl: String?,
+    coverUrl: String?,
+    effectMode: Boolean,
     options: SocialVerificationOptions?,
     selectedGateway: String,
     busy: Boolean,
@@ -4301,7 +4426,7 @@ private fun ProfileDecorationCheckoutPage(
         Row(Modifier.fillMaxWidth().height(54.dp).background(Color.White), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
             Column {
-                Text("Get avatar decoration", fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
+                Text(if (effectMode) "Get profile effect" else "Get avatar decoration", fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
                 Text("Secure Tiwlo checkout", color = Color.Gray, fontSize = 11.sp)
             }
         }
@@ -4314,7 +4439,8 @@ private fun ProfileDecorationCheckoutPage(
             item {
                 Surface(Modifier.fillMaxWidth(), color = Color(0xFF261A3D), shape = RoundedCornerShape(22.dp), tonalElevation = 0.dp) {
                     Column(Modifier.padding(22.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                        DecoratedAvatar(avatarUrl, R.drawable.img_tiwi_avatar_1, item, Modifier.size(142.dp), animateDecoration = true)
+                        if (effectMode) MiniProfileEffectPreview(repository, avatarUrl, coverUrl, item, Modifier.width(164.dp).height(286.dp))
+                        else DecoratedAvatar(avatarUrl, R.drawable.img_tiwi_avatar_1, item, Modifier.size(142.dp), animateDecoration = true)
                         Text(item.name, color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 20.sp)
                         Text(price, color = Color(0xFFD9C8FF), fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 4.dp))
                     }
@@ -4354,7 +4480,7 @@ private fun ProfileDecorationCheckoutPage(
                 }
             }
             item {
-                Text("Payment opens on Tiwlo's secure checkout. The decoration is added after confirmed payment.", color = Color.Gray, fontSize = 11.sp, lineHeight = 16.sp)
+                Text("Payment opens on Tiwlo's secure checkout. The ${if (effectMode) "profile effect" else "decoration"} is added after confirmed payment.", color = Color.Gray, fontSize = 11.sp, lineHeight = 16.sp)
             }
         }
         Button(
@@ -4387,6 +4513,34 @@ private fun DecorationStoreCard(item: SocialProfileDecoration, selected: Boolean
             }
             Text(item.name, fontWeight = FontWeight.Bold, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(when { item.applied -> "APPLIED"; item.priceUsd <= 0 -> "FREE"; item.owned -> "OWNED"; else -> "\$${String.format(Locale.US, "%.2f", item.priceUsd)}" }, color = if (item.priceUsd <= 0 || item.owned) Color(0xFF067647) else Color(0xFF6941C6), fontWeight = FontWeight.Black, fontSize = 9.sp)
+        }
+    }
+}
+
+@Composable
+private fun ProfileEffectStoreCard(
+    repository: SocialRepository,
+    avatarUrl: String?,
+    coverUrl: String?,
+    item: SocialProfileDecoration,
+    selected: Boolean,
+    modifier: Modifier,
+    onClick: () -> Unit
+) {
+    Surface(
+        modifier.clickable(onClick = onClick),
+        color = if (selected) Color(0xFFEAF2FF) else Color.White,
+        shape = RoundedCornerShape(14.dp),
+        border = BorderStroke(if (selected) 2.dp else 1.dp, if (selected) Color(0xFF2457A7) else Color(0xFFE4E7EC)),
+        tonalElevation = 0.dp
+    ) {
+        Column(Modifier.padding(7.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                MiniProfileEffectPreview(repository, avatarUrl, coverUrl, item, Modifier.fillMaxHeight().aspectRatio(450f / 880f))
+                if (item.applied) Icon(Icons.Default.CheckCircle, "Applied", tint = Color(0xFF12B76A), modifier = Modifier.align(Alignment.TopEnd).size(19.dp))
+            }
+            Text(item.name, fontWeight = FontWeight.Bold, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(when { item.applied -> "APPLIED"; item.priceUsd <= 0 -> "FREE"; item.owned -> "OWNED"; else -> "\$${String.format(Locale.US, "%.2f", item.priceUsd)}" }, color = if (item.priceUsd <= 0 || item.owned) Color(0xFF067647) else Color(0xFF2457A7), fontWeight = FontWeight.Black, fontSize = 9.sp)
         }
     }
 }

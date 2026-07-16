@@ -614,6 +614,33 @@ class SocialRepository(context: Context) {
         return SocialCheckout(checkout.string("status") ?: "pending", checkout.string("provider") ?: provider, checkout.string("paymentUrl"), checkout.string("message"))
     }
 
+    suspend fun profileEffects(): List<SocialProfileDecoration> {
+        val data = client.execute("query TiwiProfileEffects { socialProfileEffects { $DECORATION_FIELDS } }")
+        return data.list("socialProfileEffects").mapNotNull { it.objectMap()?.let(::mapDecoration) }
+    }
+
+    suspend fun applyProfileEffect(id: String?): SocialProfile {
+        val data = client.execute(
+            """mutation ApplyTiwiProfileEffect(${D}id: ID) { applySocialProfileEffect(id: ${D}id) { $PROFILE_FIELDS } }""",
+            mapOf("id" to id)
+        )
+        return mapProfile(data.objectValue("applySocialProfileEffect") ?: throw SocialApiException("Profile effect was not applied")).also {
+            _profile.value = it
+            cache.saveProfile(it)
+        }
+    }
+
+    suspend fun startProfileEffectCheckout(id: String, provider: String, currency: String): SocialCheckout {
+        val data = client.execute(
+            """mutation TiwiProfileEffectCheckout(${D}id: ID!, ${D}provider: String!, ${D}currency: String) {
+                startSocialProfileEffectCheckout(id: ${D}id, provider: ${D}provider, currency: ${D}currency) { status provider paymentUrl message }
+            }""",
+            mapOf("id" to id, "provider" to provider, "currency" to currency)
+        )
+        val checkout = data.objectValue("startSocialProfileEffectCheckout") ?: throw SocialApiException("Profile effect checkout did not start")
+        return SocialCheckout(checkout.string("status") ?: "pending", checkout.string("provider") ?: provider, checkout.string("paymentUrl"), checkout.string("message"))
+    }
+
     suspend fun signalCall(id: String, status: String? = null, offer: Map<String, Any?>? = null, answer: Map<String, Any?>? = null, candidate: Map<String, Any?>? = null): SocialCallSession {
         val data = client.execute(
             """mutation SignalTiwiCall(${D}input: SocialCallSignalInput!) { signalSocialCall(input: ${D}input) { $CALL_FIELDS } }""",
@@ -709,6 +736,7 @@ class SocialRepository(context: Context) {
 
     private fun mapDecoration(value: Map<String, Any?>) = SocialProfileDecoration(
         id = value.string("id").orEmpty(), slug = value.string("slug").orEmpty(), name = value.string("name").orEmpty(),
+        kind = value.string("kind") ?: "avatar-decoration",
         assetUrl = absoluteUrl(value.string("assetUrl")).orEmpty(), fileName = value.string("fileName").orEmpty(),
         mimeType = value.string("mimeType") ?: "image/png", animated = value.boolean("animated"),
         width = value.number("width")?.toInt() ?: 288, height = value.number("height")?.toInt() ?: 288,
@@ -731,6 +759,7 @@ class SocialRepository(context: Context) {
             badgeType = value.string("badgeType") ?: if (value.boolean("verified")) "blue" else "none",
             badgePlan = value.string("badgePlan"), badgeExpiresAt = value.string("badgeExpiresAt"),
             avatarDecoration = value.objectValue("avatarDecoration")?.let(::mapDecoration),
+            profileEffect = value.objectValue("profileEffect")?.let(::mapDecoration),
             privacy = value.objectValue("privacy") ?: emptyMap(), preferences = value.objectValue("preferences") ?: emptyMap(),
             followerCount = value.number("followerCount")?.toInt() ?: 0, followingCount = value.number("followingCount")?.toInt() ?: 0,
             postCount = value.number("postCount")?.toInt() ?: 0, isFollowing = value.boolean("isFollowing")
@@ -837,8 +866,8 @@ class SocialRepository(context: Context) {
         const val CHAT_TTL = 20_000L
         const val USER_FIELDS = "id email name avatar role status socialRestrictionCode socialRestrictionReason socialRestrictedAt socialModerationScore signupSource emailVerifiedAt phone mobileCountryCode primaryRegion country addressLine1 city state postalCode billingName"
         const val PUBLIC_USER_FIELDS = "id name avatar status"
-        const val DECORATION_FIELDS = "id slug name assetUrl fileName mimeType animated width height priceUsd status sortOrder owned applied ownershipSource"
-        const val PROFILE_FIELDS = "id userId username bio about category website location coverUrl verified badgeType badgePlan badgeExpiresAt avatarDecoration { $DECORATION_FIELDS } privacy preferences followerCount followingCount postCount isFollowing user { $PUBLIC_USER_FIELDS }"
+        const val DECORATION_FIELDS = "id slug kind name assetUrl fileName mimeType animated width height priceUsd status sortOrder owned applied ownershipSource"
+        const val PROFILE_FIELDS = "id userId username bio about category website location coverUrl verified badgeType badgePlan badgeExpiresAt avatarDecoration { $DECORATION_FIELDS } profileEffect { $DECORATION_FIELDS } privacy preferences followerCount followingCount postCount isFollowing user { $PUBLIC_USER_FIELDS }"
         const val POST_FIELDS = "id authorId type body media thumbnailUrl hlsUrl processingStatus visibility commentPermission pinned groupId saved status viewCount shareCount reactionCount commentCount viewerReaction publishedAt author { $PUBLIC_USER_FIELDS } authorProfile { id userId username verified badgeType isFollowing avatarDecoration { $DECORATION_FIELDS } }"
         const val COMMENT_FIELDS = "id postId authorId replyToId body status reactionCount viewerLiked createdAt author { $PUBLIC_USER_FIELDS } authorProfile { id userId username verified badgeType avatarDecoration { $DECORATION_FIELDS } }"
         const val MESSAGE_FIELDS = "id conversationId senderId type body media replyToId deliveryStatus sentAt deliveredAt readAt editedAt unsentAt reactions { id userId emoji } sender { $PUBLIC_USER_FIELDS } senderProfile { id userId username avatarDecoration { $DECORATION_FIELDS } }"

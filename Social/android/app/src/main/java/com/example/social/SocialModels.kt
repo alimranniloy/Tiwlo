@@ -38,6 +38,7 @@ data class SocialSignupResult(
 data class SocialProfileDecoration(
     val id: String = "",
     val slug: String = "",
+    val kind: String = "avatar-decoration",
     val name: String = "",
     val assetUrl: String = "",
     val fileName: String = "",
@@ -70,6 +71,7 @@ data class SocialProfile(
     val badgePlan: String? = null,
     val badgeExpiresAt: String? = null,
     val avatarDecoration: SocialProfileDecoration? = null,
+    val profileEffect: SocialProfileDecoration? = null,
     val privacy: Map<String, Any?> = emptyMap(),
     val preferences: Map<String, Any?> = emptyMap(),
     val followerCount: Int = 0,

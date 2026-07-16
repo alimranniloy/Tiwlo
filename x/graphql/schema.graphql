@@ -2718,6 +2718,7 @@ input AiModelChatInput {
 type SocialProfileDecoration {
   id: ID!
   slug: String!
+  kind: String!
   name: String!
   assetUrl: String!
   fileName: String!
@@ -2754,6 +2755,7 @@ type SocialProfile {
   badgePlan: String
   badgeExpiresAt: String
   avatarDecoration: SocialProfileDecoration
+  profileEffect: SocialProfileDecoration
   privacy: JSON!
   preferences: JSON!
   followerCount: Int!
@@ -3202,6 +3204,7 @@ type Query {
   socialFeed(type: String, authorId: ID, groupId: ID, before: String, limit: Int): [SocialPost!]!
   socialStories(limit: Int): [SocialPost!]!
   socialProfileDecorations: [SocialProfileDecoration!]!
+  socialProfileEffects: [SocialProfileDecoration!]!
   socialPost(id: ID!): SocialPost
   socialComments(postId: ID!, before: String, limit: Int): [SocialComment!]!
   socialSavedPosts(limit: Int): [SocialPost!]!
@@ -3221,6 +3224,7 @@ type Query {
   adminSocialReports(status: String): [SocialReport!]!
   adminSocialModerationEvents(decision: String, userId: ID, limit: Int): [SocialModerationEvent!]!
   adminSocialProfileDecorations: [SocialProfileDecoration!]!
+  adminSocialProfileEffects: [SocialProfileDecoration!]!
 }
 
 type Mutation {
@@ -3441,6 +3445,8 @@ type Mutation {
   startSocialVerificationCheckout(packageId: String!, provider: String!, currency: String): CheckoutSession!
   applySocialProfileDecoration(id: ID): SocialProfile!
   startSocialProfileDecorationCheckout(id: ID!, provider: String!, currency: String): CheckoutSession!
+  applySocialProfileEffect(id: ID): SocialProfile!
+  startSocialProfileEffectCheckout(id: ID!, provider: String!, currency: String): CheckoutSession!
   adminVerifySocialProfile(userId: ID!, verified: Boolean!): SocialProfile!
   adminSetSocialBadge(userId: ID!, badgeType: String!, badgePlan: String): SocialProfile!
   adminUpdateSocialUserStatus(userId: ID!, status: String!, reason: String): SocialProfile!
@@ -3449,4 +3455,6 @@ type Mutation {
   adminUpdateSocialSettings(input: SocialAdminSettingsInput!): JSON!
   adminUpsertSocialProfileDecoration(input: SocialProfileDecorationAdminInput!): SocialProfileDecoration!
   adminArchiveSocialProfileDecoration(id: ID!): Boolean!
+  adminUpsertSocialProfileEffect(input: SocialProfileDecorationAdminInput!): SocialProfileDecoration!
+  adminArchiveSocialProfileEffect(id: ID!): Boolean!
 }

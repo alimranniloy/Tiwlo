@@ -1427,17 +1427,21 @@ model SocialProfile {
   badgeExpiresAt     DateTime?
   avatarDecorationId String?
   avatarDecoration   SocialProfileDecoration? @relation("AppliedProfileDecoration", fields: [avatarDecorationId], references: [id], onDelete: SetNull)
+  profileEffectId    String?
+  profileEffect      SocialProfileDecoration? @relation("AppliedProfileEffect", fields: [profileEffectId], references: [id], onDelete: SetNull)
   privacy            Json                     @default("{\"profileVisibility\":\"public\",\"messagePermission\":\"everyone\",\"showActivityStatus\":true,\"allowCalls\":true}")
   preferences        Json                     @default("{\"autoplay\":true,\"dataSaver\":false,\"videoQuality\":\"auto\",\"notifications\":true}")
   createdAt          DateTime                 @default(now())
   updatedAt          DateTime                 @updatedAt
 
   @@index([avatarDecorationId])
+  @@index([profileEffectId])
 }
 
 model SocialProfileDecoration {
   id              String                             @id @default(cuid())
   slug            String                             @unique
+  kind            String                             @default("avatar-decoration")
   name            String
   assetUrl        String
   fileName        String
@@ -1452,8 +1456,10 @@ model SocialProfileDecoration {
   updatedAt       DateTime                           @updatedAt
   ownerships      SocialProfileDecorationOwnership[]
   appliedProfiles SocialProfile[]                    @relation("AppliedProfileDecoration")
+  effectProfiles  SocialProfile[]                    @relation("AppliedProfileEffect")
 
   @@index([status, sortOrder])
+  @@index([kind, status, sortOrder])
 }
 
 model SocialProfileDecorationOwnership {

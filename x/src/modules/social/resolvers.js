@@ -17,6 +17,7 @@ export const socialResolvers = {
   SocialProfile: {
     user: (parent, _, ctx) => parent.user || ctx.prisma.user.findUnique({ where: { id: parent.userId } }),
     avatarDecoration: (parent, _, ctx) => parent.avatarDecoration || (parent.avatarDecorationId ? ctx.prisma.socialProfileDecoration.findUnique({ where: { id: parent.avatarDecorationId } }) : null),
+    profileEffect: (parent, _, ctx) => parent.profileEffect || (parent.profileEffectId ? ctx.prisma.socialProfileDecoration.findUnique({ where: { id: parent.profileEffectId } }) : null),
     verified: (parent) => Boolean(parent.verified && (!parent.badgeExpiresAt || new Date(parent.badgeExpiresAt) > new Date())),
     badgeType: (parent) => {
       const active = parent.verified && (!parent.badgeExpiresAt || new Date(parent.badgeExpiresAt) > new Date());
@@ -69,6 +70,7 @@ export const socialResolvers = {
     socialFeed: (_, args, ctx) => api(service.listFeed(ctx, args)),
     socialStories: (_, args, ctx) => api(service.listStories(ctx, args)),
     socialProfileDecorations: (_, __, ctx) => api(service.listProfileDecorations(ctx)),
+    socialProfileEffects: (_, __, ctx) => api(service.listProfileEffects(ctx)),
     socialPost: (_, { id }, ctx) => api(service.getPost(ctx, id)),
     socialComments: (_, args, ctx) => api(service.listComments(ctx, args)),
     socialSavedPosts: (_, { limit }, ctx) => api(service.listSavedPosts(ctx, limit)),
@@ -90,7 +92,8 @@ export const socialResolvers = {
     adminSocialPosts: (_, args, ctx) => api(service.adminPosts(ctx, args)),
     adminSocialReports: (_, { status }, ctx) => api(service.adminReports(ctx, status)),
     adminSocialModerationEvents: (_, args, ctx) => api(service.adminModerationEvents(ctx, args)),
-    adminSocialProfileDecorations: (_, __, ctx) => api(service.adminProfileDecorations(ctx))
+    adminSocialProfileDecorations: (_, __, ctx) => api(service.adminProfileDecorations(ctx)),
+    adminSocialProfileEffects: (_, __, ctx) => api(service.adminProfileEffects(ctx))
   },
   Mutation: {
     upsertSocialProfile: (_, { input }, ctx) => api(service.upsertProfile(ctx, input)),
@@ -131,6 +134,8 @@ export const socialResolvers = {
     startSocialVerificationCheckout: (_, { packageId, provider, currency }, ctx) => api(service.startVerificationCheckout(ctx, packageId, provider, currency)),
     applySocialProfileDecoration: (_, { id }, ctx) => api(service.applyProfileDecoration(ctx, id)),
     startSocialProfileDecorationCheckout: (_, { id, provider, currency }, ctx) => api(service.startProfileDecorationCheckout(ctx, id, provider, currency)),
+    applySocialProfileEffect: (_, { id }, ctx) => api(service.applyProfileEffect(ctx, id)),
+    startSocialProfileEffectCheckout: (_, { id, provider, currency }, ctx) => api(service.startProfileEffectCheckout(ctx, id, provider, currency)),
     adminVerifySocialProfile: (_, { userId, verified }, ctx) => api(service.adminVerifyProfile(ctx, userId, verified)),
     adminSetSocialBadge: (_, { userId, badgeType, badgePlan }, ctx) => api(service.adminSetSocialBadge(ctx, userId, badgeType, badgePlan)),
     adminUpdateSocialUserStatus: (_, { userId, status, reason }, ctx) => api(service.adminUpdateUserStatus(ctx, userId, status, reason)),
@@ -138,6 +143,8 @@ export const socialResolvers = {
     adminResolveSocialReport: (_, { id, status, resolution }, ctx) => api(service.adminResolveReport(ctx, id, status, resolution)),
     adminUpdateSocialSettings: (_, { input }, ctx) => service.adminUpdateSettings(ctx, input),
     adminUpsertSocialProfileDecoration: (_, { input }, ctx) => api(service.adminUpsertProfileDecoration(ctx, input)),
-    adminArchiveSocialProfileDecoration: (_, { id }, ctx) => service.adminArchiveProfileDecoration(ctx, id)
+    adminArchiveSocialProfileDecoration: (_, { id }, ctx) => service.adminArchiveProfileDecoration(ctx, id),
+    adminUpsertSocialProfileEffect: (_, { input }, ctx) => api(service.adminUpsertProfileEffect(ctx, input)),
+    adminArchiveSocialProfileEffect: (_, { id }, ctx) => service.adminArchiveProfileEffect(ctx, id)
   }
 };

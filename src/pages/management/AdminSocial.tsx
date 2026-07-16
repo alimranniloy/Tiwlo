@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   Film,
   Flag,
+  Layers3,
   MessageCircle,
   Radio,
   RefreshCw,
@@ -24,7 +25,9 @@ import {
   adminUpdateSocialUserStatusWithApi,
   adminSetSocialBadgeWithApi,
   adminArchiveSocialProfileDecorationWithApi,
+  adminArchiveSocialProfileEffectWithApi,
   adminUpsertSocialProfileDecorationWithApi,
+  adminUpsertSocialProfileEffectWithApi,
   deleteUserWithApi,
   fetchAdminSocialOverviewWithApi,
   fetchAdminSocialModerationEventsWithApi,
@@ -32,13 +35,16 @@ import {
   fetchAdminSocialReportsWithApi,
   fetchAdminSocialUsersWithApi,
   fetchAdminSocialProfileDecorationsWithApi,
+  fetchAdminSocialProfileEffectsWithApi,
   fetchSocialSettingsWithApi,
-  uploadSocialProfileDecorationWithApi
+  uploadSocialProfileDecorationWithApi,
+  uploadSocialProfileEffectWithApi
 } from '../../lib/tiwloApi';
 
-type Tab = 'users' | 'posts' | 'reports' | 'automation' | 'decorations' | 'settings';
+type Tab = 'users' | 'posts' | 'reports' | 'automation' | 'decorations' | 'effects' | 'settings';
 
 const emptyDecoration = { id: '', name: '', assetUrl: '', fileName: '', mimeType: 'image/png', animated: false, width: 288, height: 288, priceUsd: 0, status: 'active', sortOrder: 0 };
+const emptyEffect = { ...emptyDecoration, width: 450, height: 880 };
 
 const editableDecoration = (item: any = {}) => ({
   ...emptyDecoration,
@@ -82,6 +88,10 @@ export default function AdminSocial() {
   const [decorationForm, setDecorationForm] = React.useState<any>(emptyDecoration);
   const [decorationFile, setDecorationFile] = React.useState<File | null>(null);
   const [decorationPreview, setDecorationPreview] = React.useState('');
+  const [effects, setEffects] = React.useState<any[]>([]);
+  const [effectForm, setEffectForm] = React.useState<any>(emptyEffect);
+  const [effectFile, setEffectFile] = React.useState<File | null>(null);
+  const [effectPreview, setEffectPreview] = React.useState('');
   const [settings, setSettings] = React.useState<any>({});
   const [stunJson, setStunJson] = React.useState('[]');
   const [search, setSearch] = React.useState('');
@@ -94,13 +104,14 @@ export default function AdminSocial() {
     setLoading(true);
     setError('');
     try {
-      const [summary, socialUsers, socialPosts, socialReports, automationEvents, socialDecorations, socialSettings] = await Promise.all([
+      const [summary, socialUsers, socialPosts, socialReports, automationEvents, socialDecorations, socialEffects, socialSettings] = await Promise.all([
         fetchAdminSocialOverviewWithApi(),
         fetchAdminSocialUsersWithApi(search || undefined),
         fetchAdminSocialPostsWithApi(undefined, undefined, search || undefined),
         fetchAdminSocialReportsWithApi(),
         fetchAdminSocialModerationEventsWithApi(),
         fetchAdminSocialProfileDecorationsWithApi(),
+        fetchAdminSocialProfileEffectsWithApi(),
         fetchSocialSettingsWithApi()
       ]);
       setOverview(summary || {});
@@ -109,6 +120,7 @@ export default function AdminSocial() {
       setReports(socialReports || []);
       setModerationEvents(automationEvents || []);
       setDecorations(socialDecorations || []);
+      setEffects(socialEffects || []);
       setSettings(socialSettings || {});
       setStunJson(JSON.stringify(socialSettings?.stunServers || [], null, 2));
     } catch (err) {
@@ -225,6 +237,58 @@ export default function AdminSocial() {
     }, decorationForm.id ? 'Profile decoration updated.' : 'Profile decoration uploaded.');
   };
 
+  const chooseEffectFile = async (file?: File) => {
+    if (!file) return;
+    if (file.type !== 'image/png' && !file.name.toLowerCase().endsWith('.png')) {
+      setError('Choose a PNG or animated PNG (APNG) profile effect.');
+      return;
+    }
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const animated = bytes.some((value, index) => value === 0x61 && bytes[index + 1] === 0x63 && bytes[index + 2] === 0x54 && bytes[index + 3] === 0x4c);
+    let width = 450;
+    let height = 880;
+    try {
+      const bitmap = await createImageBitmap(file);
+      width = bitmap.width;
+      height = bitmap.height;
+      bitmap.close();
+    } catch { /* dimensions stay at the recommended profile-canvas default */ }
+    if (effectPreview.startsWith('blob:')) URL.revokeObjectURL(effectPreview);
+    setEffectFile(file);
+    setEffectPreview(URL.createObjectURL(file));
+    setEffectForm((current: any) => ({ ...current, name: current.name || file.name.replace(/\.png$/i, '').replace(/[_-]+/g, ' '), fileName: file.name, mimeType: 'image/png', animated, width, height }));
+  };
+
+  const resetEffectForm = () => {
+    if (effectPreview.startsWith('blob:')) URL.revokeObjectURL(effectPreview);
+    setEffectForm(emptyEffect);
+    setEffectFile(null);
+    setEffectPreview('');
+  };
+
+  const saveEffect = async () => {
+    if (!effectForm.name.trim()) { setError('Profile effect name is required.'); return; }
+    if (!effectFile && !effectForm.assetUrl) { setError('Choose a PNG or APNG profile effect.'); return; }
+    await perform(async () => {
+      const upload = effectFile ? await uploadSocialProfileEffectWithApi(effectFile) : null;
+      await adminUpsertSocialProfileEffectWithApi({
+        id: effectForm.id || undefined,
+        slug: effectForm.slug || undefined,
+        name: effectForm.name.trim(),
+        assetUrl: upload?.sourceUrl || effectForm.assetUrl,
+        fileName: effectFile?.name || effectForm.fileName,
+        mimeType: upload?.mimeType || effectForm.mimeType || 'image/png',
+        animated: Boolean(effectForm.animated),
+        width: Number(effectForm.width || 450),
+        height: Number(effectForm.height || 880),
+        priceUsd: Number(effectForm.priceUsd || 0),
+        status: effectForm.status || 'active',
+        sortOrder: Number(effectForm.sortOrder || 0)
+      });
+      resetEffectForm();
+    }, effectForm.id ? 'Profile effect updated.' : 'Profile effect uploaded.');
+  };
+
   const stats = [
     { label: 'Social Users', value: overview.profiles || 0, icon: Users },
     { label: 'Verified', value: overview.verifiedProfiles || 0, icon: BadgeCheck },
@@ -266,6 +330,7 @@ export default function AdminSocial() {
             ['reports', 'Reports', Flag],
             ['automation', 'Automation', Ban],
             ['decorations', 'Profile decor', Sparkles],
+            ['effects', 'Profile effects', Layers3],
             ['settings', 'Settings', Settings]
           ] as const).map(([key, label, Icon]) => (
             <button key={key} onClick={() => setTab(key)} className={`flex items-center gap-2 rounded px-4 py-2 text-[12px] font-bold ${tab === key ? 'bg-[#0069ff] text-white' : 'text-[#4a4a4a] hover:bg-gray-50'}`}>
@@ -273,7 +338,7 @@ export default function AdminSocial() {
             </button>
           ))}
         </div>
-        {tab !== 'settings' && tab !== 'decorations' && (
+        {tab !== 'settings' && tab !== 'decorations' && tab !== 'effects' && (
           <label className="flex min-w-[260px] items-center gap-2 rounded border border-[#e5e8ed] px-3 py-2">
             <Search className="h-4 w-4 text-gray-400" />
             <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search real database records" className="w-full text-[12px] outline-none" />
@@ -372,6 +437,53 @@ export default function AdminSocial() {
                   <article key={item.id} className="overflow-hidden rounded-xl border border-[#dfe4ea] bg-white">
                     <div className="relative flex h-52 items-center justify-center bg-[radial-gradient(circle_at_center,#eef4ff_0,#f8fafc_62%,#fff_100%)]"><div className="absolute h-28 w-28 rounded-full bg-gradient-to-br from-[#dbeafe] to-[#c4b5fd]" /><img src={item.assetUrl} className="relative h-44 w-44 object-contain" /><span className={`absolute left-3 top-3 rounded-full px-2.5 py-1 text-[9px] font-black uppercase ${item.animated ? 'bg-violet-600 text-white' : 'bg-white text-gray-600'}`}>{item.animated ? 'Animated APNG' : 'PNG'}</span></div>
                     <div className="p-4"><div className="flex items-start justify-between gap-2"><div><h3 className="font-black text-[#2e3d49]">{item.name}</h3><p className="mt-1 text-[10px] text-gray-500">{item.fileName} · {item.width}×{item.height}</p></div><span className={`rounded px-2 py-1 text-[11px] font-black ${Number(item.priceUsd) === 0 ? 'bg-green-50 text-green-700' : 'bg-blue-50 text-blue-700'}`}>{Number(item.priceUsd) === 0 ? 'FREE' : `$${Number(item.priceUsd).toFixed(2)}`}</span></div><p className="mt-3 text-[10px] text-gray-500">{item.ownershipCount || 0} owned · {item.appliedCount || 0} currently applied · {item.status}</p><div className="mt-4 flex gap-2"><button onClick={() => { resetDecorationForm(); setDecorationForm(editableDecoration(item)); setDecorationPreview(item.assetUrl); window.scrollTo({ top: 0, behavior: 'smooth' }); }} className="flex-1 rounded-lg border border-[#dfe4ea] px-3 py-2 text-[11px] font-black text-[#344054] hover:bg-gray-50">Edit</button><button disabled={saving} onClick={() => { if (window.confirm(`Archive ${item.name}? It will be removed from profiles using it.`)) perform(() => adminArchiveSocialProfileDecorationWithApi(item.id), 'Profile decoration archived.'); }} className="rounded-lg border border-red-100 p-2 text-red-600 hover:bg-red-50"><Trash2 className="h-4 w-4" /></button></div></div>
+                  </article>
+                ))}
+              </div>
+            </section>
+          </div>
+        </div>
+      )}
+
+      {tab === 'effects' && (
+        <div className="space-y-5">
+          <div className="grid gap-5 xl:grid-cols-[390px_1fr]">
+            <section className="rounded border border-[#dfe4ea] bg-white p-5">
+              <div className="flex items-start gap-3">
+                <span className="rounded-xl bg-fuchsia-50 p-2.5 text-fuchsia-600"><Layers3 className="h-5 w-5" /></span>
+                <div><h2 className="text-[15px] font-black text-[#2e3d49]">{effectForm.id ? 'Edit profile effect' : 'Upload profile effect'}</h2><p className="mt-1 text-[11px] leading-5 text-gray-500">Upload a transparent full-profile <strong>PNG or APNG</strong>. A 450×880 portrait canvas is recommended. The app plays an applied effect twice whenever that profile opens.</p></div>
+              </div>
+              <label className="mt-5 flex cursor-pointer items-center justify-center overflow-hidden rounded-xl border-2 border-dashed border-[#cdd5df] bg-[#f8fafc] p-4 hover:border-[#0069ff]">
+                {(effectPreview || effectForm.assetUrl) ? (
+                  <div className="relative h-64 w-32 overflow-hidden rounded-xl border bg-white shadow-sm">
+                    <div className="h-16 bg-gradient-to-r from-blue-200 to-violet-200" /><div className="mx-3 -mt-5 h-10 w-10 rounded-full border-2 border-white bg-slate-300" /><div className="mx-3 mt-2 h-2 w-16 rounded bg-slate-300" /><div className="mx-3 mt-2 h-1.5 w-24 rounded bg-slate-200" /><div className="mx-3 mt-3 h-7 rounded bg-slate-100" />
+                    <img src={effectPreview || effectForm.assetUrl} className="pointer-events-none absolute inset-0 h-full w-full object-fill" />
+                  </div>
+                ) : <div className="py-10 text-center"><Upload className="mx-auto h-8 w-8 text-[#0069ff]" /><span className="mt-2 block text-[12px] font-black text-[#344054]">Choose one full-profile PNG/APNG</span></div>}
+                <input type="file" accept=".png,image/png" className="hidden" onChange={(event) => chooseEffectFile(event.target.files?.[0])} />
+              </label>
+              <div className="mt-4 grid gap-3">
+                <label className="text-[10px] font-black uppercase tracking-wide text-gray-500">Effect name<input value={effectForm.name} onChange={(event) => setEffectForm({ ...effectForm, name: event.target.value })} placeholder="Example: Flow" className="mt-1 w-full rounded-lg border border-[#dfe4ea] px-3 py-2.5 text-[13px] normal-case text-[#2e3d49] outline-none focus:border-[#0069ff]" /></label>
+                <div className="grid grid-cols-2 gap-3">
+                  <label className="text-[10px] font-black uppercase tracking-wide text-gray-500">Price (USD)<input type="number" min={0} step="0.01" value={effectForm.priceUsd} onChange={(event) => setEffectForm({ ...effectForm, priceUsd: Math.max(0, Number(event.target.value)) })} className="mt-1 w-full rounded-lg border border-[#dfe4ea] px-3 py-2.5 text-[13px] text-[#2e3d49] outline-none focus:border-[#0069ff]" /><span className="mt-1 block text-[9px] font-normal normal-case">Set 0 to make it Free.</span></label>
+                  <label className="text-[10px] font-black uppercase tracking-wide text-gray-500">Sort order<input type="number" min={0} value={effectForm.sortOrder} onChange={(event) => setEffectForm({ ...effectForm, sortOrder: Math.max(0, Number(event.target.value)) })} className="mt-1 w-full rounded-lg border border-[#dfe4ea] px-3 py-2.5 text-[13px] text-[#2e3d49] outline-none focus:border-[#0069ff]" /></label>
+                </div>
+                <div className="flex items-center justify-between rounded-lg border border-[#dfe4ea] px-3 py-2.5 text-[11px]"><span><strong>{effectForm.fileName || 'No file selected'}</strong><span className="block text-gray-500">{effectForm.width}×{effectForm.height} · {effectForm.animated ? 'Animated APNG' : 'Static PNG'}</span></span><span className={`rounded px-2 py-1 text-[9px] font-black uppercase ${effectForm.animated ? 'bg-fuchsia-50 text-fuchsia-700' : 'bg-gray-100 text-gray-600'}`}>{effectForm.animated ? 'Animated' : 'PNG'}</span></div>
+                <label className="flex items-center justify-between rounded-lg border border-[#dfe4ea] px-3 py-2.5 text-[12px] font-bold text-[#344054]">Available in app<input type="checkbox" checked={effectForm.status !== 'inactive'} onChange={(event) => setEffectForm({ ...effectForm, status: event.target.checked ? 'active' : 'inactive' })} className="h-4 w-4 accent-[#0069ff]" /></label>
+              </div>
+              <div className="mt-5 flex gap-2"><button onClick={saveEffect} disabled={saving} className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-[#0069ff] px-4 py-2.5 text-[12px] font-black text-white disabled:opacity-50"><Save className="h-4 w-4" /> {saving ? 'Saving...' : effectForm.id ? 'Save changes' : 'Upload effect'}</button>{effectForm.id && <button onClick={resetEffectForm} className="rounded-lg border px-4 py-2.5 text-[12px] font-bold text-gray-600">Cancel</button>}</div>
+            </section>
+
+            <section>
+              <div className="mb-3 flex items-center justify-between"><div><h2 className="text-[15px] font-black text-[#2e3d49]">Profile effect catalog</h2><p className="text-[11px] text-gray-500">Full-page effects delivered by the Social API, separate from avatar decorations.</p></div><span className="rounded-full bg-white px-3 py-1.5 text-[11px] font-black text-gray-600">{effects.filter((item) => item.status !== 'archived').length} items</span></div>
+              <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-3">
+                {effects.filter((item) => item.status !== 'archived').map((item) => (
+                  <article key={item.id} className="overflow-hidden rounded-xl border border-[#dfe4ea] bg-white">
+                    <div className="relative flex h-72 items-center justify-center bg-[radial-gradient(circle_at_center,#f5eaff_0,#f8fafc_62%,#fff_100%)]">
+                      <div className="relative h-64 w-32 overflow-hidden rounded-xl border bg-white shadow-sm"><div className="h-16 bg-gradient-to-r from-blue-200 to-violet-200" /><div className="mx-3 -mt-5 h-10 w-10 rounded-full border-2 border-white bg-slate-300" /><div className="mx-3 mt-2 h-2 w-16 rounded bg-slate-300" /><div className="mx-3 mt-2 h-1.5 w-24 rounded bg-slate-200" /><div className="mx-3 mt-3 h-7 rounded bg-slate-100" /><img src={item.assetUrl} className="pointer-events-none absolute inset-0 h-full w-full object-fill" /></div>
+                      <span className={`absolute left-3 top-3 rounded-full px-2.5 py-1 text-[9px] font-black uppercase ${item.animated ? 'bg-fuchsia-600 text-white' : 'bg-white text-gray-600'}`}>{item.animated ? 'Animated APNG' : 'PNG'}</span>
+                    </div>
+                    <div className="p-4"><div className="flex items-start justify-between gap-2"><div><h3 className="font-black text-[#2e3d49]">{item.name}</h3><p className="mt-1 text-[10px] text-gray-500">{item.fileName} · {item.width}×{item.height}</p></div><span className={`rounded px-2 py-1 text-[11px] font-black ${Number(item.priceUsd) === 0 ? 'bg-green-50 text-green-700' : 'bg-blue-50 text-blue-700'}`}>{Number(item.priceUsd) === 0 ? 'FREE' : `$${Number(item.priceUsd).toFixed(2)}`}</span></div><p className="mt-3 text-[10px] text-gray-500">{item.ownershipCount || 0} owned · {item.appliedCount || 0} currently applied · {item.status}</p><div className="mt-4 flex gap-2"><button onClick={() => { resetEffectForm(); setEffectForm({ ...editableDecoration(item), width: Number(item.width || 450), height: Number(item.height || 880) }); setEffectPreview(item.assetUrl); window.scrollTo({ top: 0, behavior: 'smooth' }); }} className="flex-1 rounded-lg border border-[#dfe4ea] px-3 py-2 text-[11px] font-black text-[#344054] hover:bg-gray-50">Edit</button><button disabled={saving} onClick={() => { if (window.confirm(`Archive ${item.name}? It will be removed from profiles using it.`)) perform(() => adminArchiveSocialProfileEffectWithApi(item.id), 'Profile effect archived.'); }} className="rounded-lg border border-red-100 p-2 text-red-600 hover:bg-red-50"><Trash2 className="h-4 w-4" /></button></div></div>
                   </article>
                 ))}
               </div>

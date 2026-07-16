@@ -1,7 +1,7 @@
 import { GRAPHQL_URL, getAuthToken, graphQL, userFields } from './client';
 
 const socialDecorationFields = `
-  id slug name assetUrl fileName mimeType animated width height priceUsd status sortOrder
+  id slug kind name assetUrl fileName mimeType animated width height priceUsd status sortOrder
   owned applied ownershipSource ownershipCount appliedCount createdAt updatedAt
 `;
 
@@ -150,6 +150,29 @@ export async function adminArchiveSocialProfileDecorationWithApi(id: string) {
   return data.adminArchiveSocialProfileDecoration;
 }
 
+export async function fetchAdminSocialProfileEffectsWithApi() {
+  const data = await graphQL<{ adminSocialProfileEffects: any[] }>(`
+    query AdminSocialProfileEffects { adminSocialProfileEffects { ${socialDecorationFields} } }
+  `);
+  return data.adminSocialProfileEffects;
+}
+
+export async function adminUpsertSocialProfileEffectWithApi(input: Record<string, unknown>) {
+  const data = await graphQL<{ adminUpsertSocialProfileEffect: any }>(`
+    mutation AdminUpsertSocialProfileEffect($input: SocialProfileDecorationAdminInput!) {
+      adminUpsertSocialProfileEffect(input: $input) { ${socialDecorationFields} }
+    }
+  `, { input });
+  return data.adminUpsertSocialProfileEffect;
+}
+
+export async function adminArchiveSocialProfileEffectWithApi(id: string) {
+  const data = await graphQL<{ adminArchiveSocialProfileEffect: boolean }>(`
+    mutation AdminArchiveSocialProfileEffect($id: ID!) { adminArchiveSocialProfileEffect(id: $id) }
+  `, { id });
+  return data.adminArchiveSocialProfileEffect;
+}
+
 type SocialMediaUpload = {
   sourceUrl: string;
   mimeType: string;
@@ -172,7 +195,7 @@ const socialUploadPayload = async (response: Response) => {
   return payload;
 };
 
-async function uploadSocialProfileDecorationInChunks(file: File): Promise<SocialMediaUpload> {
+async function uploadSocialProfileDecorationInChunks(file: File, kind = 'profile-decoration'): Promise<SocialMediaUpload> {
   const started = await fetch(socialMediaUrl('/chunks/start'), {
     method: 'POST',
     headers: socialUploadHeaders({ 'Content-Type': 'application/json' }),
@@ -180,7 +203,7 @@ async function uploadSocialProfileDecorationInChunks(file: File): Promise<Social
       name: file.name,
       mimeType: file.type || 'image/png',
       size: file.size,
-      kind: 'profile-decoration'
+      kind
     })
   }).then(socialUploadPayload);
 
@@ -221,5 +244,20 @@ export async function uploadSocialProfileDecorationWithApi(file: File) {
     body
   });
   if (response.status === 413) return uploadSocialProfileDecorationInChunks(file);
+  return socialUploadPayload(response) as Promise<SocialMediaUpload>;
+}
+
+export async function uploadSocialProfileEffectWithApi(file: File) {
+  if (file.size > 512 * 1024) return uploadSocialProfileDecorationInChunks(file, 'profile-effect');
+
+  const body = new FormData();
+  body.append('file', file);
+  body.append('kind', 'profile-effect');
+  const response = await fetch(socialMediaUrl(), {
+    method: 'POST',
+    headers: socialUploadHeaders(),
+    body
+  });
+  if (response.status === 413) return uploadSocialProfileDecorationInChunks(file, 'profile-effect');
   return socialUploadPayload(response) as Promise<SocialMediaUpload>;
 }

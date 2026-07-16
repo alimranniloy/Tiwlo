@@ -43,6 +43,13 @@ const DEFAULT_PROFILE_DECORATIONS = Object.freeze([
   { slug: 'treasure-and-key', name: 'Treasure and Key', assetUrl: '/brand/decorations/treasure_and_key.png', fileName: 'treasure_and_key.png', animated: true, sortOrder: 70 }
 ]);
 
+const DEFAULT_PROFILE_EFFECTS = Object.freeze([
+  { slug: 'flow-profile-effect', name: 'Flow', assetUrl: '/brand/profile-effects/flow.png', fileName: 'flow.png', animated: true, width: 450, height: 880, sortOrder: 10 }
+]);
+
+const AVATAR_DECORATION_KIND = 'avatar-decoration';
+const PROFILE_EFFECT_KIND = 'profile-effect';
+
 const POST_TYPES = new Set(['post', 'news', 'reel', 'video', 'live', 'story']);
 const VISIBILITIES = new Set(['public', 'followers', 'private']);
 const COMMENT_PERMISSIONS = new Set(['everyone', 'followers', 'none']);
@@ -127,6 +134,7 @@ const requireSocialFeature = async (ctx, key) => {
 
 const profileInclude = {
   avatarDecoration: true,
+  profileEffect: true,
   user: {
     include: {
       _count: { select: { socialFollowers: true, socialFollowing: true, socialPosts: true } }
@@ -142,14 +150,30 @@ const decorationSlug = (value) => String(value || '')
   .slice(0, 80);
 
 const ensureDefaultProfileDecorations = async (ctx) => {
-  const count = await ctx.prisma.socialProfileDecoration.count();
+  const count = await ctx.prisma.socialProfileDecoration.count({ where: { kind: AVATAR_DECORATION_KIND } });
   if (count > 0) return;
   await ctx.prisma.socialProfileDecoration.createMany({
     data: DEFAULT_PROFILE_DECORATIONS.map((item) => ({
       ...item,
+      kind: AVATAR_DECORATION_KIND,
       mimeType: 'image/png',
       width: 288,
       height: 288,
+      priceUsd: 0,
+      status: 'active'
+    })),
+    skipDuplicates: true
+  });
+};
+
+const ensureDefaultProfileEffects = async (ctx) => {
+  const count = await ctx.prisma.socialProfileDecoration.count({ where: { kind: PROFILE_EFFECT_KIND } });
+  if (count > 0) return;
+  await ctx.prisma.socialProfileDecoration.createMany({
+    data: DEFAULT_PROFILE_EFFECTS.map((item) => ({
+      ...item,
+      kind: PROFILE_EFFECT_KIND,
+      mimeType: 'image/png',
       priceUsd: 0,
       status: 'active'
     })),
@@ -1497,14 +1521,39 @@ export const startVerificationCheckout = async (ctx, packageId, provider, curren
   return startInvoicePayment(ctx, { invoiceId: invoice.id, provider });
 };
 
-export const listProfileDecorations = async (ctx) => {
+const profileCatalogConfig = (kind) => kind === PROFILE_EFFECT_KIND ? {
+  kind,
+  title: 'Profile effect',
+  appliedIdField: 'profileEffectId',
+  appliedRelation: 'effectProfiles',
+  scope: 'social_profile_effect',
+  invoicePrefix: 'EFX',
+  itemKey: 'profileEffect',
+  auditKey: 'profile_effect',
+  brandPrefix: '/brand/profile-effects/',
+  ensureDefaults: ensureDefaultProfileEffects
+} : {
+  kind: AVATAR_DECORATION_KIND,
+  title: 'Profile decoration',
+  appliedIdField: 'avatarDecorationId',
+  appliedRelation: 'appliedProfiles',
+  scope: 'social_profile_decoration',
+  invoicePrefix: 'DEC',
+  itemKey: 'profileDecoration',
+  auditKey: 'profile_decoration',
+  brandPrefix: '/brand/decorations/',
+  ensureDefaults: ensureDefaultProfileDecorations
+};
+
+const listProfileCatalog = async (ctx, kind) => {
   const actor = await requireAuth(ctx);
   await requireSocialFeature(ctx);
-  await ensureDefaultProfileDecorations(ctx);
-  const [profile, decorations] = await Promise.all([
-    ctx.prisma.socialProfile.findUnique({ where: { userId: actor.id }, select: { avatarDecorationId: true } }),
+  const config = profileCatalogConfig(kind);
+  await config.ensureDefaults(ctx);
+  const [profile, items] = await Promise.all([
+    ctx.prisma.socialProfile.findUnique({ where: { userId: actor.id }, select: { [config.appliedIdField]: true } }),
     ctx.prisma.socialProfileDecoration.findMany({
-      where: { status: 'active' },
+      where: { kind: config.kind, status: 'active' },
       include: {
         ownerships: { where: { userId: actor.id }, take: 1 },
         _count: { select: { ownerships: true } }
@@ -1512,69 +1561,71 @@ export const listProfileDecorations = async (ctx) => {
       orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }]
     })
   ]);
-  return decorations.map((item) => mapDecoration(item, actor.id, profile?.avatarDecorationId));
+  return items.map((item) => mapDecoration(item, actor.id, profile?.[config.appliedIdField]));
 };
 
-export const applyProfileDecoration = async (ctx, id) => {
+const applyProfileCatalogItem = async (ctx, id, kind) => {
   const actor = await requireAuth(ctx);
   await requireSocialFeature(ctx);
+  const config = profileCatalogConfig(kind);
+  await config.ensureDefaults(ctx);
   await ensureProfile(ctx, actor);
   if (!id) {
     const profile = await ctx.prisma.socialProfile.update({
       where: { userId: actor.id },
-      data: { avatarDecorationId: null },
+      data: { [config.appliedIdField]: null },
       include: profileInclude
     });
-    await writeAudit(ctx, 'remove_social_profile_decoration', 'socialProfile', profile.id, {});
+    await writeAudit(ctx, `remove_social_${config.auditKey}`, 'socialProfile', profile.id, {});
     return mapProfile(ctx, profile, actor.id);
   }
-  const decoration = await ctx.prisma.socialProfileDecoration.findUnique({ where: { id } });
-  if (!decoration || decoration.status !== 'active') notFound('Profile decoration');
-  const free = Number(decoration.priceUsd || 0) <= 0;
+  const item = await ctx.prisma.socialProfileDecoration.findUnique({ where: { id } });
+  if (!item || item.kind !== config.kind || item.status !== 'active') notFound(config.title);
+  const free = Number(item.priceUsd || 0) <= 0;
   const ownership = free ? null : await ctx.prisma.socialProfileDecorationOwnership.findUnique({
-    where: { userId_decorationId: { userId: actor.id, decorationId: decoration.id } }
+    where: { userId_decorationId: { userId: actor.id, decorationId: item.id } }
   });
-  if (!free && !ownership) throw new AppError('Purchase this decoration before applying it', 'PAYMENT_REQUIRED');
+  if (!free && !ownership) throw new AppError(`Purchase this ${config.title.toLowerCase()} before applying it`, 'PAYMENT_REQUIRED');
   if (free) await ctx.prisma.socialProfileDecorationOwnership.upsert({
-    where: { userId_decorationId: { userId: actor.id, decorationId: decoration.id } },
-    create: { userId: actor.id, decorationId: decoration.id, source: 'free' },
+    where: { userId_decorationId: { userId: actor.id, decorationId: item.id } },
+    create: { userId: actor.id, decorationId: item.id, source: 'free' },
     update: { source: 'free', acquiredAt: new Date() }
   });
   const profile = await ctx.prisma.socialProfile.update({
     where: { userId: actor.id },
-    data: { avatarDecorationId: decoration.id },
+    data: { [config.appliedIdField]: item.id },
     include: profileInclude
   });
-  await writeAudit(ctx, 'apply_social_profile_decoration', 'socialProfile', profile.id, { decorationId: decoration.id, decorationName: decoration.name });
+  await writeAudit(ctx, `apply_social_${config.auditKey}`, 'socialProfile', profile.id, { itemId: item.id, itemName: item.name });
   return mapProfile(ctx, profile, actor.id);
 };
 
-export const startProfileDecorationCheckout = async (ctx, id, provider, currency = 'USD') => {
+const startProfileCatalogCheckout = async (ctx, id, provider, currency, kind) => {
   const actor = await requireAuth(ctx);
   await requireSocialFeature(ctx);
-  await ensureDefaultProfileDecorations(ctx);
+  const config = profileCatalogConfig(kind);
+  await config.ensureDefaults(ctx);
   await ensureProfile(ctx, actor);
-  const decoration = await ctx.prisma.socialProfileDecoration.findUnique({ where: { id } });
-  if (!decoration || decoration.status !== 'active') notFound('Profile decoration');
+  const item = await ctx.prisma.socialProfileDecoration.findUnique({ where: { id } });
+  if (!item || item.kind !== config.kind || item.status !== 'active') notFound(config.title);
   const existingOwnership = await ctx.prisma.socialProfileDecorationOwnership.findUnique({
-    where: { userId_decorationId: { userId: actor.id, decorationId: decoration.id } }
+    where: { userId_decorationId: { userId: actor.id, decorationId: item.id } }
   });
-  if (existingOwnership) return { status: 'owned', provider: 'existing', message: 'This decoration is already in Your decorations.' };
-  if (Number(decoration.priceUsd || 0) <= 0) {
-    await ctx.prisma.socialProfileDecorationOwnership.create({
-      data: { userId: actor.id, decorationId: decoration.id, source: 'free' }
-    });
-    return { status: 'owned', provider: 'free', message: 'Free decoration added to Your decorations.' };
+  if (existingOwnership) return { status: 'owned', provider: 'existing', message: `This ${config.title.toLowerCase()} is already owned.` };
+  if (Number(item.priceUsd || 0) <= 0) {
+    await ctx.prisma.socialProfileDecorationOwnership.create({ data: { userId: actor.id, decorationId: item.id, source: 'free' } });
+    return { status: 'owned', provider: 'free', message: `Free ${config.title.toLowerCase()} added to your account.` };
   }
   const requestedCurrency = bounded(currency || 'USD', 3).toUpperCase();
-  const amount = Math.round((await convertMoneyForCtx(ctx, Number(decoration.priceUsd), 'USD', requestedCurrency)) * 100) / 100;
+  const amount = Math.round((await convertMoneyForCtx(ctx, Number(item.priceUsd), 'USD', requestedCurrency)) * 100) / 100;
   let invoice = await ctx.prisma.invoice.findFirst({
-    where: { ownerId: actor.id, scope: 'social_profile_decoration', scopeId: decoration.id, status: { in: ['open', 'payment_failed'] } },
+    where: { ownerId: actor.id, scope: config.scope, scopeId: item.id, status: { in: ['open', 'payment_failed'] } },
     orderBy: { createdAt: 'desc' }
   });
+  const catalogItem = { decorationId: item.id, name: item.name, assetUrl: item.assetUrl, priceUsd: Number(item.priceUsd), kind: item.kind };
   const items = {
-    profileDecoration: { decorationId: decoration.id, name: decoration.name, assetUrl: decoration.assetUrl, priceUsd: Number(decoration.priceUsd) },
-    lineItems: [{ label: `${decoration.name} profile decoration`, amount, currency: requestedCurrency }]
+    [config.itemKey]: catalogItem,
+    lineItems: [{ label: `${item.name} ${config.title.toLowerCase()}`, amount, currency: requestedCurrency }]
   };
   if (invoice) invoice = await ctx.prisma.invoice.update({
     where: { id: invoice.id },
@@ -1583,45 +1634,49 @@ export const startProfileDecorationCheckout = async (ctx, id, provider, currency
   else invoice = await ctx.prisma.invoice.create({
     data: {
       ownerId: actor.id,
-      number: `DEC-${Date.now()}-${randomBytes(3).toString('hex').toUpperCase()}`,
+      number: `${config.invoicePrefix}-${Date.now()}-${randomBytes(3).toString('hex').toUpperCase()}`,
       amount,
       currency: requestedCurrency,
-      scope: 'social_profile_decoration',
-      scopeId: decoration.id,
+      scope: config.scope,
+      scopeId: item.id,
       dueDate: new Date(),
       items
     }
   });
-  await writeAudit(ctx, 'start_social_profile_decoration_checkout', 'invoice', invoice.id, { decorationId: decoration.id, provider, currency: requestedCurrency });
+  await writeAudit(ctx, `start_social_${config.auditKey}_checkout`, 'invoice', invoice.id, { itemId: item.id, provider, currency: requestedCurrency });
   return startInvoicePayment(ctx, { invoiceId: invoice.id, provider });
 };
 
-export const adminProfileDecorations = async (ctx) => {
+const adminProfileCatalog = async (ctx, kind) => {
   await requireAdmin(ctx);
-  await ensureDefaultProfileDecorations(ctx);
+  const config = profileCatalogConfig(kind);
+  await config.ensureDefaults(ctx);
   const rows = await ctx.prisma.socialProfileDecoration.findMany({
-    include: { _count: { select: { ownerships: true, appliedProfiles: true } } },
+    where: { kind: config.kind },
+    include: { _count: { select: { ownerships: true, [config.appliedRelation]: true } } },
     orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }]
   });
-  return rows.map((item) => ({ ...item, owned: false, applied: false, ownershipCount: item._count.ownerships, appliedCount: item._count.appliedProfiles }));
+  return rows.map((item) => ({ ...item, owned: false, applied: false, ownershipCount: item._count.ownerships, appliedCount: item._count[config.appliedRelation] }));
 };
 
-export const adminUpsertProfileDecoration = async (ctx, input) => {
+const adminUpsertProfileCatalogItem = async (ctx, input, kind) => {
   const actor = await requireAdmin(ctx);
+  const config = profileCatalogConfig(kind);
   const name = bounded(input.name, 120);
-  if (!name) throw new AppError('Decoration name is required', 'BAD_USER_INPUT');
+  if (!name) throw new AppError(`${config.title} name is required`, 'BAD_USER_INPUT');
   const assetUrl = bounded(input.assetUrl, 2000);
-  if (!assetUrl || (!assetUrl.startsWith(`/api/social/media/files/${actor.id}/`) && !assetUrl.startsWith('/brand/decorations/'))) {
+  if (!assetUrl || (!assetUrl.startsWith(`/api/social/media/files/${actor.id}/`) && !assetUrl.startsWith(config.brandPrefix))) {
     throw new AppError('Upload the PNG/APNG file from this administrator account first', 'BAD_USER_INPUT');
   }
   const mimeType = bounded(input.mimeType || 'image/png', 100).toLowerCase();
-  if (mimeType !== 'image/png' || !assetUrl.toLowerCase().endsWith('.png')) throw new AppError('Profile decorations must be PNG or animated PNG files', 'BAD_USER_INPUT');
+  if (mimeType !== 'image/png' || !assetUrl.toLowerCase().endsWith('.png')) throw new AppError(`${config.title}s must be PNG or animated PNG files`, 'BAD_USER_INPUT');
   const priceUsd = Math.max(0, Math.min(Number(input.priceUsd || 0), 10000));
   const status = ['active', 'inactive'].includes(String(input.status || '').toLowerCase()) ? String(input.status).toLowerCase() : 'active';
   const data = {
+    kind: config.kind,
     name,
     assetUrl,
-    fileName: bounded(input.fileName || assetUrl.split('/').pop() || 'decoration.png', 255),
+    fileName: bounded(input.fileName || assetUrl.split('/').pop() || `${config.auditKey}.png`, 255),
     mimeType,
     animated: Boolean(input.animated),
     width: Math.max(64, Math.min(Number(input.width || 288), 2048)),
@@ -1630,32 +1685,46 @@ export const adminUpsertProfileDecoration = async (ctx, input) => {
     status,
     sortOrder: Math.max(0, Math.min(Number(input.sortOrder || 0), 100000))
   };
-  let decoration;
+  let item;
   if (input.id) {
     const current = await ctx.prisma.socialProfileDecoration.findUnique({ where: { id: input.id } });
-    if (!current) notFound('Profile decoration');
-    decoration = await ctx.prisma.socialProfileDecoration.update({ where: { id: input.id }, data });
+    if (!current || current.kind !== config.kind) notFound(config.title);
+    item = await ctx.prisma.socialProfileDecoration.update({ where: { id: input.id }, data });
   } else {
-    const base = decorationSlug(input.slug || name) || `decoration-${Date.now()}`;
+    const base = decorationSlug(input.slug || name) || `${config.auditKey}-${Date.now()}`;
     let slug = base;
     for (let attempt = 1; await ctx.prisma.socialProfileDecoration.findUnique({ where: { slug } }); attempt += 1) slug = `${base.slice(0, 72)}-${attempt}`;
-    decoration = await ctx.prisma.socialProfileDecoration.create({ data: { ...data, slug } });
+    item = await ctx.prisma.socialProfileDecoration.create({ data: { ...data, slug } });
   }
-  await writeAudit(ctx, input.id ? 'admin_update_social_profile_decoration' : 'admin_create_social_profile_decoration', 'socialProfileDecoration', decoration.id, { name, priceUsd, animated: data.animated });
-  return { ...decoration, owned: false, applied: false, ownershipCount: 0, appliedCount: 0 };
+  await writeAudit(ctx, input.id ? `admin_update_social_${config.auditKey}` : `admin_create_social_${config.auditKey}`, 'socialProfileDecoration', item.id, { name, priceUsd, animated: data.animated });
+  return { ...item, owned: false, applied: false, ownershipCount: 0, appliedCount: 0 };
 };
 
-export const adminArchiveProfileDecoration = async (ctx, id) => {
+const adminArchiveProfileCatalogItem = async (ctx, id, kind) => {
   await requireAdmin(ctx);
-  const decoration = await ctx.prisma.socialProfileDecoration.findUnique({ where: { id } });
-  if (!decoration) notFound('Profile decoration');
+  const config = profileCatalogConfig(kind);
+  const item = await ctx.prisma.socialProfileDecoration.findUnique({ where: { id } });
+  if (!item || item.kind !== config.kind) notFound(config.title);
   await ctx.prisma.$transaction([
-    ctx.prisma.socialProfile.updateMany({ where: { avatarDecorationId: id }, data: { avatarDecorationId: null } }),
+    ctx.prisma.socialProfile.updateMany({ where: { [config.appliedIdField]: id }, data: { [config.appliedIdField]: null } }),
     ctx.prisma.socialProfileDecoration.update({ where: { id }, data: { status: 'archived' } })
   ]);
-  await writeAudit(ctx, 'admin_archive_social_profile_decoration', 'socialProfileDecoration', id, { name: decoration.name });
+  await writeAudit(ctx, `admin_archive_social_${config.auditKey}`, 'socialProfileDecoration', id, { name: item.name });
   return true;
 };
+
+export const listProfileDecorations = (ctx) => listProfileCatalog(ctx, AVATAR_DECORATION_KIND);
+export const listProfileEffects = (ctx) => listProfileCatalog(ctx, PROFILE_EFFECT_KIND);
+export const applyProfileDecoration = (ctx, id) => applyProfileCatalogItem(ctx, id, AVATAR_DECORATION_KIND);
+export const applyProfileEffect = (ctx, id) => applyProfileCatalogItem(ctx, id, PROFILE_EFFECT_KIND);
+export const startProfileDecorationCheckout = (ctx, id, provider, currency = 'USD') => startProfileCatalogCheckout(ctx, id, provider, currency, AVATAR_DECORATION_KIND);
+export const startProfileEffectCheckout = (ctx, id, provider, currency = 'USD') => startProfileCatalogCheckout(ctx, id, provider, currency, PROFILE_EFFECT_KIND);
+export const adminProfileDecorations = (ctx) => adminProfileCatalog(ctx, AVATAR_DECORATION_KIND);
+export const adminProfileEffects = (ctx) => adminProfileCatalog(ctx, PROFILE_EFFECT_KIND);
+export const adminUpsertProfileDecoration = (ctx, input) => adminUpsertProfileCatalogItem(ctx, input, AVATAR_DECORATION_KIND);
+export const adminUpsertProfileEffect = (ctx, input) => adminUpsertProfileCatalogItem(ctx, input, PROFILE_EFFECT_KIND);
+export const adminArchiveProfileDecoration = (ctx, id) => adminArchiveProfileCatalogItem(ctx, id, AVATAR_DECORATION_KIND);
+export const adminArchiveProfileEffect = (ctx, id) => adminArchiveProfileCatalogItem(ctx, id, PROFILE_EFFECT_KIND);
 
 export const adminUpdateUserStatus = async (ctx, userId, status, reason) => {
   const actor = await requireAdmin(ctx);

@@ -505,17 +505,19 @@ const fulfillPaidInvoice = async (tx, invoice, paidAt = new Date()) => {
     }
   }
 
-  if (invoice.scope === 'social_profile_decoration') {
-    const decorationId = items?.profileDecoration?.decorationId || invoice.scopeId;
+  if (invoice.scope === 'social_profile_decoration' || invoice.scope === 'social_profile_effect') {
+    const catalogItem = invoice.scope === 'social_profile_effect' ? items?.profileEffect : items?.profileDecoration;
+    const decorationId = catalogItem?.decorationId || invoice.scopeId;
     if (decorationId) {
       const decoration = await tx.socialProfileDecoration.findUnique({ where: { id: decorationId } });
-      if (decoration) {
+      const expectedKind = invoice.scope === 'social_profile_effect' ? 'profile-effect' : 'avatar-decoration';
+      if (decoration?.kind === expectedKind) {
         await tx.socialProfileDecorationOwnership.upsert({
           where: { userId_decorationId: { userId: invoice.ownerId, decorationId } },
           create: { userId: invoice.ownerId, decorationId, source: 'purchase', invoiceId: invoice.id, acquiredAt: paidAt },
           update: { source: 'purchase', invoiceId: invoice.id, acquiredAt: paidAt }
         });
-        items = { ...items, decorationOwnedAt: paidAt.toISOString(), decorationId };
+        items = { ...items, catalogItemOwnedAt: paidAt.toISOString(), decorationOwnedAt: paidAt.toISOString(), decorationId };
       }
     }
   }
