@@ -9,9 +9,16 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import android.media.RingtoneManager
+import android.media.MediaRecorder
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.widget.Toast
 import android.widget.ImageView
 import androidx.activity.compose.BackHandler
@@ -89,6 +96,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.view.WindowCompat
@@ -129,11 +137,16 @@ import com.example.social.SocialVerificationOptions
 import com.example.social.SocialVerificationPackage
 import com.example.social.PasswordResetChallenge
 import com.example.social.WebRtcCallManager
+import com.example.social.TiwiCallListenerService
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.github.penfeizhou.animation.apng.APNGDrawable
+import com.canhub.cropper.CropImageContract
+import com.canhub.cropper.CropImageContractOptions
+import com.canhub.cropper.CropImageOptions
+import com.canhub.cropper.CropImageView
 import org.webrtc.EglBase
 import org.webrtc.SurfaceViewRenderer
 import org.webrtc.VideoTrack
@@ -569,7 +582,8 @@ data class Post(
     val visibility: String = "public",
     val commentPermission: String = "everyone",
     val pinned: Boolean = false,
-    val saved: Boolean = false
+    val saved: Boolean = false,
+    val publishedAt: String? = null
 )
 
 data class Reel(
@@ -589,7 +603,8 @@ data class Reel(
     val views: Int = 0,
     val following: Boolean = false,
     val verified: Boolean = false,
-    val badgeType: String = "none"
+    val badgeType: String = "none",
+    val publishedAt: String? = null
 )
 
 private data class TiwiCallRequest(
@@ -645,6 +660,16 @@ private fun formatCount(value: Int): String = when {
     value < 1_000 -> value.toString()
     value < 1_000_000 -> String.format(Locale.US, if (value < 10_000 && value % 1_000 != 0) "%.1fK" else "%.0fK", value / 1_000.0)
     else -> String.format(Locale.US, if (value < 10_000_000 && value % 1_000_000 != 0) "%.1fM" else "%.0fM", value / 1_000_000.0)
+}
+
+private fun isWithinDashboardRange(value: String?, range: String): Boolean {
+    val date = parseSocialDate(value) ?: return range == "28 days"
+    val elapsed = (System.currentTimeMillis() - date.time).coerceAtLeast(0L)
+    return when (range) {
+        "Today" -> elapsed < 86_400_000L
+        "7 days" -> elapsed < 7L * 86_400_000L
+        else -> elapsed < 28L * 86_400_000L
+    }
 }
 
 private fun parseSocialDate(value: String?): Date? {
@@ -725,7 +750,8 @@ private fun toUiPost(value: SocialPost): Post {
         visibility = value.visibility,
         commentPermission = value.commentPermission,
         pinned = value.pinned,
-        saved = value.saved
+        saved = value.saved,
+        publishedAt = value.publishedAt
     )
 }
 
@@ -748,7 +774,8 @@ private fun toUiReel(value: SocialPost): Reel {
         views = value.viewCount,
         following = value.authorProfile?.isFollowing == true,
         verified = value.authorProfile?.verified == true,
-        badgeType = value.authorProfile?.badgeType ?: if (value.authorProfile?.verified == true) "blue" else "none"
+        badgeType = value.authorProfile?.badgeType ?: if (value.authorProfile?.verified == true) "blue" else "none",
+        publishedAt = value.publishedAt
     )
 }
 
@@ -1218,6 +1245,15 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
         repository.refreshAll()
     }
 
+    DisposableEffect(currentUser?.id) {
+        val serviceIntent = Intent(appContext, TiwiCallListenerService::class.java)
+        if (currentUser != null) runCatching { ContextCompat.startForegroundService(appContext, serviceIntent) }
+        else appContext.stopService(serviceIntent)
+        onDispose {
+            if (repository.currentUserId() == null) appContext.stopService(serviceIntent)
+        }
+    }
+
     LaunchedEffect(Unit) {
         while (true) {
             delay(15000)
@@ -1232,6 +1268,20 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
         when {
             segments.size >= 3 && segments[0] == "social" && segments[1] == "post" -> selectedPostId = segments[2]
             segments.size >= 3 && segments[0] == "social" && segments[1] == "profile" -> selectedProfileUserId = segments[2]
+            uri?.scheme == "tiwi" && uri.host == "call" && segments.isNotEmpty() -> {
+                runCatching { repository.getCall(segments[0]) }.getOrNull()?.let { incoming ->
+                    if (incoming.calleeId == repository.currentUserId() && incoming.status in listOf("ringing", "connecting")) {
+                        callRequest = TiwiCallRequest(
+                            conversationId = incoming.conversationId,
+                            peerId = incoming.callerId,
+                            peerName = incoming.caller.name.ifBlank { "Tiwi user" },
+                            peerAvatar = incoming.caller.avatar,
+                            video = incoming.type == "video",
+                            incoming = incoming
+                        )
+                    }
+                }
+            }
         }
         onDeepLinkConsumed()
     }
@@ -2766,6 +2816,7 @@ private fun SocialCallScreen(repository: SocialRepository, request: TiwiCallRequ
     val remoteVideo by manager.remoteVideo.collectAsState()
     val microphoneEnabled by manager.microphoneEnabled.collectAsState()
     val cameraEnabled by manager.cameraEnabled.collectAsState()
+    val speakerEnabled by manager.speakerEnabled.collectAsState()
     var started by remember(request) { mutableStateOf(false) }
 
     val beginCall: () -> Unit = {
@@ -2810,6 +2861,26 @@ private fun SocialCallScreen(repository: SocialRepository, request: TiwiCallRequ
         onEnd()
     }
     DisposableEffect(manager) { onDispose { manager.dispose(sendEnd = false) } }
+    DisposableEffect(request.video, started, speakerEnabled) {
+        if (request.video || !started || speakerEnabled) return@DisposableEffect onDispose { }
+        val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
+        val proximity = sensorManager.getDefaultSensor(Sensor.TYPE_PROXIMITY)
+        val powerManager = context.getSystemService(Context.POWER_SERVICE) as PowerManager
+        val wakeLock = powerManager.newWakeLock(PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK, "Tiwi:call-proximity")
+        val listener = object : SensorEventListener {
+            override fun onSensorChanged(event: SensorEvent) {
+                val near = event.values.firstOrNull()?.let { it < event.sensor.maximumRange } == true
+                if (near && !wakeLock.isHeld) runCatching { wakeLock.acquire(10 * 60 * 1000L) }
+                else if (!near && wakeLock.isHeld) runCatching { wakeLock.release() }
+            }
+            override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
+        }
+        if (proximity != null) sensorManager.registerListener(listener, proximity, SensorManager.SENSOR_DELAY_NORMAL)
+        onDispose {
+            sensorManager.unregisterListener(listener)
+            if (wakeLock.isHeld) runCatching { wakeLock.release() }
+        }
+    }
 
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
         if (request.video && remoteVideo != null) {
@@ -2863,6 +2934,9 @@ private fun SocialCallScreen(repository: SocialRepository, request: TiwiCallRequ
             } else {
                 CallControl(if (microphoneEnabled) Icons.Default.Mic else Icons.Default.MicOff, Color.White.copy(alpha = 0.22f), "Microphone") {
                     manager.toggleMicrophone()
+                }
+                CallControl(if (speakerEnabled) Icons.Default.VolumeUp else Icons.Default.Hearing, Color.White.copy(alpha = 0.22f), "Speaker") {
+                    manager.toggleSpeaker()
                 }
                 CallControl(Icons.Default.CallEnd, Color(0xFFE53935), "End call") {
                     manager.hangUp()
@@ -3898,6 +3972,7 @@ fun ProfileScreen(
     var showEdit by remember { mutableStateOf(false) }
     var showVerified by remember { mutableStateOf(false) }
     var showMenu by remember { mutableStateOf(false) }
+    var showAllLinks by remember { mutableStateOf(false) }
     var showDashboard by remember { mutableStateOf(false) }
     var showConnections by remember { mutableStateOf(false) }
     var connections by remember(userId) { mutableStateOf<List<SocialProfile>>(emptyList()) }
@@ -3993,7 +4068,7 @@ fun ProfileScreen(
         ) {
         LazyColumn(Modifier.fillMaxSize()) {
             item {
-                Box(Modifier.fillMaxWidth().height(132.dp)) {
+                Box(Modifier.fillMaxWidth().height(132.dp).clip(RoundedCornerShape(bottomStart = 20.dp, bottomEnd = 20.dp))) {
                     TiwiAvatar(profile?.coverUrl, R.drawable.img_tiwi_cover, Modifier.fillMaxSize(), ContentScale.Crop)
                     if (isOwn) FilledTonalIconButton(
                         onClick = { showEdit = true },
@@ -4013,6 +4088,7 @@ fun ProfileScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(name, fontWeight = FontWeight.Bold)
                         if (profile?.verified == true) VerifiedBadge(profile?.badgeType, 17.dp, Modifier.padding(start = 3.dp), onClick = { showVerified = true })
+                        if (!profile?.category.isNullOrBlank()) Text(" · ${profile?.category.orEmpty()}", color = Color(0xFF667085), fontSize = 11.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 2.dp))
                     }
                     if (!profile?.bio.isNullOrBlank()) Text(profile?.bio.orEmpty(), fontSize = 14.sp)
                     val socialLinks = profile?.preferences?.profileObjects("socialLinks").orEmpty().ifEmpty {
@@ -4020,50 +4096,7 @@ fun ProfileScreen(
                             listOf(mapOf<String, Any?>("label" to "Social media", "url" to it))
                         }.orEmpty()
                     }
-                    socialLinks.firstOrNull()?.let { link ->
-                        val label = link["label"]?.toString().orEmpty()
-                        val rawUrl = link["url"]?.toString().orEmpty()
-                        Row(
-                            Modifier.padding(top = 6.dp).clickable(enabled = rawUrl.isNotBlank()) {
-                                val destination = if (rawUrl.startsWith("http://") || rawUrl.startsWith("https://")) rawUrl else "https://$rawUrl"
-                                runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(destination))) }
-                                    .onFailure { Toast.makeText(context, "This link could not be opened", Toast.LENGTH_SHORT).show() }
-                            },
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(Icons.Outlined.Link, null, tint = TiwiBlue, modifier = Modifier.size(18.dp))
-                            Text(label.ifBlank { rawUrl }, color = TiwiBlue, fontWeight = FontWeight.Bold, fontSize = 13.sp, modifier = Modifier.padding(start = 6.dp))
-                        }
-                    }
-                    if (!profile?.category.isNullOrBlank()) Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Outlined.Badge, null, modifier = Modifier.size(18.dp))
-                        Text(profile?.category.orEmpty(), fontWeight = FontWeight.ExtraBold, fontSize = 13.sp, modifier = Modifier.padding(start = 6.dp))
-                    }
-                    if (!profile?.about.isNullOrBlank()) {
-                        Text("About", fontWeight = FontWeight.ExtraBold, fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp))
-                        Text(profile?.about.orEmpty(), fontSize = 13.sp, lineHeight = 18.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    }
-                    if (!profile?.location.isNullOrBlank()) Text(profile?.location.orEmpty(), fontSize = 13.sp, modifier = Modifier.padding(top = 5.dp))
-                    if (connections.isNotEmpty()) {
-                        Row(Modifier.padding(top = 10.dp).clickable { showConnections = true }, verticalAlignment = Alignment.CenterVertically) {
-                            Box(Modifier.width((32 + ((connections.take(3).size - 1).coerceAtLeast(0) * 22)).dp).height(34.dp)) {
-                                connections.take(3).forEachIndexed { index, connection ->
-                                    TiwiAvatar(
-                                        connection.user.avatar,
-                                        R.drawable.img_tiwi_avatar_1,
-                                        Modifier.offset(x = (index * 22).dp).size(34.dp).border(2.dp, Color.White, CircleShape),
-                                        ContentScale.Crop
-                                    )
-                                }
-                            }
-                            Text(
-                                "${formatCount(connections.size)} mutual ${if (connections.size == 1) "connection" else "connections"}",
-                                color = Color(0xFF475467),
-                                fontSize = 13.sp,
-                                modifier = Modifier.padding(start = 8.dp)
-                            )
-                        }
-                    }
+                    ProfileCompactInfo(profile, socialLinks, onShowAllLinks = { showAllLinks = true })
                 }
                 Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     if (isOwn) {
@@ -4095,17 +4128,6 @@ fun ProfileScreen(
             }
             when (selectedTab) {
                 0 -> {
-                    item {
-                        ProfileAboutOverview(
-                            profile = profile,
-                            connections = connections,
-                            isOwn = isOwn,
-                            onEdit = { showEdit = true },
-                            onSeeMore = { selectedTab = 2 },
-                            onSeeConnections = { showConnections = true },
-                            onConnectionClick = { id -> onConnectionClick(id) }
-                        )
-                    }
                     items(posts, key = { it.id }) { post -> PostCard(post, repository, onShareClick = { onShare(post) }, onOpen = { onPostClick(post.id) }, onEditRequest = { onEditPost(it.id) }, onOpenLinkedPost = onPostClick) }
                 }
                 1 -> item { LazyRow(contentPadding = PaddingValues(4.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) { items(reels) { ReelItem(it) } } }
@@ -4121,6 +4143,7 @@ fun ProfileScreen(
         }
     }
     if (showVerified) VerifiedInfoSheet(name, profile?.user?.avatar, profile?.badgeType ?: "blue", profile?.avatarDecoration, onDismiss = { showVerified = false })
+    if (showAllLinks) ProfileLinksSheet(profile?.preferences?.profileObjects("socialLinks").orEmpty(), onDismiss = { showAllLinks = false })
 }
 
 @Composable
@@ -4131,6 +4154,103 @@ private fun ProfileAboutRow(icon: ImageVector, text: String, supporting: String?
         Column(Modifier.padding(start = 14.dp)) {
             Text(text, fontSize = 15.sp, fontWeight = FontWeight.Medium, lineHeight = 20.sp)
             if (!supporting.isNullOrBlank()) Text(supporting, color = Color(0xFF667085), fontSize = 12.sp, modifier = Modifier.padding(top = 2.dp))
+        }
+    }
+}
+
+private fun openProfileUrl(context: Context, rawUrl: String) {
+    if (rawUrl.isBlank()) return
+    val destination = if (rawUrl.startsWith("http://") || rawUrl.startsWith("https://")) rawUrl else "https://$rawUrl"
+    runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(destination))) }
+        .onFailure { Toast.makeText(context, "This link could not be opened", Toast.LENGTH_SHORT).show() }
+}
+
+@Composable
+private fun ProfileCompactFact(icon: ImageVector, text: String, onClick: (() -> Unit)? = null) {
+    if (text.isBlank()) return
+    Row(
+        Modifier.then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier).padding(end = 7.dp, bottom = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(icon, null, tint = if (onClick != null) TiwiBlue else Color.Black, modifier = Modifier.size(17.dp))
+        Text(
+            text,
+            color = if (onClick != null) TiwiBlue else Color(0xFF1D2939),
+            fontWeight = FontWeight.ExtraBold,
+            fontSize = 12.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(start = 4.dp).widthIn(max = 185.dp)
+        )
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ProfileCompactInfo(
+    profile: SocialProfile,
+    socialLinks: List<Map<String, Any?>>,
+    onShowAllLinks: () -> Unit
+) {
+    val context = LocalContext.current
+    val preferences = profile.preferences
+    val work = preferences.profileString("work")
+    val education = preferences.profileString("education")
+    val firstLink = socialLinks.firstOrNull()
+    val firstLinkLabel = firstLink?.get("label")?.toString().orEmpty()
+    val firstLinkUrl = firstLink?.get("url")?.toString().orEmpty()
+    FlowRow(
+        Modifier.fillMaxWidth().padding(top = 7.dp),
+        horizontalArrangement = Arrangement.spacedBy(1.dp),
+        verticalArrangement = Arrangement.spacedBy(1.dp)
+    ) {
+        ProfileCompactFact(Icons.Outlined.Badge, profile.category.orEmpty())
+        ProfileCompactFact(Icons.Outlined.LocationOn, profile.location.orEmpty())
+        ProfileCompactFact(Icons.Outlined.WorkOutline, work)
+        ProfileCompactFact(Icons.Outlined.School, education)
+        if (firstLink != null) ProfileCompactFact(Icons.Outlined.Link, firstLinkLabel.ifBlank { firstLinkUrl }) {
+            openProfileUrl(context, firstLinkUrl)
+        }
+        if (socialLinks.size > 1) {
+            Text(
+                "+${socialLinks.size - 1}",
+                color = TiwiBlue,
+                fontWeight = FontWeight.ExtraBold,
+                fontSize = 12.sp,
+                modifier = Modifier.clickable(onClick = onShowAllLinks).padding(horizontal = 3.dp, vertical = 2.dp)
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ProfileLinksSheet(links: List<Map<String, Any?>>, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = Color.White,
+        tonalElevation = 0.dp,
+        dragHandle = { BottomSheetDefaults.DragHandle(color = Color(0xFFD0D5DD)) }
+    ) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 17.dp)) {
+            Text("Links", fontWeight = FontWeight.Black, fontSize = 20.sp, modifier = Modifier.padding(bottom = 8.dp))
+            links.forEach { link ->
+                val label = link["label"]?.toString().orEmpty()
+                val url = link["url"]?.toString().orEmpty()
+                Row(
+                    Modifier.fillMaxWidth().clickable { openProfileUrl(context, url); onDismiss() }.padding(vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Outlined.Link, null, tint = TiwiBlue, modifier = Modifier.size(22.dp))
+                    Column(Modifier.weight(1f).padding(start = 11.dp)) {
+                        Text(label.ifBlank { "Link" }, fontWeight = FontWeight.ExtraBold)
+                        Text(url, color = Color(0xFF667085), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    Icon(Icons.Default.ChevronRight, null, tint = Color(0xFF98A2B3))
+                }
+            }
+            Spacer(Modifier.navigationBarsPadding().height(12.dp))
         }
     }
 }
@@ -4224,11 +4344,42 @@ private fun ProfileAboutDetails(profile: SocialProfile, connections: List<Social
             listOf(mapOf<String, Any?>("label" to "Social media", "url" to it))
         }.orEmpty()
     }
+    val joinedYear = parseSocialDate(profile.createdAt)?.let { SimpleDateFormat("yyyy", Locale.US).format(it) }
     Column(Modifier.fillMaxWidth().background(Color.White).padding(horizontal = 16.dp, vertical = 14.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text("About", Modifier.weight(1f), fontWeight = FontWeight.ExtraBold, fontSize = 21.sp)
             if (isOwn) IconButton(onClick = onEdit) { Icon(Icons.Outlined.Edit, "Edit about") }
         }
+        Surface(Modifier.fillMaxWidth().padding(top = 4.dp), color = Color(0xFFF4F7FB), shape = RoundedCornerShape(16.dp), tonalElevation = 0.dp) {
+            Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                DecoratedAvatar(profile.user.avatar, R.drawable.img_tiwi_avatar_1, profile.avatarDecoration, Modifier.size(58.dp), animateDecoration = false)
+                Column(Modifier.padding(start = 12.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(profile.user.name.ifBlank { profile.username }, fontWeight = FontWeight.Black, fontSize = 17.sp)
+                        if (profile.verified) VerifiedBadge(profile.badgeType, 15.dp, Modifier.padding(start = 3.dp))
+                    }
+                    Text("Alias · @${profile.username}", color = Color(0xFF475467), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    Text(if (joinedYear != null) "Joined Tiwi in $joinedYear" else "Tiwi member", color = Color(0xFF667085), fontSize = 12.sp)
+                }
+            }
+        }
+        if (!profile.about.isNullOrBlank()) Surface(
+            Modifier.fillMaxWidth().padding(top = 12.dp),
+            color = Color(0xFFEAF3FF),
+            shape = RoundedCornerShape(16.dp),
+            tonalElevation = 0.dp
+        ) {
+            Row(Modifier.padding(14.dp), verticalAlignment = Alignment.Top) {
+                Box(Modifier.size(34.dp).background(Color.White, CircleShape), contentAlignment = Alignment.Center) {
+                    Icon(Icons.Outlined.Info, null, tint = TiwiBlue, modifier = Modifier.size(19.dp))
+                }
+                Column(Modifier.padding(start = 11.dp)) {
+                    Text("About ${profile.user.name.ifBlank { profile.username }}", fontWeight = FontWeight.ExtraBold, fontSize = 15.sp)
+                    Text(profile.about.orEmpty(), color = Color(0xFF344054), fontSize = 13.sp, lineHeight = 19.sp, modifier = Modifier.padding(top = 4.dp))
+                }
+            }
+        }
+        Text("Overview", fontWeight = FontWeight.Black, fontSize = 18.sp, modifier = Modifier.padding(top = 18.dp, bottom = 4.dp))
         if (!profile.bio.isNullOrBlank()) ProfileAboutRow(Icons.Outlined.WavingHand, profile.bio.orEmpty(), "Bio")
         if (!profile.category.isNullOrBlank()) ProfileAboutRow(Icons.Outlined.Badge, profile.category.orEmpty(), "Profile category")
         ProfileAboutRow(Icons.Outlined.LocationOn, profile.location.orEmpty(), "Current city")
@@ -4236,17 +4387,18 @@ private fun ProfileAboutDetails(profile: SocialProfile, connections: List<Social
         ProfileAboutRow(Icons.Outlined.Cake, preferences.profileString("birthday"), "Birthday")
         ProfileAboutRow(Icons.Outlined.FavoriteBorder, preferences.profileString("relationship"), "Relationship")
         ProfileAboutRow(Icons.Outlined.FamilyRestroom, familyNames, "Family members")
+        Text("Work and identity", fontWeight = FontWeight.Black, fontSize = 18.sp, modifier = Modifier.padding(top = 14.dp, bottom = 4.dp))
         ProfileAboutRow(Icons.Outlined.Person, preferences.profileString("gender"), "Gender and pronouns")
         ProfileAboutRow(Icons.Outlined.Translate, preferences.profileStrings("languages").joinToString(), "Languages")
         ProfileAboutRow(Icons.Outlined.WorkOutline, preferences.profileString("work"), "Work")
         ProfileAboutRow(Icons.Outlined.School, preferences.profileString("education"), "Education")
+        Text("Links and interests", fontWeight = FontWeight.Black, fontSize = 18.sp, modifier = Modifier.padding(top = 14.dp, bottom = 4.dp))
         socialLinks.forEach { link ->
             ProfileAboutRow(Icons.Outlined.AlternateEmail, link["label"]?.toString().orEmpty(), link["url"]?.toString())
         }
         ProfileAboutRow(Icons.Outlined.Link, profile.website.orEmpty(), "Website")
         ProfileAboutRow(Icons.Outlined.Interests, preferences.profileStrings("hobbies").joinToString(), "Hobbies")
         ProfileAboutRow(Icons.Outlined.MusicNote, preferences.profileStrings("interests").joinToString(), "Interests")
-        if (!profile.about.isNullOrBlank()) ProfileAboutRow(Icons.Outlined.Info, profile.about.orEmpty(), "More about ${profile.user.name.ifBlank { profile.username }}")
         Spacer(Modifier.navigationBarsPadding().height(12.dp))
     }
 }
@@ -4390,9 +4542,12 @@ private fun DashboardAnalyticsPage(
     onPostClick: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val views = posts.sumOf { it.views } + reels.sumOf { it.views }
-    val interactions = posts.sumOf { it.likes + it.comments + it.shares } + reels.sumOf { it.likes + it.comments }
-    val latest = posts.maxByOrNull { it.views }
+    var selectedRange by remember { mutableStateOf("28 days") }
+    val rangePosts = remember(posts, selectedRange) { posts.filter { isWithinDashboardRange(it.publishedAt, selectedRange) } }
+    val rangeReels = remember(reels, selectedRange) { reels.filter { isWithinDashboardRange(it.publishedAt, selectedRange) } }
+    val views = rangePosts.sumOf { it.views } + rangeReels.sumOf { it.views }
+    val interactions = rangePosts.sumOf { it.likes + it.comments + it.shares } + rangeReels.sumOf { it.likes + it.comments }
+    val latest = rangePosts.maxByOrNull { it.views }
     LazyColumn(modifier, contentPadding = PaddingValues(bottom = 18.dp)) {
         item { DashboardNavigation(onSection) }
         item {
@@ -4409,24 +4564,24 @@ private fun DashboardAnalyticsPage(
         }
         item {
             Row(Modifier.fillMaxWidth().padding(horizontal = 17.dp, vertical = 18.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
-                DashboardActivityRing(Icons.Outlined.Article, "${posts.size}/7", "Posts", posts.size / 7f, TiwiBlue, Modifier.weight(1f))
-                DashboardActivityRing(Icons.Outlined.AutoStories, "${reels.size}/14", "Reels", reels.size / 14f, Color(0xFFF79009), Modifier.weight(1f))
-                DashboardActivityRing(Icons.Outlined.FavoriteBorder, formatCount(interactions), "Reception", if (interactions > 0) .72f else 0f, Color(0xFFD946EF), Modifier.weight(1f))
+                DashboardActivityRing(Icons.Outlined.GridView, "${posts.size}/7", "Posts", posts.size / 7f, TiwiBlue, Modifier.weight(1f))
+                DashboardActivityRing(Icons.Outlined.PlayCircleOutline, "${reels.size}/14", "Reels", reels.size / 14f, Color(0xFFF79009), Modifier.weight(1f))
+                DashboardActivityRing(Icons.Outlined.ThumbUpAlt, formatCount(interactions), "Reception", (interactions / 100f).coerceAtMost(1f), Color(0xFFD946EF), Modifier.weight(1f))
             }
         }
         item {
             Text("Analytics", fontWeight = FontWeight.Black, fontSize = 22.sp, modifier = Modifier.padding(horizontal = 17.dp, vertical = 8.dp))
             LazyRow(contentPadding = PaddingValues(horizontal = 17.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(listOf("28 days", "7 days", "Today")) { range ->
-                    Surface(color = if (range == "28 days") Color(0xFFDDEEFF) else Color.White, shape = RoundedCornerShape(50), tonalElevation = 0.dp) {
-                        Text(range, color = if (range == "28 days") TiwiBlue else Color.Black, modifier = Modifier.padding(horizontal = 16.dp, vertical = 9.dp))
+                    Surface(Modifier.clickable { selectedRange = range }, color = if (range == selectedRange) Color(0xFFDDEEFF) else Color.White, shape = RoundedCornerShape(50), tonalElevation = 0.dp) {
+                        Text(range, color = if (range == selectedRange) TiwiBlue else Color.Black, modifier = Modifier.padding(horizontal = 16.dp, vertical = 9.dp))
                     }
                 }
             }
         }
         item {
             Row(Modifier.fillMaxWidth().padding(horizontal = 17.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                ProfileDashboardMetric("Views", formatCount(views), Icons.Outlined.Visibility, TiwiBlue, Modifier.weight(1f))
+                ProfileDashboardMetric("Views", formatCount(views), Icons.Outlined.Insights, TiwiBlue, Modifier.weight(1f))
                 ProfileDashboardMetric("Estimated earnings", "--", Icons.Outlined.Payments, Color(0xFF12B76A), Modifier.weight(1f))
             }
             Row(Modifier.fillMaxWidth().padding(horizontal = 17.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -4519,7 +4674,7 @@ private fun DashboardContentCard(item: DashboardContentItem, modifier: Modifier 
             else -> Text(item.title, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, lineHeight = 19.sp, maxLines = 6, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(9.dp))
         }
         Row(Modifier.align(Alignment.BottomStart).padding(6.dp).background(Color.Black.copy(alpha = .55f), RoundedCornerShape(5.dp)).padding(horizontal = 6.dp, vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Outlined.Visibility, null, tint = Color.White, modifier = Modifier.size(13.dp))
+            Icon(if (item.video) Icons.Default.PlayArrow else Icons.Outlined.BarChart, null, tint = Color.White, modifier = Modifier.size(12.dp))
             Text(formatCount(item.views), color = Color.White, fontSize = 10.sp, modifier = Modifier.padding(start = 3.dp))
         }
         if (item.video) Icon(Icons.Default.Videocam, "Video", tint = Color.White, modifier = Modifier.align(Alignment.TopEnd).padding(6.dp).size(18.dp))
@@ -4540,7 +4695,7 @@ private fun DashboardContentPage(
     val allItems = remember(posts, reels) { dashboardContentItems(posts, reels) }
     val visibleItems = remember(allItems, tab, contentType, sortViews) {
         var result = when (tab) {
-            "Voice translations" -> allItems.filter { it.video }
+            "Videos" -> allItems.filter { it.video }
             "Collaborations" -> allItems.filter { it.collaboration }
             "Insights" -> allItems.sortedByDescending { it.views }
             else -> allItems
@@ -4554,7 +4709,7 @@ private fun DashboardContentPage(
     }
     Column(modifier.background(Color.White)) {
         LazyRow(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(listOf("Library", "Voice translations", "Collaborations", "Insights")) { item ->
+            items(listOf("Library", "Videos", "Collaborations", "Insights")) { item ->
                 Surface(Modifier.clickable { tab = item }, color = if (tab == item) Color(0xFFDDEEFF) else Color.White, shape = RoundedCornerShape(50), tonalElevation = 0.dp) {
                     Text(item, color = if (tab == item) TiwiBlue else Color.Black, modifier = Modifier.padding(horizontal = 15.dp, vertical = 9.dp), maxLines = 1)
                 }
@@ -4572,7 +4727,7 @@ private fun DashboardContentPage(
             item {
                 Surface(Modifier.clickable { sortViews = !sortViews }, color = if (sortViews) Color(0xFFDDEEFF) else Color(0xFFEEF0F3), shape = RoundedCornerShape(9.dp), tonalElevation = 0.dp) {
                     Row(Modifier.padding(horizontal = 12.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Outlined.Visibility, null, tint = if (sortViews) TiwiBlue else Color.Black, modifier = Modifier.size(18.dp))
+                        Icon(Icons.Outlined.TrendingUp, null, tint = if (sortViews) TiwiBlue else Color.Black, modifier = Modifier.size(18.dp))
                         Text(if (sortViews) "Top views" else "Original order", color = if (sortViews) TiwiBlue else Color.Black, modifier = Modifier.padding(start = 6.dp))
                     }
                 }
@@ -4582,7 +4737,7 @@ private fun DashboardContentPage(
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
                     when (tab) {
-                        "Voice translations" -> "No video content is available for voice translation."
+                        "Videos" -> "No video content is available."
                         "Collaborations" -> "No collaboration content yet."
                         else -> "No content found."
                     },
@@ -4607,6 +4762,63 @@ private fun DashboardContentPage(
 private data class DashboardCommentItem(val comment: SocialComment, val post: Post, val responded: Boolean)
 
 @Composable
+private fun DashboardCommunityGroupDetail(
+    repository: SocialRepository,
+    group: SocialGroup,
+    onBack: () -> Unit,
+    onPostClick: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var members by remember(group.id) { mutableStateOf<List<SocialGroupMember>>(emptyList()) }
+    var groupPosts by remember(group.id) { mutableStateOf<List<SocialPost>>(emptyList()) }
+    var loading by remember(group.id) { mutableStateOf(true) }
+    LaunchedEffect(group.id) {
+        loading = true
+        members = runCatching { repository.groupMembers(group.id) }.getOrDefault(emptyList())
+        groupPosts = runCatching { repository.groupPosts(group.id) }.getOrDefault(emptyList())
+        loading = false
+    }
+    BackHandler(onBack = onBack)
+    Column(modifier.background(Color.White)) {
+        Row(Modifier.fillMaxWidth().height(50.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back to groups") }
+            Text(group.name, Modifier.weight(1f), fontWeight = FontWeight.ExtraBold, fontSize = 18.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        if (loading) DashboardLoadingPlaceholder(Modifier.weight(1f))
+        else LazyColumn(Modifier.weight(1f)) {
+            item {
+                Box(Modifier.fillMaxWidth().height(150.dp).background(Color(0xFFEAF3FF))) {
+                    if (!group.coverUrl.isNullOrBlank()) AsyncImage(group.coverUrl, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                    else Icon(Icons.Outlined.Groups, null, tint = TiwiBlue, modifier = Modifier.align(Alignment.Center).size(48.dp))
+                }
+                Column(Modifier.padding(16.dp)) {
+                    Text(group.name, fontWeight = FontWeight.Black, fontSize = 21.sp)
+                    if (!group.description.isNullOrBlank()) Text(group.description.orEmpty(), color = Color(0xFF475467), fontSize = 13.sp, lineHeight = 18.sp, modifier = Modifier.padding(top = 4.dp))
+                    Text("${formatCount(group.memberCount)} members · ${group.privacy.replaceFirstChar { it.uppercase() }} · ${group.viewerRole ?: "member"}", color = Color(0xFF667085), fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
+                }
+            }
+            if (members.isNotEmpty()) item {
+                Text("Members", fontWeight = FontWeight.Black, fontSize = 18.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+                LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    items(members.take(12), key = { it.userId }) { member ->
+                        Column(Modifier.width(68.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                            DecoratedAvatar(member.user.avatar, R.drawable.img_tiwi_avatar_1, member.profile?.avatarDecoration, Modifier.size(52.dp), animateDecoration = false)
+                            Text(member.user.name, fontSize = 10.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))
+                        }
+                    }
+                }
+            }
+            item { Text("Group content", fontWeight = FontWeight.Black, fontSize = 18.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) }
+            if (groupPosts.isEmpty()) item { Text("No group posts yet.", color = Color(0xFF667085), modifier = Modifier.padding(horizontal = 16.dp)) }
+            else items(groupPosts, key = { it.id }) { post ->
+                PostCard(toUiPost(post), repository, onOpen = { onPostClick(post.id) })
+            }
+            item { Spacer(Modifier.navigationBarsPadding().height(10.dp)) }
+        }
+    }
+}
+
+@Composable
 private fun DashboardCommunityPage(
     repository: SocialRepository,
     posts: List<Post>,
@@ -4618,6 +4830,7 @@ private fun DashboardCommunityPage(
     var loading by remember { mutableStateOf(true) }
     var commentItems by remember { mutableStateOf<List<DashboardCommentItem>>(emptyList()) }
     var groups by remember { mutableStateOf<List<SocialGroup>>(emptyList()) }
+    var selectedGroup by remember { mutableStateOf<SocialGroup?>(null) }
     val currentUserId = repository.currentUserId()
     LaunchedEffect(Unit) {
         loading = true
@@ -4630,6 +4843,10 @@ private fun DashboardCommunityPage(
         }.sortedByDescending { it.comment.createdAt }
         groups = runCatching { repository.groups(mine = true) }.getOrDefault(emptyList())
         loading = false
+    }
+    selectedGroup?.let { group ->
+        DashboardCommunityGroupDetail(repository, group, onBack = { selectedGroup = null }, onPostClick = onPostClick, modifier = modifier)
+        return
     }
     Column(modifier.background(Color.White)) {
         LazyRow(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -4673,7 +4890,7 @@ private fun DashboardCommunityPage(
                 groups.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("You have not joined a Tiwi group yet.", color = Color(0xFF667085)) }
                 else -> LazyColumn(Modifier.weight(1f)) {
                     items(groups, key = { it.id }) { group ->
-                        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Row(Modifier.fillMaxWidth().clickable { selectedGroup = group }.padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                             Box(Modifier.size(52.dp).background(Color(0xFFEAF3FF), RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
                                 if (!group.coverUrl.isNullOrBlank()) AsyncImage(group.coverUrl, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                                 else Icon(Icons.Outlined.Groups, null, tint = TiwiBlue)
@@ -4682,6 +4899,7 @@ private fun DashboardCommunityPage(
                                 Text(group.name, fontWeight = FontWeight.ExtraBold)
                                 Text("${formatCount(group.memberCount)} members · ${group.viewerRole ?: "member"}", color = Color(0xFF667085), fontSize = 12.sp)
                             }
+                            Icon(Icons.Default.ChevronRight, "Open group", tint = Color(0xFF98A2B3))
                         }
                     }
                 }
@@ -4952,6 +5170,22 @@ private fun Map<String, Any?>.profileObjects(key: String): List<Map<String, Any?
     (this[key] as? List<*>)?.mapNotNull { item ->
         (item as? Map<*, *>)?.entries?.associate { (mapKey, value) -> mapKey.toString() to value }
     }.orEmpty()
+
+private fun tiwiProfileCropOptions(uri: android.net.Uri, cover: Boolean): CropImageContractOptions {
+    val options = CropImageOptions().apply {
+        guidelines = CropImageView.Guidelines.ON
+        cropShape = if (cover) CropImageView.CropShape.RECTANGLE else CropImageView.CropShape.OVAL
+        fixAspectRatio = true
+        aspectRatioX = if (cover) 16 else 1
+        aspectRatioY = if (cover) 7 else 1
+        allowRotation = true
+        allowFlipping = true
+        outputCompressFormat = Bitmap.CompressFormat.JPEG
+        outputCompressQuality = 92
+        activityTitle = if (cover) "Adjust cover photo" else "Adjust profile photo"
+    }
+    return CropImageContractOptions(uri = uri, cropImageOptions = options)
+}
 
 @Composable
 private fun ProfileEditSection(title: String, content: @Composable ColumnScope.() -> Unit) {
@@ -5230,11 +5464,28 @@ private fun EditProfilePage(repository: SocialRepository, profile: SocialProfile
     LaunchedEffect(profile?.userId) {
         availableConnections = runCatching { repository.connections(profile?.userId, 100) }.getOrDefault(emptyList())
     }
+    fun uploadAdjustedPhoto(uri: android.net.Uri, kind: String, onUploaded: (String) -> Unit) {
+        scope.launch {
+            busy = true
+            runCatching { repository.uploadMedia(context.contentResolver, uri, kind).url }
+                .onSuccess(onUploaded)
+                .onFailure { Toast.makeText(context, it.message ?: "Photo upload failed", Toast.LENGTH_LONG).show() }
+            busy = false
+        }
+    }
+    val avatarCropper = rememberLauncherForActivityResult(CropImageContract()) { result ->
+        if (result.isSuccessful) result.uriContent?.let { uploadAdjustedPhoto(it, "profile") { uploaded -> avatarUrl = uploaded } }
+        else result.error?.let { Toast.makeText(context, it.message ?: "Profile photo adjustment failed", Toast.LENGTH_LONG).show() }
+    }
+    val coverCropper = rememberLauncherForActivityResult(CropImageContract()) { result ->
+        if (result.isSuccessful) result.uriContent?.let { uploadAdjustedPhoto(it, "cover") { uploaded -> coverUrl = uploaded } }
+        else result.error?.let { Toast.makeText(context, it.message ?: "Cover photo adjustment failed", Toast.LENGTH_LONG).show() }
+    }
     val avatarPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        if (uri != null) scope.launch { busy = true; runCatching { repository.uploadMedia(context.contentResolver, uri, "profile").url }.onSuccess { avatarUrl = it }.onFailure { Toast.makeText(context, it.message ?: "Photo upload failed", Toast.LENGTH_LONG).show() }; busy = false }
+        uri?.let { avatarCropper.launch(tiwiProfileCropOptions(it, cover = false)) }
     }
     val coverPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        if (uri != null) scope.launch { busy = true; runCatching { repository.uploadMedia(context.contentResolver, uri, "cover").url }.onSuccess { coverUrl = it }.onFailure { Toast.makeText(context, it.message ?: "Cover upload failed", Toast.LENGTH_LONG).show() }; busy = false }
+        uri?.let { coverCropper.launch(tiwiProfileCropOptions(it, cover = true)) }
     }
     fun save() {
         if (busy || username.isBlank()) return
@@ -5879,6 +6130,7 @@ private fun EditProfileDialog(repository: SocialRepository, profile: SocialProfi
     )
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun MessagesScreen(repository: SocialRepository, onBack: () -> Unit, onChatClick: (SocialConversation) -> Unit) {
     val chats by repository.conversations.collectAsState()
@@ -5886,12 +6138,16 @@ fun MessagesScreen(repository: SocialRepository, onBack: () -> Unit, onChatClick
     var chatQuery by remember { mutableStateOf("") }
     var composerMode by remember { mutableStateOf<String?>(null) }
     var messageTab by remember { mutableIntStateOf(0) }
+    var messengerTab by remember { mutableIntStateOf(0) }
+    var selectedConversation by remember { mutableStateOf<SocialConversation?>(null) }
     var stories by remember { mutableStateOf<List<SocialPost>>(emptyList()) }
     var selectedStory by remember { mutableStateOf<SocialPost?>(null) }
     var storyUploading by remember { mutableStateOf(false) }
     val currentUserId = repository.currentUserId()
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val messengerPreferences = remember { context.getSharedPreferences("tiwi_messenger", Context.MODE_PRIVATE) }
+    var pinnedIds by remember { mutableStateOf(messengerPreferences.getStringSet("pinned_conversations", emptySet()).orEmpty()) }
     val contacts = remember(chats, currentUserId) {
         chats.filter { it.requestStatus == "accepted" }
             .mapNotNull { it.members.firstOrNull { member -> member.userId != currentUserId } }
@@ -5900,11 +6156,12 @@ fun MessagesScreen(repository: SocialRepository, onBack: () -> Unit, onChatClick
     val activeContacts = remember(contacts) { contacts.filter { isSociallyActive(it.user.socialLastActiveAt) }.take(12) }
     val storyCards = remember(stories, currentUserId) { stories.filter { it.authorId != currentUserId }.distinctBy { it.authorId } }
     val myStory = remember(stories, currentUserId) { stories.firstOrNull { it.authorId == currentUserId } }
-    val visibleChats = remember(chats, chatQuery, currentUserId, messageTab) {
+    val visibleChats = remember(chats, chatQuery, currentUserId, messageTab, pinnedIds) {
         val byRequest = chats.filter { chat -> if (messageTab == 0) chat.requestStatus == "accepted" || chat.requestedById == currentUserId else chat.requestStatus == "pending" && chat.requestedById != currentUserId }
-        if (chatQuery.isBlank()) byRequest else byRequest.filter { chat ->
+        val filtered = if (chatQuery.isBlank()) byRequest else byRequest.filter { chat ->
             chat.title?.contains(chatQuery, true) == true || chat.members.any { it.userId != currentUserId && it.user.name.contains(chatQuery, true) }
         }
+        filtered.sortedWith(compareByDescending<SocialConversation> { it.id in pinnedIds }.thenByDescending { it.updatedAt })
     }
     val storyPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null) scope.launch {
@@ -5918,8 +6175,15 @@ fun MessagesScreen(repository: SocialRepository, onBack: () -> Unit, onChatClick
         }
     }
     LaunchedEffect(Unit) {
-        runCatching { repository.refreshConversations() }
+        var previousUnread = chats.sumOf { it.unreadCount }
         stories = runCatching { repository.stories() }.getOrDefault(emptyList())
+        while (true) {
+            val refreshed = runCatching { repository.refreshConversations(force = true) }.getOrDefault(emptyList())
+            val currentUnread = refreshed.sumOf { it.unreadCount }
+            if (currentUnread > previousUnread && messengerPreferences.getBoolean("sounds", true)) playPostPublishedSound(context)
+            previousUnread = currentUnread
+            delay(3000)
+        }
     }
     selectedStory?.let { story ->
         BackHandler { selectedStory = null }
@@ -5935,7 +6199,18 @@ fun MessagesScreen(repository: SocialRepository, onBack: () -> Unit, onChatClick
         )
         return
     }
-    Column(modifier = Modifier.fillMaxSize().background(Color(0xFFF7F8FA))) {
+    Scaffold(
+        containerColor = Color.White,
+        bottomBar = {
+            MessengerBottomNavigation(
+                selected = messengerTab,
+                unread = chats.sumOf { it.unreadCount },
+                onSelect = { messengerTab = it }
+            )
+        }
+    ) { messengerPadding ->
+    when (messengerTab) {
+    0 -> Column(modifier = Modifier.fillMaxSize().padding(messengerPadding).background(Color.White)) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -5945,7 +6220,7 @@ fun MessagesScreen(repository: SocialRepository, onBack: () -> Unit, onChatClick
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "Back") }
-            Text("Chats", style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold))
+            Text("Tiwi Messenger", style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Black))
             Spacer(modifier = Modifier.weight(1f))
             IconButton(onClick = { composerMode = "group" }) { Icon(Icons.Default.GroupAdd, contentDescription = "Create group", tint = TiwiBlue) }
             IconButton(onClick = { composerMode = "direct" }) { Icon(Icons.Default.Edit, contentDescription = "New Message", tint = TiwiBlue) }
@@ -6082,7 +6357,10 @@ fun MessagesScreen(repository: SocialRepository, onBack: () -> Unit, onChatClick
                     }
                 } else {
                     Surface(
-                        modifier = Modifier.fillMaxWidth().clickable { onChatClick(chat) },
+                        modifier = Modifier.fillMaxWidth().combinedClickable(
+                            onClick = { onChatClick(chat) },
+                            onLongClick = { selectedConversation = chat }
+                        ),
                         color = Color.White,
                         shape = RoundedCornerShape(16.dp),
                         tonalElevation = 0.dp
@@ -6106,6 +6384,394 @@ fun MessagesScreen(repository: SocialRepository, onBack: () -> Unit, onChatClick
                 }
             }
         }
+    }
+    1 -> MessengerStoriesPage(
+        repository = repository,
+        stories = stories,
+        currentUser = currentUser,
+        uploading = storyUploading,
+        contentPadding = messengerPadding,
+        onAdd = { storyPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) },
+        onOpen = { selectedStory = it }
+    )
+    2 -> MessengerNotificationsPage(
+        repository = repository,
+        chats = chats,
+        contentPadding = messengerPadding,
+        onChatClick = onChatClick
+    )
+    else -> MessengerMenuPage(
+        repository = repository,
+        chats = chats,
+        currentUser = currentUser,
+        contentPadding = messengerPadding,
+        onBack = onBack,
+        onNewDirect = { composerMode = "direct" },
+        onNewGroup = { composerMode = "group" },
+        onChatClick = onChatClick
+    )
+    }
+    }
+
+    selectedConversation?.let { chat ->
+        MessengerConversationActions(
+            repository = repository,
+            conversation = chat,
+            pinned = chat.id in pinnedIds,
+            onPin = {
+                pinnedIds = if (chat.id in pinnedIds) pinnedIds - chat.id else pinnedIds + chat.id
+                messengerPreferences.edit().putStringSet("pinned_conversations", pinnedIds).apply()
+                selectedConversation = null
+            },
+            onDismiss = { selectedConversation = null },
+            onOpen = { selectedConversation = null; onChatClick(chat) }
+        )
+    }
+}
+
+@Composable
+private fun MessengerBottomNavigation(selected: Int, unread: Int, onSelect: (Int) -> Unit) {
+    NavigationBar(
+        containerColor = Color.White,
+        tonalElevation = 0.dp,
+        modifier = Modifier.navigationBarsPadding().height(62.dp)
+    ) {
+        val rows = listOf(
+            Triple("Chats", Icons.Filled.ChatBubble, Icons.Outlined.ChatBubbleOutline),
+            Triple("Stories", Icons.Filled.AutoStories, Icons.Outlined.AutoStories),
+            Triple("Notifications", Icons.Filled.Notifications, Icons.Outlined.NotificationsNone),
+            Triple("Menu", Icons.Filled.Menu, Icons.Outlined.Menu)
+        )
+        rows.forEachIndexed { index, row ->
+            NavigationBarItem(
+                selected = selected == index,
+                onClick = { onSelect(index) },
+                icon = {
+                    BadgedBox(badge = {
+                        if (index == 0 && unread > 0) Badge { Text(if (unread > 99) "99+" else unread.toString()) }
+                    }) {
+                        Icon(if (selected == index) row.second else row.third, row.first, modifier = Modifier.size(23.dp))
+                    }
+                },
+                label = { Text(row.first, fontSize = 10.sp) },
+                colors = NavigationBarItemDefaults.colors(
+                    selectedIconColor = TiwiBlue,
+                    selectedTextColor = TiwiBlue,
+                    indicatorColor = Color.Transparent,
+                    unselectedIconColor = Color(0xFF667085),
+                    unselectedTextColor = Color(0xFF667085)
+                )
+            )
+        }
+    }
+}
+
+@Composable
+private fun MessengerStoriesPage(
+    repository: SocialRepository,
+    stories: List<SocialPost>,
+    currentUser: SocialUser?,
+    uploading: Boolean,
+    contentPadding: PaddingValues,
+    onAdd: () -> Unit,
+    onOpen: (SocialPost) -> Unit
+) {
+    val currentUserId = repository.currentUserId()
+    val cards = remember(stories, currentUserId) {
+        stories.filter { it.authorId != currentUserId }.distinctBy { it.authorId }
+    }
+    Column(Modifier.fillMaxSize().padding(contentPadding).background(Color.White).statusBarsPadding()) {
+        Text("Stories", fontSize = 30.sp, fontWeight = FontWeight.Black, modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            val allCards = listOf<SocialPost?>(null) + cards
+            items(allCards.chunked(2), key = { row -> row.joinToString("-") { it?.id ?: "create" } }) { row ->
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    row.forEach { story ->
+                        val media = story?.media?.firstOrNull()
+                        Box(
+                            modifier = Modifier.weight(1f).aspectRatio(.72f)
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(Color(0xFFF0F2F5))
+                                .clickable(enabled = !uploading) { if (story == null) onAdd() else onOpen(story) }
+                        ) {
+                            if (story == null) {
+                                TiwiAvatar(currentUser?.avatar, R.drawable.img_tiwi_avatar_1, Modifier.fillMaxSize(), ContentScale.Crop)
+                                Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = .6f)))))
+                                Surface(Modifier.align(Alignment.TopStart).padding(10.dp).size(38.dp), shape = CircleShape, color = Color.White) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        if (uploading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                                        else Icon(Icons.Default.Add, "Add story", tint = TiwiBlue)
+                                    }
+                                }
+                                Text("Add to story", color = Color.White, fontWeight = FontWeight.Bold, modifier = Modifier.align(Alignment.BottomStart).padding(12.dp))
+                            } else {
+                                when (media?.type) {
+                                    "video" -> AsyncImage(model = media.thumbnailUrl ?: story.author.avatar, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                                    "image" -> AsyncImage(model = media.url, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                                    else -> Box(Modifier.fillMaxSize().background(Brush.linearGradient(listOf(TiwiBlue, TiwiPurple))))
+                                }
+                                Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = .64f)))))
+                                DecoratedAvatar(
+                                    story.author.avatar,
+                                    R.drawable.img_tiwi_avatar_1,
+                                    story.authorProfile?.avatarDecoration,
+                                    Modifier.align(Alignment.TopStart).padding(9.dp).size(39.dp).border(2.dp, TiwiBlue, CircleShape).padding(2.dp)
+                                )
+                                Text(story.author.name, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp, maxLines = 2, modifier = Modifier.align(Alignment.BottomStart).padding(11.dp))
+                            }
+                        }
+                    }
+                    if (row.size == 1) Spacer(Modifier.weight(1f))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MessengerNotificationsPage(
+    repository: SocialRepository,
+    chats: List<SocialConversation>,
+    contentPadding: PaddingValues,
+    onChatClick: (SocialConversation) -> Unit
+) {
+    val currentUserId = repository.currentUserId()
+    val notifications = remember(chats, currentUserId) {
+        chats.filter { it.unreadCount > 0 || (it.requestStatus == "pending" && it.requestedById != currentUserId) }
+    }
+    Column(Modifier.fillMaxSize().padding(contentPadding).background(Color.White).statusBarsPadding()) {
+        Text("Notifications", fontSize = 30.sp, fontWeight = FontWeight.Black, modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
+        if (notifications.isEmpty()) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(Icons.Outlined.NotificationsNone, null, tint = Color(0xFF98A2B3), modifier = Modifier.size(50.dp))
+                    Text("No new notifications", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 10.dp))
+                    Text("New messages and requests appear here.", color = Color(0xFF667085), fontSize = 12.sp)
+                }
+            }
+        } else {
+            Text("New", color = Color(0xFF667085), modifier = Modifier.padding(horizontal = 16.dp, vertical = 7.dp))
+            LazyColumn(Modifier.fillMaxSize()) {
+                items(notifications, key = { "notification-${it.id}" }) { chat ->
+                    val contact = chat.members.firstOrNull { it.userId != currentUserId }
+                    val request = chat.requestStatus == "pending" && chat.requestedById != currentUserId
+                    Row(
+                        Modifier.fillMaxWidth().clickable { onChatClick(chat) }.padding(horizontal = 14.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        DecoratedAvatar(contact?.user?.avatar ?: chat.avatarUrl, R.drawable.img_tiwi_avatar_1, contact?.profile?.avatarDecoration, Modifier.size(58.dp))
+                        Column(Modifier.weight(1f).padding(start = 10.dp)) {
+                            Text(chat.title ?: contact?.user?.name ?: "Tiwi chat", fontWeight = FontWeight.Bold)
+                            Text(
+                                if (request) "Sent you a message request"
+                                else if (chat.unreadCount == 1) "Sent you a message"
+                                else "Sent ${chat.unreadCount} messages",
+                                color = Color(0xFF344054),
+                                fontSize = 13.sp
+                            )
+                            Text(relativePostTime(chat.updatedAt), color = Color(0xFF667085), fontSize = 11.sp)
+                        }
+                        Box(Modifier.size(9.dp).background(TiwiBlue, CircleShape))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MessengerMenuPage(
+    repository: SocialRepository,
+    chats: List<SocialConversation>,
+    currentUser: SocialUser?,
+    contentPadding: PaddingValues,
+    onBack: () -> Unit,
+    onNewDirect: () -> Unit,
+    onNewGroup: () -> Unit,
+    onChatClick: (SocialConversation) -> Unit
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var page by remember { mutableStateOf<String?>(null) }
+    var archived by remember { mutableStateOf<List<SocialConversation>>(emptyList()) }
+    val requests = chats.filter { it.requestStatus == "pending" && it.requestedById != repository.currentUserId() }
+    LaunchedEffect(page) {
+        if (page == "Archive") archived = runCatching { repository.archivedConversations() }.getOrDefault(emptyList())
+    }
+    if (page == "Settings") {
+        MessengerSettingsPage(contentPadding = contentPadding, onBack = { page = null })
+        return
+    }
+    if (page == "Message requests" || page == "Archive") {
+        val rows = if (page == "Archive") archived else requests
+        Column(Modifier.fillMaxSize().padding(contentPadding).background(Color.White).statusBarsPadding()) {
+            Row(Modifier.height(52.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = { page = null }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
+                Text(page.orEmpty(), fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            }
+            if (rows.isEmpty()) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text(if (page == "Archive") "No archived chats" else "No message requests", color = Color(0xFF667085))
+            } else LazyColumn {
+                items(rows, key = { "menu-chat-${it.id}" }) { chat ->
+                    val contact = chat.members.firstOrNull { it.userId != repository.currentUserId() }
+                    Row(
+                        Modifier.fillMaxWidth().clickable { onChatClick(chat) }.padding(horizontal = 14.dp, vertical = 9.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        DecoratedAvatar(contact?.user?.avatar ?: chat.avatarUrl, R.drawable.img_tiwi_avatar_1, contact?.profile?.avatarDecoration, Modifier.size(54.dp))
+                        Column(Modifier.weight(1f).padding(start = 10.dp)) {
+                            Text(chat.title ?: contact?.user?.name ?: "Tiwi chat", fontWeight = FontWeight.Bold)
+                            Text(messagePreview(chat.lastMessage, repository.currentUserId()), color = Color(0xFF667085), maxLines = 1)
+                        }
+                        if (page == "Archive") TextButton(onClick = {
+                            scope.launch {
+                                repository.updateConversationMember(chat.id, archived = false)
+                                archived = archived.filterNot { it.id == chat.id }
+                            }
+                        }) { Text("Restore") }
+                    }
+                }
+            }
+        }
+        return
+    }
+    Column(
+        Modifier.fillMaxSize().padding(contentPadding).background(Color.White).statusBarsPadding()
+            .verticalScroll(rememberScrollState())
+    ) {
+        Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("Menu", fontSize = 30.sp, fontWeight = FontWeight.Black, modifier = Modifier.weight(1f))
+            IconButton(onClick = onBack) { Icon(Icons.Default.Close, "Close Messenger") }
+        }
+        Row(Modifier.fillMaxWidth().clickable { onNewDirect() }.padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            DecoratedAvatar(currentUser?.avatar, R.drawable.img_tiwi_avatar_1, repository.profile.value?.avatarDecoration, Modifier.size(52.dp))
+            Column(Modifier.weight(1f).padding(start = 10.dp)) {
+                Text(currentUser?.name ?: "Tiwi account", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                Text("Start a new Tiwi conversation", color = Color(0xFF667085), fontSize = 12.sp)
+            }
+            if (requests.isNotEmpty()) Badge { Text(requests.size.toString()) }
+        }
+        HorizontalDivider(color = Color(0xFFE4E7EC), thickness = .5.dp)
+        MessengerMenuRow(Icons.Outlined.Settings, "Settings") { page = "Settings" }
+        MessengerMenuRow(Icons.Outlined.GroupAdd, "Create group chat") { onNewGroup() }
+        MessengerMenuRow(Icons.Outlined.MarkEmailUnread, "Message requests", if (requests.isNotEmpty()) requests.size.toString() else null) { page = "Message requests" }
+        MessengerMenuRow(Icons.Outlined.Archive, "Archive") { page = "Archive" }
+        HorizontalDivider(color = Color(0xFFE4E7EC), thickness = .5.dp, modifier = Modifier.padding(vertical = 4.dp))
+        MessengerMenuRow(Icons.Outlined.Groups, "Communities") { onNewGroup() }
+        MessengerMenuRow(Icons.Outlined.SupportAgent, "Support") {
+            context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://tiwlo.com/support")))
+        }
+        MessengerMenuRow(Icons.Outlined.Movie, "Tiwi Reels") {
+            context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://tiwlo.com/social/reels")))
+        }
+    }
+}
+
+@Composable
+private fun MessengerMenuRow(icon: ImageVector, label: String, badge: String? = null, onClick: () -> Unit) {
+    Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 17.dp, vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
+        Icon(icon, null, modifier = Modifier.size(25.dp))
+        Text(label, modifier = Modifier.weight(1f).padding(start = 17.dp), fontSize = 16.sp)
+        if (badge != null) Badge { Text(badge) }
+        else Icon(Icons.Default.ChevronRight, null, tint = Color(0xFF98A2B3))
+    }
+}
+
+@Composable
+private fun MessengerSettingsPage(contentPadding: PaddingValues, onBack: () -> Unit) {
+    val context = LocalContext.current
+    val preferences = remember { context.getSharedPreferences("tiwi_messenger", Context.MODE_PRIVATE) }
+    var sounds by remember { mutableStateOf(preferences.getBoolean("sounds", true)) }
+    Column(Modifier.fillMaxSize().padding(contentPadding).background(Color.White).statusBarsPadding()) {
+        Row(Modifier.height(52.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
+            Text("Messenger settings", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+        }
+        Text("Notifications & privacy", color = Color(0xFF667085), modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+        MessengerSettingSwitch(Icons.Outlined.VolumeUp, "Notifications & sounds", "Play alerts for new messages", sounds) {
+            sounds = it; preferences.edit().putBoolean("sounds", it).apply()
+        }
+        MessengerInfoRow(Icons.Outlined.MarkEmailRead, "Read receipts", "Delivered and seen states come from Tiwi's message API", enabled = false) {}
+        MessengerInfoRow(Icons.Outlined.Security, "Message permissions", "Message requests protect chats from accounts you do not follow", enabled = false) {}
+    }
+}
+
+@Composable
+private fun MessengerSettingSwitch(icon: ImageVector, title: String, subtitle: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+        Icon(icon, null, modifier = Modifier.size(25.dp))
+        Column(Modifier.weight(1f).padding(horizontal = 14.dp)) {
+            Text(title, fontWeight = FontWeight.SemiBold)
+            Text(subtitle, color = Color(0xFF667085), fontSize = 11.sp)
+        }
+        Switch(checked = checked, onCheckedChange = onChange)
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun MessengerConversationActions(
+    repository: SocialRepository,
+    conversation: SocialConversation,
+    pinned: Boolean,
+    onPin: () -> Unit,
+    onDismiss: () -> Unit,
+    onOpen: () -> Unit
+) {
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val membership = conversation.members.firstOrNull { it.userId == repository.currentUserId() }
+    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = Color.White, tonalElevation = 0.dp) {
+        MessengerActionRow(Icons.Outlined.PushPin, if (pinned) "Unpin" else "Pin", onPin)
+        MessengerActionRow(Icons.Outlined.Archive, "Archive", onClick = {
+            scope.launch {
+                runCatching { repository.updateConversationMember(conversation.id, archived = true) }
+                    .onSuccess { onDismiss() }
+                    .onFailure { Toast.makeText(context, it.message ?: "Archive failed", Toast.LENGTH_SHORT).show() }
+            }
+        })
+        MessengerActionRow(if (membership?.muted == true) Icons.Outlined.NotificationsActive else Icons.Outlined.NotificationsOff, if (membership?.muted == true) "Unmute" else "Mute", onClick = {
+            scope.launch {
+                runCatching { repository.updateConversationMember(conversation.id, muted = membership?.muted != true) }
+                    .onSuccess { onDismiss() }
+                    .onFailure { Toast.makeText(context, it.message ?: "Mute failed", Toast.LENGTH_SHORT).show() }
+            }
+        })
+        MessengerActionRow(Icons.Outlined.Forum, "Open chat thread", onOpen)
+        MessengerActionRow(Icons.Outlined.MarkEmailUnread, "Mark as unread", onClick = {
+            scope.launch {
+                runCatching { repository.updateConversationMember(conversation.id, markUnread = true) }
+                    .onSuccess { onDismiss() }
+                    .onFailure { Toast.makeText(context, it.message ?: "Could not mark unread", Toast.LENGTH_SHORT).show() }
+            }
+        })
+        if (conversation.type == "group") MessengerActionRow(Icons.Outlined.ExitToApp, "Leave group", {
+            scope.launch {
+                runCatching { repository.updateConversationMember(conversation.id, leave = true) }
+                    .onSuccess { onDismiss() }
+                    .onFailure { Toast.makeText(context, it.message ?: "Could not leave group", Toast.LENGTH_SHORT).show() }
+            }
+        }, destructive = true)
+        MessengerActionRow(Icons.Outlined.Delete, "Delete from inbox", {
+            scope.launch {
+                runCatching { repository.updateConversationMember(conversation.id, archived = true) }
+                    .onSuccess { onDismiss() }
+                    .onFailure { Toast.makeText(context, it.message ?: "Delete failed", Toast.LENGTH_SHORT).show() }
+            }
+        }, destructive = true)
+        Spacer(Modifier.height(16.dp))
+    }
+}
+
+@Composable
+private fun MessengerActionRow(icon: ImageVector, label: String, onClick: () -> Unit, destructive: Boolean = false) {
+    Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 22.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+        Icon(icon, null, tint = if (destructive) Color(0xFFD92D20) else Color.Black, modifier = Modifier.size(25.dp))
+        Text(label, color = if (destructive) Color(0xFFD92D20) else Color.Black, fontSize = 16.sp, modifier = Modifier.padding(start = 18.dp))
     }
 }
 
@@ -6280,13 +6946,30 @@ fun ChatDetailScreen(
     var messageText by remember { mutableStateOf("") }
     var messageToUnsend by remember { mutableStateOf<SocialMessage?>(null) }
     var selectedMessageId by remember { mutableStateOf<String?>(null) }
+    var replyTo by remember { mutableStateOf<SocialMessage?>(null) }
+    var messageToEdit by remember { mutableStateOf<SocialMessage?>(null) }
+    var editText by remember { mutableStateOf("") }
+    var messageToDelete by remember { mutableStateOf<SocialMessage?>(null) }
+    var showInfo by remember { mutableStateOf(false) }
+    var showEmojiPicker by remember { mutableStateOf(false) }
+    var recording by remember { mutableStateOf(false) }
+    var recorder by remember { mutableStateOf<MediaRecorder?>(null) }
+    var recordingFile by remember { mutableStateOf<File?>(null) }
+    val context = LocalContext.current
+    val chatPreferences = remember { context.getSharedPreferences("tiwi_messenger", Context.MODE_PRIVATE) }
+    var emojiHistory by remember {
+        mutableStateOf(chatPreferences.getString("emoji_history", "").orEmpty().split(" ").filter { it.isNotBlank() }.take(12))
+    }
+    var pinnedMessageIds by remember {
+        mutableStateOf(chatPreferences.getStringSet("pinned_messages_${conversation.id}", emptySet()).orEmpty())
+    }
     val messagesByConversation by repository.messages.collectAsState()
     var liveConversation by remember(conversation.id) { mutableStateOf(conversation) }
     val contact = liveConversation.members.firstOrNull { it.userId != repository.currentUserId() }
-    val name = liveConversation.title ?: contact?.user?.name.orEmpty()
+    val name = chatPreferences.getString("nickname_${conversation.id}", null)?.takeIf { it.isNotBlank() }
+        ?: liveConversation.title ?: contact?.user?.name.orEmpty()
     val messages = messagesByConversation[conversation.id] ?: repository.cachedMessages(conversation.id)
     val scope = rememberCoroutineScope()
-    val context = LocalContext.current
     val sendAttachment: (android.net.Uri) -> Unit = { uri ->
         scope.launch {
             runCatching {
@@ -6298,8 +6981,75 @@ fun ChatDetailScreen(
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri -> uri?.let(sendAttachment) }
     val mediaPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri -> uri?.let(sendAttachment) }
     val selectedMessage = messages.firstOrNull { it.id == selectedMessageId }
+    val clipboard = remember { context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager }
 
-    BackHandler(enabled = selectedMessageId != null) { selectedMessageId = null }
+    val finishRecording: () -> Unit = {
+        val activeRecorder = recorder
+        val file = recordingFile
+        runCatching { activeRecorder?.stop() }
+        runCatching { activeRecorder?.release() }
+        recorder = null
+        recording = false
+        if (file != null && file.exists() && file.length() > 0L) {
+            scope.launch {
+                runCatching {
+                    val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", file)
+                    val media = repository.uploadMedia(context.contentResolver, uri, "chat")
+                    repository.sendMessage(conversation.id, "", listOf(media))
+                }.onFailure { Toast.makeText(context, it.message ?: "Voice message failed", Toast.LENGTH_SHORT).show() }
+                file.delete()
+                recordingFile = null
+            }
+        }
+    }
+    val startRecording: () -> Unit = {
+        val file = File(context.cacheDir, "tiwi-voice-${System.currentTimeMillis()}.m4a")
+        runCatching {
+            @Suppress("DEPRECATION")
+            val next = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) MediaRecorder(context) else MediaRecorder()
+            next.setAudioSource(MediaRecorder.AudioSource.MIC)
+            next.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+            next.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+            next.setAudioEncodingBitRate(96_000)
+            next.setAudioSamplingRate(44_100)
+            next.setOutputFile(file.absolutePath)
+            next.prepare()
+            next.start()
+            recorder = next
+            recordingFile = file
+            recording = true
+        }.onFailure {
+            file.delete()
+            Toast.makeText(context, it.message ?: "Microphone could not start", Toast.LENGTH_SHORT).show()
+        }
+    }
+    val recordPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) startRecording() else Toast.makeText(context, "Microphone permission is required", Toast.LENGTH_SHORT).show()
+    }
+
+    if (showInfo) {
+        BackHandler { showInfo = false }
+        MessengerChatInfoPage(
+            repository = repository,
+            conversation = liveConversation,
+            messages = messages,
+            pinnedMessageIds = pinnedMessageIds,
+            onBack = { showInfo = false },
+            onProfile = { contact?.userId?.let(onProfileClick) }
+        )
+        return
+    }
+
+    BackHandler(enabled = selectedMessageId != null || replyTo != null) {
+        if (selectedMessageId != null) selectedMessageId = null else replyTo = null
+    }
+    DisposableEffect(Unit) {
+        onDispose {
+            runCatching { recorder?.stop() }
+            runCatching { recorder?.release() }
+            recordingFile?.delete()
+        }
+    }
 
     LaunchedEffect(conversation.id) {
         runCatching { repository.markConversationRead(conversation.id) }
@@ -6353,7 +7103,7 @@ fun ChatDetailScreen(
                         IconButton(onClick = { onCall(false) }) { Icon(Icons.Default.Call, contentDescription = "Call", tint = TiwiBlue) }
                         IconButton(onClick = { onCall(true) }) { Icon(Icons.Default.VideoCall, contentDescription = "Video Call", tint = TiwiBlue) }
                     }
-                    IconButton(onClick = { contact?.userId?.let(onProfileClick) }) { Icon(Icons.Default.Info, contentDescription = "Info", tint = TiwiBlue) }
+                    IconButton(onClick = { showInfo = true }) { Icon(Icons.Default.Info, contentDescription = "Info", tint = TiwiBlue) }
                 }
             }
         }
@@ -6468,10 +7218,35 @@ fun ChatDetailScreen(
                         onLongClick = { selectedMessageId = message.id }
                     )) {
                         Column {
+                            message.replyToId?.let { targetId ->
+                                val quoted = messages.firstOrNull { it.id == targetId }
+                                Surface(
+                                    color = if (isMe) Color.White.copy(alpha = .17f) else Color.Black.copy(alpha = .06f),
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier.padding(start = 7.dp, end = 7.dp, top = 7.dp).fillMaxWidth()
+                                ) {
+                                    Column(Modifier.padding(horizontal = 9.dp, vertical = 6.dp)) {
+                                        Text(
+                                            if (quoted?.senderId == repository.currentUserId()) "You" else quoted?.sender?.name ?: "Message",
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (isMe) Color.White else TiwiBlue
+                                        )
+                                        Text(
+                                            quoted?.body?.takeIf { it.isNotBlank() } ?: "Attachment",
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            fontSize = 11.sp,
+                                            color = if (isMe) Color.White.copy(alpha = .85f) else Color(0xFF475467)
+                                        )
+                                    }
+                                }
+                            }
                             message.media.forEach { media ->
                                 when (media.type) {
                                     "video" -> TiwiVideo(media.hlsUrl?.takeIf { media.processingStatus == "ready" } ?: media.url, Modifier.fillMaxWidth().height(180.dp), fallbackUrl = media.url, posterUrl = media.thumbnailUrl)
                                     "image" -> AsyncImage(model = media.url, contentDescription = "Attachment", modifier = Modifier.fillMaxWidth().heightIn(max = 220.dp), contentScale = ContentScale.Crop)
+                                    "audio" -> TiwiAudioMessage(media.url, isMe)
                                     else -> Text("Attachment", modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp), color = if (isMe) Color.White else Color.Black)
                                 }
                             }
@@ -6484,60 +7259,154 @@ fun ChatDetailScreen(
                         }
                     }
                     if (isMe) Text(when (message.deliveryStatus) { "read" -> "Seen"; "delivered" -> "Delivered"; "sending" -> "Sending…"; "failed" -> "Failed"; else -> "Sent" }, color = Color.Gray, fontSize = 10.sp, modifier = Modifier.padding(end = 5.dp, top = 2.dp))
+                    if (message.reactions.isNotEmpty()) Surface(
+                        color = Color.White,
+                        shape = RoundedCornerShape(20.dp),
+                        border = BorderStroke(.5.dp, Color(0xFFE4E7EC)),
+                        tonalElevation = 0.dp,
+                        modifier = Modifier.offset(y = (-5).dp)
+                    ) {
+                        Text(
+                            message.reactions.groupingBy { it.emoji }.eachCount().entries.joinToString(" ") { (emoji, count) -> if (count > 1) "$emoji$count" else emoji },
+                            fontSize = 12.sp,
+                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                        )
+                    }
                     if (selectedMessageId == message.id) Text("${messageDay(message.sentAt)} · ${messageClock(message.sentAt)}", color = Color.Gray, fontSize = 10.sp, modifier = Modifier.padding(horizontal = 5.dp).padding(top = 2.dp))
                     }
                 }
             }
         }
 
-        // Input Area
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .navigationBarsPadding()
-                .padding(horizontal = 4.dp, vertical = 5.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            IconButton(onClick = { filePicker.launch("*/*") }) { Icon(Icons.Default.AddCircle, contentDescription = "More", tint = TiwiBlue) }
-            IconButton(onClick = { mediaPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }) { Icon(Icons.Default.CameraAlt, contentDescription = "Camera", tint = TiwiBlue) }
-            IconButton(onClick = { mediaPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) }) { Icon(Icons.Default.Image, contentDescription = "Gallery", tint = TiwiBlue) }
-            
-            Surface(
-                modifier = Modifier.weight(1f).height(40.dp),
-                color = Color(0xFFF1F1F1),
-                shape = RoundedCornerShape(20.dp)
+        if (selectedMessage != null) {
+            LazyRow(
+                Modifier.fillMaxWidth().padding(horizontal = 42.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                TextField(
-                    value = messageText,
-                    onValueChange = { messageText = it },
-                    placeholder = { Text("Aa", color = Color.Gray) },
-                    modifier = Modifier.fillMaxSize(),
-                    colors = TextFieldDefaults.colors(
-                        focusedTextColor = Color.Black,
-                        unfocusedTextColor = Color.Black,
-                        cursorColor = TiwiBlue,
-                        focusedContainerColor = Color.Transparent,
-                        unfocusedContainerColor = Color.Transparent,
-                        focusedIndicatorColor = Color.Transparent,
-                        unfocusedIndicatorColor = Color.Transparent
+                items(listOf("❤️", "😆", "😮", "😢", "😡", "👍")) { emoji ->
+                    Text(
+                        emoji,
+                        fontSize = 24.sp,
+                        modifier = Modifier.clickable {
+                            scope.launch {
+                                runCatching { repository.reactToMessage(selectedMessage.id, emoji) }
+                                    .onSuccess { selectedMessageId = null }
+                                    .onFailure { Toast.makeText(context, it.message ?: "Reaction failed", Toast.LENGTH_SHORT).show() }
+                            }
+                        }.padding(4.dp)
                     )
-                )
-            }
-            
-            IconButton(onClick = {
-                if (messageText.isBlank()) return@IconButton
-                val sending = messageText
-                messageText = ""
-                scope.launch {
-                    runCatching { repository.sendMessage(conversation.id, sending) }
-                        .onFailure { Toast.makeText(context, it.message ?: "Message failed", Toast.LENGTH_SHORT).show() }
                 }
-            }) {
-                Icon(
-                    if (messageText.isEmpty()) Icons.Default.ThumbUp else Icons.Default.Send,
-                    contentDescription = "Send",
-                    tint = TiwiBlue
-                )
+            }
+            Row(
+                Modifier.fillMaxWidth().navigationBarsPadding().height(62.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                MessengerSelectionAction(Icons.Default.Reply, "Reply") { replyTo = selectedMessage; selectedMessageId = null }
+                MessengerSelectionAction(Icons.Outlined.ContentCopy, "Copy") {
+                    clipboard.setPrimaryClip(ClipData.newPlainText("Tiwi message", selectedMessage.body))
+                    Toast.makeText(context, "Message copied", Toast.LENGTH_SHORT).show()
+                    selectedMessageId = null
+                }
+                MessengerSelectionAction(Icons.Outlined.Translate, "Translate") {
+                    val target = android.net.Uri.parse("https://translate.google.com/?sl=auto&tl=en&text=${android.net.Uri.encode(selectedMessage.body)}")
+                    context.startActivity(Intent(Intent.ACTION_VIEW, target))
+                    selectedMessageId = null
+                }
+                MessengerSelectionAction(Icons.Outlined.MoreHoriz, "More") {
+                    if (selectedMessage.senderId == repository.currentUserId() && selectedMessage.unsentAt == null) {
+                        messageToEdit = selectedMessage
+                        editText = selectedMessage.body
+                    } else messageToDelete = selectedMessage
+                    selectedMessageId = null
+                }
+            }
+        } else {
+            replyTo?.let { target ->
+                Row(
+                    Modifier.fillMaxWidth().background(Color(0xFFF7F8FA)).padding(horizontal = 14.dp, vertical = 7.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(Modifier.width(3.dp).height(34.dp).background(TiwiBlue, RoundedCornerShape(2.dp)))
+                    Column(Modifier.weight(1f).padding(start = 9.dp)) {
+                        Text(if (target.senderId == repository.currentUserId()) "Replying to yourself" else "Replying to ${target.sender.name}", color = TiwiBlue, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                        Text(target.body.ifBlank { "Attachment" }, maxLines = 1, overflow = TextOverflow.Ellipsis, color = Color(0xFF667085), fontSize = 11.sp)
+                    }
+                    IconButton(onClick = { replyTo = null }, modifier = Modifier.size(32.dp)) { Icon(Icons.Default.Close, "Cancel reply", modifier = Modifier.size(17.dp)) }
+                }
+            }
+            if (showEmojiPicker) {
+                val emojiChoices = (emojiHistory + listOf("❤️", "😂", "🥰", "😮", "😢", "😡", "👍", "🙏", "🔥", "🎉", "😍", "🤔", "👏", "💯")).distinct()
+                LazyRow(
+                    Modifier.fillMaxWidth().background(Color.White).padding(horizontal = 8.dp, vertical = 5.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    items(emojiChoices, key = { "composer-$it" }) { emoji ->
+                        Text(emoji, fontSize = 25.sp, modifier = Modifier.clickable {
+                            messageText += emoji
+                            emojiHistory = (listOf(emoji) + emojiHistory.filterNot { it == emoji }).take(12)
+                            chatPreferences.edit().putString("emoji_history", emojiHistory.joinToString(" ")).apply()
+                        }.padding(5.dp))
+                    }
+                }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 4.dp, vertical = 5.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = { filePicker.launch("*/*") }) { Icon(Icons.Default.AddCircle, contentDescription = "More", tint = TiwiBlue) }
+                IconButton(onClick = { mediaPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }) { Icon(Icons.Default.CameraAlt, contentDescription = "Camera", tint = TiwiBlue) }
+                IconButton(onClick = { mediaPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) }) { Icon(Icons.Default.Image, contentDescription = "Gallery", tint = TiwiBlue) }
+                if (messageText.isBlank()) IconButton(onClick = {
+                    if (recording) finishRecording()
+                    else if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) startRecording()
+                    else recordPermission.launch(Manifest.permission.RECORD_AUDIO)
+                }) {
+                    Icon(if (recording) Icons.Default.StopCircle else Icons.Default.Mic, if (recording) "Stop recording" else "Voice message", tint = if (recording) Color(0xFFD92D20) else TiwiBlue)
+                }
+                Surface(
+                    modifier = Modifier.weight(1f).height(40.dp),
+                    color = if (recording) Color(0xFFFFEBEE) else Color(0xFFF1F1F1),
+                    shape = RoundedCornerShape(20.dp)
+                ) {
+                    TextField(
+                        value = messageText,
+                        onValueChange = { if (!recording) messageText = it },
+                        placeholder = { Text(if (recording) "Recording voice message…" else "Message", color = if (recording) Color(0xFFD92D20) else Color.Gray) },
+                        trailingIcon = {
+                            IconButton(onClick = { showEmojiPicker = !showEmojiPicker }, modifier = Modifier.size(34.dp)) {
+                                Icon(Icons.Outlined.EmojiEmotions, "Emoji", tint = TiwiBlue, modifier = Modifier.size(20.dp))
+                            }
+                        },
+                        modifier = Modifier.fillMaxSize(),
+                        colors = TextFieldDefaults.colors(
+                            focusedTextColor = Color.Black,
+                            unfocusedTextColor = Color.Black,
+                            cursorColor = TiwiBlue,
+                            focusedContainerColor = Color.Transparent,
+                            unfocusedContainerColor = Color.Transparent,
+                            focusedIndicatorColor = Color.Transparent,
+                            unfocusedIndicatorColor = Color.Transparent
+                        )
+                    )
+                }
+                IconButton(onClick = {
+                    if (messageText.isBlank()) {
+                        scope.launch { runCatching { repository.sendMessage(conversation.id, "👍", replyToId = replyTo?.id) } }
+                        replyTo = null
+                        return@IconButton
+                    }
+                    val sending = messageText
+                    val replyId = replyTo?.id
+                    messageText = ""
+                    replyTo = null
+                    scope.launch {
+                        runCatching { repository.sendMessage(conversation.id, sending, replyToId = replyId) }
+                            .onFailure { Toast.makeText(context, it.message ?: "Message failed", Toast.LENGTH_SHORT).show() }
+                    }
+                }) {
+                    Icon(if (messageText.isEmpty()) Icons.Default.ThumbUp else Icons.Default.Send, contentDescription = "Send", tint = TiwiBlue)
+                }
             }
         }
     }
@@ -6559,6 +7428,326 @@ fun ChatDetailScreen(
             },
             dismissButton = { TextButton(onClick = { messageToUnsend = null }) { Text("Cancel") } }
         )
+    }
+    messageToEdit?.let { target ->
+        AlertDialog(
+            onDismissRequest = { messageToEdit = null },
+            containerColor = Color.White,
+            tonalElevation = 0.dp,
+            title = { Text("Message options") },
+            text = {
+                Column {
+                    OutlinedTextField(editText, { editText = it.take(8000) }, modifier = Modifier.fillMaxWidth(), label = { Text("Edit message") })
+                    TextButton(onClick = {
+                        pinnedMessageIds = if (target.id in pinnedMessageIds) pinnedMessageIds - target.id else pinnedMessageIds + target.id
+                        chatPreferences.edit().putStringSet("pinned_messages_${conversation.id}", pinnedMessageIds).apply()
+                        messageToEdit = null
+                    }) {
+                        Icon(Icons.Outlined.PushPin, null)
+                        Text(if (target.id in pinnedMessageIds) "Unpin message" else "Pin message", modifier = Modifier.padding(start = 7.dp))
+                    }
+                    TextButton(onClick = { messageToEdit = null; messageToUnsend = target }) {
+                        Icon(Icons.Outlined.DeleteForever, null, tint = Color(0xFFD92D20))
+                        Text("Unsend for everyone", color = Color(0xFFD92D20), modifier = Modifier.padding(start = 7.dp))
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(enabled = editText.isNotBlank(), onClick = {
+                    messageToEdit = null
+                    scope.launch {
+                        runCatching { repository.editMessage(target.id, editText) }
+                            .onFailure { Toast.makeText(context, it.message ?: "Edit failed", Toast.LENGTH_SHORT).show() }
+                    }
+                }) { Text("Save") }
+            },
+            dismissButton = {
+                TextButton(onClick = { messageToEdit = null; messageToDelete = target }) { Text("Delete for me", color = Color(0xFFD92D20)) }
+            }
+        )
+    }
+    messageToDelete?.let { target ->
+        AlertDialog(
+            onDismissRequest = { messageToDelete = null },
+            containerColor = Color.White,
+            tonalElevation = 0.dp,
+            title = { Text("Delete message?") },
+            text = {
+                Column {
+                    Text("This removes the message from your chat history only.")
+                    TextButton(onClick = {
+                        pinnedMessageIds = if (target.id in pinnedMessageIds) pinnedMessageIds - target.id else pinnedMessageIds + target.id
+                        chatPreferences.edit().putStringSet("pinned_messages_${conversation.id}", pinnedMessageIds).apply()
+                        messageToDelete = null
+                    }) {
+                        Icon(Icons.Outlined.PushPin, null)
+                        Text(if (target.id in pinnedMessageIds) "Unpin message" else "Pin message", modifier = Modifier.padding(start = 7.dp))
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    messageToDelete = null
+                    scope.launch {
+                        runCatching { repository.deleteMessageForMe(target.id) }
+                            .onFailure { Toast.makeText(context, it.message ?: "Delete failed", Toast.LENGTH_SHORT).show() }
+                    }
+                }) { Text("Delete", color = Color(0xFFD92D20)) }
+            },
+            dismissButton = { TextButton(onClick = { messageToDelete = null }) { Text("Cancel") } }
+        )
+    }
+}
+
+@Composable
+private fun MessengerSelectionAction(icon: ImageVector, label: String, onClick: () -> Unit) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clickable(onClick = onClick).padding(horizontal = 10.dp, vertical = 5.dp)) {
+        Icon(icon, label, tint = Color(0xFF001489), modifier = Modifier.size(24.dp))
+        Text(label, fontSize = 10.sp, modifier = Modifier.padding(top = 3.dp))
+    }
+}
+
+@Composable
+private fun TiwiAudioMessage(url: String, isMe: Boolean) {
+    val context = LocalContext.current
+    val player = remember(url) {
+        ExoPlayer.Builder(context).build().apply {
+            setMediaItem(MediaItem.fromUri(url))
+            prepare()
+        }
+    }
+    var playing by remember { mutableStateOf(false) }
+    var progress by remember { mutableFloatStateOf(0f) }
+    LaunchedEffect(player, playing) {
+        while (playing) {
+            val duration = player.duration.takeIf { it > 0 } ?: 1L
+            progress = (player.currentPosition.toFloat() / duration).coerceIn(0f, 1f)
+            delay(150)
+        }
+    }
+    DisposableEffect(player) {
+        val listener = object : Player.Listener {
+            override fun onIsPlayingChanged(isPlaying: Boolean) { playing = isPlaying }
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                if (playbackState == Player.STATE_ENDED) {
+                    playing = false
+                    progress = 0f
+                    player.seekTo(0)
+                }
+            }
+        }
+        player.addListener(listener)
+        onDispose { player.removeListener(listener); player.release() }
+    }
+    Row(Modifier.widthIn(min = 210.dp).padding(horizontal = 10.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+        IconButton(onClick = { if (player.isPlaying) player.pause() else player.play() }, modifier = Modifier.size(37.dp)) {
+            Icon(if (playing) Icons.Default.Pause else Icons.Default.PlayArrow, if (playing) "Pause voice message" else "Play voice message", tint = if (isMe) Color.White else TiwiBlue)
+        }
+        Column(Modifier.weight(1f).padding(horizontal = 7.dp)) {
+            LinearProgressIndicator(
+                progress = { progress },
+                modifier = Modifier.fillMaxWidth().height(3.dp),
+                color = if (isMe) Color.White else TiwiBlue,
+                trackColor = if (isMe) Color.White.copy(alpha = .35f) else Color(0xFFD0D5DD)
+            )
+            Text("Voice message", color = if (isMe) Color.White.copy(alpha = .82f) else Color(0xFF667085), fontSize = 9.sp, modifier = Modifier.padding(top = 4.dp))
+        }
+    }
+}
+
+@Composable
+private fun MessengerChatInfoPage(
+    repository: SocialRepository,
+    conversation: SocialConversation,
+    messages: List<SocialMessage>,
+    pinnedMessageIds: Set<String>,
+    onBack: () -> Unit,
+    onProfile: () -> Unit
+) {
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val preferences = remember { context.getSharedPreferences("tiwi_messenger", Context.MODE_PRIVATE) }
+    val currentUserId = repository.currentUserId()
+    val contact = conversation.members.firstOrNull { it.userId != currentUserId }
+    val membership = conversation.members.firstOrNull { it.userId == currentUserId }
+    var nickname by remember { mutableStateOf(preferences.getString("nickname_${conversation.id}", null).orEmpty()) }
+    val name = nickname.takeIf { it.isNotBlank() } ?: conversation.title ?: contact?.user?.name ?: "Tiwi chat"
+    val mediaCount = messages.sumOf { it.media.size }
+    val links = messages.count { it.body.contains("http://") || it.body.contains("https://") }
+    var muted by remember(membership?.muted) { mutableStateOf(membership?.muted == true) }
+    var sounds by remember { mutableStateOf(preferences.getBoolean("sounds", true)) }
+    var section by remember { mutableStateOf<String?>(null) }
+    var searchQuery by remember { mutableStateOf("") }
+    var nicknameDialog by remember { mutableStateOf(false) }
+    var nicknameDraft by remember { mutableStateOf(nickname) }
+    var groupDialog by remember { mutableStateOf(false) }
+    var groupName by remember { mutableStateOf("") }
+    var groupBusy by remember { mutableStateOf(false) }
+
+    section?.let { active ->
+        val rows = when (active) {
+            "search" -> messages.filter { searchQuery.isNotBlank() && it.body.contains(searchQuery, true) }
+            "media" -> messages.filter { it.media.isNotEmpty() || it.body.contains("http://") || it.body.contains("https://") }
+            else -> messages.filter { it.id in pinnedMessageIds }
+        }
+        Column(Modifier.fillMaxSize().background(Color.White).statusBarsPadding().navigationBarsPadding()) {
+            Row(Modifier.fillMaxWidth().height(52.dp), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = { section = null }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
+                Text(when (active) { "search" -> "Search in conversation"; "media" -> "Media, files & links"; else -> "Pinned messages" }, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            }
+            if (active == "search") OutlinedTextField(
+                searchQuery,
+                { searchQuery = it },
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                singleLine = true,
+                leadingIcon = { Icon(Icons.Default.Search, null) },
+                placeholder = { Text("Search messages") },
+                shape = RoundedCornerShape(18.dp)
+            )
+            if (rows.isEmpty()) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text(if (active == "search" && searchQuery.isBlank()) "Type to search this conversation" else "Nothing found", color = Color(0xFF667085))
+            } else LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(rows, key = { "info-message-${it.id}" }) { message ->
+                    Surface(color = Color(0xFFF7F8FA), shape = RoundedCornerShape(14.dp), tonalElevation = 0.dp) {
+                        Column(Modifier.fillMaxWidth().padding(11.dp)) {
+                            Text(if (message.senderId == currentUserId) "You" else message.sender.name, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                            message.media.forEach { media ->
+                                if (media.type == "image") AsyncImage(model = media.url, contentDescription = null, modifier = Modifier.fillMaxWidth().heightIn(max = 220.dp).clip(RoundedCornerShape(10.dp)), contentScale = ContentScale.Crop)
+                                else Text("${media.type.replaceFirstChar { it.uppercase() }} attachment", color = TiwiBlue, modifier = Modifier.padding(vertical = 6.dp))
+                            }
+                            if (message.body.isNotBlank()) Text(message.body, modifier = Modifier.padding(top = 4.dp))
+                            Text("${messageDay(message.sentAt)} · ${messageClock(message.sentAt)}", color = Color(0xFF667085), fontSize = 10.sp, modifier = Modifier.padding(top = 5.dp))
+                        }
+                    }
+                }
+            }
+        }
+        return
+    }
+
+    Column(Modifier.fillMaxSize().background(Color.White).statusBarsPadding().navigationBarsPadding().verticalScroll(rememberScrollState())) {
+        Row(Modifier.fillMaxWidth().height(50.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
+            Spacer(Modifier.weight(1f))
+            IconButton(onClick = {
+                val share = Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_TEXT, "Chat with $name on Tiwi")
+                }
+                context.startActivity(Intent.createChooser(share, "Share contact"))
+            }) { Icon(Icons.Default.MoreVert, "More") }
+        }
+        Column(Modifier.fillMaxWidth().padding(vertical = 12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            DecoratedAvatar(contact?.user?.avatar ?: conversation.avatarUrl, R.drawable.img_tiwi_avatar_1, contact?.profile?.avatarDecoration, Modifier.size(118.dp), animateDecoration = true)
+            Text(name, fontSize = 25.sp, fontWeight = FontWeight.Black, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                MessengerInfoShortcut(Icons.Outlined.Person, "Profile", onProfile)
+                MessengerInfoShortcut(Icons.Outlined.Search, "Search") { section = "search" }
+                MessengerInfoShortcut(Icons.Outlined.Edit, "Nickname") { nicknameDraft = nickname; nicknameDialog = true }
+                MessengerInfoShortcut(Icons.Outlined.GroupAdd, "Group") { groupDialog = true }
+            }
+        }
+        Text("Chat info", color = Color(0xFF667085), modifier = Modifier.padding(horizontal = 16.dp, vertical = 9.dp))
+        MessengerInfoRow(Icons.Outlined.PhotoLibrary, "View media, files & links", "$mediaCount media · $links links") {
+            section = "media"
+        }
+        MessengerInfoRow(Icons.Outlined.PushPin, "Pinned messages", "${pinnedMessageIds.size} pinned") { section = "pinned" }
+        Text("Actions", color = Color(0xFF667085), modifier = Modifier.padding(horizontal = 16.dp, vertical = 9.dp))
+        MessengerSettingSwitch(Icons.Outlined.NotificationsOff, "Mute $name", "Silence this conversation", muted) {
+            muted = it
+            scope.launch {
+                runCatching { repository.updateConversationMember(conversation.id, muted = it) }
+                    .onFailure { error -> muted = !muted; Toast.makeText(context, error.message ?: "Mute failed", Toast.LENGTH_SHORT).show() }
+            }
+        }
+        MessengerSettingSwitch(Icons.Outlined.VolumeUp, "Notifications & sounds", "Message alert sound", sounds) {
+            sounds = it
+            preferences.edit().putBoolean("sounds", it).apply()
+        }
+        MessengerInfoRow(Icons.Outlined.GroupAdd, "Create group chat with $name") { groupDialog = true }
+        MessengerInfoRow(Icons.Outlined.Share, "Share contact") {
+            val share = Intent(Intent.ACTION_SEND).apply { type = "text/plain"; putExtra(Intent.EXTRA_TEXT, "Chat with $name on Tiwi") }
+            context.startActivity(Intent.createChooser(share, "Share contact"))
+        }
+        Text("Privacy & support", color = Color(0xFF667085), modifier = Modifier.padding(horizontal = 16.dp, vertical = 9.dp))
+        MessengerInfoRow(Icons.Outlined.Lock, "Call privacy", "Tiwi calls use authenticated peer-to-peer WebRTC media", enabled = false) {}
+        MessengerInfoRow(Icons.Outlined.Block, "Block") {
+            contact?.userId?.let { userId -> scope.launch { runCatching { repository.blockUser(userId, true, "Blocked from chat") } } }
+        }
+        MessengerInfoRow(Icons.Outlined.Report, "Report", destructive = true) {
+            scope.launch {
+                runCatching { repository.reportContent("profile", contact?.userId.orEmpty(), "harassment") }
+                    .onSuccess { Toast.makeText(context, "Report sent", Toast.LENGTH_SHORT).show() }
+            }
+        }
+        MessengerInfoRow(Icons.Outlined.Delete, "Delete chat", destructive = true) {
+            scope.launch { repository.updateConversationMember(conversation.id, archived = true); onBack() }
+        }
+    }
+
+    if (nicknameDialog) AlertDialog(
+        onDismissRequest = { nicknameDialog = false },
+        containerColor = Color.White,
+        tonalElevation = 0.dp,
+        title = { Text("Nickname") },
+        text = { OutlinedTextField(nicknameDraft, { nicknameDraft = it.take(60) }, singleLine = true, placeholder = { Text(contact?.user?.name ?: "Nickname") }) },
+        confirmButton = {
+            TextButton(onClick = {
+                nickname = nicknameDraft.trim()
+                preferences.edit().putString("nickname_${conversation.id}", nickname).apply()
+                nicknameDialog = false
+            }) { Text("Save") }
+        },
+        dismissButton = {
+            TextButton(onClick = {
+                nickname = ""
+                preferences.edit().remove("nickname_${conversation.id}").apply()
+                nicknameDialog = false
+            }) { Text("Remove") }
+        }
+    )
+    if (groupDialog) AlertDialog(
+        onDismissRequest = { if (!groupBusy) groupDialog = false },
+        containerColor = Color.White,
+        tonalElevation = 0.dp,
+        title = { Text("Create group chat") },
+        text = { OutlinedTextField(groupName, { groupName = it.take(120) }, singleLine = true, label = { Text("Group name") }) },
+        confirmButton = {
+            TextButton(enabled = !groupBusy && contact != null, onClick = {
+                val memberId = contact?.userId ?: return@TextButton
+                groupBusy = true
+                scope.launch {
+                    runCatching { repository.createGroupConversation(groupName.ifBlank { "$name group" }, listOf(memberId)) }
+                        .onSuccess {
+                            Toast.makeText(context, "Group chat created", Toast.LENGTH_SHORT).show()
+                            groupDialog = false
+                        }
+                        .onFailure { Toast.makeText(context, it.message ?: "Group could not be created", Toast.LENGTH_SHORT).show() }
+                    groupBusy = false
+                }
+            }) { if (groupBusy) CircularProgressIndicator(Modifier.size(17.dp), strokeWidth = 2.dp) else Text("Create") }
+        },
+        dismissButton = { TextButton(enabled = !groupBusy, onClick = { groupDialog = false }) { Text("Cancel") } }
+    )
+}
+
+@Composable
+private fun MessengerInfoShortcut(icon: ImageVector, label: String, onClick: () -> Unit) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(76.dp).clickable(onClick = onClick)) {
+        Box(Modifier.size(44.dp).background(Color(0xFFF0F2F5), CircleShape), contentAlignment = Alignment.Center) { Icon(icon, label, modifier = Modifier.size(22.dp)) }
+        Text(label, fontSize = 11.sp, modifier = Modifier.padding(top = 5.dp))
+    }
+}
+
+@Composable
+private fun MessengerInfoRow(icon: ImageVector, title: String, subtitle: String? = null, destructive: Boolean = false, enabled: Boolean = true, onClick: () -> Unit) {
+    Row(Modifier.fillMaxWidth().clickable(enabled = enabled, onClick = onClick).padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Icon(icon, null, tint = if (destructive) Color(0xFFD92D20) else Color.Black, modifier = Modifier.size(25.dp))
+        Column(Modifier.weight(1f).padding(start = 15.dp)) {
+            Text(title, color = if (destructive) Color(0xFFD92D20) else Color.Black, fontSize = 16.sp)
+            if (!subtitle.isNullOrBlank()) Text(subtitle, color = Color(0xFF667085), fontSize = 11.sp)
+        }
+        if (enabled) Icon(Icons.Default.ChevronRight, null, tint = Color(0xFF98A2B3), modifier = Modifier.size(19.dp))
     }
 }
 

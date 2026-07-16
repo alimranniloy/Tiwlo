@@ -2,6 +2,8 @@ package com.example.social
 
 import android.content.Context
 import android.media.AudioManager
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -31,6 +33,7 @@ import org.webrtc.SessionDescription
 import org.webrtc.SurfaceTextureHelper
 import org.webrtc.VideoSource
 import org.webrtc.VideoTrack
+import org.webrtc.audio.JavaAudioDeviceModule
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.coroutines.suspendCoroutine
@@ -49,6 +52,7 @@ class WebRtcCallManager(
     val eglContext: EglBase.Context get() = eglBase.eglBaseContext
 
     private val factory: PeerConnectionFactory
+    private val audioDeviceModule: JavaAudioDeviceModule
     private var peerConnection: PeerConnection? = null
     private var cameraCapturer: CameraVideoCapturer? = null
     private var surfaceTextureHelper: SurfaceTextureHelper? = null
@@ -73,6 +77,9 @@ class WebRtcCallManager(
     val microphoneEnabled: StateFlow<Boolean> = _microphoneEnabled.asStateFlow()
     private val _cameraEnabled = MutableStateFlow(true)
     val cameraEnabled: StateFlow<Boolean> = _cameraEnabled.asStateFlow()
+    private val _speakerEnabled = MutableStateFlow(false)
+    val speakerEnabled: StateFlow<Boolean> = _speakerEnabled.asStateFlow()
+    private var audioFocusRequest: AudioFocusRequest? = null
 
     init {
         PeerConnectionFactory.initialize(
@@ -80,7 +87,12 @@ class WebRtcCallManager(
                 .setEnableInternalTracer(false)
                 .createInitializationOptions()
         )
+        audioDeviceModule = JavaAudioDeviceModule.builder(appContext)
+            .setUseHardwareAcousticEchoCanceler(true)
+            .setUseHardwareNoiseSuppressor(true)
+            .createAudioDeviceModule()
         factory = PeerConnectionFactory.builder()
+            .setAudioDeviceModule(audioDeviceModule)
             .setVideoEncoderFactory(DefaultVideoEncoderFactory(eglContext, true, true))
             .setVideoDecoderFactory(DefaultVideoDecoderFactory(eglContext))
             .createPeerConnectionFactory()
@@ -142,6 +154,10 @@ class WebRtcCallManager(
         cameraCapturer?.switchCamera(null)
     }
 
+    fun toggleSpeaker() {
+        setSpeaker(!_speakerEnabled.value)
+    }
+
     fun declineIncoming(incoming: SocialCallSession) {
         _call.value = incoming
         hangUp("declined")
@@ -163,13 +179,16 @@ class WebRtcCallManager(
         disposed = true
         scope.cancel()
         factory.dispose()
+        audioDeviceModule.release()
         eglBase.release()
+        abandonAudioFocus()
         audioManager.mode = previousAudioMode
     }
 
     private suspend fun createPeer(video: Boolean) {
+        requestAudioFocus()
         audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
-        audioManager.isSpeakerphoneOn = video
+        setSpeaker(video)
         val servers = loadIceServers()
         val config = PeerConnection.RTCConfiguration(servers).apply {
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
@@ -190,13 +209,14 @@ class WebRtcCallManager(
         val enumerator = Camera2Enumerator(appContext)
         val cameraName = enumerator.deviceNames.firstOrNull(enumerator::isFrontFacing)
             ?: enumerator.deviceNames.firstOrNull()
-            ?: return
-        val capturer = enumerator.createCapturer(cameraName, null) ?: return
+            ?: throw SocialApiException("No camera is available")
+        val capturer = enumerator.createCapturer(cameraName, null)
+            ?: throw SocialApiException("The camera could not start")
         cameraCapturer = capturer
         surfaceTextureHelper = SurfaceTextureHelper.create("TiwiCamera", eglContext)
         videoSource = factory.createVideoSource(false).also { source ->
             capturer.initialize(surfaceTextureHelper, appContext, source.capturerObserver)
-            capturer.startCapture(720, 1280, 30)
+            capturer.startCapture(640, 480, 30)
         }
         _localVideo.value = factory.createVideoTrack("tiwi-video", videoSource).also {
             it.setEnabled(true)
@@ -229,6 +249,7 @@ class WebRtcCallManager(
     private fun startPolling(callId: String) {
         pollJob?.cancel()
         pollJob = scope.launch {
+            var ringingSeconds = 0
             while (!disposed) {
                 try {
                     val latest = repository.getCall(callId) ?: break
@@ -246,6 +267,15 @@ class WebRtcCallManager(
                         "declined" -> { _state.value = "Declined"; closeMedia(); break }
                         "ended", "missed", "failed" -> { _state.value = "Call ended"; closeMedia(); break }
                     }
+                    if (latest.status == "ringing" && latest.answer == null) {
+                        ringingSeconds += 1
+                        if (ringingSeconds >= 45) {
+                            runCatching { repository.endCall(callId, "missed") }
+                            _state.value = "Call ended"
+                            closeMedia()
+                            break
+                        }
+                    } else ringingSeconds = 0
                 } catch (_: Exception) {
                     // A cached call remains usable through a brief network interruption.
                 }
@@ -293,7 +323,13 @@ class WebRtcCallManager(
         override fun onDataChannel(channel: DataChannel) = Unit
         override fun onRenegotiationNeeded() = Unit
         override fun onAddTrack(receiver: RtpReceiver, mediaStreams: Array<out MediaStream>) {
-            (receiver.track() as? VideoTrack)?.let { _remoteVideo.value = it }
+            when (val track = receiver.track()) {
+                is VideoTrack -> {
+                    track.setEnabled(true)
+                    _remoteVideo.value = track
+                }
+                is AudioTrack -> track.setEnabled(true)
+            }
         }
     }
 
@@ -337,7 +373,45 @@ class WebRtcCallManager(
         peerConnection?.close()
         peerConnection?.dispose()
         peerConnection = null
+        abandonAudioFocus()
+        _speakerEnabled.value = false
         audioManager.mode = previousAudioMode
+    }
+
+    @Suppress("DEPRECATION")
+    private fun setSpeaker(enabled: Boolean) {
+        _speakerEnabled.value = enabled
+        audioManager.isSpeakerphoneOn = enabled
+    }
+
+    private fun requestAudioFocus() {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+                .setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .build()
+                )
+                .setAcceptsDelayedFocusGain(false)
+                .setOnAudioFocusChangeListener { }
+                .build()
+            audioFocusRequest = request
+            audioManager.requestAudioFocus(request)
+        } else {
+            @Suppress("DEPRECATION")
+            audioManager.requestAudioFocus(null, AudioManager.STREAM_VOICE_CALL, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+        }
+    }
+
+    private fun abandonAudioFocus() {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            audioFocusRequest?.let(audioManager::abandonAudioFocusRequest)
+            audioFocusRequest = null
+        } else {
+            @Suppress("DEPRECATION")
+            audioManager.abandonAudioFocus(null)
+        }
     }
 
     private class SdpContinuation(

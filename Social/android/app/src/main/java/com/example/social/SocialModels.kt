@@ -84,7 +84,8 @@ data class SocialProfile(
     val followerCount: Int = 0,
     val followingCount: Int = 0,
     val postCount: Int = 0,
-    val isFollowing: Boolean = false
+    val isFollowing: Boolean = false,
+    val createdAt: String? = null
 )
 
 @JsonClass(generateAdapter = true)
@@ -178,6 +179,8 @@ data class SocialConversationMember(
     val user: SocialUser = SocialUser(),
     val profile: SocialProfile? = null,
     val role: String = "member",
+    val muted: Boolean = false,
+    val archived: Boolean = false,
     val lastReadAt: String? = null
 )
 

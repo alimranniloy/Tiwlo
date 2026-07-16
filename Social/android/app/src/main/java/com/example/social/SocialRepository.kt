@@ -445,11 +445,16 @@ class SocialRepository(context: Context) {
 
     suspend fun refreshConversations(force: Boolean = false): List<SocialConversation> {
         if (!force && _conversations.value.isNotEmpty() && cache.isFresh("conversations", CHAT_TTL)) return _conversations.value
-        val data = client.execute("query TiwiChats { socialConversations { $CONVERSATION_FIELDS } }")
+        val data = client.execute("query TiwiChats { socialConversations(archived: false) { $CONVERSATION_FIELDS } }")
         return data.list("socialConversations").mapNotNull { it.objectMap()?.let(::mapConversation) }.also {
             _conversations.value = it
             cache.saveConversations(it)
         }
+    }
+
+    suspend fun archivedConversations(): List<SocialConversation> {
+        val data = client.execute("query TiwiArchivedChats { socialConversations(archived: true) { $CONVERSATION_FIELDS } }")
+        return data.list("socialConversations").mapNotNull { it.objectMap()?.let(::mapConversation) }
     }
 
     suspend fun createConversation(userId: String): SocialConversation {
@@ -508,11 +513,11 @@ class SocialRepository(context: Context) {
         }
     }
 
-    suspend fun sendMessage(conversationId: String, body: String, media: List<SocialMedia> = emptyList()): SocialMessage {
+    suspend fun sendMessage(conversationId: String, body: String, media: List<SocialMedia> = emptyList(), replyToId: String? = null): SocialMessage {
         val local = SocialMessage(
             id = "local-${System.nanoTime()}", conversationId = conversationId, senderId = currentUserId().orEmpty(),
             sender = _currentUser.value ?: SocialUser(), body = body.trim(), type = media.firstOrNull()?.type ?: "text",
-            media = media, deliveryStatus = "sending", sentAt = System.currentTimeMillis().toString()
+            media = media, replyToId = replyToId, deliveryStatus = "sending", sentAt = System.currentTimeMillis().toString()
         )
         val previous = cachedMessages(conversationId)
         _messages.value = _messages.value + (conversationId to (previous + local))
@@ -522,7 +527,8 @@ class SocialRepository(context: Context) {
                 """mutation SendTiwiMessage(${D}input: SocialMessageInput!) { sendSocialMessage(input: ${D}input) { $MESSAGE_FIELDS } }""",
                 mapOf("input" to mapOf(
                     "conversationId" to conversationId, "body" to body.trim(), "type" to (media.firstOrNull()?.type ?: "text"),
-                    "media" to media.map { mapOf("url" to it.url, "type" to it.type, "hlsUrl" to it.hlsUrl, "mimeType" to it.mimeType) }
+                    "media" to media.map { mapOf("url" to it.url, "type" to it.type, "hlsUrl" to it.hlsUrl, "thumbnailUrl" to it.thumbnailUrl, "mimeType" to it.mimeType) },
+                    "replyToId" to replyToId
                 ))
             )
             mapMessage(data.objectValue("sendSocialMessage") ?: throw SocialApiException("Message was not sent")).also { sent ->
@@ -542,6 +548,52 @@ class SocialRepository(context: Context) {
         client.execute("""mutation ReadTiwiChat(${D}id: ID!) { markSocialConversationRead(id: ${D}id) { id unreadCount } }""", mapOf("id" to id))
         _conversations.value = _conversations.value.map { if (it.id == id) it.copy(unreadCount = 0) else it }
         cache.saveConversations(_conversations.value)
+    }
+
+    suspend fun updateConversationMember(
+        id: String,
+        muted: Boolean? = null,
+        archived: Boolean? = null,
+        markUnread: Boolean = false,
+        leave: Boolean = false
+    ): SocialConversation? {
+        val data = client.execute(
+            """mutation UpdateTiwiChat(${D}id: ID!, ${D}muted: Boolean, ${D}archived: Boolean, ${D}markUnread: Boolean, ${D}leave: Boolean) {
+                updateSocialConversationMember(id: ${D}id, muted: ${D}muted, archived: ${D}archived, markUnread: ${D}markUnread, leave: ${D}leave) { $CONVERSATION_FIELDS }
+            }""",
+            mapOf("id" to id, "muted" to muted, "archived" to archived, "markUnread" to markUnread, "leave" to leave)
+        )
+        val updated = data.objectValue("updateSocialConversationMember")?.let(::mapConversation)
+        _conversations.value = when {
+            leave || archived == true -> _conversations.value.filterNot { it.id == id }
+            updated != null && _conversations.value.any { it.id == id } -> _conversations.value.map { if (it.id == id) updated else it }
+            updated != null -> listOf(updated) + _conversations.value
+            else -> _conversations.value
+        }
+        cache.saveConversations(_conversations.value)
+        return updated
+    }
+
+    suspend fun reactToMessage(id: String, emoji: String): SocialMessage {
+        val data = client.execute(
+            """mutation ReactTiwiMessage(${D}id: ID!, ${D}emoji: String!) { reactToSocialMessage(id: ${D}id, emoji: ${D}emoji) { $MESSAGE_FIELDS } }""",
+            mapOf("id" to id, "emoji" to emoji)
+        )
+        return replaceMessage(mapMessage(data.objectValue("reactToSocialMessage") ?: throw SocialApiException("Reaction failed")))
+    }
+
+    suspend fun editMessage(id: String, body: String): SocialMessage {
+        val data = client.execute(
+            """mutation EditTiwiMessage(${D}id: ID!, ${D}body: String!) { editSocialMessage(id: ${D}id, body: ${D}body) { $MESSAGE_FIELDS } }""",
+            mapOf("id" to id, "body" to body.trim())
+        )
+        return replaceMessage(mapMessage(data.objectValue("editSocialMessage") ?: throw SocialApiException("Message was not edited")))
+    }
+
+    suspend fun deleteMessageForMe(id: String) {
+        client.execute("""mutation DeleteTiwiMessage(${D}id: ID!) { deleteSocialMessageForMe(id: ${D}id) }""", mapOf("id" to id))
+        _messages.value = _messages.value.mapValues { (_, rows) -> rows.filterNot { it.id == id } }
+        _messages.value.forEach { (conversationId, rows) -> cache.saveMessages(conversationId, rows) }
     }
 
     suspend fun startCall(conversationId: String?, calleeId: String, video: Boolean, offer: Map<String, Any?>? = null): SocialCallSession {
@@ -696,6 +748,12 @@ class SocialRepository(context: Context) {
         _messages.value.forEach { (conversationId, rows) -> cache.saveMessages(conversationId, rows) }
     }
 
+    private fun replaceMessage(value: SocialMessage): SocialMessage {
+        _messages.value = _messages.value.mapValues { (_, rows) -> rows.map { if (it.id == value.id) value else it } }
+        _messages.value.forEach { (conversationId, rows) -> cache.saveMessages(conversationId, rows) }
+        return value
+    }
+
     suspend fun startPasswordReset(identifier: String): PasswordResetChallenge {
         val data = client.execute(
             """mutation StartTiwiReset(${D}identifier: String) { startPasswordResetOtp(identifier: ${D}identifier) { ok challengeId channel destination expiresAt resendAvailableAt message } }""",
@@ -793,7 +851,8 @@ class SocialRepository(context: Context) {
             profileEffect = value.objectValue("profileEffect")?.let(::mapDecoration),
             privacy = value.objectValue("privacy") ?: emptyMap(), preferences = value.objectValue("preferences") ?: emptyMap(),
             followerCount = value.number("followerCount")?.toInt() ?: 0, followingCount = value.number("followingCount")?.toInt() ?: 0,
-            postCount = value.number("postCount")?.toInt() ?: 0, isFollowing = value.boolean("isFollowing")
+            postCount = value.number("postCount")?.toInt() ?: 0, isFollowing = value.boolean("isFollowing"),
+            createdAt = value.string("createdAt")
         )
     }
 
@@ -841,7 +900,16 @@ class SocialRepository(context: Context) {
         requestStatus = value.string("requestStatus") ?: "accepted", requestedById = value.string("requestedById"),
         members = value.list("members").mapNotNull { row -> row.objectMap()?.let { member ->
             val user = mapUser(member.objectValue("user") ?: emptyMap())
-            SocialConversationMember(member.string("id").orEmpty(), member.string("userId") ?: user.id, user, member.objectValue("profile")?.let { mapProfile(it, user) }, member.string("role") ?: "member", member.string("lastReadAt"))
+            SocialConversationMember(
+                id = member.string("id").orEmpty(),
+                userId = member.string("userId") ?: user.id,
+                user = user,
+                profile = member.objectValue("profile")?.let { mapProfile(it, user) },
+                role = member.string("role") ?: "member",
+                muted = member.boolean("muted"),
+                archived = member.boolean("archived"),
+                lastReadAt = member.string("lastReadAt")
+            )
         } },
         lastMessage = value.objectValue("lastMessage")?.let(::mapMessage), unreadCount = value.number("unreadCount")?.toInt() ?: 0, updatedAt = value.string("updatedAt")
     )
@@ -898,11 +966,11 @@ class SocialRepository(context: Context) {
         const val USER_FIELDS = "id email name avatar role status socialRestrictionCode socialRestrictionReason socialRestrictedAt socialModerationScore signupSource emailVerifiedAt phone mobileCountryCode primaryRegion country addressLine1 city state postalCode billingName socialLastActiveAt"
         const val PUBLIC_USER_FIELDS = "id name avatar status socialLastActiveAt"
         const val DECORATION_FIELDS = "id slug kind name assetUrl fileName mimeType animated width height priceUsd status sortOrder owned applied ownershipSource"
-        const val PROFILE_FIELDS = "id userId username bio about category website location coverUrl verified badgeType badgePlan badgeExpiresAt avatarDecoration { $DECORATION_FIELDS } profileEffect { $DECORATION_FIELDS } privacy preferences followerCount followingCount postCount isFollowing user { $PUBLIC_USER_FIELDS }"
+        const val PROFILE_FIELDS = "id userId username bio about category website location coverUrl verified badgeType badgePlan badgeExpiresAt avatarDecoration { $DECORATION_FIELDS } profileEffect { $DECORATION_FIELDS } privacy preferences followerCount followingCount postCount isFollowing createdAt user { $PUBLIC_USER_FIELDS }"
         const val POST_FIELDS = "id authorId type body media thumbnailUrl hlsUrl processingStatus visibility commentPermission pinned groupId saved status viewCount shareCount reactionCount commentCount viewerReaction publishedAt author { $PUBLIC_USER_FIELDS } authorProfile { id userId username verified badgeType isFollowing avatarDecoration { $DECORATION_FIELDS } }"
         const val COMMENT_FIELDS = "id postId authorId replyToId body status reactionCount viewerLiked createdAt author { $PUBLIC_USER_FIELDS } authorProfile { id userId username verified badgeType avatarDecoration { $DECORATION_FIELDS } }"
         const val MESSAGE_FIELDS = "id conversationId senderId type body media replyToId deliveryStatus sentAt deliveredAt readAt editedAt unsentAt reactions { id userId emoji } sender { $PUBLIC_USER_FIELDS } senderProfile { id userId username avatarDecoration { $DECORATION_FIELDS } }"
-        const val CONVERSATION_FIELDS = "id type title avatarUrl requestStatus requestedById unreadCount updatedAt members { id userId role lastReadAt user { $PUBLIC_USER_FIELDS } profile { id userId username verified badgeType avatarDecoration { $DECORATION_FIELDS } } } lastMessage { $MESSAGE_FIELDS }"
+        const val CONVERSATION_FIELDS = "id type title avatarUrl requestStatus requestedById unreadCount updatedAt members { id userId role muted archived lastReadAt user { $PUBLIC_USER_FIELDS } profile { id userId username verified badgeType avatarDecoration { $DECORATION_FIELDS } } } lastMessage { $MESSAGE_FIELDS }"
         const val CALL_FIELDS = "id conversationId callerId calleeId type status offer answer iceCandidates caller { $PUBLIC_USER_FIELDS } callee { $PUBLIC_USER_FIELDS }"
         const val GROUP_FIELDS = "id ownerId name description coverUrl privacy status memberCount viewerRole viewerJoined createdAt owner { $PUBLIC_USER_FIELDS }"
         const val GROUP_MEMBER_FIELDS = "id groupId userId role status joinedAt user { $PUBLIC_USER_FIELDS } profile { id userId username verified badgeType avatarDecoration { $DECORATION_FIELDS } }"

@@ -3216,7 +3216,7 @@ type Query {
   socialGroups(search: String, mine: Boolean, limit: Int): [SocialGroup!]!
   socialGroup(id: ID!): SocialGroup
   socialGroupMembers(groupId: ID!, limit: Int): [SocialGroupMember!]!
-  socialConversations: [SocialConversation!]!
+  socialConversations(archived: Boolean): [SocialConversation!]!
   socialMessages(conversationId: ID!, before: String, limit: Int): [SocialMessage!]!
   socialCall(id: ID!): SocialCallSession
   socialIncomingCalls: [SocialCallSession!]!
@@ -3437,6 +3437,7 @@ type Mutation {
   sendSocialMessage(input: SocialMessageInput!): SocialMessage!
   editSocialMessage(id: ID!, body: String!): SocialMessage!
   markSocialConversationRead(id: ID!): SocialConversation!
+  updateSocialConversationMember(id: ID!, muted: Boolean, archived: Boolean, markUnread: Boolean, leave: Boolean): SocialConversation
   reactToSocialMessage(id: ID!, emoji: String!): SocialMessage!
   unsendSocialMessage(id: ID!): SocialMessage!
   deleteSocialMessageForMe(id: ID!): Boolean!

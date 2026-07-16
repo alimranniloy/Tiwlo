@@ -1015,11 +1015,11 @@ const conversationInclude = (actorId) => ({
   }
 });
 
-export const listConversations = async (ctx) => {
+export const listConversations = async (ctx, archived = false) => {
   const actor = await requireAuth(ctx);
   await requireSocialFeature(ctx, 'messagingEnabled');
   const rows = await ctx.prisma.socialConversation.findMany({
-    where: { members: { some: { userId: actor.id, archived: false } } },
+    where: { members: { some: { userId: actor.id, archived: Boolean(archived) } } },
     include: conversationInclude(actor.id),
     orderBy: { updatedAt: 'desc' },
     take: 100
@@ -1166,6 +1166,48 @@ export const markConversationRead = async (ctx, id) => {
   return mapConversation(ctx, conversation, actor.id);
 };
 
+export const updateConversationMember = async (ctx, { id, muted, archived, markUnread, leave }) => {
+  const actor = await requireAuth(ctx);
+  await requireSocialFeature(ctx, 'messagingEnabled');
+  const membership = await requireConversationMember(ctx, id, actor.id);
+  const conversation = await ctx.prisma.socialConversation.findUnique({
+    where: { id },
+    include: conversationInclude(actor.id)
+  });
+  if (!conversation) notFound('Conversation');
+
+  if (leave) {
+    if (conversation.type === 'group') {
+      await ctx.prisma.socialConversationMember.delete({ where: { id: membership.id } });
+      return null;
+    }
+    archived = true;
+  }
+
+  let unreadAt;
+  if (markUnread) {
+    const latestIncoming = await ctx.prisma.socialMessage.findFirst({
+      where: { conversationId: id, senderId: { not: actor.id }, unsentAt: null },
+      orderBy: { sentAt: 'desc' },
+      select: { sentAt: true }
+    });
+    unreadAt = latestIncoming ? new Date(latestIncoming.sentAt.getTime() - 1) : membership.lastReadAt;
+  }
+  const data = removeUndefined({
+    muted: typeof muted === 'boolean' ? muted : undefined,
+    archived: typeof archived === 'boolean' ? archived : undefined,
+    lastReadAt: markUnread ? unreadAt : undefined
+  });
+  if (Object.keys(data).length) {
+    await ctx.prisma.socialConversationMember.update({ where: { id: membership.id }, data });
+  }
+  const updated = await ctx.prisma.socialConversation.findUnique({
+    where: { id },
+    include: conversationInclude(actor.id)
+  });
+  return mapConversation(ctx, updated, actor.id);
+};
+
 export const reactToMessage = async (ctx, id, emoji) => {
   const actor = await requireAuth(ctx);
   const message = await ctx.prisma.socialMessage.findUnique({ where: { id } });
@@ -1245,6 +1287,15 @@ export const getCall = async (ctx, id) => {
 export const incomingCalls = async (ctx) => {
   const actor = await requireAuth(ctx);
   await requireSocialFeature(ctx, 'callsEnabled');
+  const expiry = new Date(Date.now() - 60_000);
+  await ctx.prisma.socialCallSession.updateMany({
+    where: {
+      calleeId: actor.id,
+      status: { in: ['ringing', 'connecting'] },
+      createdAt: { lt: expiry }
+    },
+    data: { status: 'missed', endedAt: new Date() }
+  });
   return ctx.prisma.socialCallSession.findMany({
     where: { calleeId: actor.id, status: { in: ['ringing', 'connecting'] } },
     include: callInclude,
