@@ -298,32 +298,12 @@ private fun DisabledAccountScreen(repository: SocialRepository, onLogout: () -> 
         Text("Account disabled", fontSize = 27.sp, fontWeight = FontWeight.ExtraBold, color = Color(0xFF101828))
         Spacer(Modifier.height(10.dp))
         Text(
-            "${user?.name.orEmpty()}, your Tiwi account is currently ${user?.status ?: "restricted"}. You can still download your information or request a review.",
+            "You have 180 days to request a review. $restrictionReason After that, your account and information may be permanently removed.",
             textAlign = TextAlign.Center,
             color = Color(0xFF475467),
-            lineHeight = 21.sp
+            lineHeight = 21.sp,
+            modifier = Modifier.padding(horizontal = 4.dp)
         )
-        Surface(
-            modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
-            color = Color(0xFFFFF4ED),
-            shape = RoundedCornerShape(14.dp),
-            border = BorderStroke(1.dp, Color(0xFFFEC89A)),
-            tonalElevation = 0.dp
-        ) {
-            Column(Modifier.padding(16.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("180", fontSize = 30.sp, fontWeight = FontWeight.Black, color = Color(0xFFB42318))
-                    Column(Modifier.padding(start = 9.dp)) {
-                        Text("DAYS", fontSize = 11.sp, fontWeight = FontWeight.Black, color = Color(0xFFB42318))
-                        Text("Review period", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF7A271A))
-                    }
-                }
-                HorizontalDivider(Modifier.padding(vertical = 11.dp), color = Color(0xFFFEC89A))
-                Text("Account restriction", fontWeight = FontWeight.Bold, color = Color(0xFF9A3412))
-                Text(restrictionReason, color = Color(0xFF7C2D12), fontSize = 13.sp, lineHeight = 18.sp)
-                Text("Request a review before this period ends. After 180 days, the account and stored information may be permanently removed.", color = Color(0xFF9A3412), fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp), lineHeight = 17.sp)
-            }
-        }
         Spacer(Modifier.height(24.dp))
         Button(
             enabled = !busy,
@@ -866,24 +846,50 @@ private fun MiniProfileEffectPreview(
     effect: SocialProfileDecoration?,
     modifier: Modifier = Modifier
 ) {
-    Box(modifier.clip(RoundedCornerShape(18.dp)).background(Color.White)) {
+    BoxWithConstraints(modifier.clip(RoundedCornerShape(16.dp)).background(Color.White)) {
+        val tiny = maxHeight < 140.dp
+        val compact = maxHeight < 200.dp
+        val headerHeight = if (tiny) 48.dp else if (compact) 62.dp else 96.dp
+        val coverHeight = if (tiny) 34.dp else if (compact) 45.dp else 72.dp
+        val avatarSize = if (tiny) 28.dp else if (compact) 36.dp else 50.dp
+        val horizontal = if (compact) 7.dp else 11.dp
         Column(Modifier.fillMaxSize()) {
-            TiwiAvatar(coverUrl, R.drawable.img_tiwi_cover, Modifier.fillMaxWidth().height(78.dp), ContentScale.Crop)
-            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp).offset(y = (-19).dp), verticalAlignment = Alignment.Bottom) {
-                TiwiAvatar(avatarUrl, R.drawable.img_tiwi_avatar_1, Modifier.size(54.dp).clip(CircleShape), ContentScale.Crop)
-                Column(Modifier.padding(start = 9.dp, bottom = 2.dp)) {
-                    Text(repository.currentUser.value?.name.orEmpty(), fontWeight = FontWeight.ExtraBold, fontSize = 13.sp, maxLines = 1)
-                    Text("@${repository.profile.value?.username.orEmpty()}", color = Color.Gray, fontSize = 9.sp, maxLines = 1)
-                }
+            Box(Modifier.fillMaxWidth().height(headerHeight)) {
+                TiwiAvatar(coverUrl, R.drawable.img_tiwi_cover, Modifier.fillMaxWidth().height(coverHeight), ContentScale.Crop)
+                TiwiAvatar(
+                    avatarUrl,
+                    R.drawable.img_tiwi_avatar_1,
+                    Modifier.align(Alignment.BottomStart).padding(start = horizontal).size(avatarSize).clip(CircleShape).border(2.dp, Color.White, CircleShape),
+                    ContentScale.Crop
+                )
             }
-            Row(Modifier.fillMaxWidth().offset(y = (-10).dp), horizontalArrangement = Arrangement.SpaceEvenly) {
-                listOf("Posts", "Followers", "Following").forEach { label -> Column(horizontalAlignment = Alignment.CenterHorizontally) { Text("12", fontWeight = FontWeight.Bold, fontSize = 11.sp); Text(label, color = Color.Gray, fontSize = 8.sp) } }
+            Column(Modifier.padding(horizontal = horizontal)) {
+                Text(repository.currentUser.value?.name?.ifBlank { "Tiwi profile" } ?: "Tiwi profile", fontWeight = FontWeight.ExtraBold, fontSize = if (tiny) 8.sp else if (compact) 10.sp else 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (!tiny) Text("@${repository.profile.value?.username.orEmpty()}", color = Color(0xFF667085), fontSize = if (compact) 7.sp else 9.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            Box(Modifier.fillMaxWidth().padding(horizontal = 11.dp).height(28.dp).background(Color(0xFFF0F2F5), RoundedCornerShape(7.dp)))
-            Spacer(Modifier.height(7.dp))
-            repeat(2) { Box(Modifier.fillMaxWidth().padding(horizontal = 11.dp, vertical = 3.dp).height(31.dp).background(Color(0xFFF7F8FA), RoundedCornerShape(7.dp))) }
+            if (!compact) Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
+                listOf("Posts", "Followers", "Following").forEach { label -> Column(horizontalAlignment = Alignment.CenterHorizontally) { Text("12", fontWeight = FontWeight.Bold, fontSize = 10.sp); Text(label, color = Color.Gray, fontSize = 7.sp) } }
+            }
+            Spacer(Modifier.height(if (tiny) 4.dp else 6.dp))
+            Box(Modifier.fillMaxWidth().padding(horizontal = horizontal).height(if (tiny) 12.dp else if (compact) 17.dp else 25.dp).background(Color(0xFFF0F2F5), RoundedCornerShape(6.dp)))
+            if (!tiny) repeat(if (compact) 1 else 2) { Box(Modifier.fillMaxWidth().padding(horizontal = horizontal, vertical = 3.dp).height(if (compact) 18.dp else 27.dp).background(Color(0xFFF7F8FA), RoundedCornerShape(6.dp))) }
         }
         ProfileEffectImage(effect, Modifier.matchParentSize(), loopLimit = 2)
+    }
+}
+
+@Composable
+private fun MarketplaceLoadingPlaceholder(modifier: Modifier = Modifier) {
+    val alpha by rememberInfiniteTransition(label = "marketplace-placeholder").animateFloat(
+        initialValue = .42f, targetValue = .8f,
+        animationSpec = infiniteRepeatable(tween(800), repeatMode = RepeatMode.Reverse), label = "marketplace-placeholder-alpha"
+    )
+    val shade = Color(0xFFDDE2EA).copy(alpha = alpha)
+    Column(modifier.padding(horizontal = 14.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Box(Modifier.width(150.dp).height(18.dp).background(shade, RoundedCornerShape(8.dp)))
+        Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) { repeat(3) { Box(Modifier.weight(1f).height(136.dp).background(shade, RoundedCornerShape(14.dp))) } }
+        Box(Modifier.width(112.dp).height(18.dp).background(shade, RoundedCornerShape(8.dp)))
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) { repeat(2) { Box(Modifier.weight(1f).height(198.dp).background(shade, RoundedCornerShape(14.dp))) } }
     }
 }
 
@@ -956,6 +962,7 @@ private fun TiwiVideo(
     autoplay: Boolean = false,
     fallbackUrl: String? = null,
     posterUrl: String? = null,
+    posterContentScale: ContentScale = ContentScale.Crop,
     muted: Boolean = false,
     previewClipMs: Long? = null,
     coordinated: Boolean = true,
@@ -1053,7 +1060,7 @@ private fun TiwiVideo(
             modifier = Modifier.fillMaxSize()
         )
         if (!renderedFirstFrame && !posterUrl.isNullOrBlank()) {
-            AsyncImage(model = posterUrl, contentDescription = "Video thumbnail", modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+            AsyncImage(model = posterUrl, contentDescription = "Video thumbnail", modifier = Modifier.fillMaxSize(), contentScale = posterContentScale)
         }
         if (interactive) Box(Modifier.fillMaxSize().clickable {
             if (playing) { manuallyPaused = true; player.pause() } else { manuallyPaused = false; if (coordinated) TiwiPlaybackCoordinator.activate(playerId); player.play() }
@@ -1468,7 +1475,7 @@ private fun SuggestedFriendsSection(
 fun ReelsSection(reels: List<Reel>, onReelClick: (String) -> Unit = {}) {
     Column(modifier = Modifier.padding(vertical = 8.dp)) {
         Text(
-            text = "Trending Reels",
+            text = "Reels for you",
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
         )
@@ -1476,8 +1483,8 @@ fun ReelsSection(reels: List<Reel>, onReelClick: (String) -> Unit = {}) {
             contentPadding = PaddingValues(horizontal = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            items(reels.take(3), key = { it.id }) { reel ->
-                ReelItem(reel, autoplayPreview = true) { onReelClick(reel.id) }
+            itemsIndexed(reels.take(16), key = { _, reel -> reel.id }) { index, reel ->
+                ReelItem(reel, autoplayPreview = index < 3) { onReelClick(reel.id) }
             }
         }
     }
@@ -1487,9 +1494,9 @@ fun ReelsSection(reels: List<Reel>, onReelClick: (String) -> Unit = {}) {
 fun ReelItem(reel: Reel, autoplayPreview: Boolean = false, onClick: () -> Unit = {}) {
     Box(
         modifier = Modifier
-            .size(width = 110.dp, height = 180.dp)
-            .clip(RoundedCornerShape(16.dp))
-            .background(MaterialTheme.colorScheme.surface)
+            .size(width = 126.dp, height = 224.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(Color.Black)
     ) {
         if (autoplayPreview && !reel.videoUrl.isNullOrBlank()) {
             TiwiVideo(
@@ -1498,12 +1505,13 @@ fun ReelItem(reel: Reel, autoplayPreview: Boolean = false, onClick: () -> Unit =
                 autoplay = true,
                 fallbackUrl = reel.fallbackVideoUrl,
                 posterUrl = reel.thumbnailUrl,
+                posterContentScale = ContentScale.Fit,
                 muted = true,
                 previewClipMs = 2_500L,
                 coordinated = false,
                 interactive = false
             )
-        } else TiwiAvatar(reel.thumbnailUrl, reel.thumbnail, Modifier.fillMaxSize(), ContentScale.Crop)
+        } else TiwiAvatar(reel.thumbnailUrl, reel.thumbnail, Modifier.fillMaxSize(), ContentScale.Fit)
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -2932,111 +2940,118 @@ fun MenuScreen(repository: SocialRepository, name: String, avatarUrl: String?, o
         EditProfilePage(repository, profile, onBack = { showEditProfile = false })
         return
     }
-    Column(modifier = Modifier.fillMaxSize().background(Color.White).statusBarsPadding().padding(horizontal = 10.dp)) {
+    Column(modifier = Modifier.fillMaxSize().background(Color(0xFFF4F5F7)).statusBarsPadding().padding(horizontal = 12.dp)) {
         Surface(
             modifier = Modifier.fillMaxWidth(),
             color = Color.White,
-            shape = RoundedCornerShape(12.dp),
-            border = BorderStroke(1.dp, Color(0xFFE3E6EA)),
+            shape = RoundedCornerShape(22.dp),
             tonalElevation = 0.dp
         ) {
             Column {
-                Box(Modifier.fillMaxWidth().height(142.dp)) {
-                    TiwiAvatar(profile?.coverUrl, R.drawable.img_tiwi_cover, Modifier.fillMaxWidth().height(105.dp).clip(RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)), ContentScale.Crop)
+                Box(Modifier.fillMaxWidth().height(154.dp)) {
+                    TiwiAvatar(profile?.coverUrl, R.drawable.img_tiwi_cover, Modifier.fillMaxWidth().height(114.dp), ContentScale.Crop)
                     DecoratedAvatar(
                         avatarUrl,
                         R.drawable.img_tiwi_avatar_1,
                         profile?.avatarDecoration,
-                        Modifier.align(Alignment.BottomStart).padding(start = 10.dp).size(86.dp)
+                        Modifier.align(Alignment.BottomStart).padding(start = 14.dp).size(92.dp)
                     )
                 }
-                Row(Modifier.fillMaxWidth().clickable(onClick = onProfileClick).padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.fillMaxWidth().clickable(onClick = onProfileClick).padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(name, style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
                             if (profile?.verified == true) VerifiedBadge(profile?.badgeType, 17.dp, Modifier.padding(start = 3.dp))
                         }
-                        Text("@${profile?.username.orEmpty()} - View profile", style = MaterialTheme.typography.labelMedium, color = Color.Gray)
+                        Text("@${profile?.username.orEmpty()}  ·  View your profile", style = MaterialTheme.typography.labelMedium, color = Color(0xFF667085))
                     }
                     FilledTonalIconButton(
                         onClick = { showEditProfile = true },
-                        modifier = Modifier.size(36.dp),
-                        colors = IconButtonDefaults.filledTonalIconButtonColors(containerColor = Color(0xFFF0F2F5), contentColor = Color.Black)
+                        modifier = Modifier.size(38.dp),
+                        colors = IconButtonDefaults.filledTonalIconButtonColors(containerColor = Color(0xFFEEEAFE), contentColor = Color(0xFF5865F2))
                     ) { Icon(Icons.Default.Edit, "Edit profile", modifier = Modifier.size(18.dp)) }
+                }
+                HorizontalDivider(color = Color(0xFFEEF0F3))
+                Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 11.dp), horizontalArrangement = Arrangement.SpaceAround) {
+                    listOf(
+                        "Posts" to (profile?.postCount ?: 0),
+                        "Followers" to (profile?.followerCount ?: 0),
+                        "Following" to (profile?.followingCount ?: 0)
+                    ).forEach { (label, count) -> Column(horizontalAlignment = Alignment.CenterHorizontally) { Text(count.toString(), fontWeight = FontWeight.ExtraBold, fontSize = 14.sp); Text(label, color = Color(0xFF667085), fontSize = 10.sp) } }
                 }
             }
         }
 
-        Spacer(modifier = Modifier.height(9.dp))
+        Spacer(modifier = Modifier.height(14.dp))
+        Text("Discover", color = Color(0xFF667085), fontSize = 11.sp, fontWeight = FontWeight.Black, modifier = Modifier.padding(start = 3.dp, bottom = 7.dp))
 
         Surface(
             modifier = Modifier.fillMaxWidth().clickable { selectedSetting = "Verified badge" },
-            color = Color.White,
-            shape = RoundedCornerShape(12.dp),
-            border = BorderStroke(1.dp, Color(0xFFB9D7FF)),
+            color = Color(0xFFEAF2FF),
+            shape = RoundedCornerShape(18.dp),
             tonalElevation = 0.dp
         ) {
-            Row(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(42.dp).background(Color(0xFFEAF3FF), CircleShape), contentAlignment = Alignment.Center) { VerifiedBadge("blue", 24.dp) }
+            Row(Modifier.padding(horizontal = 15.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(46.dp).background(Color.White, RoundedCornerShape(14.dp)), contentAlignment = Alignment.Center) { VerifiedBadge("blue", 25.dp) }
                 Column(Modifier.weight(1f).padding(start = 11.dp)) {
                     Text("Apply for a verified badge", fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                    Text("Blue subscriptions or Gold notable review", color = Color.Gray, fontSize = 12.sp)
+                    Text("Protection, identity and notable status", color = Color(0xFF475467), fontSize = 12.sp)
                 }
-                Icon(Icons.Default.ChevronRight, null, tint = Color.Gray)
+                Icon(Icons.Default.ChevronRight, null, tint = Color(0xFF2457A7))
             }
         }
 
-        Spacer(modifier = Modifier.height(10.dp))
+        Spacer(modifier = Modifier.height(8.dp))
         Surface(
             modifier = Modifier.fillMaxWidth().clickable { showEditProfile = true },
-            color = Color(0xFFF7F4FF),
-            shape = RoundedCornerShape(16.dp),
+            color = Color(0xFF2B2D31),
+            shape = RoundedCornerShape(18.dp),
             tonalElevation = 0.dp
         ) {
-            Row(Modifier.padding(horizontal = 13.dp, vertical = 11.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(42.dp).background(Color.White, CircleShape), contentAlignment = Alignment.Center) { Icon(Icons.Outlined.AutoAwesome, null, tint = Color(0xFF7F56D9)) }
+            Row(Modifier.padding(horizontal = 15.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(46.dp).background(Color(0xFF404249), RoundedCornerShape(14.dp)), contentAlignment = Alignment.Center) { Icon(Icons.Outlined.AutoAwesome, null, tint = Color(0xFFB8B5FF)) }
                 Column(Modifier.weight(1f).padding(start = 11.dp)) {
-                    Text("Decorate your profile", fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                    Text("Avatar decoration and full profile effects", color = Color(0xFF625B71), fontSize = 12.sp)
+                    Text("Decorate your profile", fontWeight = FontWeight.Bold, fontSize = 15.sp, color = Color.White)
+                    Text("Avatar decorations and full-page effects", color = Color(0xFFB5BAC1), fontSize = 12.sp)
                 }
-                Icon(Icons.Default.Edit, "Open Edit profile", tint = Color(0xFF7F56D9), modifier = Modifier.size(19.dp))
+                Icon(Icons.Default.ChevronRight, "Open Edit profile", tint = Color(0xFFDBDEE1), modifier = Modifier.size(21.dp))
             }
         }
-        Spacer(modifier = Modifier.height(10.dp))
+        Spacer(modifier = Modifier.height(13.dp))
 
         LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             item {
-                Text("Your Shortcuts", style = MaterialTheme.typography.titleSmall, color = Color.Gray)
+                Text("Your shortcuts", style = MaterialTheme.typography.titleSmall, color = Color(0xFF667085), fontWeight = FontWeight.Bold)
                 Spacer(modifier = Modifier.height(8.dp))
                 val shortcuts = listOf(
                     Triple("Saved", Icons.Default.Bookmark, TiwiPurple),
                     Triple("Memories", Icons.Default.History, TiwiBlue),
                     Triple("Groups", Icons.Default.Group, TiwiPink)
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    shortcuts.forEach { item ->
-                        Surface(
-                            modifier = Modifier.weight(1f).height(100.dp).clickable { selectedShortcut = item.first },
-                            color = Color.White,
-                            shape = RoundedCornerShape(10.dp),
-                            border = BorderStroke(1.dp, Color(0xFFE3E6EA)),
-                            tonalElevation = 0.dp
-                        ) {
-                            Column(
-                                modifier = Modifier.padding(12.dp),
-                                verticalArrangement = Arrangement.Center
-                            ) {
-                                Icon(item.second, contentDescription = null, tint = item.third)
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Text(item.first, style = MaterialTheme.typography.labelMedium)
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    shortcuts.chunked(2).forEach { shortcutRow ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            shortcutRow.forEach { shortcut ->
+                                Surface(
+                                    modifier = Modifier.weight(1f).height(72.dp).clickable { selectedShortcut = shortcut.first },
+                                    color = Color.White,
+                                    shape = RoundedCornerShape(16.dp),
+                                    tonalElevation = 0.dp
+                                ) {
+                                    Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        Box(Modifier.size(38.dp).background(shortcut.third.copy(alpha = .12f), RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) { Icon(shortcut.second, null, tint = shortcut.third, modifier = Modifier.size(21.dp)) }
+                                        Text(shortcut.first, Modifier.padding(start = 9.dp), fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                    }
+                                }
                             }
+                            if (shortcutRow.size == 1) Spacer(Modifier.weight(1f))
                         }
                     }
                 }
             }
             
             item {
-                Text("Settings & Support", style = MaterialTheme.typography.titleSmall, color = Color.Gray)
+                Text("Settings & support", style = MaterialTheme.typography.titleSmall, color = Color(0xFF667085), fontWeight = FontWeight.Bold)
                 Spacer(modifier = Modifier.height(8.dp))
                 val settings = listOf(
                     Pair("Account Center", Icons.Default.AccountCircle),
@@ -3045,15 +3060,18 @@ fun MenuScreen(repository: SocialRepository, name: String, avatarUrl: String?, o
                     Pair("Help & Support", Icons.Default.Help),
                     Pair("About Tiwi", Icons.Default.Info)
                 )
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    settings.forEach { item ->
+                Surface(color = Color.White, shape = RoundedCornerShape(18.dp), tonalElevation = 0.dp) {
+                    Column {
+                    settings.forEachIndexed { index, item ->
                         ListItem(
-                            headlineContent = { Text(item.first) },
-                            leadingContent = { Icon(item.second, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)) },
-                            trailingContent = { Icon(Icons.Default.ChevronRight, contentDescription = null) },
+                            headlineContent = { Text(item.first, fontWeight = FontWeight.SemiBold, fontSize = 14.sp) },
+                            leadingContent = { Box(Modifier.size(36.dp).background(Color(0xFFF0F2F5), RoundedCornerShape(11.dp)), contentAlignment = Alignment.Center) { Icon(item.second, contentDescription = null, tint = Color(0xFF475467), modifier = Modifier.size(20.dp)) } },
+                            trailingContent = { Icon(Icons.Default.ChevronRight, contentDescription = null, tint = Color(0xFF98A2B3)) },
                             colors = ListItemDefaults.colors(containerColor = Color.White),
-                            modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { selectedSetting = item.first }
+                            modifier = Modifier.clickable { selectedSetting = item.first }
                         )
+                        if (index < settings.lastIndex) HorizontalDivider(Modifier.padding(start = 64.dp), color = Color(0xFFF0F1F3))
+                    }
                     }
                 }
             }
@@ -3062,9 +3080,8 @@ fun MenuScreen(repository: SocialRepository, name: String, avatarUrl: String?, o
                 Button(
                     onClick = onLogout,
                     modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color(0xFFB42318)),
-                    border = BorderStroke(1.dp, Color(0xFFF1B4AE)),
-                    shape = RoundedCornerShape(12.dp)
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFEDEB), contentColor = Color(0xFFB42318)),
+                    shape = RoundedCornerShape(16.dp)
                 ) {
                     Text("Log Out", fontWeight = FontWeight.Bold)
                 }
@@ -4117,61 +4134,66 @@ private fun EditProfilePage(repository: SocialRepository, profile: SocialProfile
             busy = false
         }
     }
-    Column(Modifier.fillMaxSize().background(Color.White).statusBarsPadding()) {
-        Row(Modifier.fillMaxWidth().height(52.dp), verticalAlignment = Alignment.CenterVertically) {
-            TextButton(enabled = !busy, onClick = onBack) { Text("Cancel", color = Color.Black) }
+    val profileFieldColors = OutlinedTextFieldDefaults.colors(
+        focusedContainerColor = Color.White,
+        unfocusedContainerColor = Color.White,
+        focusedBorderColor = Color(0xFF5865F2),
+        unfocusedBorderColor = Color.Transparent
+    )
+    Column(Modifier.fillMaxSize().background(Color(0xFFF4F5F7)).statusBarsPadding()) {
+        Row(Modifier.fillMaxWidth().height(52.dp).background(Color.White), verticalAlignment = Alignment.CenterVertically) {
+            TextButton(enabled = !busy, onClick = onBack) { Text("Cancel", color = Color(0xFF475467)) }
             Text("Edit profile", Modifier.weight(1f), textAlign = TextAlign.Center, fontWeight = FontWeight.Bold, fontSize = 18.sp)
-            TextButton(enabled = !busy && username.isNotBlank(), onClick = ::save) { if (busy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Text("Done", fontWeight = FontWeight.Bold) }
+            TextButton(enabled = !busy && username.isNotBlank(), onClick = ::save) { if (busy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Text("Done", fontWeight = FontWeight.Bold, color = Color(0xFF5865F2)) }
         }
         HorizontalDivider(color = Color(0xFFE4E7EC))
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-            Box(Modifier.fillMaxWidth().height(150.dp).background(Color(0xFFEAF3FF)).clickable { coverPicker.launch("image/*") }) {
+            Box(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 12.dp).height(158.dp).clip(RoundedCornerShape(18.dp)).background(Color(0xFFEAF3FF)).clickable { coverPicker.launch("image/*") }) {
                 TiwiAvatar(coverUrl, R.drawable.img_tiwi_cover, Modifier.fillMaxSize(), ContentScale.Crop)
-                Surface(Modifier.align(Alignment.BottomEnd).padding(10.dp), color = Color.White, shape = CircleShape, tonalElevation = 0.dp) { Icon(Icons.Default.CameraAlt, "Edit cover", Modifier.padding(9.dp)) }
+                Surface(Modifier.align(Alignment.BottomEnd).padding(10.dp), color = Color.Black.copy(alpha = .62f), shape = RoundedCornerShape(12.dp), tonalElevation = 0.dp) { Row(Modifier.padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.CameraAlt, "Edit cover", tint = Color.White, modifier = Modifier.size(17.dp)); Text("Cover", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 5.dp)) } }
             }
-            Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-                DecoratedAvatar(avatarUrl, R.drawable.img_tiwi_avatar_1, avatarDecoration, Modifier.offset(y = (-46).dp).size(104.dp), animateDecoration = true)
-                TextButton(onClick = { avatarPicker.launch("image/*") }, modifier = Modifier.offset(y = (-42).dp)) { Text("Edit picture", fontWeight = FontWeight.Bold) }
+            Box(Modifier.fillMaxWidth().height(86.dp)) {
+                DecoratedAvatar(avatarUrl, R.drawable.img_tiwi_avatar_1, avatarDecoration, Modifier.align(Alignment.TopCenter).offset(y = (-54).dp).size(112.dp), animateDecoration = true)
+                TextButton(onClick = { avatarPicker.launch("image/*") }, modifier = Modifier.align(Alignment.BottomCenter)) { Text("Change profile picture", fontWeight = FontWeight.Bold, color = Color(0xFF5865F2)) }
             }
-            Column(Modifier.padding(horizontal = 16.dp).offset(y = (-28).dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(Modifier.padding(horizontal = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("Profile features", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = Color(0xFF344054), modifier = Modifier.padding(start = 2.dp, top = 2.dp))
                 if (decorationCatalogAvailable) {
                     Surface(
                         Modifier.fillMaxWidth().clickable { showDecorations = true },
-                        color = Color(0xFFFAF9FF),
-                        border = BorderStroke(1.dp, Color(0xFFD8CCFF)),
-                        shape = RoundedCornerShape(12.dp),
+                        color = Color.White,
+                        shape = RoundedCornerShape(18.dp),
                         tonalElevation = 0.dp
                     ) {
-                        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Box(Modifier.size(42.dp).background(Color(0xFFF0EBFF), CircleShape), contentAlignment = Alignment.Center) { if (avatarDecoration != null) ProfileDecorationImage(avatarDecoration!!.assetUrl, Modifier.fillMaxSize(), animated = true) else Icon(Icons.Outlined.AutoAwesome, null, tint = Color(0xFF7F56D9)) }
-                            Column(Modifier.weight(1f).padding(start = 11.dp)) { Text("Avatar decoration", fontWeight = FontWeight.Bold); Text(avatarDecoration?.name ?: "Choose an animated profile effect", color = Color.Gray, fontSize = 12.sp) }
-                            Icon(Icons.Default.ChevronRight, null, tint = Color.Gray)
+                        Row(Modifier.padding(horizontal = 15.dp, vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Box(Modifier.width(62.dp).height(68.dp).background(Color(0xFFF0EBFF), RoundedCornerShape(17.dp)), contentAlignment = Alignment.Center) { if (avatarDecoration != null) ProfileDecorationImage(avatarDecoration!!.assetUrl, Modifier.size(60.dp), animated = true) else Icon(Icons.Outlined.AutoAwesome, null, tint = Color(0xFF7F56D9), modifier = Modifier.size(27.dp)) }
+                            Column(Modifier.weight(1f).padding(start = 13.dp)) { Text("Avatar decoration", fontWeight = FontWeight.Bold, fontSize = 15.sp); Text(avatarDecoration?.name ?: "Add a frame around your profile photo", color = Color(0xFF667085), fontSize = 12.sp, lineHeight = 16.sp) }
+                            Icon(Icons.Default.ChevronRight, null, tint = Color(0xFF98A2B3))
                         }
                     }
                 }
                 if (effectCatalogAvailable) {
                     Surface(
                         Modifier.fillMaxWidth().clickable { showEffects = true },
-                        color = Color(0xFFF7FAFF),
-                        border = BorderStroke(1.dp, Color(0xFFC9D8F4)),
-                        shape = RoundedCornerShape(12.dp),
+                        color = Color(0xFF2B2D31),
+                        shape = RoundedCornerShape(18.dp),
                         tonalElevation = 0.dp
                     ) {
-                        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Box(Modifier.size(42.dp).background(Color(0xFFEAF3FF), RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) { Icon(Icons.Outlined.Layers, null, tint = Color(0xFF2457A7)) }
-                            Column(Modifier.weight(1f).padding(start = 11.dp)) { Text("Profile effect", fontWeight = FontWeight.Bold); Text(profileEffect?.name ?: "Animate your full profile when it opens", color = Color.Gray, fontSize = 12.sp) }
-                            Icon(Icons.Default.ChevronRight, null, tint = Color.Gray)
+                        Row(Modifier.padding(horizontal = 15.dp, vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Box(Modifier.width(62.dp).height(68.dp).background(Color(0xFF404249), RoundedCornerShape(17.dp)), contentAlignment = Alignment.Center) { if (profileEffect != null) ProfileEffectImage(profileEffect, Modifier.matchParentSize().padding(4.dp), loopLimit = 1) else Icon(Icons.Outlined.Layers, null, tint = Color(0xFFB8B5FF), modifier = Modifier.size(27.dp)) }
+                            Column(Modifier.weight(1f).padding(start = 13.dp)) { Text("Profile effect", fontWeight = FontWeight.Bold, fontSize = 15.sp, color = Color.White); Text(profileEffect?.name ?: "Animate the full profile when it opens", color = Color(0xFFB5BAC1), fontSize = 12.sp, lineHeight = 16.sp) }
+                            Icon(Icons.Default.ChevronRight, null, tint = Color(0xFFDBDEE1))
                         }
                     }
                 }
-                Text("Public profile", fontWeight = FontWeight.Bold, fontSize = 17.sp)
-                OutlinedTextField(username, { username = it.take(30) }, label = { Text("Username") }, supportingText = { Text("${username.length}/30") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(bio, { bio = it.take(240) }, label = { Text("Bio") }, supportingText = { Text("${bio.length}/240") }, minLines = 3, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(category, { category = it.take(80) }, label = { Text("Category") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                Text("About and links", fontWeight = FontWeight.Bold, fontSize = 17.sp, modifier = Modifier.padding(top = 6.dp))
-                OutlinedTextField(about, { about = it.take(3000) }, label = { Text("About") }, minLines = 4, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(website, { website = it.take(500) }, label = { Text("Website") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(location, { location = it.take(160) }, label = { Text("Location") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                Text("Public profile", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = Color(0xFF344054), modifier = Modifier.padding(start = 2.dp, top = 7.dp))
+                OutlinedTextField(username, { username = it.take(30) }, label = { Text("Username") }, supportingText = { Text("${username.length}/30") }, singleLine = true, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(15.dp), colors = profileFieldColors)
+                OutlinedTextField(bio, { bio = it.take(240) }, label = { Text("Bio") }, supportingText = { Text("${bio.length}/240") }, minLines = 3, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(15.dp), colors = profileFieldColors)
+                OutlinedTextField(category, { category = it.take(80) }, label = { Text("Category") }, singleLine = true, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(15.dp), colors = profileFieldColors)
+                Text("About and links", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = Color(0xFF344054), modifier = Modifier.padding(start = 2.dp, top = 7.dp))
+                OutlinedTextField(about, { about = it.take(3000) }, label = { Text("About") }, minLines = 4, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(15.dp), colors = profileFieldColors)
+                OutlinedTextField(website, { website = it.take(500) }, label = { Text("Website") }, singleLine = true, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(15.dp), colors = profileFieldColors)
+                OutlinedTextField(location, { location = it.take(160) }, label = { Text("Location") }, singleLine = true, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(15.dp), colors = profileFieldColors)
                 Text("Changes are validated and saved through the Tiwi API.", color = Color.Gray, fontSize = 12.sp)
                 Spacer(Modifier.navigationBarsPadding().height(22.dp))
             }
@@ -4359,9 +4381,14 @@ private fun ProfileDecorationMarketplace(
         ) {
             Box(Modifier.fillMaxWidth().background(Brush.linearGradient(listOf(Color(0xFF201A33), Color(0xFF4C2D80), Color(0xFF7F56D9)))).padding(vertical = 14.dp), contentAlignment = Alignment.Center) {
                 if (effectMode) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        MiniProfileEffectPreview(repository, avatarUrl, coverUrl, previewDecoration, Modifier.width(150.dp).height(258.dp))
-                        Text(previewDecoration?.name ?: "No profile effect", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 15.sp, modifier = Modifier.padding(top = 7.dp))
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+                        MiniProfileEffectPreview(repository, avatarUrl, coverUrl, previewDecoration, Modifier.width(132.dp).height(228.dp))
+                        Column(Modifier.weight(1f).padding(start = 17.dp)) {
+                            Text("PROFILE EFFECT", color = Color(0xFFD8D3FF), fontSize = 10.sp, fontWeight = FontWeight.Black, letterSpacing = 1.sp)
+                            Text(previewDecoration?.name ?: "No effect selected", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 20.sp, lineHeight = 24.sp, modifier = Modifier.padding(top = 7.dp))
+                            Text("See the complete profile exactly as visitors will see it.", color = Color.White.copy(alpha = .72f), fontSize = 11.sp, lineHeight = 16.sp, modifier = Modifier.padding(top = 7.dp))
+                            Surface(color = Color.White.copy(alpha = .14f), shape = RoundedCornerShape(50), tonalElevation = 0.dp, modifier = Modifier.padding(top = 12.dp)) { Text(if (previewDecoration == null) "Original profile" else "Live preview", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 10.sp, modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) }
+                        }
                     }
                 } else Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     DecoratedAvatar(avatarUrl, R.drawable.img_tiwi_avatar_1, previewDecoration, Modifier.size(148.dp), animateDecoration = true)
@@ -4370,7 +4397,7 @@ private fun ProfileDecorationMarketplace(
                 }
             }
         }
-        if (loading) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(Modifier.size(30.dp), strokeWidth = 2.5.dp) }
+        if (loading) MarketplaceLoadingPlaceholder(Modifier.weight(1f))
         else LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 14.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             item {
                 Row(verticalAlignment = Alignment.CenterVertically) { Text(if (effectMode) "Your profile effects" else "Your decorations", Modifier.weight(1f), fontWeight = FontWeight.ExtraBold, fontSize = 17.sp); IconButton(onClick = { scope.launch { refreshDecorations() } }, modifier = Modifier.size(34.dp)) { Icon(Icons.Default.Refresh, "Refresh", tint = TiwiBlue, modifier = Modifier.size(19.dp)) } }
@@ -4392,7 +4419,14 @@ private fun ProfileDecorationMarketplace(
                     }
                 }
             }
-            item { Text("Explore all", fontWeight = FontWeight.ExtraBold, fontSize = 17.sp); Text(if (effectMode) "Tap an effect to preview your complete profile." else "Scroll and tap any decoration to see it on your profile.", color = Color.Gray, fontSize = 11.sp) }
+            item {
+                Surface(Modifier.fillMaxWidth(), color = Color.White, shape = RoundedCornerShape(15.dp), tonalElevation = 0.dp) {
+                    Row(Modifier.padding(horizontal = 13.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.size(38.dp).background(if (effectMode) Color(0xFFEEEAFE) else Color(0xFFEAF2FF), RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) { Icon(if (effectMode) Icons.Outlined.Explore else Icons.Outlined.AutoAwesome, null, tint = if (effectMode) Color(0xFF5865F2) else TiwiBlue, modifier = Modifier.size(21.dp)) }
+                        Column(Modifier.padding(start = 10.dp)) { Text("Explore all", fontWeight = FontWeight.ExtraBold, fontSize = 16.sp); Text(if (effectMode) "Choose an effect to preview your complete profile." else "Choose a decoration to preview it on your photo.", color = Color(0xFF667085), fontSize = 11.sp) }
+                    }
+                }
+            }
             items(decorations.chunked(2), key = { row -> row.joinToString("-") { it.id } }) { row ->
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     row.forEach { item ->
