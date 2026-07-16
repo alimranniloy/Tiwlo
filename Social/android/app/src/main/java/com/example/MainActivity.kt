@@ -809,18 +809,18 @@ private fun DecoratedAvatar(
     val decorationUrl = decoration?.assetUrl?.takeIf { it.isNotBlank() }
     Box(modifier, contentAlignment = Alignment.Center) {
         if (decorationUrl != null) {
-            Box(Modifier.fillMaxSize(.74f).clip(CircleShape).background(Color.White))
+            Box(Modifier.fillMaxSize(.84f).clip(CircleShape).background(Color.White))
         }
         TiwiAvatar(
             url,
             fallback,
-            Modifier.fillMaxSize(if (decorationUrl != null) .68f else 1f).clip(CircleShape),
+            Modifier.fillMaxSize(if (decorationUrl != null) .78f else 1f).clip(CircleShape),
             contentScale
         )
         decorationUrl?.let {
             ProfileDecorationImage(
                 it,
-                Modifier.matchParentSize().graphicsLayer(scaleX = 1.16f, scaleY = 1.16f),
+                Modifier.matchParentSize().graphicsLayer(scaleX = 1.03f, scaleY = 1.03f),
                 animated = animateDecoration
             )
         }
@@ -4237,8 +4237,8 @@ private fun DecorationStoreCard(item: SocialProfileDecoration, selected: Boolean
     ) {
         Column(Modifier.padding(9.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                Box(Modifier.fillMaxSize(.66f).background(Brush.linearGradient(listOf(Color(0xFFDDEBFF), Color(0xFFEADFFF))), CircleShape))
-                ProfileDecorationImage(item.assetUrl, Modifier.fillMaxSize().graphicsLayer(scaleX = 1.12f, scaleY = 1.12f), animated = true)
+                Box(Modifier.size(82.dp).background(Brush.linearGradient(listOf(Color(0xFFDDEBFF), Color(0xFFEADFFF))), CircleShape))
+                ProfileDecorationImage(item.assetUrl, Modifier.size(96.dp), animated = true)
                 if (item.applied) Icon(Icons.Default.CheckCircle, "Applied", tint = Color(0xFF12B76A), modifier = Modifier.align(Alignment.TopEnd).size(20.dp))
             }
             Text(item.name, fontWeight = FontWeight.Bold, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
