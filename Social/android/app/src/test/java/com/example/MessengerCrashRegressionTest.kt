@@ -77,6 +77,14 @@ class MessengerCrashRegressionTest {
         assertTrue(crop.top > 0)
     }
 
+    @Test
+    fun chatThemeArgbIsNotReadAsPackedComposeColor() {
+        assertEquals(0xFF0866FF.toInt(), normalizedChatColorArgb(0xFF0866FFL))
+        val purple = 0xFF7F56D9.toInt()
+        assertEquals(purple, normalizedChatColorArgb(purple.toLong()))
+        assertEquals(0xFF0866FF.toInt(), normalizedChatColorArgb(Long.MIN_VALUE))
+    }
+
     private fun createImage(context: Context, name: String, width: Int, height: Int): File {
         val file = File(context.cacheDir, "$name-test.jpg")
         Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also { bitmap ->

@@ -1036,6 +1036,12 @@ private fun TiwiVideo(
         }
     }
     LaunchedEffect(player, muted) { player.volume = if (muted) 0f else 1f }
+    LaunchedEffect(player, autoplay) {
+        if (!autoplay) {
+            player.pause()
+            if (coordinated) TiwiPlaybackCoordinator.remove(playerId)
+        }
+    }
     LaunchedEffect(player, autoplay, visibleEnough, manuallyPaused, isActivePlayer, coordinated) {
         player.repeatMode = if (autoplay) ExoPlayer.REPEAT_MODE_ONE else ExoPlayer.REPEAT_MODE_OFF
         val allowed = !coordinated || isActivePlayer
@@ -1628,7 +1634,7 @@ fun ReelItem(reel: Reel, autoplayPreview: Boolean = false, onClick: () -> Unit =
                 posterContentScale = ContentScale.Fit,
                 muted = true,
                 previewClipMs = 2_500L,
-                coordinated = false,
+                coordinated = true,
                 interactive = false
             )
         } else TiwiAvatar(reel.thumbnailUrl, reel.thumbnail, Modifier.fillMaxSize(), ContentScale.Fit)
@@ -2749,12 +2755,12 @@ fun ReelsScreen(reels: List<Reel>, repository: SocialRepository, initialReelId: 
     LaunchedEffect(pagerState.currentPage, currentReelId) {
         currentReelId?.let { id -> runCatching { repository.viewPost(id) } }
     }
-    VerticalPager(state = pagerState, beyondViewportPageCount = 1, modifier = Modifier.fillMaxSize().background(Color.Black)) { page ->
+    VerticalPager(state = pagerState, beyondViewportPageCount = 0, modifier = Modifier.fillMaxSize().background(Color.Black)) { page ->
         val reel = reels[page]
         val reelMedia = reel.media.filter { it.type == "video" || it.type == "image" }
         val mediaPager = rememberPagerState(pageCount = { reelMedia.size.coerceAtLeast(1) })
         Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
-            HorizontalPager(state = mediaPager, modifier = Modifier.fillMaxSize(), beyondViewportPageCount = 1) { mediaPage ->
+            HorizontalPager(state = mediaPager, modifier = Modifier.fillMaxSize(), beyondViewportPageCount = 0) { mediaPage ->
                 val item = reelMedia.getOrNull(mediaPage)
                 when {
                     item?.type == "video" -> TiwiVideo(item.hlsUrl?.takeIf { item.processingStatus == "ready" } ?: item.url, Modifier.fillMaxSize(), autoplay = pagerState.currentPage == page && mediaPager.currentPage == mediaPage, fallbackUrl = item.url, posterUrl = item.thumbnailUrl)
@@ -3718,12 +3724,13 @@ private fun VerificationInvoiceSheet(plan: SocialVerificationPackage, options: S
     val gold = plan.notableOnly || plan.badgeType == "gold"
     val converted = plan.priceUsd * options.usdRate
     val total = when (options.currency) { "BDT" -> "BDT ${String.format(Locale.US, "%.0f", converted)}"; else -> "\$${String.format(Locale.US, "%.2f", plan.priceUsd)} USD" }
-    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = Color.White, contentColor = Color.Black, tonalElevation = 0.dp) {
-        Column(Modifier.fillMaxWidth().heightIn(max = 720.dp)) {
-            Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = Color.White, contentColor = Color.Black, tonalElevation = 0.dp) {
+        Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(bottom = 6.dp)) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) { VerifiedBadge(if (gold) "gold" else "blue", 30.dp); Column(Modifier.padding(start = 10.dp)) { Text("Verification invoice", fontWeight = FontWeight.Bold, fontSize = 20.sp); Text("Choose a method, then use the Pay button below", color = Color.Gray, fontSize = 12.sp) } }
             Surface(color = Color(0xFFF8FAFC), border = BorderStroke(1.dp, Color(0xFFE3E6EA)), shape = RoundedCornerShape(12.dp), tonalElevation = 0.dp) {
-                Column(Modifier.padding(14.dp)) {
+                Column(Modifier.padding(11.dp)) {
                     Row { Text(plan.name, Modifier.weight(1f), fontWeight = FontWeight.SemiBold); Text(total, fontWeight = FontWeight.Bold, color = TiwiBlue) }
                     Text(if (gold) "Notable-person review • No purchase" else "${plan.periodMonths} month subscription • Taxes may be added by the payment provider", color = Color.Gray, fontSize = 12.sp, modifier = Modifier.padding(top = 5.dp))
                 }
@@ -3734,16 +3741,15 @@ private fun VerificationInvoiceSheet(plan: SocialVerificationPackage, options: S
                 options.gateways.forEach { gateway ->
                     val selected = selectedProvider == gateway.provider
                     Surface(Modifier.fillMaxWidth().clickable { selectedProvider = gateway.provider }, color = if (selected) Color(0xFFEAF3FF) else Color.White, border = BorderStroke(if (selected) 2.dp else 1.dp, if (selected) TiwiBlue else Color(0xFFD0D5DD)), shape = RoundedCornerShape(10.dp), tonalElevation = 0.dp) {
-                        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) { RadioButton(selected, onClick = { selectedProvider = gateway.provider }); Icon(Icons.Outlined.Payment, null, tint = TiwiBlue, modifier = Modifier.padding(start = 4.dp)); Text(gateway.name, Modifier.weight(1f).padding(start = 9.dp), fontWeight = FontWeight.Medium); if (selected) Icon(Icons.Default.CheckCircle, "Selected", tint = TiwiBlue) }
+                        Row(Modifier.padding(horizontal = 9.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) { RadioButton(selected, onClick = { selectedProvider = gateway.provider }); Icon(Icons.Outlined.Payment, null, tint = TiwiBlue, modifier = Modifier.padding(start = 2.dp).size(21.dp)); Text(gateway.name, Modifier.weight(1f).padding(start = 8.dp), fontWeight = FontWeight.Medium, fontSize = 14.sp); if (selected) Icon(Icons.Default.CheckCircle, "Selected", tint = TiwiBlue, modifier = Modifier.size(20.dp)) }
                     }
                 }
             }
-                Spacer(Modifier.height(8.dp))
             }
             HorizontalDivider(color = Color(0xFFE4E7EC))
-            Column(Modifier.fillMaxWidth().background(Color.White).padding(horizontal = 18.dp, vertical = 12.dp).navigationBarsPadding()) {
+            Column(Modifier.fillMaxWidth().background(Color.White).padding(horizontal = 18.dp, vertical = 9.dp)) {
                 Text(if (gold) "Administrator review" else if (selectedProvider.isBlank()) "Select a payment method above" else "Selected: ${options.gateways.firstOrNull { it.provider == selectedProvider }?.name ?: selectedProvider}", color = if (!gold && selectedProvider.isBlank()) Color(0xFFB42318) else Color(0xFF475467), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                Button(enabled = !busy && (gold || selectedProvider.isNotBlank()), onClick = { onPay(if (gold) "manual" else selectedProvider) }, modifier = Modifier.fillMaxWidth().padding(top = 7.dp).height(48.dp), shape = RoundedCornerShape(9.dp)) { if (busy) CircularProgressIndicator(Modifier.size(19.dp), color = Color.White, strokeWidth = 2.dp) else Text(if (gold) "Submit for review" else "Pay $total", fontWeight = FontWeight.Bold) }
+                Button(enabled = !busy && (gold || selectedProvider.isNotBlank()), onClick = { onPay(if (gold) "manual" else selectedProvider) }, modifier = Modifier.fillMaxWidth().padding(top = 6.dp).height(44.dp), shape = RoundedCornerShape(9.dp)) { if (busy) CircularProgressIndicator(Modifier.size(19.dp), color = Color.White, strokeWidth = 2.dp) else Text(if (gold) "Submit for review" else "Pay $total", fontWeight = FontWeight.Bold) }
                 Text("Payment opens the secure main Tiwlo checkout.", color = Color.Gray, fontSize = 11.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(top = 5.dp))
             }
         }
@@ -6649,9 +6655,9 @@ private fun ExactMessengerChatsPage(
                 }
                 item {
                     LazyRow(
-                        modifier = Modifier.fillMaxWidth().height(55.dp),
-                        contentPadding = PaddingValues(horizontal = 15.dp, vertical = 6.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxWidth().height(44.dp),
+                        contentPadding = PaddingValues(horizontal = 15.dp, vertical = 5.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         item {
@@ -6667,8 +6673,8 @@ private fun ExactMessengerChatsPage(
                             MessengerInboxFilterChip("Groups", inboxFilter == "groups") { inboxFilter = "groups" }
                         }
                         item {
-                            IconButton(onClick = onNewGroup, modifier = Modifier.size(40.dp)) {
-                                Icon(Icons.Default.MoreVert, "More chat shortcuts", tint = Color(0xFF65676B))
+                            IconButton(onClick = onNewGroup, modifier = Modifier.size(34.dp)) {
+                                Icon(Icons.Default.MoreVert, "More chat shortcuts", tint = Color(0xFF65676B), modifier = Modifier.size(20.dp))
                             }
                         }
                     }
@@ -6737,17 +6743,17 @@ private fun ExactMessengerChatsPage(
 @Composable
 private fun MessengerInboxFilterChip(label: String, selected: Boolean, onClick: () -> Unit) {
     Surface(
-        modifier = Modifier.height(42.dp).clickable(onClick = onClick),
-        shape = RoundedCornerShape(22.dp),
+        modifier = Modifier.height(34.dp).clickable(onClick = onClick),
+        shape = RoundedCornerShape(18.dp),
         color = if (selected) Color(0xFFE7F3FF) else Color(0xFFE4E6EB),
         tonalElevation = 0.dp
     ) {
-        Box(Modifier.padding(horizontal = 18.dp), contentAlignment = Alignment.Center) {
+        Box(Modifier.padding(horizontal = 13.dp), contentAlignment = Alignment.Center) {
             Text(
                 label,
                 color = if (selected) Color(0xFF0866FF) else Color(0xFF4B4F56),
-                fontSize = 15.sp,
-                fontWeight = FontWeight.Bold
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold
             )
         }
     }
@@ -7765,10 +7771,10 @@ private fun MessengerConversationActions(
         containerColor = Color.White,
         tonalElevation = 0.dp
     ) {
-        Column(Modifier.fillMaxWidth().fillMaxHeight(.9f).navigationBarsPadding()) {
-            Row(Modifier.fillMaxWidth().height(48.dp).padding(horizontal = 18.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("Chat options", fontSize = 18.sp, fontWeight = FontWeight.ExtraBold, modifier = Modifier.weight(1f))
-                IconButton(onClick = onDismiss, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.Close, "Close") }
+        Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(bottom = 5.dp)) {
+            Row(Modifier.fillMaxWidth().height(43.dp).padding(horizontal = 18.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Chat options", fontSize = 17.sp, fontWeight = FontWeight.ExtraBold, modifier = Modifier.weight(1f))
+                IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp)) { Icon(Icons.Default.Close, "Close", modifier = Modifier.size(20.dp)) }
             }
             HorizontalDivider(thickness = .5.dp, color = Color(0xFFE4E7EC))
             MessengerActionRow(Icons.Outlined.PushPin, if (pinned) "Unpin" else "Pin", onPin)
@@ -7821,16 +7827,15 @@ private fun MessengerConversationActions(
                         .onFailure { Toast.makeText(context, it.message ?: "Delete failed", Toast.LENGTH_SHORT).show() }
                 }
             }, destructive = true)
-            Spacer(Modifier.weight(1f))
         }
     }
 }
 
 @Composable
 private fun MessengerActionRow(icon: ImageVector, label: String, onClick: () -> Unit, destructive: Boolean = false) {
-    Row(Modifier.fillMaxWidth().height(46.dp).clickable(onClick = onClick).padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
-        Icon(icon, null, tint = if (destructive) Color(0xFFD92D20) else Color.Black, modifier = Modifier.size(23.dp))
-        Text(label, color = if (destructive) Color(0xFFD92D20) else Color.Black, fontSize = 15.sp, modifier = Modifier.padding(start = 17.dp))
+    Row(Modifier.fillMaxWidth().height(42.dp).clickable(onClick = onClick).padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
+        Icon(icon, null, tint = if (destructive) Color(0xFFD92D20) else Color.Black, modifier = Modifier.size(22.dp))
+        Text(label, color = if (destructive) Color(0xFFD92D20) else Color.Black, fontSize = 14.sp, modifier = Modifier.padding(start = 16.dp))
     }
 }
 
@@ -7992,6 +7997,132 @@ private fun NewConversationPage(
     }
 }
 
+private const val DEFAULT_CHAT_COLOR = 0xFF0866FFL
+
+internal fun normalizedChatColorArgb(stored: Long): Int {
+    return if (
+        stored in Int.MIN_VALUE.toLong()..Int.MAX_VALUE.toLong() ||
+        stored in 0L..0xFFFFFFFFL
+    ) stored.toInt() else DEFAULT_CHAT_COLOR.toInt()
+}
+
+private fun messengerChatColor(preferences: android.content.SharedPreferences, conversationId: String): Color {
+    return Color(normalizedChatColorArgb(preferences.getLong("chat_color_$conversationId", DEFAULT_CHAT_COLOR)))
+}
+
+@Composable
+private fun MessengerMediaCell(
+    media: SocialMedia,
+    modifier: Modifier,
+    extraCount: Int = 0,
+    onOpen: (SocialMedia) -> Unit
+) {
+    Box(
+        modifier.clip(RoundedCornerShape(12.dp)).background(Color(0xFF101010)).clickable { onOpen(media) },
+        contentAlignment = Alignment.Center
+    ) {
+        if (media.type == "image") {
+            AsyncImage(media.url, "Photo attachment", Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+        } else {
+            if (!media.thumbnailUrl.isNullOrBlank()) {
+                AsyncImage(media.thumbnailUrl, "Video attachment", Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+            }
+            Box(Modifier.size(42.dp).background(Color.Black.copy(alpha = .58f), CircleShape), contentAlignment = Alignment.Center) {
+                Icon(Icons.Default.PlayArrow, "Play video", tint = Color.White, modifier = Modifier.size(29.dp))
+            }
+        }
+        if (extraCount > 0) {
+            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = .58f)), contentAlignment = Alignment.Center) {
+                Text("+$extraCount", color = Color.White, fontSize = 27.sp, fontWeight = FontWeight.ExtraBold)
+            }
+        }
+    }
+}
+
+@Composable
+private fun MessengerMediaGrid(media: List<SocialMedia>, onOpen: (SocialMedia) -> Unit) {
+    val items = media.filter { it.type == "image" || it.type == "video" }
+    if (items.isEmpty()) return
+    when (items.size) {
+        1 -> MessengerMediaCell(items.first(), Modifier.fillMaxWidth().height(if (items.first().type == "video") 180.dp else 238.dp), onOpen = onOpen)
+        2 -> Row(Modifier.fillMaxWidth().height(190.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+            items.forEach { MessengerMediaCell(it, Modifier.weight(1f).fillMaxHeight(), onOpen = onOpen) }
+        }
+        3 -> Row(Modifier.fillMaxWidth().height(224.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+            MessengerMediaCell(items[0], Modifier.weight(1.15f).fillMaxHeight(), onOpen = onOpen)
+            Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                MessengerMediaCell(items[1], Modifier.weight(1f).fillMaxWidth(), onOpen = onOpen)
+                MessengerMediaCell(items[2], Modifier.weight(1f).fillMaxWidth(), onOpen = onOpen)
+            }
+        }
+        else -> Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            items.take(4).chunked(2).forEachIndexed { rowIndex, row ->
+                Row(Modifier.fillMaxWidth().height(132.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                    row.forEachIndexed { columnIndex, item ->
+                        val itemIndex = rowIndex * 2 + columnIndex
+                        MessengerMediaCell(
+                            item,
+                            Modifier.weight(1f).fillMaxHeight(),
+                            extraCount = if (itemIndex == 3) (items.size - 4).coerceAtLeast(0) else 0,
+                            onOpen = onOpen
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PendingMessengerMediaGrid(uris: List<Uri>) {
+    if (uris.isEmpty()) return
+    Column(Modifier.width(270.dp).clip(RoundedCornerShape(16.dp)).background(Color(0xFFF0F2F5)).padding(3.dp)) {
+        uris.take(4).chunked(2).forEachIndexed { rowIndex, row ->
+            Row(Modifier.fillMaxWidth().height(112.dp), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                row.forEachIndexed { columnIndex, uri ->
+                    val itemIndex = rowIndex * 2 + columnIndex
+                    Box(Modifier.weight(1f).fillMaxHeight().clip(RoundedCornerShape(11.dp)).background(Color.Black)) {
+                        AsyncImage(uri, "Sending attachment", Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                        if (itemIndex == 3 && uris.size > 4) Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = .55f)), contentAlignment = Alignment.Center) {
+                            Text("+${uris.size - 4}", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 24.sp)
+                        }
+                    }
+                }
+                if (row.size == 1) Spacer(Modifier.weight(1f))
+            }
+            if (rowIndex == 0 && uris.size > 2) Spacer(Modifier.height(3.dp))
+        }
+        Row(Modifier.fillMaxWidth().padding(horizontal = 9.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp, color = TiwiBlue)
+            Text("Sending ${uris.size} ${if (uris.size == 1) "attachment" else "attachments"}…", color = Color(0xFF65676B), fontSize = 11.sp, modifier = Modifier.padding(start = 7.dp))
+        }
+    }
+}
+
+@Composable
+private fun MessengerMediaViewer(media: SocialMedia, onBack: () -> Unit) {
+    BackHandler(onBack = onBack)
+    Box(Modifier.fillMaxSize().background(Color.Black).statusBarsPadding().navigationBarsPadding()) {
+        if (media.type == "video") {
+            TiwiVideo(
+                media.hlsUrl?.takeIf { media.processingStatus == "ready" } ?: media.url,
+                Modifier.fillMaxSize(),
+                autoplay = true,
+                fallbackUrl = media.url,
+                posterUrl = media.thumbnailUrl,
+                posterContentScale = ContentScale.Fit,
+                coordinated = false
+            )
+        } else {
+            AsyncImage(media.url, "Full screen photo", Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
+        }
+        IconButton(
+            onClick = onBack,
+            modifier = Modifier.align(Alignment.TopStart).padding(8.dp).background(Color.Black.copy(alpha = .48f), CircleShape)
+        ) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.White) }
+    }
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ChatDetailScreen(
@@ -8012,6 +8143,8 @@ fun ChatDetailScreen(
     var showInfo by remember { mutableStateOf(false) }
     var showAddMembers by remember { mutableStateOf(false) }
     var showEmojiPicker by remember { mutableStateOf(false) }
+    var mediaViewer by remember { mutableStateOf<SocialMedia?>(null) }
+    var pendingAttachmentUris by remember { mutableStateOf<List<Uri>>(emptyList()) }
     var recording by remember { mutableStateOf(false) }
     var recorder by remember { mutableStateOf<MediaRecorder?>(null) }
     var recordingFile by remember { mutableStateOf<File?>(null) }
@@ -8029,7 +8162,7 @@ fun ChatDetailScreen(
     val contactTyping = (parseSocialDate(contact?.typingAt)?.time ?: 0L) > System.currentTimeMillis() - 6_000L
     val name = chatPreferences.getString("nickname_${conversation.id}", null)?.takeIf { it.isNotBlank() }
         ?: liveConversation.title ?: contact?.user?.name.orEmpty()
-    val outgoingMessageColor = Color(chatPreferences.getLong("chat_color_${conversation.id}", 0xFF0866FF))
+    val outgoingMessageColor = messengerChatColor(chatPreferences, conversation.id)
     val rawMessages = messagesByConversation[conversation.id] ?: repository.cachedMessages(conversation.id)
     val disappearingSeconds = chatPreferences.getInt("disappearing_${conversation.id}", 0)
     val messages = if (disappearingSeconds > 0) {
@@ -8042,16 +8175,30 @@ fun ChatDetailScreen(
         it.senderId != repository.currentUserId() && (parseSocialDate(it.sentAt)?.time ?: 0L) > lastReadTime
     }?.id
     val scope = rememberCoroutineScope()
-    val sendAttachment: (android.net.Uri) -> Unit = { uri ->
+    val sendAttachments: (List<Uri>) -> Unit = send@ { selectedUris ->
+        val uris = selectedUris.distinct().take(10)
+        if (uris.isEmpty()) return@send
+        if (pendingAttachmentUris.isNotEmpty()) {
+            Toast.makeText(context, "Please wait for the current attachments to finish", Toast.LENGTH_SHORT).show()
+            return@send
+        }
+        pendingAttachmentUris = uris
         scope.launch {
             runCatching {
-                val media = repository.uploadMedia(context.contentResolver, uri, "chat")
-                repository.sendMessage(conversation.id, "", listOf(media))
-            }.onFailure { Toast.makeText(context, it.message ?: "Attachment failed", Toast.LENGTH_SHORT).show() }
+                uris.map { repository.uploadMedia(context.contentResolver, it, "chat") }
+            }.onSuccess { uploaded ->
+                pendingAttachmentUris = emptyList()
+                runCatching { repository.sendMessage(conversation.id, "", uploaded) }
+                    .onFailure { Toast.makeText(context, it.message ?: "Message failed", Toast.LENGTH_SHORT).show() }
+            }.onFailure {
+                pendingAttachmentUris = emptyList()
+                Toast.makeText(context, it.message ?: "Attachment failed", Toast.LENGTH_SHORT).show()
+            }
         }
     }
-    val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri -> uri?.let(sendAttachment) }
-    val mediaPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri -> uri?.let(sendAttachment) }
+    val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri -> uri?.let { sendAttachments(listOf(it)) } }
+    val mediaPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri -> uri?.let { sendAttachments(listOf(it)) } }
+    val galleryPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(10)) { sendAttachments(it) }
     val selectedMessage = messages.firstOrNull { it.id == selectedMessageId }
     val clipboard = remember { context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager }
     val chatHaptics = androidx.compose.ui.platform.LocalHapticFeedback.current
@@ -8100,6 +8247,10 @@ fun ChatDetailScreen(
         if (granted) startRecording() else Toast.makeText(context, "Microphone permission is required", Toast.LENGTH_SHORT).show()
     }
 
+    mediaViewer?.let {
+        MessengerMediaViewer(it) { mediaViewer = null }
+        return
+    }
     if (showAddMembers) {
         AddConversationMembersPage(
             repository = repository,
@@ -8300,6 +8451,7 @@ fun ChatDetailScreen(
                 val msg = if (message.unsentAt != null) "Message unsent" else message.body
                 val isMe = message.senderId == repository.currentUserId()
                 val callEvent = parseCallEvent(message.body)
+                val visualMessageMedia = message.media.filter { it.type == "image" || it.type == "video" }
                 if (message.type == "system") {
                     Surface(
                         modifier = Modifier.align(Alignment.CenterHorizontally).combinedClickable(
@@ -8375,6 +8527,7 @@ fun ChatDetailScreen(
                     Surface(
                         color = when {
                             message.unsentAt != null -> Color.White
+                            visualMessageMedia.isNotEmpty() && msg.isBlank() -> Color.Transparent
                             isMe -> outgoingMessageColor
                             else -> Color(0xFFF0F2F5)
                         },
@@ -8413,13 +8566,10 @@ fun ChatDetailScreen(
                                     }
                                 }
                             }
-                            message.media.forEach { media ->
-                                when (media.type) {
-                                    "video" -> TiwiVideo(media.hlsUrl?.takeIf { media.processingStatus == "ready" } ?: media.url, Modifier.fillMaxWidth().height(180.dp), fallbackUrl = media.url, posterUrl = media.thumbnailUrl)
-                                    "image" -> AsyncImage(model = media.url, contentDescription = "Attachment", modifier = Modifier.fillMaxWidth().heightIn(max = 220.dp), contentScale = ContentScale.Crop)
-                                    "audio" -> TiwiAudioMessage(media.url, isMe)
-                                    else -> Text("Attachment", modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp), color = if (isMe) Color.White else Color.Black)
-                                }
+                            if (visualMessageMedia.isNotEmpty()) MessengerMediaGrid(visualMessageMedia) { mediaViewer = it }
+                            message.media.filter { it.type == "audio" }.forEach { TiwiAudioMessage(it.url, isMe) }
+                            message.media.filter { it.type !in listOf("image", "video", "audio") }.forEach {
+                                Text("Attachment", modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp), color = if (isMe) Color.White else Color.Black)
                             }
                             if (msg.isNotBlank()) Text(
                                 text = if (message.unsentAt != null) {
@@ -8472,6 +8622,13 @@ fun ChatDetailScreen(
                     }
                     if (selectedMessageId == message.id) Text("${messageDay(message.sentAt)} · ${messageClock(message.sentAt)}", color = Color.Gray, fontSize = 10.sp, modifier = Modifier.padding(horizontal = 5.dp).padding(top = 2.dp))
                     }
+                    }
+                }
+            }
+            if (pendingAttachmentUris.isNotEmpty()) {
+                item(key = "pending-chat-attachments") {
+                    Box(Modifier.fillMaxWidth().padding(horizontal = 3.dp, vertical = 2.dp), contentAlignment = Alignment.CenterEnd) {
+                        PendingMessengerMediaGrid(pendingAttachmentUris)
                     }
                 }
             }
@@ -8554,7 +8711,7 @@ fun ChatDetailScreen(
             ) {
                 IconButton(onClick = { filePicker.launch("*/*") }) { Icon(Icons.Default.AddCircle, contentDescription = "More", tint = TiwiBlue) }
                 IconButton(onClick = { mediaPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }) { Icon(Icons.Default.CameraAlt, contentDescription = "Camera", tint = TiwiBlue) }
-                IconButton(onClick = { mediaPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) }) { Icon(Icons.Default.Image, contentDescription = "Gallery", tint = TiwiBlue) }
+                IconButton(onClick = { galleryPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) }) { Icon(Icons.Default.Image, contentDescription = "Gallery", tint = TiwiBlue) }
                 if (messageText.isBlank()) IconButton(onClick = {
                     chatHaptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
                     if (recording) finishRecording()
@@ -8995,19 +9152,46 @@ private fun MessengerChatInfoPage(
         title = { Text("Customize chat") },
         text = {
             Column {
-                Text("Choose a message color", color = Color(0xFF65676B), modifier = Modifier.padding(bottom = 12.dp))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                    listOf(Color(0xFF0866FF), Color(0xFF7F56D9), Color(0xFF008A45), Color(0xFFD81B60)).forEach { color ->
-                        Box(
-                            Modifier.size(48.dp).background(color, CircleShape).border(
-                                if (preferences.getLong("chat_color_${conversation.id}", 0xFF0866FF) == color.value.toLong()) 3.dp else 0.dp,
-                                Color.Black,
-                                CircleShape
-                            ).clickable {
-                                preferences.edit().putLong("chat_color_${conversation.id}", color.value.toLong()).apply()
-                                customizeDialog = false
+                val themes = listOf(
+                    "Tiwi" to Color(0xFF0866FF),
+                    "Ocean" to Color(0xFF0077B6),
+                    "Purple" to Color(0xFF7F56D9),
+                    "Berry" to Color(0xFFD81B60),
+                    "Rose" to Color(0xFFE91E63),
+                    "Orange" to Color(0xFFF57C00),
+                    "Gold" to Color(0xFFC58B00),
+                    "Green" to Color(0xFF008A45),
+                    "Teal" to Color(0xFF00897B),
+                    "Indigo" to Color(0xFF3949AB),
+                    "Graphite" to Color(0xFF344054),
+                    "Black" to Color(0xFF111111)
+                )
+                val selectedArgb = messengerChatColor(preferences, conversation.id).toArgb()
+                Text("Choose a message theme", color = Color(0xFF65676B), fontSize = 13.sp, modifier = Modifier.padding(bottom = 10.dp))
+                themes.chunked(4).forEach { row ->
+                    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                        row.forEach { (name, color) ->
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier.width(55.dp).clickable {
+                                    preferences.edit().putLong("chat_color_${conversation.id}", color.toArgb().toLong()).commit()
+                                    customizeDialog = false
+                                }
+                            ) {
+                                Box(
+                                    Modifier.size(39.dp).background(color, CircleShape).border(
+                                        if (selectedArgb == color.toArgb()) 3.dp else 1.dp,
+                                        if (selectedArgb == color.toArgb()) Color.Black else Color.White,
+                                        CircleShape
+                                    ),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    if (selectedArgb == color.toArgb()) Icon(Icons.Default.Check, "Selected", tint = Color.White, modifier = Modifier.size(20.dp))
+                                }
+                                Text(name, fontSize = 9.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 3.dp))
                             }
-                        )
+                        }
+                        repeat(4 - row.size) { Spacer(Modifier.width(55.dp)) }
                     }
                 }
             }
