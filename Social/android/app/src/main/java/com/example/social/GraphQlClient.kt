@@ -3,6 +3,7 @@ package com.example.social
 import android.content.ContentResolver
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.provider.OpenableColumns
@@ -87,14 +88,78 @@ internal class GraphQlClient(context: Context, private val token: () -> String?)
         try {
             resolver.openInputStream(uri)?.use { input -> temp.outputStream().use(input::copyTo) }
                 ?: throw SocialApiException("Selected media could not be opened")
-            var uploaded = if (temp.length() > CHUNK_THRESHOLD) uploadMediaInChunks(temp, name, mime, kind, onProgress)
-            else uploadMediaMultipart(temp, name, mime, kind, onProgress)
+            var uploadName = name
+            var uploadMime = mime
+            if (mime.startsWith("image/") && kind in setOf("profile", "cover")) {
+                if (normalizeProfileImage(temp, kind)) {
+                    uploadName = "${name.substringBeforeLast('.', name)}.jpg"
+                    uploadMime = "image/jpeg"
+                }
+            }
+            var uploaded = if (temp.length() > CHUNK_THRESHOLD) uploadMediaInChunks(temp, uploadName, uploadMime, kind, onProgress)
+            else uploadMediaMultipart(temp, uploadName, uploadMime, kind, onProgress)
             onProgress?.invoke(95)
-            if (mime.startsWith("video/") && uploaded.thumbnailUrl.isNullOrBlank()) {
-                uploaded = attachGeneratedThumbnail(temp, name, uploaded)
+            if (uploadMime.startsWith("video/") && uploaded.thumbnailUrl.isNullOrBlank()) {
+                uploaded = attachGeneratedThumbnail(temp, uploadName, uploaded)
             }
             awaitMediaPreview(uploaded, onProgress)
         } finally { temp.delete() }
+    }
+
+    private fun normalizeProfileImage(file: File, kind: String): Boolean {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(file.absolutePath, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return false
+        var sample = 1
+        while (bounds.outWidth / sample > 4096 || bounds.outHeight / sample > 4096) sample *= 2
+        val source = BitmapFactory.decodeFile(file.absolutePath, BitmapFactory.Options().apply { inSampleSize = sample }) ?: return false
+        try {
+            val ratio = if (kind == "cover") 16f / 7f else 1f
+            val sourceRatio = source.width.toFloat() / source.height.coerceAtLeast(1)
+            val cropWidth: Int
+            val cropHeight: Int
+            if (sourceRatio > ratio) {
+                cropHeight = source.height
+                cropWidth = (cropHeight * ratio).toInt().coerceAtMost(source.width)
+            } else {
+                cropWidth = source.width
+                cropHeight = (cropWidth / ratio).toInt().coerceAtMost(source.height)
+            }
+            val cropped = Bitmap.createBitmap(
+                source,
+                ((source.width - cropWidth) / 2).coerceAtLeast(0),
+                ((source.height - cropHeight) / 2).coerceAtLeast(0),
+                cropWidth.coerceAtLeast(1),
+                cropHeight.coerceAtLeast(1)
+            )
+            try {
+                val maxWidth = if (kind == "cover") 1600 else 1080
+                val maxHeight = if (kind == "cover") 700 else 1080
+                val scale = minOf(1f, maxWidth.toFloat() / cropped.width, maxHeight.toFloat() / cropped.height)
+                val output = if (scale < 1f) {
+                    Bitmap.createScaledBitmap(
+                        cropped,
+                        (cropped.width * scale).toInt().coerceAtLeast(1),
+                        (cropped.height * scale).toInt().coerceAtLeast(1),
+                        true
+                    )
+                } else cropped
+                try {
+                    file.outputStream().use { stream ->
+                        if (!output.compress(Bitmap.CompressFormat.JPEG, 90, stream)) {
+                            throw SocialApiException("Photo could not be prepared")
+                        }
+                    }
+                } finally {
+                    if (output !== cropped) output.recycle()
+                }
+            } finally {
+                if (cropped !== source) cropped.recycle()
+            }
+        } finally {
+            source.recycle()
+        }
+        return true
     }
 
     private suspend fun uploadMediaMultipart(temp: File, name: String, mime: String, kind: String, onProgress: ((Int) -> Unit)?): MediaUploadResult {

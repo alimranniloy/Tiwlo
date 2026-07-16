@@ -10,7 +10,6 @@ import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.graphics.Bitmap
 import android.media.RingtoneManager
 import android.media.MediaRecorder
 import android.os.Build
@@ -147,10 +146,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.github.penfeizhou.animation.apng.APNGDrawable
-import com.canhub.cropper.CropImageContract
-import com.canhub.cropper.CropImageContractOptions
-import com.canhub.cropper.CropImageOptions
-import com.canhub.cropper.CropImageView
 import org.webrtc.EglBase
 import org.webrtc.SurfaceViewRenderer
 import org.webrtc.VideoTrack
@@ -5213,22 +5208,6 @@ private fun Map<String, Any?>.profileObjects(key: String): List<Map<String, Any?
         (item as? Map<*, *>)?.entries?.associate { (mapKey, value) -> mapKey.toString() to value }
     }.orEmpty()
 
-private fun tiwiProfileCropOptions(uri: android.net.Uri, cover: Boolean): CropImageContractOptions {
-    val options = CropImageOptions().apply {
-        guidelines = CropImageView.Guidelines.ON
-        cropShape = if (cover) CropImageView.CropShape.RECTANGLE else CropImageView.CropShape.OVAL
-        fixAspectRatio = true
-        aspectRatioX = if (cover) 16 else 1
-        aspectRatioY = if (cover) 7 else 1
-        allowRotation = true
-        allowFlipping = true
-        outputCompressFormat = Bitmap.CompressFormat.JPEG
-        outputCompressQuality = 92
-        activityTitle = if (cover) "Adjust cover photo" else "Adjust profile photo"
-    }
-    return CropImageContractOptions(uri = uri, cropImageOptions = options)
-}
-
 @Composable
 private fun ProfileEditSection(title: String, content: @Composable ColumnScope.() -> Unit) {
     Column(Modifier.fillMaxWidth().padding(top = 10.dp)) {
@@ -5515,19 +5494,11 @@ private fun EditProfilePage(repository: SocialRepository, profile: SocialProfile
             busy = false
         }
     }
-    val avatarCropper = rememberLauncherForActivityResult(CropImageContract()) { result ->
-        if (result.isSuccessful) result.uriContent?.let { uploadAdjustedPhoto(it, "profile") { uploaded -> avatarUrl = uploaded } }
-        else result.error?.let { Toast.makeText(context, it.message ?: "Profile photo adjustment failed", Toast.LENGTH_LONG).show() }
+    val avatarPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        uri?.let { uploadAdjustedPhoto(it, "profile") { uploaded -> avatarUrl = uploaded } }
     }
-    val coverCropper = rememberLauncherForActivityResult(CropImageContract()) { result ->
-        if (result.isSuccessful) result.uriContent?.let { uploadAdjustedPhoto(it, "cover") { uploaded -> coverUrl = uploaded } }
-        else result.error?.let { Toast.makeText(context, it.message ?: "Cover photo adjustment failed", Toast.LENGTH_LONG).show() }
-    }
-    val avatarPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        uri?.let { avatarCropper.launch(tiwiProfileCropOptions(it, cover = false)) }
-    }
-    val coverPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        uri?.let { coverCropper.launch(tiwiProfileCropOptions(it, cover = true)) }
+    val coverPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        uri?.let { uploadAdjustedPhoto(it, "cover") { uploaded -> coverUrl = uploaded } }
     }
     fun save() {
         if (busy || username.isBlank()) return
@@ -5605,7 +5576,7 @@ private fun EditProfilePage(repository: SocialRepository, profile: SocialProfile
                 Box(
                     Modifier.align(Alignment.TopCenter).fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp)
                         .height(158.dp).clip(RoundedCornerShape(18.dp)).background(Color(0xFFEAF3FF))
-                        .clickable { coverPicker.launch("image/*") }
+                        .clickable { if (!busy) coverPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
                 ) {
                     TiwiAvatar(coverUrl, R.drawable.img_tiwi_cover, Modifier.fillMaxSize(), ContentScale.Crop)
                     Box(Modifier.align(Alignment.BottomEnd).padding(11.dp).size(42.dp).background(Color.Black.copy(alpha = .58f), CircleShape), contentAlignment = Alignment.Center) {
@@ -5616,7 +5587,7 @@ private fun EditProfilePage(repository: SocialRepository, profile: SocialProfile
                     DecoratedAvatar(avatarUrl, R.drawable.img_tiwi_avatar_1, avatarDecoration, Modifier.size(118.dp), animateDecoration = true)
                     Box(
                         Modifier.align(Alignment.BottomEnd).padding(5.dp).size(34.dp).background(Color.White, CircleShape)
-                            .border(1.dp, Color(0xFFE4E7EC), CircleShape).clickable { avatarPicker.launch("image/*") },
+                            .border(1.dp, Color(0xFFE4E7EC), CircleShape).clickable { if (!busy) avatarPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
                         contentAlignment = Alignment.Center
                     ) { Icon(Icons.Default.CameraAlt, "Change profile picture", modifier = Modifier.size(19.dp)) }
                 }
@@ -6115,21 +6086,21 @@ private fun EditProfileDialog(repository: SocialRepository, profile: SocialProfi
     var avatarUrl by remember(profile) { mutableStateOf(profile?.user?.avatar) }
     var coverUrl by remember(profile) { mutableStateOf(profile?.coverUrl) }
     var busy by remember { mutableStateOf(false) }
-    val avatarPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+    val avatarPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null) scope.launch {
             busy = true
             runCatching { repository.uploadMedia(context.contentResolver, uri, "profile").url }
                 .onSuccess { avatarUrl = it }
-                .onFailure { Toast.makeText(context, it.message ?: "Photo upload failed", Toast.LENGTH_SHORT).show() }
+                .onFailure { Toast.makeText(context, it.message ?: "Photo upload failed", Toast.LENGTH_LONG).show() }
             busy = false
         }
     }
-    val coverPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+    val coverPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null) scope.launch {
             busy = true
             runCatching { repository.uploadMedia(context.contentResolver, uri, "cover").url }
                 .onSuccess { coverUrl = it }
-                .onFailure { Toast.makeText(context, it.message ?: "Cover upload failed", Toast.LENGTH_SHORT).show() }
+                .onFailure { Toast.makeText(context, it.message ?: "Cover upload failed", Toast.LENGTH_LONG).show() }
             busy = false
         }
     }
@@ -6143,8 +6114,16 @@ private fun EditProfileDialog(repository: SocialRepository, profile: SocialProfi
             LazyColumn(modifier = Modifier.heightIn(max = 480.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 item {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(onClick = { avatarPicker.launch("image/*") }, modifier = Modifier.weight(1f)) { Text("Profile photo") }
-                        OutlinedButton(onClick = { coverPicker.launch("image/*") }, modifier = Modifier.weight(1f)) { Text("Cover photo") }
+                        OutlinedButton(
+                            enabled = !busy,
+                            onClick = { avatarPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                            modifier = Modifier.weight(1f)
+                        ) { Text("Profile photo") }
+                        OutlinedButton(
+                            enabled = !busy,
+                            onClick = { coverPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                            modifier = Modifier.weight(1f)
+                        ) { Text("Cover photo") }
                     }
                 }
                 item { OutlinedTextField(username, { username = it }, label = { Text("Username") }, singleLine = true) }
@@ -6568,7 +6547,7 @@ private fun ExactMessengerBottomNavigation(
 }
 
 @Composable
-private fun ExactMessengerFloatingButton(modifier: Modifier = Modifier) {
+internal fun ExactMessengerFloatingButton(modifier: Modifier = Modifier) {
     Surface(
         modifier = modifier.size(58.dp),
         shape = CircleShape,
@@ -6577,7 +6556,7 @@ private fun ExactMessengerFloatingButton(modifier: Modifier = Modifier) {
         tonalElevation = 0.dp
     ) {
         Box(contentAlignment = Alignment.Center) {
-            Image(painterResource(R.mipmap.ic_launcher), null, modifier = Modifier.size(43.dp).clip(CircleShape))
+            Image(painterResource(R.drawable.img_tiwi_avatar_1), null, modifier = Modifier.size(43.dp).clip(CircleShape), contentScale = ContentScale.Crop)
         }
     }
 }
