@@ -3948,7 +3948,7 @@ fun ProfileScreen(
     }
     if (showDashboard && isOwn && profile != null) {
         BackHandler { showDashboard = false }
-        ProfileDashboardPage(profile, posts, reels, onBack = { showDashboard = false }, onCreate = onCreate)
+        ProfileDashboardPage(repository, profile, posts, reels, onBack = { showDashboard = false }, onCreate = onCreate, onPostClick = onPostClick)
         return
     }
     if (showConnections && profile != null) {
@@ -4015,20 +4015,35 @@ fun ProfileScreen(
                         if (profile?.verified == true) VerifiedBadge(profile?.badgeType, 17.dp, Modifier.padding(start = 3.dp), onClick = { showVerified = true })
                     }
                     if (!profile?.bio.isNullOrBlank()) Text(profile?.bio.orEmpty(), fontSize = 14.sp)
-                    if (!profile?.category.isNullOrBlank()) Text(profile?.category.orEmpty(), color = Color.Gray, fontSize = 13.sp)
-                    if (!profile?.location.isNullOrBlank()) Text(profile?.location.orEmpty(), fontSize = 13.sp)
-                    val socialMedia = profile?.preferences?.profileString("socialMedia").orEmpty()
-                    if (!profile?.category.isNullOrBlank() || socialMedia.isNotBlank()) {
-                        Row(Modifier.padding(top = 7.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Outlined.Badge, null, modifier = Modifier.size(19.dp))
-                            Text(
-                                listOfNotNull(profile?.category?.takeIf { it.isNotBlank() }, socialMedia.takeIf { it.isNotBlank() }).joinToString(" · "),
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 13.sp,
-                                modifier = Modifier.padding(start = 7.dp)
-                            )
+                    val socialLinks = profile?.preferences?.profileObjects("socialLinks").orEmpty().ifEmpty {
+                        profile?.preferences?.profileString("socialMedia")?.takeIf { it.isNotBlank() }?.let {
+                            listOf(mapOf<String, Any?>("label" to "Social media", "url" to it))
+                        }.orEmpty()
+                    }
+                    socialLinks.firstOrNull()?.let { link ->
+                        val label = link["label"]?.toString().orEmpty()
+                        val rawUrl = link["url"]?.toString().orEmpty()
+                        Row(
+                            Modifier.padding(top = 6.dp).clickable(enabled = rawUrl.isNotBlank()) {
+                                val destination = if (rawUrl.startsWith("http://") || rawUrl.startsWith("https://")) rawUrl else "https://$rawUrl"
+                                runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(destination))) }
+                                    .onFailure { Toast.makeText(context, "This link could not be opened", Toast.LENGTH_SHORT).show() }
+                            },
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Outlined.Link, null, tint = TiwiBlue, modifier = Modifier.size(18.dp))
+                            Text(label.ifBlank { rawUrl }, color = TiwiBlue, fontWeight = FontWeight.Bold, fontSize = 13.sp, modifier = Modifier.padding(start = 6.dp))
                         }
                     }
+                    if (!profile?.category.isNullOrBlank()) Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Outlined.Badge, null, modifier = Modifier.size(18.dp))
+                        Text(profile?.category.orEmpty(), fontWeight = FontWeight.ExtraBold, fontSize = 13.sp, modifier = Modifier.padding(start = 6.dp))
+                    }
+                    if (!profile?.about.isNullOrBlank()) {
+                        Text("About", fontWeight = FontWeight.ExtraBold, fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp))
+                        Text(profile?.about.orEmpty(), fontSize = 13.sp, lineHeight = 18.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    }
+                    if (!profile?.location.isNullOrBlank()) Text(profile?.location.orEmpty(), fontSize = 13.sp, modifier = Modifier.padding(top = 5.dp))
                     if (connections.isNotEmpty()) {
                         Row(Modifier.padding(top = 10.dp).clickable { showConnections = true }, verticalAlignment = Alignment.CenterVertically) {
                             Box(Modifier.width((32 + ((connections.take(3).size - 1).coerceAtLeast(0) * 22)).dp).height(34.dp)) {
@@ -4051,39 +4066,17 @@ fun ProfileScreen(
                     }
                 }
                 Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    if (isOwn) ProfileActionButton("Edit profile", Modifier.weight(1f)) { showEdit = true }
-                    else {
+                    if (isOwn) {
+                        ProfileActionButton("Edit profile", Modifier.weight(1f)) { showEdit = true }
+                        ProfileActionButton("Dashboard", Modifier.weight(1f), primary = true) { showDashboard = true }
+                    } else {
                         ProfileActionButton(if (isFollowing) "Following" else "Follow", Modifier.weight(1f), primary = !isFollowing) {
                             userId?.let { id -> scope.launch { runCatching { repository.follow(id, !isFollowing) }.onSuccess { isFollowing = it.isFollowing } } }
                         }
                         ProfileActionButton("Message", Modifier.weight(1f)) { userId?.let(onMessage) }
-                    }
-                    ProfileActionButton("Share profile", Modifier.weight(1f)) {
-                        val profileId = profile?.userId ?: repository.currentUserId().orEmpty()
-                        shareDeepLink(context, "$name on Tiwi", profile?.bio.orEmpty(), "https://tiwlo.com/social/profile/$profileId")
-                    }
-                }
-                if (isOwn) {
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(
-                            onClick = { showDashboard = true },
-                            modifier = Modifier.weight(1f).height(42.dp),
-                            shape = RoundedCornerShape(8.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = TiwiBlue),
-                            elevation = ButtonDefaults.buttonElevation(0.dp)
-                        ) {
-                            Icon(Icons.Outlined.BarChart, null, Modifier.size(19.dp))
-                            Text("Dashboard", Modifier.padding(start = 7.dp), fontWeight = FontWeight.Bold)
-                        }
-                        Button(
-                            onClick = onCreate,
-                            modifier = Modifier.weight(1f).height(42.dp),
-                            shape = RoundedCornerShape(8.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE9ECF1), contentColor = Color.Black),
-                            elevation = ButtonDefaults.buttonElevation(0.dp)
-                        ) {
-                            Icon(Icons.Default.Add, null, Modifier.size(20.dp))
-                            Text("Create", Modifier.padding(start = 7.dp), fontWeight = FontWeight.Bold)
+                        ProfileActionButton("Share profile", Modifier.weight(1f)) {
+                            val profileId = profile?.userId ?: repository.currentUserId().orEmpty()
+                            shareDeepLink(context, "$name on Tiwi", profile?.bio.orEmpty(), "https://tiwlo.com/social/profile/$profileId")
                         }
                     }
                 }
@@ -4117,7 +4110,7 @@ fun ProfileScreen(
                 }
                 1 -> item { LazyRow(contentPadding = PaddingValues(4.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) { items(reels) { ReelItem(it) } } }
                 else -> item {
-                    ProfileAboutDetails(profile, isOwn, onEdit = { showEdit = true })
+                    ProfileAboutDetails(profile, connections, isOwn, onEdit = { showEdit = true })
                 }
             }
         }
@@ -4155,7 +4148,13 @@ private fun ProfileAboutOverview(
     val preferences = profile.preferences
     val hometown = preferences.profileString("hometown")
     val birthday = preferences.profileString("birthday")
-    val social = preferences.profileString("socialMedia")
+    val socialLinks = preferences.profileObjects("socialLinks").ifEmpty {
+        preferences.profileString("socialMedia").takeIf { it.isNotBlank() }?.let {
+            listOf(mapOf<String, Any?>("label" to "Social media", "url" to it))
+        }.orEmpty()
+    }
+    val familyNames = connections.filter { it.userId in preferences.profileStrings("familyMemberIds").toSet() }
+        .joinToString { it.user.name.ifBlank { it.username } }
     Column(Modifier.fillMaxWidth().background(Color.White).padding(horizontal = 15.dp, vertical = 14.dp)) {
         if (!profile.about.isNullOrBlank()) {
             Text(profile.about.orEmpty(), fontSize = 14.sp, lineHeight = 20.sp, modifier = Modifier.padding(bottom = 12.dp))
@@ -4167,16 +4166,19 @@ private fun ProfileAboutOverview(
         ProfileAboutRow(Icons.Outlined.LocationOn, profile.location.orEmpty())
         ProfileAboutRow(Icons.Outlined.Home, hometown)
         ProfileAboutRow(Icons.Outlined.Cake, birthday)
+        ProfileAboutRow(Icons.Outlined.FamilyRestroom, familyNames)
         TextButton(onClick = onSeeMore, contentPadding = PaddingValues(horizontal = 0.dp, vertical = 4.dp)) {
             Text("See more details", color = Color(0xFF475467), fontWeight = FontWeight.ExtraBold)
         }
 
-        if (social.isNotBlank() || !profile.website.isNullOrBlank()) {
+        if (socialLinks.isNotEmpty() || !profile.website.isNullOrBlank()) {
             Row(Modifier.fillMaxWidth().padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("Contact info", Modifier.weight(1f), fontWeight = FontWeight.ExtraBold, fontSize = 20.sp)
                 if (isOwn) IconButton(onClick = onEdit, modifier = Modifier.size(36.dp)) { Icon(Icons.Outlined.Edit, "Edit contact info", tint = Color(0xFF475467)) }
             }
-            ProfileAboutRow(Icons.Outlined.AlternateEmail, social)
+            socialLinks.forEach { link ->
+                ProfileAboutRow(Icons.Outlined.AlternateEmail, link["label"]?.toString().orEmpty(), link["url"]?.toString())
+            }
             ProfileAboutRow(Icons.Outlined.Link, profile.website.orEmpty())
         }
 
@@ -4213,8 +4215,15 @@ private fun ProfileAboutOverview(
 }
 
 @Composable
-private fun ProfileAboutDetails(profile: SocialProfile, isOwn: Boolean, onEdit: () -> Unit) {
+private fun ProfileAboutDetails(profile: SocialProfile, connections: List<SocialProfile>, isOwn: Boolean, onEdit: () -> Unit) {
     val preferences = profile.preferences
+    val familyNames = connections.filter { it.userId in preferences.profileStrings("familyMemberIds").toSet() }
+        .joinToString { it.user.name.ifBlank { it.username } }
+    val socialLinks = preferences.profileObjects("socialLinks").ifEmpty {
+        preferences.profileString("socialMedia").takeIf { it.isNotBlank() }?.let {
+            listOf(mapOf<String, Any?>("label" to "Social media", "url" to it))
+        }.orEmpty()
+    }
     Column(Modifier.fillMaxWidth().background(Color.White).padding(horizontal = 16.dp, vertical = 14.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text("About", Modifier.weight(1f), fontWeight = FontWeight.ExtraBold, fontSize = 21.sp)
@@ -4226,11 +4235,14 @@ private fun ProfileAboutDetails(profile: SocialProfile, isOwn: Boolean, onEdit: 
         ProfileAboutRow(Icons.Outlined.Home, preferences.profileString("hometown"), "Hometown")
         ProfileAboutRow(Icons.Outlined.Cake, preferences.profileString("birthday"), "Birthday")
         ProfileAboutRow(Icons.Outlined.FavoriteBorder, preferences.profileString("relationship"), "Relationship")
+        ProfileAboutRow(Icons.Outlined.FamilyRestroom, familyNames, "Family members")
         ProfileAboutRow(Icons.Outlined.Person, preferences.profileString("gender"), "Gender and pronouns")
         ProfileAboutRow(Icons.Outlined.Translate, preferences.profileStrings("languages").joinToString(), "Languages")
         ProfileAboutRow(Icons.Outlined.WorkOutline, preferences.profileString("work"), "Work")
         ProfileAboutRow(Icons.Outlined.School, preferences.profileString("education"), "Education")
-        ProfileAboutRow(Icons.Outlined.AlternateEmail, preferences.profileString("socialMedia"), "Social media")
+        socialLinks.forEach { link ->
+            ProfileAboutRow(Icons.Outlined.AlternateEmail, link["label"]?.toString().orEmpty(), link["url"]?.toString())
+        }
         ProfileAboutRow(Icons.Outlined.Link, profile.website.orEmpty(), "Website")
         ProfileAboutRow(Icons.Outlined.Interests, preferences.profileStrings("hobbies").joinToString(), "Hobbies")
         ProfileAboutRow(Icons.Outlined.MusicNote, preferences.profileStrings("interests").joinToString(), "Interests")
@@ -4307,76 +4319,534 @@ private fun ProfileDashboardMetric(title: String, value: String, icon: ImageVect
 
 @Composable
 private fun ProfileDashboardPage(
+    repository: SocialRepository,
     profile: SocialProfile,
     posts: List<Post>,
     reels: List<Reel>,
     onBack: () -> Unit,
-    onCreate: () -> Unit
+    onCreate: () -> Unit,
+    onPostClick: (String) -> Unit
 ) {
-    val views = posts.sumOf { it.views } + reels.sumOf { it.views }
-    val interactions = posts.sumOf { it.likes + it.comments + it.shares } + reels.sumOf { it.likes + it.comments }
-    val series = (posts.map { it.views } + reels.map { it.views }).takeLast(7).let { values ->
-        if (values.isEmpty()) listOf(0) else values
-    }
-    val maxValue = series.maxOrNull()?.coerceAtLeast(1) ?: 1
+    var section by remember { mutableStateOf("Analytics") }
+    BackHandler(enabled = section != "Analytics") { section = "Analytics" }
     Column(Modifier.fillMaxSize().background(Color.White).statusBarsPadding()) {
         Row(Modifier.fillMaxWidth().height(54.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
-            Text("Professional dashboard", Modifier.weight(1f), fontWeight = FontWeight.ExtraBold, fontSize = 19.sp)
+            IconButton(onClick = { if (section == "Analytics") onBack() else section = "Analytics" }) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
+            }
+            Text(if (section == "Analytics") "Dashboard" else section, Modifier.weight(1f), textAlign = TextAlign.Center, fontWeight = FontWeight.ExtraBold, fontSize = 20.sp)
             IconButton(onClick = onCreate) { Icon(Icons.Default.Add, "Create") }
         }
         HorizontalDivider(color = Color(0xFFE4E7EC), thickness = .5.dp)
-        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(15.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            item {
-                Text("Overview", fontWeight = FontWeight.Black, fontSize = 22.sp)
-                Text("Performance for ${profile.user.name.ifBlank { profile.username }} across posts and reels.", color = Color(0xFF667085), fontSize = 12.sp, modifier = Modifier.padding(top = 3.dp))
+        when (section) {
+            "Content" -> DashboardContentPage(posts, reels, onPostClick, Modifier.weight(1f))
+            "Community" -> DashboardCommunityPage(repository, posts, onPostClick, Modifier.weight(1f))
+            "Monetize" -> DashboardMonetizePage(repository, profile, Modifier.weight(1f))
+            else -> DashboardAnalyticsPage(profile, posts, reels, onSection = { section = it }, onPostClick = onPostClick, modifier = Modifier.weight(1f))
+        }
+    }
+}
+
+@Composable
+private fun DashboardNavigation(onSection: (String) -> Unit) {
+    LazyRow(
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        items(listOf("Analytics", "Content", "Community", "Monetize")) { title ->
+            Surface(
+                Modifier.clickable { if (title != "Analytics") onSection(title) },
+                color = if (title == "Analytics") Color(0xFFDDEEFF) else Color(0xFFEEF0F3),
+                shape = RoundedCornerShape(50),
+                tonalElevation = 0.dp
+            ) {
+                Text(title, color = if (title == "Analytics") TiwiBlue else Color.Black, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(horizontal = 17.dp, vertical = 10.dp))
             }
+        }
+    }
+}
+
+@Composable
+private fun DashboardActivityRing(icon: ImageVector, value: String, label: String, progress: Float, color: Color, modifier: Modifier = Modifier) {
+    Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(Modifier.size(82.dp), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator(progress = { 1f }, modifier = Modifier.fillMaxSize(), strokeWidth = 5.dp, color = color.copy(alpha = .15f), trackColor = Color.Transparent)
+            CircularProgressIndicator(progress = { progress.coerceIn(0f, 1f) }, modifier = Modifier.fillMaxSize(), strokeWidth = 5.dp, color = color, trackColor = Color.Transparent)
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Icon(icon, null, modifier = Modifier.size(21.dp))
+                Text(value, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+            }
+        }
+        Text(label, color = Color(0xFF667085), fontWeight = FontWeight.Bold, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
+    }
+}
+
+@Composable
+private fun DashboardAnalyticsPage(
+    profile: SocialProfile,
+    posts: List<Post>,
+    reels: List<Reel>,
+    onSection: (String) -> Unit,
+    onPostClick: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val views = posts.sumOf { it.views } + reels.sumOf { it.views }
+    val interactions = posts.sumOf { it.likes + it.comments + it.shares } + reels.sumOf { it.likes + it.comments }
+    val latest = posts.maxByOrNull { it.views }
+    LazyColumn(modifier, contentPadding = PaddingValues(bottom = 18.dp)) {
+        item { DashboardNavigation(onSection) }
+        item {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 17.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+                DecoratedAvatar(profile.user.avatar, R.drawable.img_tiwi_avatar_1, profile.avatarDecoration, Modifier.size(58.dp), animateDecoration = false)
+                Column(Modifier.weight(1f).padding(start = 11.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(profile.user.name.ifBlank { profile.username }, fontWeight = FontWeight.ExtraBold, fontSize = 17.sp)
+                        if (profile.verified) VerifiedBadge(profile.badgeType, 15.dp, Modifier.padding(start = 3.dp))
+                    }
+                    Text("Your Tiwi creator activity", color = Color(0xFF667085), fontSize = 12.sp)
+                }
+            }
+        }
+        item {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 17.dp, vertical = 18.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
+                DashboardActivityRing(Icons.Outlined.Article, "${posts.size}/7", "Posts", posts.size / 7f, TiwiBlue, Modifier.weight(1f))
+                DashboardActivityRing(Icons.Outlined.AutoStories, "${reels.size}/14", "Reels", reels.size / 14f, Color(0xFFF79009), Modifier.weight(1f))
+                DashboardActivityRing(Icons.Outlined.FavoriteBorder, formatCount(interactions), "Reception", if (interactions > 0) .72f else 0f, Color(0xFFD946EF), Modifier.weight(1f))
+            }
+        }
+        item {
+            Text("Analytics", fontWeight = FontWeight.Black, fontSize = 22.sp, modifier = Modifier.padding(horizontal = 17.dp, vertical = 8.dp))
+            LazyRow(contentPadding = PaddingValues(horizontal = 17.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(listOf("28 days", "7 days", "Today")) { range ->
+                    Surface(color = if (range == "28 days") Color(0xFFDDEEFF) else Color.White, shape = RoundedCornerShape(50), tonalElevation = 0.dp) {
+                        Text(range, color = if (range == "28 days") TiwiBlue else Color.Black, modifier = Modifier.padding(horizontal = 16.dp, vertical = 9.dp))
+                    }
+                }
+            }
+        }
+        item {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 17.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                ProfileDashboardMetric("Views", formatCount(views), Icons.Outlined.Visibility, TiwiBlue, Modifier.weight(1f))
+                ProfileDashboardMetric("Estimated earnings", "--", Icons.Outlined.Payments, Color(0xFF12B76A), Modifier.weight(1f))
+            }
+            Row(Modifier.fillMaxWidth().padding(horizontal = 17.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                ProfileDashboardMetric("Engagement", formatCount(interactions), Icons.Outlined.TouchApp, Color(0xFF7F56D9), Modifier.weight(1f))
+                ProfileDashboardMetric("Net followers", formatCount(profile.followerCount), Icons.Outlined.Group, Color(0xFFF79009), Modifier.weight(1f))
+            }
+        }
+        item {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 17.dp, vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Content", Modifier.weight(1f), fontWeight = FontWeight.Black, fontSize = 22.sp)
+                TextButton(onClick = { onSection("Content") }) { Text("See all", color = TiwiBlue, fontWeight = FontWeight.Bold) }
+            }
+            if (latest == null) Text("Create your first post to see content analytics.", color = Color(0xFF667085), modifier = Modifier.padding(horizontal = 17.dp))
+            else Surface(
+                Modifier.fillMaxWidth().padding(horizontal = 17.dp).clickable { onPostClick(latest.id) },
+                color = Color(0xFFF7F9FC),
+                shape = RoundedCornerShape(16.dp),
+                tonalElevation = 0.dp
+            ) {
+                Row(Modifier.heightIn(min = 148.dp).padding(14.dp)) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Latest top content", color = Color(0xFF667085), fontSize = 11.sp)
+                        Text(latest.content.ifBlank { "Media post" }, fontWeight = FontWeight.ExtraBold, fontSize = 17.sp, maxLines = 4, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 7.dp))
+                    }
+                    Column(Modifier.width(126.dp).padding(start = 10.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                        DashboardMiniStat("Views", formatCount(latest.views))
+                        DashboardMiniStat("Engagement", formatCount(latest.likes + latest.comments + latest.shares))
+                    }
+                }
+            }
+        }
+        item { Spacer(Modifier.navigationBarsPadding().height(8.dp)) }
+    }
+}
+
+@Composable
+private fun DashboardMiniStat(title: String, value: String) {
+    Column(Modifier.fillMaxWidth().background(Color.White, RoundedCornerShape(11.dp)).padding(horizontal = 11.dp, vertical = 10.dp)) {
+        Text(title, color = Color(0xFF667085), fontSize = 11.sp)
+        Text(value, fontWeight = FontWeight.Black, fontSize = 17.sp)
+    }
+}
+
+private data class DashboardContentItem(
+    val id: String,
+    val title: String,
+    val imageUrl: String?,
+    val imageRes: Int?,
+    val views: Int,
+    val video: Boolean,
+    val collaboration: Boolean,
+    val kind: String
+)
+
+private fun dashboardContentItems(posts: List<Post>, reels: List<Reel>): List<DashboardContentItem> {
+    val postItems = posts.map { post ->
+        val media = post.media.firstOrNull()
+        DashboardContentItem(
+            id = post.id,
+            title = post.content.ifBlank { if (post.videoUrl != null || media?.type == "video") "Video post" else "Photo post" },
+            imageUrl = media?.thumbnailUrl ?: post.imageUrl ?: media?.url,
+            imageRes = post.image,
+            views = post.views,
+            video = post.videoUrl != null || media?.type == "video",
+            collaboration = post.media.any { it.sharedPostId != null },
+            kind = "Post"
+        )
+    }
+    val reelItems = reels.map { reel ->
+        DashboardContentItem(
+            id = reel.id,
+            title = reel.content.ifBlank { "Reel" },
+            imageUrl = reel.thumbnailUrl,
+            imageRes = reel.thumbnail,
+            views = reel.views,
+            video = true,
+            collaboration = false,
+            kind = "Reel"
+        )
+    }
+    return (postItems + reelItems).distinctBy { it.id }
+}
+
+@Composable
+private fun DashboardContentCard(item: DashboardContentItem, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    Box(modifier.aspectRatio(.78f).background(Color(0xFFF0F2F5)).clickable(onClick = onClick)) {
+        when {
+            !item.imageUrl.isNullOrBlank() -> AsyncImage(item.imageUrl, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+            item.imageRes != null -> Image(painterResource(item.imageRes), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+            else -> Text(item.title, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, lineHeight = 19.sp, maxLines = 6, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(9.dp))
+        }
+        Row(Modifier.align(Alignment.BottomStart).padding(6.dp).background(Color.Black.copy(alpha = .55f), RoundedCornerShape(5.dp)).padding(horizontal = 6.dp, vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Outlined.Visibility, null, tint = Color.White, modifier = Modifier.size(13.dp))
+            Text(formatCount(item.views), color = Color.White, fontSize = 10.sp, modifier = Modifier.padding(start = 3.dp))
+        }
+        if (item.video) Icon(Icons.Default.Videocam, "Video", tint = Color.White, modifier = Modifier.align(Alignment.TopEnd).padding(6.dp).size(18.dp))
+        if (item.collaboration) Icon(Icons.Outlined.Group, "Collaboration", tint = Color.White, modifier = Modifier.align(Alignment.BottomEnd).padding(6.dp).size(18.dp))
+    }
+}
+
+@Composable
+private fun DashboardContentPage(
+    posts: List<Post>,
+    reels: List<Reel>,
+    onPostClick: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var tab by remember { mutableStateOf("Library") }
+    var contentType by remember { mutableStateOf("All") }
+    var sortViews by remember { mutableStateOf(true) }
+    val allItems = remember(posts, reels) { dashboardContentItems(posts, reels) }
+    val visibleItems = remember(allItems, tab, contentType, sortViews) {
+        var result = when (tab) {
+            "Voice translations" -> allItems.filter { it.video }
+            "Collaborations" -> allItems.filter { it.collaboration }
+            "Insights" -> allItems.sortedByDescending { it.views }
+            else -> allItems
+        }
+        result = when (contentType) {
+            "Posts" -> result.filter { it.kind == "Post" }
+            "Reels" -> result.filter { it.kind == "Reel" }
+            else -> result
+        }
+        if (sortViews) result.sortedByDescending { it.views } else result
+    }
+    Column(modifier.background(Color.White)) {
+        LazyRow(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(listOf("Library", "Voice translations", "Collaborations", "Insights")) { item ->
+                Surface(Modifier.clickable { tab = item }, color = if (tab == item) Color(0xFFDDEEFF) else Color.White, shape = RoundedCornerShape(50), tonalElevation = 0.dp) {
+                    Text(item, color = if (tab == item) TiwiBlue else Color.Black, modifier = Modifier.padding(horizontal = 15.dp, vertical = 9.dp), maxLines = 1)
+                }
+            }
+        }
+        LazyRow(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             item {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    ProfileDashboardMetric("Views", formatCount(views), Icons.Outlined.Visibility, TiwiBlue, Modifier.weight(1f))
-                    ProfileDashboardMetric("Interactions", formatCount(interactions), Icons.Outlined.TouchApp, Color(0xFF7F56D9), Modifier.weight(1f))
+                Surface(Modifier.clickable { contentType = when (contentType) { "All" -> "Posts"; "Posts" -> "Reels"; else -> "All" } }, color = Color(0xFFEEF0F3), shape = RoundedCornerShape(9.dp), tonalElevation = 0.dp) {
+                    Row(Modifier.padding(horizontal = 12.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Outlined.FilterList, null, Modifier.size(18.dp))
+                        Text(contentType, modifier = Modifier.padding(start = 6.dp))
+                    }
                 }
             }
             item {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    ProfileDashboardMetric("Followers", formatCount(profile.followerCount), Icons.Outlined.Group, Color(0xFF12B76A), Modifier.weight(1f))
-                    ProfileDashboardMetric("Content", formatCount(posts.size + reels.size), Icons.Outlined.Collections, Color(0xFFF79009), Modifier.weight(1f))
+                Surface(Modifier.clickable { sortViews = !sortViews }, color = if (sortViews) Color(0xFFDDEEFF) else Color(0xFFEEF0F3), shape = RoundedCornerShape(9.dp), tonalElevation = 0.dp) {
+                    Row(Modifier.padding(horizontal = 12.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Outlined.Visibility, null, tint = if (sortViews) TiwiBlue else Color.Black, modifier = Modifier.size(18.dp))
+                        Text(if (sortViews) "Top views" else "Original order", color = if (sortViews) TiwiBlue else Color.Black, modifier = Modifier.padding(start = 6.dp))
+                    }
                 }
             }
+        }
+        if (visibleItems.isEmpty()) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text(
+                    when (tab) {
+                        "Voice translations" -> "No video content is available for voice translation."
+                        "Collaborations" -> "No collaboration content yet."
+                        else -> "No content found."
+                    },
+                    color = Color(0xFF667085),
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(30.dp)
+                )
+            }
+        } else LazyColumn(Modifier.weight(1f)) {
+            items(visibleItems.chunked(3)) { row ->
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(1.dp)) {
+                    row.forEach { item -> DashboardContentCard(item, Modifier.weight(1f)) { onPostClick(item.id) } }
+                    repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
+                }
+                Spacer(Modifier.height(1.dp))
+            }
+            item { Spacer(Modifier.navigationBarsPadding().height(10.dp)) }
+        }
+    }
+}
+
+private data class DashboardCommentItem(val comment: SocialComment, val post: Post, val responded: Boolean)
+
+@Composable
+private fun DashboardCommunityPage(
+    repository: SocialRepository,
+    posts: List<Post>,
+    onPostClick: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var tab by remember { mutableStateOf("Comments") }
+    var unansweredOnly by remember { mutableStateOf(true) }
+    var loading by remember { mutableStateOf(true) }
+    var commentItems by remember { mutableStateOf<List<DashboardCommentItem>>(emptyList()) }
+    var groups by remember { mutableStateOf<List<SocialGroup>>(emptyList()) }
+    val currentUserId = repository.currentUserId()
+    LaunchedEffect(Unit) {
+        loading = true
+        val loadedComments = mutableListOf<Pair<Post, SocialComment>>()
+        posts.take(20).forEach { post ->
+            runCatching { repository.refreshComments(post.id) }.getOrDefault(emptyList()).forEach { loadedComments += post to it }
+        }
+        commentItems = loadedComments.filter { (_, comment) -> comment.replyToId == null && comment.authorId != currentUserId }.map { (post, comment) ->
+            DashboardCommentItem(comment, post, loadedComments.any { (_, reply) -> reply.replyToId == comment.id && reply.authorId == currentUserId })
+        }.sortedByDescending { it.comment.createdAt }
+        groups = runCatching { repository.groups(mine = true) }.getOrDefault(emptyList())
+        loading = false
+    }
+    Column(modifier.background(Color.White)) {
+        LazyRow(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(listOf("Comments", "Groups", "Moderation Assist", "Invites")) { item ->
+                Surface(Modifier.clickable { tab = item }, color = if (tab == item) Color(0xFFDDEEFF) else Color.White, shape = RoundedCornerShape(50), tonalElevation = 0.dp) {
+                    Text(item, color = if (tab == item) TiwiBlue else Color.Black, modifier = Modifier.padding(horizontal = 15.dp, vertical = 9.dp))
+                }
+            }
+        }
+        when (tab) {
+            "Comments" -> {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 5.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Surface(Modifier.clickable { unansweredOnly = !unansweredOnly }, color = Color(0xFFDDEEFF), shape = RoundedCornerShape(9.dp), tonalElevation = 0.dp) {
+                        Row(Modifier.padding(horizontal = 12.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Outlined.FilterList, null, tint = TiwiBlue, modifier = Modifier.size(18.dp))
+                            Text(if (unansweredOnly) "Not responded" else "All comments", color = TiwiBlue, modifier = Modifier.padding(start = 6.dp))
+                        }
+                    }
+                }
+                val visible = if (unansweredOnly) commentItems.filterNot { it.responded } else commentItems
+                when {
+                    loading -> DashboardLoadingPlaceholder(Modifier.weight(1f))
+                    visible.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(if (unansweredOnly) "No comments need a response." else "No comments yet.", color = Color(0xFF667085)) }
+                    else -> LazyColumn(Modifier.weight(1f)) {
+                        items(visible, key = { it.comment.id }) { item ->
+                            Row(Modifier.fillMaxWidth().clickable { onPostClick(item.post.id) }.padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.Top) {
+                                DecoratedAvatar(item.comment.author.avatar, R.drawable.img_tiwi_avatar_1, item.comment.authorProfile?.avatarDecoration, Modifier.size(46.dp), animateDecoration = false)
+                                Column(Modifier.weight(1f).padding(start = 10.dp)) {
+                                    Text(item.comment.author.name.ifBlank { item.comment.authorProfile?.username.orEmpty() }, fontWeight = FontWeight.ExtraBold)
+                                    Text(item.comment.body, fontSize = 13.sp, lineHeight = 18.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                                    Text("${relativePostTime(item.comment.createdAt)} · ${if (item.responded) "Responded" else "Not responded"}", color = if (item.responded) Color(0xFF12B76A) else Color(0xFF667085), fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp))
+                                }
+                                Icon(Icons.Default.ChevronRight, null, tint = Color(0xFF98A2B3))
+                            }
+                        }
+                    }
+                }
+            }
+            "Groups" -> when {
+                loading -> DashboardLoadingPlaceholder(Modifier.weight(1f))
+                groups.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("You have not joined a Tiwi group yet.", color = Color(0xFF667085)) }
+                else -> LazyColumn(Modifier.weight(1f)) {
+                    items(groups, key = { it.id }) { group ->
+                        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Box(Modifier.size(52.dp).background(Color(0xFFEAF3FF), RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
+                                if (!group.coverUrl.isNullOrBlank()) AsyncImage(group.coverUrl, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                                else Icon(Icons.Outlined.Groups, null, tint = TiwiBlue)
+                            }
+                            Column(Modifier.weight(1f).padding(start = 11.dp)) {
+                                Text(group.name, fontWeight = FontWeight.ExtraBold)
+                                Text("${formatCount(group.memberCount)} members · ${group.viewerRole ?: "member"}", color = Color(0xFF667085), fontSize = 12.sp)
+                            }
+                        }
+                    }
+                }
+            }
+            "Moderation Assist" -> LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                item {
+                    Text("Tiwi Moderation Assist", fontWeight = FontWeight.Black, fontSize = 21.sp)
+                    Text("The Tiwi Team automatically checks public content and helps you review conversations around your profile.", color = Color(0xFF667085), fontSize = 13.sp, lineHeight = 18.sp, modifier = Modifier.padding(top = 5.dp))
+                }
+                item { ProfileDashboardMetric("Comments reviewed", formatCount(commentItems.size), Icons.Outlined.Comment, TiwiBlue, Modifier.fillMaxWidth()) }
+                item { ProfileDashboardMetric("Waiting for response", formatCount(commentItems.count { !it.responded }), Icons.Outlined.MarkChatUnread, Color(0xFFF79009), Modifier.fillMaxWidth()) }
+            }
+            else -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(Icons.Outlined.MailOutline, null, tint = Color(0xFF98A2B3), modifier = Modifier.size(48.dp))
+                    Text("No pending community invites", fontWeight = FontWeight.ExtraBold, modifier = Modifier.padding(top = 11.dp))
+                    Text("New Tiwi collaboration and group invitations will appear here.", color = Color(0xFF667085), textAlign = TextAlign.Center, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 34.dp, vertical = 5.dp))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DashboardLoadingPlaceholder(modifier: Modifier = Modifier) {
+    val alpha by rememberInfiniteTransition(label = "dashboard-loading").animateFloat(.35f, .75f, infiniteRepeatable(tween(800), repeatMode = RepeatMode.Reverse), label = "dashboard-loading-alpha")
+    Column(modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(13.dp)) {
+        repeat(4) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(48.dp).background(Color(0xFFE4E7EC).copy(alpha = alpha), CircleShape))
+                Column(Modifier.weight(1f).padding(start = 11.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                    Box(Modifier.fillMaxWidth(.45f).height(12.dp).background(Color(0xFFE4E7EC).copy(alpha = alpha), RoundedCornerShape(6.dp)))
+                    Box(Modifier.fillMaxWidth(.82f).height(10.dp).background(Color(0xFFE4E7EC).copy(alpha = alpha), RoundedCornerShape(6.dp)))
+                }
+            }
+        }
+    }
+}
+
+private data class TiwiMonetizationProgram(val id: String, val title: String, val description: String, val status: String, val icon: ImageVector)
+
+@Composable
+private fun DashboardMonetizePage(repository: SocialRepository, profile: SocialProfile, modifier: Modifier = Modifier) {
+    val programs = remember {
+        listOf(
+            TiwiMonetizationProgram("partnership_ads", "Partnership ads", "Manage partner permissions and branded content.", "Ready to set up", Icons.Outlined.Handshake),
+            TiwiMonetizationProgram("content_monetization", "Content monetization", "Register interest in earning from eligible Tiwi content.", "Interest form", Icons.Outlined.VideoLibrary),
+            TiwiMonetizationProgram("stars", "Stars and gifts", "Let your audience support eligible live and video content.", "Eligibility required", Icons.Outlined.AutoAwesome),
+            TiwiMonetizationProgram("subscriptions", "Subscriptions", "Offer monthly supporter benefits when your account qualifies.", "Eligibility required", Icons.Outlined.Subscriptions)
+        )
+    }
+    var tab by remember { mutableStateOf("Ways to earn") }
+    var expandedProgram by remember { mutableStateOf<String?>(null) }
+    var preferences by remember(profile.preferences) { mutableStateOf(profile.preferences) }
+    var interests by remember(profile.preferences) { mutableStateOf(profile.preferences.profileStrings("monetizationInterests").toSet()) }
+    var busyProgram by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    fun toggleInterest(program: TiwiMonetizationProgram) {
+        if (busyProgram != null) return
+        val updated = if (program.id in interests) interests - program.id else interests + program.id
+        scope.launch {
+            busyProgram = program.id
+            val updatedPreferences = if (updated.isEmpty()) preferences - "monetizationInterests" else preferences + ("monetizationInterests" to updated.toList())
+            runCatching { repository.updateProfile(mapOf("preferences" to updatedPreferences)) }
+                .onSuccess {
+                    preferences = updatedPreferences
+                    interests = updated
+                    Toast.makeText(context, if (program.id in updated) "Interest submitted to the Tiwi Team" else "Interest removed", Toast.LENGTH_SHORT).show()
+                }
+                .onFailure { Toast.makeText(context, it.message ?: "Request could not be saved", Toast.LENGTH_LONG).show() }
+            busyProgram = null
+        }
+    }
+    LazyColumn(modifier.background(Color.White), contentPadding = PaddingValues(bottom = 18.dp)) {
+        item {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                listOf("Ways to earn", "Where to start").forEach { item ->
+                    Surface(Modifier.clickable { tab = item }.weight(1f), color = if (tab == item) Color(0xFFDDEEFF) else Color.White, shape = RoundedCornerShape(50), tonalElevation = 0.dp) {
+                        Text(item, color = if (tab == item) TiwiBlue else Color.Black, textAlign = TextAlign.Center, modifier = Modifier.padding(vertical = 10.dp))
+                    }
+                }
+            }
+        }
+        if (tab == "Where to start") {
             item {
-                Text("Content performance", fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
-                Text("Views on your latest ${series.size} items", color = Color(0xFF667085), fontSize = 12.sp)
-                Surface(Modifier.fillMaxWidth().padding(top = 10.dp), color = Color(0xFFF7F9FC), shape = RoundedCornerShape(16.dp), tonalElevation = 0.dp) {
-                    Canvas(Modifier.fillMaxWidth().height(180.dp).padding(horizontal = 18.dp, vertical = 22.dp)) {
-                        val step = size.width / series.size.coerceAtLeast(1)
-                        val baseline = size.height
-                        series.forEachIndexed { index, value ->
-                            val height = (value.toFloat() / maxValue.toFloat()) * (size.height * .82f)
-                            val x = (index + .5f) * step
-                            drawLine(
-                                color = TiwiBlue,
-                                start = Offset(x, baseline),
-                                end = Offset(x, baseline - height.coerceAtLeast(5f)),
-                                strokeWidth = (step * .42f).coerceAtMost(34f),
-                                cap = StrokeCap.Round
-                            )
+                Column(Modifier.padding(17.dp)) {
+                    Text("Start earning on Tiwi", fontWeight = FontWeight.Black, fontSize = 22.sp)
+                    Text("Complete these creator basics. Final eligibility and regional availability are reviewed by the Tiwi Team.", color = Color(0xFF667085), fontSize = 13.sp, lineHeight = 18.sp, modifier = Modifier.padding(top = 5.dp))
+                }
+            }
+            item { MonetizeCriterion("Publish at least 3 posts", postsReady = profile.postCount >= 3, detail = "${profile.postCount}/3 posts") }
+            item { MonetizeCriterion("Build your audience", postsReady = profile.followerCount >= 100, detail = "${formatCount(profile.followerCount)}/100 followers") }
+            item { MonetizeCriterion("Keep your account in good standing", postsReady = profile.user.status == "active", detail = if (profile.user.status == "active") "Account active" else "Account review required") }
+            item { MonetizeCriterion("Submit program interest", postsReady = interests.isNotEmpty(), detail = if (interests.isEmpty()) "Choose a program under Ways to earn" else "${interests.size} program selected") }
+        } else {
+            item {
+                Text("Updates", fontWeight = FontWeight.Black, fontSize = 22.sp, modifier = Modifier.padding(horizontal = 17.dp, vertical = 12.dp))
+                LazyRow(contentPadding = PaddingValues(horizontal = 17.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    item {
+                        Surface(Modifier.width(270.dp), color = Color.White, border = BorderStroke(1.dp, Color(0xFFE4E7EC)), shape = RoundedCornerShape(16.dp), tonalElevation = 0.dp) {
+                            Column(Modifier.padding(15.dp)) {
+                                Icon(Icons.Outlined.Paid, null, modifier = Modifier.size(25.dp))
+                                Text("Submit your interest for Tiwi monetization", fontWeight = FontWeight.ExtraBold, fontSize = 17.sp, lineHeight = 20.sp, modifier = Modifier.padding(top = 12.dp))
+                                Text("The Tiwi Team will review eligibility and notify you when a program becomes available.", color = Color(0xFF667085), fontSize = 12.sp, lineHeight = 17.sp, modifier = Modifier.padding(top = 6.dp))
+                            }
+                        }
+                    }
+                    item {
+                        Surface(Modifier.width(270.dp), color = Color.White, border = BorderStroke(1.dp, Color(0xFFE4E7EC)), shape = RoundedCornerShape(16.dp), tonalElevation = 0.dp) {
+                            Column(Modifier.padding(15.dp)) {
+                                Icon(Icons.Outlined.Groups, null, modifier = Modifier.size(25.dp))
+                                Text("Turn ideas into audience value", fontWeight = FontWeight.ExtraBold, fontSize = 17.sp, lineHeight = 20.sp, modifier = Modifier.padding(top = 12.dp))
+                                Text("Use original posts, reels and live content to build an eligible Tiwi creator profile.", color = Color(0xFF667085), fontSize = 12.sp, lineHeight = 17.sp, modifier = Modifier.padding(top = 6.dp))
+                            }
+                        }
+                    }
+                }
+            }
+            item { Text("Monetization programs", fontWeight = FontWeight.Black, fontSize = 22.sp, modifier = Modifier.padding(horizontal = 17.dp, vertical = 17.dp)) }
+            items(programs, key = { it.id }) { program ->
+                val expanded = expandedProgram == program.id
+                val interested = program.id in interests
+                Column(Modifier.fillMaxWidth().clickable { expandedProgram = if (expanded) null else program.id }.padding(horizontal = 17.dp, vertical = 10.dp)) {
+                    Row(verticalAlignment = Alignment.Top) {
+                        Icon(program.icon, null, modifier = Modifier.size(29.dp))
+                        Column(Modifier.weight(1f).padding(start = 13.dp)) {
+                            Text(program.title, fontWeight = FontWeight.ExtraBold, fontSize = 17.sp)
+                            Text(program.description, fontSize = 13.sp, lineHeight = 18.sp)
+                            Text(if (interested) "Interest submitted" else program.status, color = if (interested) Color(0xFF12B76A) else Color(0xFF667085), fontSize = 12.sp, modifier = Modifier.padding(top = 3.dp))
+                        }
+                        Icon(if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.ChevronRight, null, tint = Color(0xFF667085))
+                    }
+                    if (expanded) {
+                        Text("Availability depends on account standing, audience activity, original content and supported country. The Tiwi Team makes the final decision.", color = Color(0xFF667085), fontSize = 12.sp, lineHeight = 17.sp, modifier = Modifier.padding(start = 42.dp, top = 10.dp))
+                        Button(
+                            onClick = { toggleInterest(program) },
+                            enabled = busyProgram == null,
+                            modifier = Modifier.fillMaxWidth().padding(start = 42.dp, top = 10.dp),
+                            shape = RoundedCornerShape(9.dp),
+                            elevation = ButtonDefaults.buttonElevation(0.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = if (interested) Color(0xFFEEF0F3) else TiwiBlue, contentColor = if (interested) Color.Black else Color.White)
+                        ) {
+                            if (busyProgram == program.id) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                            else Text(if (interested) "Withdraw interest" else "Submit interest", fontWeight = FontWeight.ExtraBold)
                         }
                     }
                 }
             }
             item {
-                Button(
-                    onClick = onCreate,
-                    modifier = Modifier.fillMaxWidth().height(46.dp),
-                    shape = RoundedCornerShape(9.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = TiwiBlue),
-                    elevation = ButtonDefaults.buttonElevation(0.dp)
-                ) {
-                    Icon(Icons.Default.Add, null)
-                    Text("Create new content", Modifier.padding(start = 7.dp), fontWeight = FontWeight.ExtraBold)
-                }
+                Text("Learning on Tiwi", fontWeight = FontWeight.Black, fontSize = 21.sp, modifier = Modifier.padding(horizontal = 17.dp, vertical = 14.dp))
+                Text("Creator guidance and program updates will appear here from the Tiwi Team.", color = Color(0xFF667085), fontSize = 12.sp, modifier = Modifier.padding(horizontal = 17.dp))
             }
-            item { Spacer(Modifier.navigationBarsPadding().height(8.dp)) }
+        }
+        item { Spacer(Modifier.navigationBarsPadding().height(8.dp)) }
+    }
+}
+
+@Composable
+private fun MonetizeCriterion(title: String, postsReady: Boolean, detail: String) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = 17.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+        Icon(if (postsReady) Icons.Default.CheckCircle else Icons.Outlined.RadioButtonUnchecked, null, tint = if (postsReady) Color(0xFF12B76A) else Color(0xFF98A2B3), modifier = Modifier.size(27.dp))
+        Column(Modifier.padding(start = 12.dp)) {
+            Text(title, fontWeight = FontWeight.ExtraBold)
+            Text(detail, color = Color(0xFF667085), fontSize = 12.sp)
         }
     }
 }
@@ -4478,6 +4948,10 @@ private val PROFILE_INTEREST_OPTIONS = listOf("Music", "TV shows", "Movies", "Ga
 
 private fun Map<String, Any?>.profileString(key: String): String = this[key]?.toString()?.takeUnless { it == "null" }.orEmpty()
 private fun Map<String, Any?>.profileStrings(key: String): List<String> = (this[key] as? List<*>)?.mapNotNull { it?.toString() }.orEmpty()
+private fun Map<String, Any?>.profileObjects(key: String): List<Map<String, Any?>> =
+    (this[key] as? List<*>)?.mapNotNull { item ->
+        (item as? Map<*, *>)?.entries?.associate { (mapKey, value) -> mapKey.toString() to value }
+    }.orEmpty()
 
 @Composable
 private fun ProfileEditSection(title: String, content: @Composable ColumnScope.() -> Unit) {
@@ -4581,6 +5055,153 @@ private fun ProfileOptionEditorPage(
 }
 
 @Composable
+private fun ProfileFamilyEditorPage(
+    connections: List<SocialProfile>,
+    selected: Set<String>,
+    onBack: () -> Unit,
+    onSave: (Set<String>) -> Unit
+) {
+    var draft by remember(selected) { mutableStateOf(selected) }
+    Column(Modifier.fillMaxSize().background(Color.White).statusBarsPadding()) {
+        Row(Modifier.fillMaxWidth().height(54.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
+            Text("Family members", Modifier.weight(1f), textAlign = TextAlign.Center, fontWeight = FontWeight.ExtraBold, fontSize = 19.sp)
+            TextButton(onClick = { onSave(draft) }) { Text("Save", color = TiwiBlue, fontWeight = FontWeight.Bold) }
+        }
+        HorizontalDivider(color = Color(0xFFE4E7EC), thickness = .5.dp)
+        Text(
+            "Choose family members from My Connections. You can add or remove them any time.",
+            color = Color(0xFF667085),
+            fontSize = 12.sp,
+            lineHeight = 17.sp,
+            modifier = Modifier.padding(horizontal = 17.dp, vertical = 13.dp)
+        )
+        if (connections.isEmpty()) {
+            Column(Modifier.fillMaxSize().padding(28.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                Icon(Icons.Outlined.FamilyRestroom, null, tint = Color(0xFF98A2B3), modifier = Modifier.size(46.dp))
+                Text("No mutual connections yet", fontWeight = FontWeight.ExtraBold, fontSize = 17.sp, modifier = Modifier.padding(top = 12.dp))
+                Text("When someone you follow follows you back, they can be selected here.", color = Color(0xFF667085), textAlign = TextAlign.Center, fontSize = 12.sp, lineHeight = 17.sp, modifier = Modifier.padding(top = 5.dp))
+            }
+        } else LazyColumn(Modifier.weight(1f)) {
+            items(connections, key = { it.userId }) { connection ->
+                val checked = connection.userId in draft
+                Row(
+                    Modifier.fillMaxWidth().clickable { draft = if (checked) draft - connection.userId else draft + connection.userId }
+                        .padding(horizontal = 17.dp, vertical = 9.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    DecoratedAvatar(connection.user.avatar, R.drawable.img_tiwi_avatar_1, connection.avatarDecoration, Modifier.size(52.dp), animateDecoration = false)
+                    Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(connection.user.name.ifBlank { connection.username }, fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            if (connection.verified) VerifiedBadge(connection.badgeType, 14.dp, Modifier.padding(start = 3.dp))
+                        }
+                        Text("@${connection.username}", color = Color(0xFF667085), fontSize = 12.sp)
+                    }
+                    Checkbox(checked = checked, onCheckedChange = { enabled -> draft = if (enabled) draft + connection.userId else draft - connection.userId })
+                }
+            }
+            item { Spacer(Modifier.navigationBarsPadding().height(12.dp)) }
+        }
+    }
+}
+
+@Composable
+private fun ProfileSocialLinksEditorPage(
+    links: List<Map<String, Any?>>,
+    onBack: () -> Unit,
+    onSave: (List<Map<String, Any?>>) -> Unit
+) {
+    var draft by remember(links) { mutableStateOf(links) }
+    var label by remember { mutableStateOf("") }
+    var url by remember { mutableStateOf("") }
+    var editingIndex by remember { mutableIntStateOf(-1) }
+    val valid = label.isNotBlank() && url.isNotBlank()
+    fun clearEditor() {
+        label = ""
+        url = ""
+        editingIndex = -1
+    }
+    fun commitLink() {
+        if (!valid) return
+        val value = mapOf<String, Any?>("label" to label.trim(), "url" to url.trim())
+        draft = if (editingIndex in draft.indices) draft.mapIndexed { index, item -> if (index == editingIndex) value else item }
+        else draft + value
+        clearEditor()
+    }
+    Column(Modifier.fillMaxSize().background(Color.White).statusBarsPadding().imePadding()) {
+        Row(Modifier.fillMaxWidth().height(54.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
+            Text("Social links", Modifier.weight(1f), textAlign = TextAlign.Center, fontWeight = FontWeight.ExtraBold, fontSize = 19.sp)
+            TextButton(onClick = { onSave(draft) }) { Text("Save", color = TiwiBlue, fontWeight = FontWeight.Bold) }
+        }
+        HorizontalDivider(color = Color(0xFFE4E7EC), thickness = .5.dp)
+        Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+            Text(if (editingIndex >= 0) "Edit link" else "Add a social link", fontWeight = FontWeight.ExtraBold, fontSize = 17.sp)
+            OutlinedTextField(
+                value = label,
+                onValueChange = { label = it.take(50) },
+                label = { Text("Name") },
+                placeholder = { Text("Instagram, YouTube, Portfolio") },
+                singleLine = true,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth().padding(top = 9.dp)
+            )
+            OutlinedTextField(
+                value = url,
+                onValueChange = { url = it.take(500) },
+                label = { Text("Link") },
+                placeholder = { Text("https://example.com/your-name") },
+                singleLine = true,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+            )
+            Row(Modifier.fillMaxWidth().padding(top = 9.dp), horizontalArrangement = Arrangement.End) {
+                if (editingIndex >= 0) TextButton(onClick = ::clearEditor) { Text("Cancel", color = Color(0xFF667085)) }
+                Button(
+                    onClick = ::commitLink,
+                    enabled = valid,
+                    shape = RoundedCornerShape(9.dp),
+                    elevation = ButtonDefaults.buttonElevation(0.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = TiwiBlue)
+                ) { Text(if (editingIndex >= 0) "Update link" else "Add link", fontWeight = FontWeight.Bold) }
+            }
+        }
+        HorizontalDivider(color = Color(0xFFF0F2F5), thickness = 8.dp)
+        Text("Your links", fontWeight = FontWeight.ExtraBold, fontSize = 17.sp, modifier = Modifier.padding(horizontal = 17.dp, vertical = 12.dp))
+        if (draft.isEmpty()) {
+            Text("No social links added.", color = Color(0xFF667085), fontSize = 13.sp, modifier = Modifier.padding(horizontal = 17.dp))
+        } else LazyColumn(Modifier.weight(1f)) {
+            itemsIndexed(draft) { index, link ->
+                val linkLabel = link["label"]?.toString().orEmpty()
+                val linkUrl = link["url"]?.toString().orEmpty()
+                Row(
+                    Modifier.fillMaxWidth().clickable {
+                        label = linkLabel
+                        url = linkUrl
+                        editingIndex = index
+                    }.padding(horizontal = 17.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(Modifier.size(42.dp).background(Color(0xFFEAF3FF), CircleShape), contentAlignment = Alignment.Center) {
+                        Icon(Icons.Outlined.Link, null, tint = TiwiBlue)
+                    }
+                    Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                        Text(linkLabel, fontWeight = FontWeight.ExtraBold)
+                        Text(linkUrl, color = Color(0xFF667085), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    IconButton(onClick = {
+                        draft = draft.filterIndexed { itemIndex, _ -> itemIndex != index }
+                        if (editingIndex == index) clearEditor()
+                    }) { Icon(Icons.Outlined.Delete, "Remove link", tint = Color(0xFFD92D20)) }
+                }
+            }
+            item { Spacer(Modifier.navigationBarsPadding().height(12.dp)) }
+        }
+    }
+}
+
+@Composable
 private fun EditProfilePage(repository: SocialRepository, profile: SocialProfile?, onBack: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -4601,9 +5222,13 @@ private fun EditProfilePage(repository: SocialRepository, profile: SocialProfile
     var busy by remember { mutableStateOf(false) }
     var decorationCatalogAvailable by remember { mutableStateOf(false) }
     var effectCatalogAvailable by remember { mutableStateOf(false) }
+    var availableConnections by remember(profile?.userId) { mutableStateOf<List<SocialProfile>>(emptyList()) }
     LaunchedEffect(Unit) {
         decorationCatalogAvailable = runCatching { repository.profileDecorations().isNotEmpty() }.getOrDefault(false)
         effectCatalogAvailable = runCatching { repository.profileEffects().isNotEmpty() }.getOrDefault(false)
+    }
+    LaunchedEffect(profile?.userId) {
+        availableConnections = runCatching { repository.connections(profile?.userId, 100) }.getOrDefault(emptyList())
     }
     val avatarPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) scope.launch { busy = true; runCatching { repository.uploadMedia(context.contentResolver, uri, "profile").url }.onSuccess { avatarUrl = it }.onFailure { Toast.makeText(context, it.message ?: "Photo upload failed", Toast.LENGTH_LONG).show() }; busy = false }
@@ -4629,6 +5254,15 @@ private fun EditProfilePage(repository: SocialRepository, profile: SocialProfile
         else preferences + (key to value)
     }
 
+    val selectedFamilyIds = preferences.profileStrings("familyMemberIds").toSet()
+    val selectedFamilyNames = availableConnections.filter { it.userId in selectedFamilyIds }
+        .joinToString { it.user.name.ifBlank { it.username } }
+    val structuredSocialLinks = preferences.profileObjects("socialLinks").ifEmpty {
+        preferences.profileString("socialMedia").takeIf { it.isNotBlank() }?.let {
+            listOf(mapOf<String, Any?>("label" to "Social media", "url" to it))
+        }.orEmpty()
+    }
+
     when (activeEditor) {
         "bio" -> ProfileTextEditorPage("Bio", bio, "Tell people about yourself", 240, true, { activeEditor = null }) { bio = it; activeEditor = null }
         "about" -> ProfileTextEditorPage("About", about, "Share more about you", 3000, true, { activeEditor = null }) { about = it; activeEditor = null }
@@ -4636,8 +5270,16 @@ private fun EditProfilePage(repository: SocialRepository, profile: SocialProfile
         "location" -> ProfileTextEditorPage("Current city", location, "City, country", 160, false, { activeEditor = null }) { location = it; activeEditor = null }
         "hometown" -> ProfileTextEditorPage("Hometown", preferences.profileString("hometown"), "Hometown, country", 160, false, { activeEditor = null }) { updatePreference("hometown", it); activeEditor = null }
         "birthday" -> ProfileTextEditorPage("Birthday", preferences.profileString("birthday"), "Example: November 20, 2000", 40, false, { activeEditor = null }) { updatePreference("birthday", it); activeEditor = null }
-        "family" -> ProfileTextEditorPage("Family", preferences.profileString("family"), "Add family details", 240, true, { activeEditor = null }) { updatePreference("family", it); activeEditor = null }
-        "socialMedia" -> ProfileTextEditorPage("Social media", preferences.profileString("socialMedia"), "Example: Instagram @username", 240, true, { activeEditor = null }) { updatePreference("socialMedia", it); activeEditor = null }
+        "family" -> ProfileFamilyEditorPage(availableConnections, selectedFamilyIds, { activeEditor = null }) {
+            preferences = if (it.isEmpty()) preferences - "familyMemberIds" - "family"
+            else (preferences - "family") + ("familyMemberIds" to it.toList())
+            activeEditor = null
+        }
+        "socialMedia" -> ProfileSocialLinksEditorPage(structuredSocialLinks, { activeEditor = null }) {
+            preferences = if (it.isEmpty()) preferences - "socialLinks" - "socialMedia"
+            else (preferences - "socialMedia") + ("socialLinks" to it)
+            activeEditor = null
+        }
         "website" -> ProfileTextEditorPage("Websites, blogs, portfolios", website, "https://your-site.com", 500, true, { activeEditor = null }) { website = it; activeEditor = null }
         "work" -> ProfileTextEditorPage("Work experience", preferences.profileString("work"), "Company, role and dates", 500, true, { activeEditor = null }) { updatePreference("work", it); activeEditor = null }
         "education" -> ProfileTextEditorPage("Education", preferences.profileString("education"), "School, college or university", 500, true, { activeEditor = null }) { updatePreference("education", it); activeEditor = null }
@@ -4687,6 +5329,10 @@ private fun EditProfilePage(repository: SocialRepository, profile: SocialProfile
                 }
             }
 
+            if (decorationCatalogAvailable || effectCatalogAvailable) ProfileEditSection("Profile style") {
+                if (decorationCatalogAvailable) ProfileEditRow(Icons.Outlined.AutoAwesome, "Avatar decoration", avatarDecoration?.name ?: "Choose a profile decoration") { showDecorations = true }
+                if (effectCatalogAvailable) ProfileEditRow(Icons.Outlined.Layers, "Profile effect", profileEffect?.name ?: "Choose a full-profile effect") { showEffects = true }
+            }
             ProfileEditSection("Intro") {
                 ProfileEditRow(Icons.Outlined.WavingHand, "Bio", bio.ifBlank { "Add bio" }) { activeEditor = "bio" }
                 ProfileEditRow(Icons.Outlined.PushPin, "Pinned details", preferences.profileStrings("pinnedDetails").joinToString(" · ").ifBlank { "Choose details to feature" }) { activeEditor = "pinned" }
@@ -4700,12 +5346,12 @@ private fun EditProfilePage(repository: SocialRepository, profile: SocialProfile
                 ProfileEditRow(Icons.Outlined.Home, "Hometown", preferences.profileString("hometown").ifBlank { "Add hometown" }) { activeEditor = "hometown" }
                 ProfileEditRow(Icons.Outlined.Cake, "Birthday", preferences.profileString("birthday").ifBlank { "Add birthday" }) { activeEditor = "birthday" }
                 ProfileEditRow(Icons.Outlined.FavoriteBorder, "Relationship", preferences.profileString("relationship").ifBlank { "Add relationship status" }) { activeEditor = "relationship" }
-                ProfileEditRow(Icons.Outlined.FamilyRestroom, "Family", preferences.profileString("family").ifBlank { "Add family details" }) { activeEditor = "family" }
+                ProfileEditRow(Icons.Outlined.FamilyRestroom, "Family members", selectedFamilyNames.ifBlank { "Choose from My Connections" }) { activeEditor = "family" }
                 ProfileEditRow(Icons.Outlined.Person, "Gender and pronouns", preferences.profileString("gender").ifBlank { "Choose from system options" }) { activeEditor = "gender" }
                 ProfileEditRow(Icons.Outlined.Translate, "Languages", preferences.profileStrings("languages").joinToString().ifBlank { "Choose languages" }) { activeEditor = "languages" }
             }
             ProfileEditSection("Links") {
-                ProfileEditRow(Icons.Outlined.AlternateEmail, "Social media", preferences.profileString("socialMedia").ifBlank { "Add social accounts" }) { activeEditor = "socialMedia" }
+                ProfileEditRow(Icons.Outlined.AlternateEmail, "Social links", structuredSocialLinks.joinToString { it["label"]?.toString().orEmpty() }.ifBlank { "Add name and link" }) { activeEditor = "socialMedia" }
                 ProfileEditRow(Icons.Outlined.Link, "Websites, blogs, portfolios", website.ifBlank { "Add website" }) { activeEditor = "website" }
             }
             ProfileEditSection("Work") {
@@ -4725,11 +5371,7 @@ private fun EditProfilePage(repository: SocialRepository, profile: SocialProfile
                 ProfileEditRow(Icons.Outlined.Email, "Email", repository.currentUser.value?.email ?: "Managed in Account Center", enabled = false)
                 ProfileEditRow(Icons.Outlined.Phone, "Phone number", "Managed in Account Center", enabled = false)
             }
-            if (decorationCatalogAvailable || effectCatalogAvailable) ProfileEditSection("Profile style") {
-                if (decorationCatalogAvailable) ProfileEditRow(Icons.Outlined.AutoAwesome, "Avatar decoration", avatarDecoration?.name ?: "Choose a profile decoration") { showDecorations = true }
-                if (effectCatalogAvailable) ProfileEditRow(Icons.Outlined.Layers, "Profile effect", profileEffect?.name ?: "Choose a full-profile effect") { showEffects = true }
-            }
-            Text("All profile changes are validated and saved through the Tiwi API.", color = Color(0xFF667085), fontSize = 11.sp, modifier = Modifier.padding(horizontal = 18.dp, vertical = 18.dp))
+            Text("Your profile information is reviewed and protected by the Tiwi Team.", color = Color(0xFF667085), fontSize = 11.sp, modifier = Modifier.padding(horizontal = 18.dp, vertical = 18.dp))
             Spacer(Modifier.navigationBarsPadding().height(12.dp))
         }
     }
