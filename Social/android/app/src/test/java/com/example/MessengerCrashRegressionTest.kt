@@ -85,6 +85,14 @@ class MessengerCrashRegressionTest {
         assertEquals(0xFF0866FF.toInt(), normalizedChatColorArgb(Long.MIN_VALUE))
     }
 
+    @Test
+    fun videoPlayerIsOnlyOwnedByVisiblePlayingContent() {
+        assertTrue(shouldOwnVideoPlayer(visibleEnough = true, autoplay = true, startRequested = false))
+        assertTrue(shouldOwnVideoPlayer(visibleEnough = true, autoplay = false, startRequested = true))
+        assertTrue(!shouldOwnVideoPlayer(visibleEnough = false, autoplay = true, startRequested = true))
+        assertTrue(!shouldOwnVideoPlayer(visibleEnough = true, autoplay = false, startRequested = false))
+    }
+
     private fun createImage(context: Context, name: String, width: Int, height: Int): File {
         val file = File(context.cacheDir, "$name-test.jpg")
         Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also { bitmap ->

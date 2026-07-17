@@ -966,14 +966,14 @@ private object TiwiPlaybackCache {
     @Synchronized
     private fun cache(context: Context): SimpleCache = cache ?: SimpleCache(
         File(context.applicationContext.cacheDir, "tiwi_video_cache"),
-        LeastRecentlyUsedCacheEvictor(384L * 1024L * 1024L),
+        LeastRecentlyUsedCacheEvictor(192L * 1024L * 1024L),
         StandaloneDatabaseProvider(context.applicationContext)
     ).also { cache = it }
 
     fun player(context: Context): ExoPlayer {
         val upstream = DefaultHttpDataSource.Factory().setAllowCrossProtocolRedirects(true).setConnectTimeoutMs(12_000).setReadTimeoutMs(30_000)
         val dataSource = CacheDataSource.Factory().setCache(cache(context)).setUpstreamDataSourceFactory(upstream).setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
-        val loadControl = DefaultLoadControl.Builder().setBufferDurationsMs(1_200, 20_000, 250, 500).setPrioritizeTimeOverSizeThresholds(true).build()
+        val loadControl = DefaultLoadControl.Builder().setBufferDurationsMs(900, 8_000, 200, 400).setPrioritizeTimeOverSizeThresholds(true).build()
         return ExoPlayer.Builder(context).setMediaSourceFactory(DefaultMediaSourceFactory(dataSource)).setLoadControl(loadControl).build()
     }
 }
@@ -1002,6 +1002,9 @@ private object TiwiPlaybackCoordinator {
     }
 }
 
+internal fun shouldOwnVideoPlayer(visibleEnough: Boolean, autoplay: Boolean, startRequested: Boolean): Boolean =
+    visibleEnough && (autoplay || startRequested)
+
 @OptIn(UnstableApi::class)
 @Composable
 private fun TiwiVideo(
@@ -1022,43 +1025,53 @@ private fun TiwiVideo(
     var visibleEnough by remember(url) { mutableStateOf(false) }
     var renderedFirstFrame by remember(activeUrl) { mutableStateOf(false) }
     var buffering by remember(activeUrl) { mutableStateOf(true) }
-    var manuallyPaused by remember(activeUrl) { mutableStateOf(false) }
+    var manuallyPaused by remember(url) { mutableStateOf(false) }
+    var startRequested by remember(url) { mutableStateOf(autoplay) }
     var playing by remember(activeUrl) { mutableStateOf(false) }
     var showPauseOverlay by remember(activeUrl) { mutableStateOf(false) }
     val playerId = remember(activeUrl) { "$activeUrl#${System.nanoTime()}" }
     val isActivePlayer = TiwiPlaybackCoordinator.activeId == playerId
-    val player = remember(activeUrl) {
-        TiwiPlaybackCache.player(context).apply {
-            setMediaItem(MediaItem.fromUri(activeUrl))
-            prepare()
-            volume = if (muted) 0f else 1f
-            repeatMode = if (autoplay) ExoPlayer.REPEAT_MODE_ONE else ExoPlayer.REPEAT_MODE_OFF
+    val shouldCreatePlayer = shouldOwnVideoPlayer(visibleEnough, autoplay, startRequested)
+    val player = if (shouldCreatePlayer) {
+        remember(activeUrl) {
+            TiwiPlaybackCache.player(context).apply {
+                setMediaItem(MediaItem.fromUri(activeUrl))
+                prepare()
+                volume = if (muted) 0f else 1f
+                repeatMode = if (autoplay) ExoPlayer.REPEAT_MODE_ONE else ExoPlayer.REPEAT_MODE_OFF
+            }
         }
-    }
-    LaunchedEffect(player, muted) { player.volume = if (muted) 0f else 1f }
-    LaunchedEffect(player, autoplay) {
-        if (!autoplay) {
-            player.pause()
-            if (coordinated) TiwiPlaybackCoordinator.remove(playerId)
-        }
-    }
+    } else null
+    LaunchedEffect(player, muted) { player?.volume = if (muted) 0f else 1f }
     LaunchedEffect(player, autoplay, visibleEnough, manuallyPaused, isActivePlayer, coordinated) {
-        player.repeatMode = if (autoplay) ExoPlayer.REPEAT_MODE_ONE else ExoPlayer.REPEAT_MODE_OFF
+        val activePlayer = player ?: return@LaunchedEffect
+        activePlayer.repeatMode = if (autoplay) ExoPlayer.REPEAT_MODE_ONE else ExoPlayer.REPEAT_MODE_OFF
         val allowed = !coordinated || isActivePlayer
-        if (autoplay && visibleEnough && allowed && !manuallyPaused) player.play() else if (autoplay || isActivePlayer || !coordinated) player.pause()
+        if ((autoplay || startRequested) && visibleEnough && allowed && !manuallyPaused) activePlayer.play()
+        else activePlayer.pause()
     }
     LaunchedEffect(player, previewClipMs) {
+        val activePlayer = player ?: return@LaunchedEffect
         val clip = previewClipMs?.coerceAtLeast(1_000L) ?: return@LaunchedEffect
         while (true) {
             delay(100)
-            if (player.isPlaying && player.currentPosition >= clip) player.seekTo(0L)
+            if (activePlayer.isPlaying && activePlayer.currentPosition >= clip) activePlayer.seekTo(0L)
         }
     }
-    LaunchedEffect(playerId, autoplay, coordinated) { if (!autoplay || !coordinated) TiwiPlaybackCoordinator.remove(playerId) }
+    LaunchedEffect(playerId, autoplay, startRequested, coordinated) {
+        if ((!autoplay && !startRequested) || !coordinated) TiwiPlaybackCoordinator.remove(playerId)
+    }
+    LaunchedEffect(shouldCreatePlayer) {
+        if (!shouldCreatePlayer) {
+            playing = false
+            buffering = true
+            renderedFirstFrame = false
+        }
+    }
     LaunchedEffect(showPauseOverlay) {
         if (showPauseOverlay) { delay(650); showPauseOverlay = false }
     }
-    DisposableEffect(player, lifecycleOwner, activeUrl, fallbackUrl) {
+    if (player != null) DisposableEffect(player, lifecycleOwner, activeUrl, fallbackUrl) {
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
                 buffering = playbackState == Player.STATE_BUFFERING
@@ -1079,7 +1092,7 @@ private fun TiwiVideo(
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_PAUSE, Lifecycle.Event.ON_STOP -> player.pause()
-                Lifecycle.Event.ON_RESUME -> if (autoplay && visibleEnough && (!coordinated || isActivePlayer) && !manuallyPaused) player.play()
+                Lifecycle.Event.ON_RESUME -> if ((autoplay || startRequested) && visibleEnough && (!coordinated || TiwiPlaybackCoordinator.activeId == playerId) && !manuallyPaused) player.play()
                 else -> Unit
             }
         }
@@ -1105,23 +1118,31 @@ private fun TiwiVideo(
             val itemCenter = (bounds.top + bounds.bottom) / 2f
             val centerDistance = kotlin.math.abs(itemCenter - screenHeight / 2f) / screenHeight
             visibleEnough = ratio >= .5f
-            if (coordinated) TiwiPlaybackCoordinator.update(playerId, ratio - centerDistance * .15f, autoplay)
+            if (coordinated) TiwiPlaybackCoordinator.update(playerId, ratio - centerDistance * .15f, autoplay || startRequested)
         }
     ) {
-        AndroidView(
+        if (player != null) AndroidView(
             factory = { PlayerView(it).apply { this.player = player; useController = false } },
             update = { it.player = player },
             modifier = Modifier.fillMaxSize()
         )
-        if (!renderedFirstFrame && !posterUrl.isNullOrBlank()) {
+        if ((player == null || !renderedFirstFrame) && !posterUrl.isNullOrBlank()) {
             AsyncImage(model = posterUrl, contentDescription = "Video thumbnail", modifier = Modifier.fillMaxSize(), contentScale = posterContentScale)
         }
         if (interactive) Box(Modifier.fillMaxSize().clickable {
-            if (playing) { manuallyPaused = true; player.pause() } else { manuallyPaused = false; if (coordinated) TiwiPlaybackCoordinator.activate(playerId); player.play() }
+            if (playing) {
+                manuallyPaused = true
+                player?.pause()
+            } else {
+                startRequested = true
+                manuallyPaused = false
+                if (coordinated) TiwiPlaybackCoordinator.activate(playerId)
+                player?.play()
+            }
             showPauseOverlay = true
         })
-        if (interactive && buffering && visibleEnough) CircularProgressIndicator(Modifier.align(Alignment.Center).size(30.dp), color = Color.White, strokeWidth = 2.5.dp)
-        if (interactive && ((!playing && !buffering && visibleEnough) || showPauseOverlay)) {
+        if (interactive && buffering && shouldCreatePlayer) CircularProgressIndicator(Modifier.align(Alignment.Center).size(30.dp), color = Color.White, strokeWidth = 2.5.dp)
+        if (interactive && ((!playing && !buffering && visibleEnough) || (player == null && visibleEnough) || showPauseOverlay)) {
             Box(Modifier.align(Alignment.Center).size(58.dp).background(Color.Black.copy(alpha = .48f), CircleShape), contentAlignment = Alignment.Center) {
                 Icon(if (playing) Icons.Default.Pause else Icons.Default.PlayArrow, if (playing) "Pause" else "Play", tint = Color.White, modifier = Modifier.size(34.dp))
             }
@@ -1300,7 +1321,7 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
 
     LaunchedEffect(Unit) {
         while (true) {
-            delay(15000)
+            delay(60000)
             runCatching { repository.validateSession() }
         }
     }
@@ -1521,13 +1542,13 @@ fun HomeFeed(
         if (posts.isEmpty() && syncing) FeedSkeleton()
         else LazyColumn(modifier = Modifier.fillMaxSize()) {
             item { ReelsSection(reels, onReelClick) }
-            posts.forEachIndexed { index, post ->
-                item(key = post.id) {
+            itemsIndexed(posts, key = { _, post -> post.id }) { index, post ->
+                Column {
                     PostCard(post, repository, { onShareClick(post) }, { onAuthorClick(post.authorId) }, { onPostClick(post.id) }, onEditRequest = { onEditPost(it.id) }, onOpenLinkedPost = onPostClick)
-                }
-                if (suggestions.isNotEmpty() && index % 2 == 1) item(key = "suggest-$index") {
-                    SuggestedFriendsSection(suggestions, repository, onAuthorClick) { updated ->
-                        suggestions = suggestions.map { if (it.userId == updated.userId) updated else it }
+                    if (suggestions.isNotEmpty() && index % 2 == 1) {
+                        SuggestedFriendsSection(suggestions, repository, onAuthorClick) { updated ->
+                            suggestions = suggestions.map { if (it.userId == updated.userId) updated else it }
+                        }
                     }
                 }
             }
@@ -4507,13 +4528,13 @@ private fun ProfileConnectionsPage(
 
 @Composable
 private fun ProfileDashboardMetric(title: String, value: String, icon: ImageVector, color: Color, modifier: Modifier = Modifier) {
-    Surface(modifier, color = color.copy(alpha = .1f), shape = RoundedCornerShape(14.dp), tonalElevation = 0.dp) {
-        Column(Modifier.padding(14.dp)) {
-            Box(Modifier.size(34.dp).background(color.copy(alpha = .16f), RoundedCornerShape(10.dp)), contentAlignment = Alignment.Center) {
-                Icon(icon, null, tint = color, modifier = Modifier.size(19.dp))
+    Surface(modifier, color = color.copy(alpha = .1f), shape = RoundedCornerShape(12.dp), tonalElevation = 0.dp) {
+        Column(Modifier.padding(11.dp)) {
+            Box(Modifier.size(29.dp).background(color.copy(alpha = .16f), RoundedCornerShape(8.dp)), contentAlignment = Alignment.Center) {
+                Icon(icon, null, tint = color, modifier = Modifier.size(17.dp))
             }
-            Text(value, fontWeight = FontWeight.Black, fontSize = 22.sp, modifier = Modifier.padding(top = 10.dp))
-            Text(title, color = Color(0xFF667085), fontSize = 12.sp)
+            Text(value, fontWeight = FontWeight.Black, fontSize = 18.sp, modifier = Modifier.padding(top = 7.dp))
+            Text(title, color = Color(0xFF667085), fontSize = 10.sp)
         }
     }
 }
@@ -4531,11 +4552,11 @@ private fun ProfileDashboardPage(
     var section by remember { mutableStateOf("Analytics") }
     BackHandler(enabled = section != "Analytics") { section = "Analytics" }
     Column(Modifier.fillMaxSize().background(Color.White).statusBarsPadding()) {
-        Row(Modifier.fillMaxWidth().height(54.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().height(50.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = { if (section == "Analytics") onBack() else section = "Analytics" }) {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
             }
-            Text(if (section == "Analytics") "Dashboard" else section, Modifier.weight(1f), textAlign = TextAlign.Center, fontWeight = FontWeight.ExtraBold, fontSize = 20.sp)
+            Text(if (section == "Analytics") "Dashboard" else section, Modifier.weight(1f), textAlign = TextAlign.Center, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
             IconButton(onClick = onCreate) { Icon(Icons.Default.Add, "Create") }
         }
         HorizontalDivider(color = Color(0xFFE4E7EC), thickness = .5.dp)
@@ -4551,8 +4572,8 @@ private fun ProfileDashboardPage(
 @Composable
 private fun DashboardNavigation(onSection: (String) -> Unit) {
     LazyRow(
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
+        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         items(listOf("Analytics", "Content", "Community", "Monetize")) { title ->
             Surface(
@@ -4561,7 +4582,7 @@ private fun DashboardNavigation(onSection: (String) -> Unit) {
                 shape = RoundedCornerShape(50),
                 tonalElevation = 0.dp
             ) {
-                Text(title, color = if (title == "Analytics") TiwiBlue else Color.Black, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(horizontal = 17.dp, vertical = 10.dp))
+                Text(title, color = if (title == "Analytics") TiwiBlue else Color.Black, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(horizontal = 13.dp, vertical = 7.dp))
             }
         }
     }
@@ -4570,15 +4591,15 @@ private fun DashboardNavigation(onSection: (String) -> Unit) {
 @Composable
 private fun DashboardActivityRing(icon: ImageVector, value: String, label: String, progress: Float, color: Color, modifier: Modifier = Modifier) {
     Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
-        Box(Modifier.size(82.dp), contentAlignment = Alignment.Center) {
-            CircularProgressIndicator(progress = { 1f }, modifier = Modifier.fillMaxSize(), strokeWidth = 5.dp, color = color.copy(alpha = .15f), trackColor = Color.Transparent)
-            CircularProgressIndicator(progress = { progress.coerceIn(0f, 1f) }, modifier = Modifier.fillMaxSize(), strokeWidth = 5.dp, color = color, trackColor = Color.Transparent)
+        Box(Modifier.size(68.dp), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator(progress = { 1f }, modifier = Modifier.fillMaxSize(), strokeWidth = 4.dp, color = color.copy(alpha = .15f), trackColor = Color.Transparent)
+            CircularProgressIndicator(progress = { progress.coerceIn(0f, 1f) }, modifier = Modifier.fillMaxSize(), strokeWidth = 4.dp, color = color, trackColor = Color.Transparent)
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Icon(icon, null, modifier = Modifier.size(21.dp))
-                Text(value, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                Icon(icon, null, modifier = Modifier.size(18.dp))
+                Text(value, fontWeight = FontWeight.Bold, fontSize = 11.sp)
             }
         }
-        Text(label, color = Color(0xFF667085), fontWeight = FontWeight.Bold, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
+        Text(label, color = Color(0xFF667085), fontWeight = FontWeight.Bold, fontSize = 10.sp, modifier = Modifier.padding(top = 4.dp))
     }
 }
 
@@ -4600,47 +4621,47 @@ private fun DashboardAnalyticsPage(
     LazyColumn(modifier, contentPadding = PaddingValues(bottom = 18.dp)) {
         item { DashboardNavigation(onSection) }
         item {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 17.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
-                DecoratedAvatar(profile.user.avatar, R.drawable.img_tiwi_avatar_1, profile.avatarDecoration, Modifier.size(58.dp), animateDecoration = false)
-                Column(Modifier.weight(1f).padding(start = 11.dp)) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 15.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
+                DecoratedAvatar(profile.user.avatar, R.drawable.img_tiwi_avatar_1, profile.avatarDecoration, Modifier.size(50.dp), animateDecoration = false)
+                Column(Modifier.weight(1f).padding(start = 9.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(profile.user.name.ifBlank { profile.username }, fontWeight = FontWeight.ExtraBold, fontSize = 17.sp)
+                        Text(profile.user.name.ifBlank { profile.username }, fontWeight = FontWeight.ExtraBold, fontSize = 15.sp)
                         if (profile.verified) VerifiedBadge(profile.badgeType, 15.dp, Modifier.padding(start = 3.dp))
                     }
-                    Text("Your Tiwi creator activity", color = Color(0xFF667085), fontSize = 12.sp)
+                    Text("Your Tiwi creator activity", color = Color(0xFF667085), fontSize = 11.sp)
                 }
             }
         }
         item {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 17.dp, vertical = 18.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 15.dp, vertical = 12.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
                 DashboardActivityRing(Icons.Outlined.GridView, "${posts.size}/7", "Posts", posts.size / 7f, TiwiBlue, Modifier.weight(1f))
                 DashboardActivityRing(Icons.Outlined.PlayCircleOutline, "${reels.size}/14", "Reels", reels.size / 14f, Color(0xFFF79009), Modifier.weight(1f))
                 DashboardActivityRing(Icons.Outlined.ThumbUpAlt, formatCount(interactions), "Reception", (interactions / 100f).coerceAtMost(1f), Color(0xFFD946EF), Modifier.weight(1f))
             }
         }
         item {
-            Text("Analytics", fontWeight = FontWeight.Black, fontSize = 22.sp, modifier = Modifier.padding(horizontal = 17.dp, vertical = 8.dp))
+            Text("Analytics", fontWeight = FontWeight.Black, fontSize = 18.sp, modifier = Modifier.padding(horizontal = 15.dp, vertical = 6.dp))
             LazyRow(contentPadding = PaddingValues(horizontal = 17.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(listOf("28 days", "7 days", "Today")) { range ->
                     Surface(Modifier.clickable { selectedRange = range }, color = if (range == selectedRange) Color(0xFFDDEEFF) else Color.White, shape = RoundedCornerShape(50), tonalElevation = 0.dp) {
-                        Text(range, color = if (range == selectedRange) TiwiBlue else Color.Black, modifier = Modifier.padding(horizontal = 16.dp, vertical = 9.dp))
+                        Text(range, color = if (range == selectedRange) TiwiBlue else Color.Black, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 13.dp, vertical = 7.dp))
                     }
                 }
             }
         }
         item {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 17.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 15.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 ProfileDashboardMetric("Views", formatCount(views), Icons.Outlined.Insights, TiwiBlue, Modifier.weight(1f))
                 ProfileDashboardMetric("Estimated earnings", "--", Icons.Outlined.Payments, Color(0xFF12B76A), Modifier.weight(1f))
             }
-            Row(Modifier.fillMaxWidth().padding(horizontal = 17.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 15.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 ProfileDashboardMetric("Engagement", formatCount(interactions), Icons.Outlined.TouchApp, Color(0xFF7F56D9), Modifier.weight(1f))
                 ProfileDashboardMetric("Net followers", formatCount(profile.followerCount), Icons.Outlined.Group, Color(0xFFF79009), Modifier.weight(1f))
             }
         }
         item {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 17.dp, vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("Content", Modifier.weight(1f), fontWeight = FontWeight.Black, fontSize = 22.sp)
+            Row(Modifier.fillMaxWidth().padding(horizontal = 15.dp, vertical = 11.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Content", Modifier.weight(1f), fontWeight = FontWeight.Black, fontSize = 18.sp)
                 TextButton(onClick = { onSection("Content") }) { Text("See all", color = TiwiBlue, fontWeight = FontWeight.Bold) }
             }
             if (latest == null) Text("Create your first post to see content analytics.", color = Color(0xFF667085), modifier = Modifier.padding(horizontal = 17.dp))
@@ -4650,12 +4671,12 @@ private fun DashboardAnalyticsPage(
                 shape = RoundedCornerShape(16.dp),
                 tonalElevation = 0.dp
             ) {
-                Row(Modifier.heightIn(min = 148.dp).padding(14.dp)) {
+                Row(Modifier.heightIn(min = 124.dp).padding(11.dp)) {
                     Column(Modifier.weight(1f)) {
                         Text("Latest top content", color = Color(0xFF667085), fontSize = 11.sp)
-                        Text(latest.content.ifBlank { "Media post" }, fontWeight = FontWeight.ExtraBold, fontSize = 17.sp, maxLines = 4, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 7.dp))
+                        Text(latest.content.ifBlank { "Media post" }, fontWeight = FontWeight.ExtraBold, fontSize = 14.sp, maxLines = 4, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 5.dp))
                     }
-                    Column(Modifier.width(126.dp).padding(start = 10.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                    Column(Modifier.width(110.dp).padding(start = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         DashboardMiniStat("Views", formatCount(latest.views))
                         DashboardMiniStat("Engagement", formatCount(latest.likes + latest.comments + latest.shares))
                     }
@@ -4668,9 +4689,9 @@ private fun DashboardAnalyticsPage(
 
 @Composable
 private fun DashboardMiniStat(title: String, value: String) {
-    Column(Modifier.fillMaxWidth().background(Color.White, RoundedCornerShape(11.dp)).padding(horizontal = 11.dp, vertical = 10.dp)) {
-        Text(title, color = Color(0xFF667085), fontSize = 11.sp)
-        Text(value, fontWeight = FontWeight.Black, fontSize = 17.sp)
+    Column(Modifier.fillMaxWidth().background(Color.White, RoundedCornerShape(10.dp)).padding(horizontal = 9.dp, vertical = 7.dp)) {
+        Text(title, color = Color(0xFF667085), fontSize = 10.sp)
+        Text(value, fontWeight = FontWeight.Black, fontSize = 14.sp)
     }
 }
 
@@ -6436,10 +6457,12 @@ fun MessagesScreen(repository: SocialRepository, onBack: () -> Unit, onChatClick
 
     LaunchedEffect(Unit) {
         stories = runCatching { repository.stories() }.getOrDefault(emptyList())
+        var refreshCycle = 0
         while (true) {
             runCatching { repository.refreshConversations(force = true) }
-            runCatching { repository.refreshNotifications() }
-            delay(3000)
+            if (refreshCycle % 3 == 0) runCatching { repository.refreshNotifications() }
+            refreshCycle++
+            delay(5000)
         }
     }
     selectedStory?.let {
@@ -6590,31 +6613,31 @@ private fun ExactMessengerChatsPage(
             LazyColumn(Modifier.fillMaxSize().statusBarsPadding()) {
                 item {
                     Row(
-                        Modifier.fillMaxWidth().height(54.dp).padding(start = 17.dp, end = 7.dp),
+                        Modifier.fillMaxWidth().height(50.dp).padding(start = 15.dp, end = 5.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("Tiwi Chats", color = Color(0xFF0866FF), fontSize = 22.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-.4).sp, modifier = Modifier.weight(1f))
-                        IconButton(onClick = onNewMessage, modifier = Modifier.size(42.dp)) { Icon(Icons.Outlined.Edit, "New message", modifier = Modifier.size(24.dp)) }
-                        IconButton(onClick = onNewGroup, modifier = Modifier.size(42.dp)) { Icon(Icons.Outlined.GroupAdd, "New group", modifier = Modifier.size(25.dp)) }
+                        Text("Tiwi Chats", color = Color(0xFF0866FF), fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-.3).sp, modifier = Modifier.weight(1f))
+                        IconButton(onClick = onNewMessage, modifier = Modifier.size(38.dp)) { Icon(Icons.Outlined.Edit, "New message", modifier = Modifier.size(21.dp)) }
+                        IconButton(onClick = onNewGroup, modifier = Modifier.size(38.dp)) { Icon(Icons.Outlined.GroupAdd, "New group", modifier = Modifier.size(22.dp)) }
                     }
                 }
                 item {
                     Surface(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 3.dp).height(50.dp),
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 2.dp).height(42.dp),
                         shape = RoundedCornerShape(26.dp),
                         color = Color(0xFFF0F2F5),
                         tonalElevation = 0.dp
                     ) {
                         Row(Modifier.padding(horizontal = 15.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.Search, null, tint = Color(0xFF65676B), modifier = Modifier.size(24.dp))
+                            Icon(Icons.Default.Search, null, tint = Color(0xFF65676B), modifier = Modifier.size(20.dp))
                             BasicTextField(
                                 value = query,
                                 onValueChange = onQuery,
                                 singleLine = true,
-                                modifier = Modifier.weight(1f).padding(start = 10.dp),
-                                textStyle = MaterialTheme.typography.bodyLarge.copy(color = Color(0xFF1C1E21), fontSize = 16.sp),
+                                modifier = Modifier.weight(1f).padding(start = 8.dp),
+                                textStyle = MaterialTheme.typography.bodyMedium.copy(color = Color(0xFF1C1E21), fontSize = 14.sp),
                                 decorationBox = { inner ->
-                                    if (query.isBlank()) Text("Ask Tiwi AI or Search", color = Color(0xFF65676B), fontSize = 16.sp)
+                                    if (query.isBlank()) Text("Ask Tiwi AI or Search", color = Color(0xFF65676B), fontSize = 14.sp)
                                     inner()
                                 }
                             )
@@ -6623,9 +6646,9 @@ private fun ExactMessengerChatsPage(
                 }
                 item {
                     LazyRow(
-                        Modifier.fillMaxWidth().height(174.dp),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp),
-                        horizontalArrangement = Arrangement.spacedBy(7.dp)
+                        Modifier.fillMaxWidth().height(148.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 9.dp),
+                        horizontalArrangement = Arrangement.spacedBy(5.dp)
                     ) {
                         item {
                             ExactMessengerStoryBubble(
@@ -6655,8 +6678,8 @@ private fun ExactMessengerChatsPage(
                 }
                 item {
                     LazyRow(
-                        modifier = Modifier.fillMaxWidth().height(44.dp),
-                        contentPadding = PaddingValues(horizontal = 15.dp, vertical = 5.dp),
+                        modifier = Modifier.fillMaxWidth().height(40.dp),
+                        contentPadding = PaddingValues(horizontal = 13.dp, vertical = 5.dp),
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -6673,8 +6696,8 @@ private fun ExactMessengerChatsPage(
                             MessengerInboxFilterChip("Groups", inboxFilter == "groups") { inboxFilter = "groups" }
                         }
                         item {
-                            IconButton(onClick = onNewGroup, modifier = Modifier.size(34.dp)) {
-                                Icon(Icons.Default.MoreVert, "More chat shortcuts", tint = Color(0xFF65676B), modifier = Modifier.size(20.dp))
+                            IconButton(onClick = onNewGroup, modifier = Modifier.size(30.dp)) {
+                                Icon(Icons.Default.MoreVert, "More chat shortcuts", tint = Color(0xFF65676B), modifier = Modifier.size(18.dp))
                             }
                         }
                     }
@@ -6700,35 +6723,35 @@ private fun ExactMessengerChatsPage(
                     val name = chat.title ?: contact?.user?.name ?: "Tiwi conversation"
                     val preview = messagePreview(chat.lastMessage, currentUserId)
                     Row(
-                        Modifier.fillMaxWidth().heightIn(min = 78.dp).combinedClickable(
+                        Modifier.fillMaxWidth().heightIn(min = 68.dp).combinedClickable(
                             onClick = { onChat(chat) },
                             onLongClick = { onLongPress(chat) }
-                        ).padding(horizontal = 16.dp, vertical = 8.dp),
+                        ).padding(horizontal = 14.dp, vertical = 6.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Box {
-                            DecoratedAvatar(contact?.user?.avatar ?: chat.avatarUrl, R.drawable.img_tiwi_avatar_1, contact?.profile?.avatarDecoration, Modifier.size(59.dp))
+                            DecoratedAvatar(contact?.user?.avatar ?: chat.avatarUrl, R.drawable.img_tiwi_avatar_1, contact?.profile?.avatarDecoration, Modifier.size(52.dp))
                             if (chat.type == "direct" && isSociallyActive(contact?.user?.socialLastActiveAt)) {
                                 Box(Modifier.align(Alignment.BottomEnd).size(16.dp).background(Color.White, CircleShape).padding(2.dp).background(Color(0xFF31A24C), CircleShape))
                             }
                         }
-                        Column(Modifier.weight(1f).padding(start = 12.dp, end = 8.dp)) {
-                            Text(name, fontWeight = if (chat.unreadCount > 0) FontWeight.Black else FontWeight.Medium, fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Column(Modifier.weight(1f).padding(start = 10.dp, end = 7.dp)) {
+                            Text(name, fontWeight = if (chat.unreadCount > 0) FontWeight.Black else FontWeight.Medium, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Text(
                                 if (chat.unreadCount > 0) "${chat.unreadCount} new ${if (chat.unreadCount == 1) "message" else "messages"}" else preview,
                                 color = if (chat.unreadCount > 0) Color(0xFF050505) else Color(0xFF65676B),
                                 fontWeight = if (chat.unreadCount > 0) FontWeight.Bold else FontWeight.Normal,
-                                fontSize = 14.sp,
+                                fontSize = 12.sp,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
                         }
                         Column(horizontalAlignment = Alignment.End) {
-                            Text(relativePostTime(chat.updatedAt), color = Color(0xFF65676B), fontSize = 12.sp)
-                            Spacer(Modifier.height(8.dp))
-                            if (chat.unreadCount > 0) Box(Modifier.size(11.dp).background(Color(0xFF0866FF), CircleShape))
+                            Text(relativePostTime(chat.updatedAt), color = Color(0xFF65676B), fontSize = 10.sp)
+                            Spacer(Modifier.height(6.dp))
+                            if (chat.unreadCount > 0) Box(Modifier.size(9.dp).background(Color(0xFF0866FF), CircleShape))
                             else if (chat.lastMessage?.deliveryStatus == "read" && chat.lastMessage.senderId == currentUserId) {
-                                DecoratedAvatar(contact?.user?.avatar, R.drawable.img_tiwi_avatar_1, contact?.profile?.avatarDecoration, Modifier.size(15.dp))
+                                DecoratedAvatar(contact?.user?.avatar, R.drawable.img_tiwi_avatar_1, contact?.profile?.avatarDecoration, Modifier.size(13.dp))
                             }
                         }
                     }
@@ -6743,16 +6766,16 @@ private fun ExactMessengerChatsPage(
 @Composable
 private fun MessengerInboxFilterChip(label: String, selected: Boolean, onClick: () -> Unit) {
     Surface(
-        modifier = Modifier.height(34.dp).clickable(onClick = onClick),
+        modifier = Modifier.height(30.dp).clickable(onClick = onClick),
         shape = RoundedCornerShape(18.dp),
         color = if (selected) Color(0xFFE7F3FF) else Color(0xFFE4E6EB),
         tonalElevation = 0.dp
     ) {
-        Box(Modifier.padding(horizontal = 13.dp), contentAlignment = Alignment.Center) {
+        Box(Modifier.padding(horizontal = 11.dp), contentAlignment = Alignment.Center) {
             Text(
                 label,
                 color = if (selected) Color(0xFF0866FF) else Color(0xFF4B4F56),
-                fontSize = 13.sp,
+                fontSize = 12.sp,
                 fontWeight = FontWeight.SemiBold
             )
         }
@@ -6770,34 +6793,34 @@ private fun ExactMessengerStoryBubble(
     uploading: Boolean,
     onClick: () -> Unit
 ) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(91.dp).clickable(enabled = !uploading, onClick = onClick)) {
-        Box(Modifier.height(124.dp).fillMaxWidth(), contentAlignment = Alignment.BottomCenter) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(79.dp).clickable(enabled = !uploading, onClick = onClick)) {
+        Box(Modifier.height(105.dp).fillMaxWidth(), contentAlignment = Alignment.BottomCenter) {
             Surface(
-                modifier = Modifier.align(Alignment.TopCenter).widthIn(max = 90.dp),
-                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier.align(Alignment.TopCenter).widthIn(max = 78.dp),
+                shape = RoundedCornerShape(14.dp),
                 color = if (create) Color.White else Color(0xFFF0F2F5),
                 border = BorderStroke(.5.dp, Color(0xFFDADDE1)),
                 tonalElevation = 0.dp
             ) {
-                Text(note, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center, fontSize = 10.sp, lineHeight = 12.sp, modifier = Modifier.padding(horizontal = 7.dp, vertical = 5.dp))
+                Text(note, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center, fontSize = 9.sp, lineHeight = 10.sp, modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp))
             }
             Box(Modifier.align(Alignment.BottomCenter)) {
                 DecoratedAvatar(
                     avatar,
                     R.drawable.img_tiwi_avatar_1,
                     decoration,
-                    Modifier.size(82.dp).then(if (!create) Modifier.border(3.dp, Color(0xFF0866FF), CircleShape).padding(3.dp) else Modifier)
+                    Modifier.size(68.dp).then(if (!create) Modifier.border(2.dp, Color(0xFF0866FF), CircleShape).padding(2.dp) else Modifier)
                 )
-                if (create) Surface(Modifier.align(Alignment.BottomEnd).size(31.dp), shape = CircleShape, color = Color.White, tonalElevation = 0.dp) {
+                if (create) Surface(Modifier.align(Alignment.BottomEnd).size(26.dp), shape = CircleShape, color = Color.White, tonalElevation = 0.dp) {
                     Box(contentAlignment = Alignment.Center) {
-                        if (uploading) CircularProgressIndicator(Modifier.size(19.dp), strokeWidth = 2.dp)
-                        else Icon(Icons.Default.Add, "Add story", modifier = Modifier.size(23.dp))
+                        if (uploading) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                        else Icon(Icons.Default.Add, "Add story", modifier = Modifier.size(20.dp))
                     }
                 }
-                if (active) Box(Modifier.align(Alignment.BottomEnd).offset(x = (-2).dp).size(18.dp).background(Color.White, CircleShape).padding(3.dp).background(Color(0xFF31A24C), CircleShape))
+                if (active) Box(Modifier.align(Alignment.BottomEnd).offset(x = (-2).dp).size(15.dp).background(Color.White, CircleShape).padding(3.dp).background(Color(0xFF31A24C), CircleShape))
             }
         }
-        Text(name, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 3.dp))
+        Text(name, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 2.dp))
     }
 }
 
@@ -6812,7 +6835,7 @@ private fun ExactMessengerBottomNavigation(
     NavigationBar(
         containerColor = Color.White,
         tonalElevation = 0.dp,
-        modifier = Modifier.navigationBarsPadding().height(74.dp)
+        modifier = Modifier.navigationBarsPadding().height(62.dp)
     ) {
         val rows = listOf(
             Triple("Chats", Icons.Filled.ChatBubble, Icons.Outlined.ChatBubbleOutline),
@@ -6832,10 +6855,10 @@ private fun ExactMessengerBottomNavigation(
                             (index == 1 && unreadNotifications > 0) || (index == 3 && hasRequests) -> Badge(Modifier.size(9.dp))
                         }
                     }) {
-                        Icon(if (selected == index) item.second else item.third, item.first, modifier = Modifier.size(26.dp))
+                        Icon(if (selected == index) item.second else item.third, item.first, modifier = Modifier.size(22.dp))
                     }
                 },
-                label = { Text(item.first, fontSize = 11.sp) },
+                label = { Text(item.first, fontSize = 9.sp, maxLines = 1) },
                 colors = NavigationBarItemDefaults.colors(
                     selectedIconColor = Color(0xFF0866FF),
                     selectedTextColor = Color(0xFF0866FF),
@@ -6851,14 +6874,14 @@ private fun ExactMessengerBottomNavigation(
 @Composable
 internal fun ExactMessengerFloatingButton(modifier: Modifier = Modifier) {
     Surface(
-        modifier = modifier.size(58.dp),
+        modifier = modifier.size(48.dp),
         shape = CircleShape,
         color = Color.White,
         border = BorderStroke(.5.dp, Color(0xFFDADDE1)),
         tonalElevation = 0.dp
     ) {
         Box(contentAlignment = Alignment.Center) {
-            Image(painterResource(R.drawable.img_tiwi_avatar_1), null, modifier = Modifier.size(43.dp).clip(CircleShape), contentScale = ContentScale.Crop)
+            Image(painterResource(R.drawable.img_tiwi_avatar_1), null, modifier = Modifier.size(36.dp).clip(CircleShape), contentScale = ContentScale.Crop)
         }
     }
 }
@@ -6877,11 +6900,11 @@ private fun ExactMessengerStoriesPage(
     val cards = remember(stories, currentUserId) { stories.filter { it.authorId != currentUserId }.distinctBy { it.authorId } }
     Box(Modifier.fillMaxSize().padding(contentPadding).background(Color.White)) {
         Column(Modifier.fillMaxSize().statusBarsPadding()) {
-            Text("Stories", fontSize = 31.sp, fontWeight = FontWeight.Black, letterSpacing = (-.7).sp, modifier = Modifier.padding(start = 17.dp, top = 11.dp, bottom = 9.dp))
-            LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 3.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("Stories", fontSize = 25.sp, fontWeight = FontWeight.Black, letterSpacing = (-.5).sp, modifier = Modifier.padding(start = 15.dp, top = 8.dp, bottom = 7.dp))
+            LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
                 val all = listOf<SocialPost?>(null) + cards
                 items(all.chunked(2), key = { row -> row.joinToString("-") { it?.id ?: "create" } }) { row ->
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                         row.forEach { story ->
                             val media = story?.media?.firstOrNull()
                             Box(
@@ -6946,8 +6969,8 @@ private fun ExactMessengerNotificationsPage(
     }
     Box(Modifier.fillMaxSize().padding(contentPadding).background(Color.White)) {
         LazyColumn(Modifier.fillMaxSize().statusBarsPadding()) {
-            item { Text("Notifications", fontSize = 31.sp, fontWeight = FontWeight.Black, letterSpacing = (-.7).sp, modifier = Modifier.padding(start = 17.dp, top = 11.dp, bottom = 26.dp)) }
-            item { Text("New", color = Color(0xFF65676B), fontSize = 16.sp, modifier = Modifier.padding(horizontal = 17.dp, vertical = 5.dp)) }
+            item { Text("Notifications", fontSize = 25.sp, fontWeight = FontWeight.Black, letterSpacing = (-.5).sp, modifier = Modifier.padding(start = 15.dp, top = 8.dp, bottom = 16.dp)) }
+            item { Text("New", color = Color(0xFF65676B), fontSize = 13.sp, modifier = Modifier.padding(horizontal = 15.dp, vertical = 4.dp)) }
             if (rows.isEmpty()) item {
                 Column(Modifier.fillParentMaxHeight(.65f).fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                     Icon(Icons.Outlined.NotificationsNone, null, tint = Color(0xFF8A8D91), modifier = Modifier.size(54.dp))
@@ -6963,18 +6986,18 @@ private fun ExactMessengerNotificationsPage(
                             val conversationId = notification.metadata["conversationId"]?.toString() ?: notification.scopeId
                             chats.firstOrNull { it.id == conversationId }?.let(onChat)
                         }
-                    }.padding(horizontal = 17.dp, vertical = 10.dp),
+                    }.padding(horizontal = 14.dp, vertical = 7.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Box {
-                        TiwiAvatar(avatar, R.drawable.img_tiwi_avatar_1, Modifier.size(62.dp).clip(CircleShape))
-                        if (notification.type in listOf("message", "message_request")) Box(Modifier.align(Alignment.BottomEnd).size(16.dp).background(Color(0xFF31A24C), CircleShape))
+                        TiwiAvatar(avatar, R.drawable.img_tiwi_avatar_1, Modifier.size(50.dp).clip(CircleShape))
+                        if (notification.type in listOf("message", "message_request")) Box(Modifier.align(Alignment.BottomEnd).size(13.dp).background(Color(0xFF31A24C), CircleShape))
                     }
-                    Column(Modifier.weight(1f).padding(start = 12.dp, end = 8.dp)) {
-                        Text(notification.title, fontWeight = FontWeight.Black, fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text("${notification.message} · ${relativePostTime(notification.createdAt)}", fontSize = 14.sp, color = Color(0xFF1C1E21), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Column(Modifier.weight(1f).padding(start = 10.dp, end = 7.dp)) {
+                        Text(notification.title, fontWeight = FontWeight.Black, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text("${notification.message} · ${relativePostTime(notification.createdAt)}", fontSize = 12.sp, color = Color(0xFF1C1E21), maxLines = 2, overflow = TextOverflow.Ellipsis)
                     }
-                    if (notification.status == "unread") Box(Modifier.size(11.dp).background(Color(0xFF0866FF), CircleShape))
+                    if (notification.status == "unread") Box(Modifier.size(9.dp).background(Color(0xFF0866FF), CircleShape))
                 }
             }
             item { Spacer(Modifier.height(74.dp)) }
@@ -7072,15 +7095,15 @@ private fun ExactMessengerMenuPage(
     }
     Box(Modifier.fillMaxSize().padding(contentPadding).background(Color.White)) {
         Column(Modifier.fillMaxSize().statusBarsPadding().verticalScroll(rememberScrollState())) {
-            Row(Modifier.fillMaxWidth().height(70.dp).padding(horizontal = 17.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("Menu", fontSize = 31.sp, fontWeight = FontWeight.Black, modifier = Modifier.weight(1f))
-                Icon(Icons.Default.QrCode2, "Tiwi code", modifier = Modifier.size(31.dp))
+            Row(Modifier.fillMaxWidth().height(54.dp).padding(horizontal = 15.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Menu", fontSize = 25.sp, fontWeight = FontWeight.Black, modifier = Modifier.weight(1f))
+                Icon(Icons.Default.QrCode2, "Tiwi code", modifier = Modifier.size(25.dp))
             }
-            Row(Modifier.fillMaxWidth().clickable(onClick = onProfile).padding(horizontal = 17.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                DecoratedAvatar(currentUser?.avatar, R.drawable.img_tiwi_avatar_1, currentProfile?.avatarDecoration, Modifier.size(53.dp))
-                Column(Modifier.weight(1f).padding(start = 12.dp)) {
-                    Text(currentUser?.name ?: "Tiwi account", fontWeight = FontWeight.Medium, fontSize = 16.sp)
-                    Text("Switch profile · @${currentProfile?.username.orEmpty()}", color = Color(0xFF65676B), fontSize = 13.sp)
+            Row(Modifier.fillMaxWidth().clickable(onClick = onProfile).padding(horizontal = 15.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
+                DecoratedAvatar(currentUser?.avatar, R.drawable.img_tiwi_avatar_1, currentProfile?.avatarDecoration, Modifier.size(46.dp))
+                Column(Modifier.weight(1f).padding(start = 10.dp)) {
+                    Text(currentUser?.name ?: "Tiwi account", fontWeight = FontWeight.Medium, fontSize = 14.sp)
+                    Text("Switch profile · @${currentProfile?.username.orEmpty()}", color = Color(0xFF65676B), fontSize = 11.sp)
                 }
                 if (requests.isNotEmpty()) Badge { Text(requests.size.toString()) }
             }
@@ -7093,7 +7116,7 @@ private fun ExactMessengerMenuPage(
             ExactMenuRow(Icons.Filled.Inventory2, "Archive") { page = "Archive" }
             HorizontalDivider(thickness = .6.dp, color = Color(0xFFDADDE1), modifier = Modifier.padding(vertical = 8.dp))
             ExactMenuRow(Icons.Filled.GroupAdd, "Friend requests") { page = "Friend requests" }
-            Text("Also from Tiwi", color = Color(0xFF65676B), fontSize = 15.sp, modifier = Modifier.padding(horizontal = 17.dp, vertical = 13.dp))
+            Text("Also from Tiwi", color = Color(0xFF65676B), fontSize = 13.sp, modifier = Modifier.padding(horizontal = 15.dp, vertical = 9.dp))
             ExactMenuRow(Icons.Filled.SmartDisplay, "Tiwi Reels") { context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://tiwlo.com/social/reels"))) }
             ExactMenuRow(Icons.Filled.Event, "Tiwi Events") { context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://tiwlo.com/social/events"))) }
             Spacer(Modifier.height(90.dp))
@@ -7104,9 +7127,9 @@ private fun ExactMessengerMenuPage(
 
 @Composable
 private fun ExactMenuRow(icon: ImageVector, title: String, badge: String? = null, onClick: () -> Unit) {
-    Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 21.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-        Icon(icon, null, modifier = Modifier.size(28.dp))
-        Text(title, fontSize = 17.sp, modifier = Modifier.weight(1f).padding(start = 21.dp))
+    Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 18.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+        Icon(icon, null, modifier = Modifier.size(23.dp))
+        Text(title, fontSize = 15.sp, modifier = Modifier.weight(1f).padding(start = 16.dp))
         if (badge != null) Badge { Text(badge) }
     }
 }
@@ -8872,40 +8895,43 @@ private fun MessengerSelectionAction(icon: ImageVector, label: String, onClick: 
 @Composable
 private fun TiwiAudioMessage(url: String, isMe: Boolean) {
     val context = LocalContext.current
-    val player = remember(url) {
-        ExoPlayer.Builder(context).build().apply {
-            setMediaItem(MediaItem.fromUri(url))
-            prepare()
-        }
-    }
+    var player by remember(url) { mutableStateOf<ExoPlayer?>(null) }
     var playing by remember { mutableStateOf(false) }
     var progress by remember { mutableFloatStateOf(0f) }
     var durationMs by remember { mutableLongStateOf(0L) }
     LaunchedEffect(player, playing) {
+        val activePlayer = player ?: return@LaunchedEffect
         while (playing) {
-            val duration = player.duration.takeIf { it > 0 } ?: 1L
-            progress = (player.currentPosition.toFloat() / duration).coerceIn(0f, 1f)
+            val duration = activePlayer.duration.takeIf { it > 0 } ?: 1L
+            progress = (activePlayer.currentPosition.toFloat() / duration).coerceIn(0f, 1f)
             delay(150)
         }
     }
     DisposableEffect(player) {
+        val activePlayer = player ?: return@DisposableEffect onDispose { }
         val listener = object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) { playing = isPlaying }
             override fun onPlaybackStateChanged(playbackState: Int) {
-                if (playbackState == Player.STATE_READY) durationMs = player.duration.coerceAtLeast(0L)
+                if (playbackState == Player.STATE_READY) durationMs = activePlayer.duration.coerceAtLeast(0L)
                 if (playbackState == Player.STATE_ENDED) {
                     playing = false
                     progress = 0f
-                    player.seekTo(0)
+                    activePlayer.seekTo(0)
                 }
             }
         }
-        player.addListener(listener)
-        onDispose { player.removeListener(listener); player.release() }
+        activePlayer.addListener(listener)
+        onDispose { activePlayer.removeListener(listener); activePlayer.release() }
     }
     Row(Modifier.widthIn(min = 235.dp).padding(horizontal = 9.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         Box(
-            Modifier.size(43.dp).background(if (isMe) Color(0xFF001B8E) else Color.White, CircleShape).clickable { if (player.isPlaying) player.pause() else player.play() },
+            Modifier.size(43.dp).background(if (isMe) Color(0xFF001B8E) else Color.White, CircleShape).clickable {
+                val activePlayer = player ?: ExoPlayer.Builder(context).build().apply {
+                    setMediaItem(MediaItem.fromUri(url))
+                    prepare()
+                }.also { player = it }
+                if (activePlayer.isPlaying) activePlayer.pause() else activePlayer.play()
+            },
             contentAlignment = Alignment.Center
         ) {
             Icon(if (playing) Icons.Default.Pause else Icons.Default.PlayArrow, if (playing) "Pause voice message" else "Play voice message", tint = if (isMe) Color.White else TiwiBlue, modifier = Modifier.size(27.dp))
