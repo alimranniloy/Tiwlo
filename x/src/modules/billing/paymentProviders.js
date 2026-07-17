@@ -62,7 +62,7 @@ const publicUrlFrom = (...values) => {
   const publicUrl = urls.find((value) => {
     try {
       const { hostname } = new URL(value);
-      return !['localhost', '127.0.0.1', '0.0.0.0', '::1'].includes(hostname.toLowerCase());
+      return !['localhost', '127.0.0.1', '0.0.0.0', '::1', '[::1]'].includes(hostname.toLowerCase());
     } catch {
       return false;
     }

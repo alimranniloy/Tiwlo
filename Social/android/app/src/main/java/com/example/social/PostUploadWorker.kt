@@ -113,11 +113,15 @@ class PostUploadWorker(context: Context, parameters: WorkerParameters) : Corouti
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
         val pending = PendingIntent.getActivity(applicationContext, notificationId, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        NotificationManagerCompat.from(applicationContext).notify(notificationId, NotificationCompat.Builder(applicationContext, POST_CHANNEL)
+        val manager = NotificationManagerCompat.from(applicationContext)
+        manager.cancel(notificationId)
+        manager.notify(notificationId xor COMPLETION_NOTIFICATION_MASK, NotificationCompat.Builder(applicationContext, POST_CHANNEL)
             .setSmallIcon(R.drawable.ic_tiwi_notification)
-            .setLargeIcon(BitmapFactory.decodeResource(applicationContext.resources, R.drawable.tiwi_app_icon))
+            .setLargeIcon(brandIcon(applicationContext))
             .setContentTitle("Your post is live").setContentText("Tap to view it in your feed")
             .setSound(rawSound(applicationContext, R.raw.tiwi_post_published))
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setOnlyAlertOnce(false)
             .setAutoCancel(true).setContentIntent(pending).build())
     }
 
@@ -126,7 +130,7 @@ class PostUploadWorker(context: Context, parameters: WorkerParameters) : Corouti
         ensureChannels(applicationContext)
         NotificationManagerCompat.from(applicationContext).notify(notificationId, NotificationCompat.Builder(applicationContext, PROGRESS_CHANNEL)
             .setSmallIcon(R.drawable.ic_tiwi_notification)
-            .setLargeIcon(BitmapFactory.decodeResource(applicationContext.resources, R.drawable.tiwi_app_icon))
+            .setLargeIcon(brandIcon(applicationContext))
             .setContentTitle("Post couldn't be published").setContentText(message)
             .setStyle(NotificationCompat.BigTextStyle().bigText(message)).setAutoCancel(true).build())
     }
@@ -139,7 +143,8 @@ class PostUploadWorker(context: Context, parameters: WorkerParameters) : Corouti
         const val KEY_POST_ID = "postId"
         const val KEY_ERROR = "error"
         private const val PROGRESS_CHANNEL = "tiwi_post_upload_progress_v2"
-        private const val POST_CHANNEL = "tiwi_post_published_brand_v2"
+        private const val POST_CHANNEL = "tiwi_post_published_brand_v3"
+        private const val COMPLETION_NOTIFICATION_MASK = 0x35A17
 
         suspend fun enqueue(context: Context, uris: List<Uri>, body: String, visibility: String): UUID = withContext(Dispatchers.IO) {
             val queueId = UUID.randomUUID()
@@ -194,10 +199,17 @@ class PostUploadWorker(context: Context, parameters: WorkerParameters) : Corouti
             manager.createNotificationChannel(
                 NotificationChannel(POST_CHANNEL, "Published posts", NotificationManager.IMPORTANCE_DEFAULT).apply {
                     description = "Alerts when your Tiwi post is live"
+                    enableVibration(true)
                     setSound(rawSound(context, R.raw.tiwi_post_published), attributes)
                 }
             )
         }
+
+        private fun brandIcon(context: Context) = BitmapFactory.decodeResource(
+            context.resources,
+            R.drawable.tiwi_app_icon,
+            BitmapFactory.Options().apply { inSampleSize = 8 }
+        )
 
         private fun rawSound(context: Context, resId: Int): Uri = Uri.parse("android.resource://${context.packageName}/$resId")
 

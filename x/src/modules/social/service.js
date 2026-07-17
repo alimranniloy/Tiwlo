@@ -141,6 +141,20 @@ const bounded = (value, max = 5000) => {
   return String(value).trim().slice(0, max);
 };
 
+const reportTargetLabel = (targetType = '') => {
+  const normalized = bounded(targetType, 40).toLowerCase();
+  if (normalized === 'profile') return 'profile';
+  if (normalized === 'comment') return 'comment';
+  if (normalized === 'reel' || normalized === 'video') return 'reel';
+  return 'post';
+};
+
+const supportCenterMetadata = (metadata = {}) => ({
+  destination: 'support_center',
+  noReply: true,
+  ...metadata
+});
+
 const upsertSocialActivityNotification = async (ctx, {
   ownerId,
   scopeId,
@@ -1493,6 +1507,16 @@ export const markConversationRead = async (ctx, id) => {
     ctx.prisma.socialMessage.updateMany({
       where: { conversationId: id, senderId: { not: actor.id }, unsentAt: null, readAt: null },
       data: { deliveryStatus: 'read', deliveredAt: now, readAt: now }
+    }),
+    ctx.prisma.notification.updateMany({
+      where: {
+        ownerId: actor.id,
+        scope: 'social',
+        scopeId: id,
+        type: { in: ['message', 'message_request'] },
+        status: 'unread'
+      },
+      data: { status: 'read', readAt: now }
     })
   ]);
   const conversation = await ctx.prisma.socialConversation.findUnique({ where: { id }, include: conversationInclude(actor.id) });
@@ -1812,7 +1836,7 @@ export const reportContent = async (ctx, targetType, targetId, reason, details) 
   const settings = await requireSocialFeature(ctx);
   if (settings.moderation?.reportsEnabled === false) throw new AppError('Reports are disabled', 'FORBIDDEN');
   const type = bounded(targetType, 40).toLowerCase();
-  return ctx.prisma.socialReport.create({
+  const report = await ctx.prisma.socialReport.create({
     data: {
       reporterId: actor.id,
       postId: type === 'post' ? targetId : undefined,
@@ -1822,6 +1846,21 @@ export const reportContent = async (ctx, targetType, targetId, reason, details) 
       details: bounded(details, 3000)
     }
   });
+  const label = reportTargetLabel(type);
+  await createSocialNotification(ctx, {
+    ownerId: actor.id,
+    scopeId: report.id,
+    type: 'report_received',
+    title: 'We received your report',
+    message: `Thanks for reporting this ${label}. Your report is confidential, and the account you reported will not know who sent it.`,
+    metadata: supportCenterMetadata({
+      caseType: 'report',
+      reportId: report.id,
+      targetType: type,
+      targetId
+    })
+  });
+  return report;
 };
 
 export const adminOverview = async (ctx) => {
@@ -1903,13 +1942,23 @@ export const adminVerifyProfile = async (ctx, userId, verified) => {
   const actor = await requireAdmin(ctx);
   const user = await ctx.prisma.user.findUnique({ where: { id: userId } });
   if (!user) notFound('User');
-  await ensureProfile(ctx, user);
+  const previous = await ensureProfile(ctx, user);
   const profile = await ctx.prisma.socialProfile.update({
     where: { userId },
     data: { verified, badgeType: verified ? 'blue' : 'none', badgePlan: verified ? 'admin' : null, badgeExpiresAt: null },
     include: profileInclude
   });
   await writeAudit(ctx, 'admin_verify_social_profile', 'socialProfile', profile.id, { userId, verified });
+  if (previous.verified !== verified || previous.badgeType !== (verified ? 'blue' : 'none')) await createSocialNotification(ctx, {
+    ownerId: userId,
+    scopeId: profile.id,
+    type: verified ? 'verification_approved' : 'verification_updated',
+    title: verified ? "You're verified on Tiwi" : 'Verification status updated',
+    message: verified
+      ? 'Your profile now has a blue verified badge. This decision is available in Support Center.'
+      : 'Your blue verified badge has been removed. Open Support Center for this account decision.',
+    metadata: supportCenterMetadata({ caseType: 'verification', badgeType: verified ? 'blue' : 'none', profileId: profile.id })
+  });
   return mapProfile(ctx, profile, actor.id);
 };
 
@@ -1917,7 +1966,7 @@ export const adminSetSocialBadge = async (ctx, userId, badgeType, badgePlan) => 
   const actor = await requireAdmin(ctx);
   const user = await ctx.prisma.user.findUnique({ where: { id: userId } });
   if (!user) notFound('User');
-  await ensureProfile(ctx, user);
+  const previous = await ensureProfile(ctx, user);
   const type = bounded(badgeType, 20).toLowerCase();
   if (!['none', 'blue', 'gold'].includes(type)) throw new AppError('Badge type must be none, blue or gold', 'BAD_USER_INPUT');
   const profile = await ctx.prisma.socialProfile.update({
@@ -1931,6 +1980,18 @@ export const adminSetSocialBadge = async (ctx, userId, badgeType, badgePlan) => 
     include: profileInclude
   });
   await writeAudit(ctx, 'admin_set_social_badge', 'socialProfile', profile.id, { userId, badgeType: type, badgePlan });
+  if (previous.badgeType !== type || previous.verified !== (type !== 'none')) await createSocialNotification(ctx, {
+    ownerId: userId,
+    scopeId: profile.id,
+    type: type === 'none' ? 'verification_updated' : 'verification_approved',
+    title: type === 'gold' ? "You've received a gold badge" : type === 'blue' ? "You're verified on Tiwi" : 'Verification status updated',
+    message: type === 'gold'
+      ? 'Tiwi reviewed your notable-person application and added a gold verified badge to your profile.'
+      : type === 'blue'
+        ? 'Tiwi reviewed your account and added a blue verified badge to your profile.'
+        : 'Your verified badge has been removed. Open Support Center for this account decision.',
+    metadata: supportCenterMetadata({ caseType: 'verification', badgeType: type, profileId: profile.id, badgePlan: profile.badgePlan })
+  });
   return mapProfile(ctx, profile, actor.id);
 };
 
@@ -1946,7 +2007,7 @@ export const startVerificationCheckout = async (ctx, packageId, provider, curren
       where: { reporterId: actor.id, targetType: 'verification', targetId: actor.id, status: 'open' }
     });
     if (!existing) {
-      await ctx.prisma.socialReport.create({
+      const report = await ctx.prisma.socialReport.create({
         data: {
           reporterId: actor.id,
           targetType: 'verification',
@@ -1954,6 +2015,14 @@ export const startVerificationCheckout = async (ctx, packageId, provider, curren
           reason: 'gold_notable_application',
           details: JSON.stringify({ packageId: plan.id, packageName: plan.name, badgeType: 'gold' })
         }
+      });
+      await createSocialNotification(ctx, {
+        ownerId: actor.id,
+        scopeId: report.id,
+        type: 'verification_received',
+        title: 'Gold verification request received',
+        message: 'Tiwi Team will review your notable-person application. You will receive a Support Center notification when a decision is made.',
+        metadata: supportCenterMetadata({ caseType: 'verification', reportId: report.id, badgeType: 'gold', packageId: plan.id })
       });
     }
     return { status: 'pending_review', provider: 'manual', message: 'Your Gold Notable application was sent to the Social administrators.' };
@@ -2230,6 +2299,39 @@ export const adminResolveReport = async (ctx, id, status, resolution) => {
     data: { status: bounded(status, 30).toLowerCase(), resolution: bounded(resolution, 2000) }
   });
   await writeAudit(ctx, 'admin_resolve_social_report', 'socialReport', id, { status });
+  const normalizedStatus = updated.status;
+  if (report.targetType === 'verification') {
+    await createSocialNotification(ctx, {
+      ownerId: report.reporterId,
+      scopeId: report.id,
+      type: 'verification_reviewed',
+      title: 'Verification review completed',
+      message: normalizedStatus === 'resolved'
+        ? (bounded(resolution, 1000) || 'Tiwi Team completed the review of your verification request.')
+        : 'Tiwi Team reviewed your verification request, but it was not approved at this time.',
+      metadata: supportCenterMetadata({ caseType: 'verification', reportId: report.id, badgeType: 'gold', outcome: normalizedStatus })
+    });
+  } else {
+    const label = reportTargetLabel(report.targetType);
+    const actionTaken = normalizedStatus === 'resolved';
+    await createSocialNotification(ctx, {
+      ownerId: report.reporterId,
+      scopeId: report.id,
+      type: 'report_reviewed',
+      title: actionTaken ? 'We took action on your report' : 'We reviewed your report',
+      message: actionTaken
+        ? `We found that the ${label} you reported does not follow our Community Guidelines, so we took action. The account will not know who submitted the report.`
+        : `We reviewed the ${label} you reported and found that it follows our Community Guidelines, so we did not remove it. The account will not know who submitted the report.`,
+      metadata: supportCenterMetadata({
+        caseType: 'report',
+        reportId: report.id,
+        targetType: report.targetType,
+        targetId: report.targetId,
+        outcome: normalizedStatus,
+        resolution: updated.resolution || ''
+      })
+    });
+  }
   return updated;
 };
 

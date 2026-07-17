@@ -501,6 +501,26 @@ const fulfillPaidInvoice = async (tx, invoice, paidAt = new Date()) => {
         where: { userId: invoice.ownerId },
         data: { verified: true, badgeType: 'blue', badgePlan: verification.packageId || invoice.scopeId || 'blue', badgeExpiresAt: expiresAt }
       });
+      await tx.notification.create({
+        data: {
+          ownerId: invoice.ownerId,
+          scope: 'social',
+          scopeId: invoice.id,
+          type: 'verification_approved',
+          title: "You're verified on Tiwi",
+          message: `Your payment was confirmed and your blue verified badge is active until ${expiresAt.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC' })}.`,
+          status: 'unread',
+          metadata: {
+            destination: 'support_center',
+            noReply: true,
+            caseType: 'verification',
+            badgeType: 'blue',
+            invoiceId: invoice.id,
+            packageId: verification.packageId || invoice.scopeId || 'blue',
+            expiresAt: expiresAt.toISOString()
+          }
+        }
+      });
       items = { ...items, verificationActivatedAt: paidAt.toISOString(), verificationExpiresAt: expiresAt.toISOString() };
     }
   }
@@ -798,6 +818,7 @@ const safeMerchantReturnUrl = (value) => {
   try {
     const url = new URL(String(value || '').trim());
     if (!['https:', 'http:'].includes(url.protocol)) return null;
+    if (['localhost', '127.0.0.1', '0.0.0.0', '::1', '[::1]'].includes(url.hostname.toLowerCase())) return null;
     return url;
   } catch {
     return null;

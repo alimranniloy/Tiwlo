@@ -281,7 +281,25 @@ function getPrisma(ctxOrPrisma) {
 }
 
 export function appOrigin() {
-  return process.env.FRONTEND_ORIGIN || process.env.PUBLIC_APP_URL || process.env.APP_URL || 'https://tiwlo.com';
+  const configured = [
+    process.env.PUBLIC_APP_URL,
+    process.env.FRONTEND_ORIGIN,
+    process.env.APP_ORIGIN,
+    process.env.FRONTEND_URL,
+    process.env.CLIENT_ORIGIN,
+    process.env.APP_URL
+  ];
+  for (const value of configured) {
+    try {
+      const url = new URL(String(value || '').trim());
+      if (!['https:', 'http:'].includes(url.protocol)) continue;
+      if (LOCAL_SMTP_HOSTS.has(url.hostname.toLowerCase()) || ['0.0.0.0', '[::1]'].includes(url.hostname.toLowerCase())) continue;
+      return url.toString().replace(/\/$/, '');
+    } catch {
+      // Ignore malformed/private development origins in customer-facing links.
+    }
+  }
+  return 'https://tiwlo.com';
 }
 
 function escapeHtml(value = '') {

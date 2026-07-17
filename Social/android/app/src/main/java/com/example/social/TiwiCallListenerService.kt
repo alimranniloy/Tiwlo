@@ -26,8 +26,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
- * Keeps authenticated call signaling alive while Tiwi is backgrounded.
- * FCM can replace the polling transport later without changing the call UI/signaling contract.
+ * Keeps authenticated first-party call and notification polling alive while Tiwi is backgrounded.
+ * No external push provider is required; the listener reads the authenticated Tiwlo API directly.
  */
 class TiwiCallListenerService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -35,7 +35,9 @@ class TiwiCallListenerService : Service() {
     private lateinit var repository: SocialRepository
     private var shownCallId: String? = null
     private var notificationPollTick = 0
-    private val brandIcon by lazy { BitmapFactory.decodeResource(resources, R.drawable.tiwi_app_icon) }
+    private val brandIcon by lazy {
+        BitmapFactory.decodeResource(resources, R.drawable.tiwi_app_icon, BitmapFactory.Options().apply { inSampleSize = 8 })
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -60,7 +62,7 @@ class TiwiCallListenerService : Service() {
                         NotificationManagerCompat.from(this@TiwiCallListenerService).cancel(INCOMING_NOTIFICATION_ID)
                         shownCallId = null
                     }
-                    if (notificationPollTick++ % 5 == 0) {
+                    if (notificationPollTick++ % 3 == 0) {
                         runCatching { repository.refreshNotifications() }.getOrDefault(emptyList())
                             .filter { it.status == "unread" && it.type != "call" }
                             .take(8)
@@ -130,13 +132,18 @@ class TiwiCallListenerService : Service() {
         if (item.id in shown) return
         val postId = item.metadata["postId"]?.toString()
         val actorId = item.metadata["actorId"]?.toString()
+        val conversationId = item.metadata["conversationId"]?.toString()
+        val supportCenter = item.metadata["destination"]?.toString() == "support_center"
         val openIntent = Intent(this, MainActivity::class.java).apply {
             action = Intent.ACTION_VIEW
-            data = when {
-                !postId.isNullOrBlank() -> android.net.Uri.parse("https://tiwlo.com/social/post/$postId")
-                !actorId.isNullOrBlank() -> android.net.Uri.parse("https://tiwlo.com/social/profile/$actorId")
-                else -> null
+            val target = when {
+                supportCenter -> "https://tiwlo.com/social/support"
+                !conversationId.isNullOrBlank() -> "https://tiwlo.com/social/messages/$conversationId"
+                !postId.isNullOrBlank() -> "https://tiwlo.com/social/post/$postId"
+                !actorId.isNullOrBlank() -> "https://tiwlo.com/social/profile/$actorId"
+                else -> "https://tiwlo.com/social/notifications"
             }
+            data = android.net.Uri.parse(target).buildUpon().appendQueryParameter("notification", item.id).build()
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
         val pending = PendingIntent.getActivity(this, item.id.hashCode(), openIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
@@ -196,8 +203,8 @@ class TiwiCallListenerService : Service() {
 
     companion object {
         private const val SERVICE_CHANNEL = "tiwi_call_connection"
-        private const val CALL_CHANNEL = "tiwi_incoming_calls_brand_v2"
-        private const val ACTIVITY_CHANNEL = "tiwi_social_activity_brand_v2"
+        private const val CALL_CHANNEL = "tiwi_incoming_calls_brand_v3"
+        private const val ACTIVITY_CHANNEL = "tiwi_social_activity_brand_v3"
         private const val SERVICE_NOTIFICATION_ID = 4301
         const val INCOMING_NOTIFICATION_ID = 4302
     }

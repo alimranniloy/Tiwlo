@@ -6,7 +6,7 @@ import { normalizeEmail, removeUndefined, slugify, toApi } from '../../core/form
 import { writeAudit } from '../../core/audit.js';
 import { AppError } from '../../core/errors.js';
 import { pagination, searchWhere } from '../../core/validation.js';
-import { sendTiwloEmail } from '../../core/email.js';
+import { appOrigin, sendTiwloEmail } from '../../core/email.js';
 import { storeOrderReceiptEmailHtml } from '../../core/receiptEmail.js';
 import { ensureOwnerHasCredit } from '../billing/creditAutomation.js';
 import { chargeProvisioningCredit, requireProvisioningCredit } from '../billing/service.js';
@@ -27,7 +27,7 @@ import {
 } from './themeCatalog.js';
 
 const STOREFRONT_ROOT_DOMAIN = (process.env.STOREFRONT_ROOT_DOMAIN || 'tiwlo.com').toLowerCase();
-const APP_ORIGIN = (process.env.APP_ORIGIN || process.env.FRONTEND_URL || process.env.CLIENT_ORIGIN || 'http://localhost:3000').replace(/\/$/, '');
+const APP_ORIGIN = appOrigin();
 const RESERVED_STOREFRONT_SUBDOMAINS = new Set([
   'admin',
   'api',

@@ -1323,11 +1323,17 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
     var initialReelId by remember { mutableStateOf<String?>(null) }
     var selectedEditPostId by remember { mutableStateOf<String?>(null) }
     var callRequest by remember { mutableStateOf<TiwiCallRequest?>(null) }
+    var menuDestination by remember { mutableStateOf<String?>(null) }
+    var pendingConversationId by remember { mutableStateOf<String?>(null) }
     
     val apiPosts by repository.feed.collectAsState()
     val currentUser by repository.currentUser.collectAsState()
     val currentProfile by repository.profile.collectAsState()
     val incomingCalls by repository.incomingCalls.collectAsState()
+    val conversations by repository.conversations.collectAsState()
+    val notifications by repository.notifications.collectAsState()
+    val unreadMessages = remember(conversations) { conversations.sumOf { it.unreadCount } }
+    val unreadActivity = remember(notifications) { notifications.count { it.status == "unread" && it.type !in listOf("message", "message_request") } }
     val posts = remember(apiPosts) { apiPosts.map(::toUiPost) }
     val reels = remember(apiPosts) { apiPosts.filter { it.type == "reel" || it.type == "video" }.map(::toUiReel) }
     val scope = rememberCoroutineScope()
@@ -1353,6 +1359,10 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
     val firstRunPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         permissionPreferences.edit().putBoolean("requested_v1", true).apply()
     }
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        permissionPreferences.edit().putBoolean("notification_permission_v3", true).apply()
+        if (!granted) Toast.makeText(appContext, "Enable Tiwi notifications in Android settings to hear calls and alerts", Toast.LENGTH_LONG).show()
+    }
     val hasOverlay = showProfile || showCreatePost || showMessages || showConnect || selectedProfileUserId != null || selectedChat != null || selectedPostId != null || selectedEditPostId != null
     val darkChrome = selectedTab == 2 && !hasOverlay
 
@@ -1361,8 +1371,8 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
         icon = { Icon(Icons.Default.Security, null, tint = TiwiBlue) },
         title = { Text("Enable Tiwi features") },
         text = { Text("Tiwi uses notifications for activity, photos and videos for posts, camera and microphone for calls, and location only when you choose to add it. You can change these permissions anytime in Android settings.") },
-        confirmButton = { TextButton(onClick = { showPermissionIntro = false; permissionPreferences.edit().putBoolean("requested_v1", true).apply(); if (firstRunPermissions.isNotEmpty()) firstRunPermissionLauncher.launch(firstRunPermissions) }) { Text("Continue", fontWeight = FontWeight.Bold) } },
-        dismissButton = { TextButton(onClick = { showPermissionIntro = false; permissionPreferences.edit().putBoolean("requested_v1", true).apply() }) { Text("Not now") } }
+        confirmButton = { TextButton(onClick = { showPermissionIntro = false; permissionPreferences.edit().putBoolean("requested_v1", true).putBoolean("notification_permission_v3", true).apply(); if (firstRunPermissions.isNotEmpty()) firstRunPermissionLauncher.launch(firstRunPermissions) }) { Text("Continue", fontWeight = FontWeight.Bold) } },
+        dismissButton = { TextButton(onClick = { showPermissionIntro = false; permissionPreferences.edit().putBoolean("requested_v1", true).putBoolean("notification_permission_v3", true).apply() }) { Text("Not now") } }
     )
 
     SideEffect {
@@ -1400,6 +1410,16 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
         repository.refreshAll()
     }
 
+    LaunchedEffect(currentUser?.id, showPermissionIntro) {
+        if (currentUser == null || showPermissionIntro || Build.VERSION.SDK_INT < 33) return@LaunchedEffect
+        if (ContextCompat.checkSelfPermission(appContext, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED &&
+            !permissionPreferences.getBoolean("notification_permission_v3", false)
+        ) {
+            delay(700)
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
     DisposableEffect(currentUser?.id, appLifecycleOwner) {
         val serviceIntent = Intent(appContext, TiwiCallListenerService::class.java)
         fun updateCallListener(visible: Boolean) {
@@ -1434,12 +1454,24 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
         val link = initialDeepLink ?: return@LaunchedEffect
         val uri = runCatching { android.net.Uri.parse(link) }.getOrNull()
         val segments = uri?.pathSegments.orEmpty()
+        uri?.getQueryParameter("notification")?.takeIf { it.isNotBlank() }?.let { notificationId ->
+            runCatching { repository.markNotificationRead(notificationId) }
+        }
         when {
             segments.size >= 3 && segments[0] == "social" && segments[1] == "post" -> {
                 selectedPostMediaIndex = null
                 selectedPostId = segments[2]
             }
             segments.size >= 3 && segments[0] == "social" && segments[1] == "profile" -> selectedProfileUserId = segments[2]
+            segments.size >= 3 && segments[0] == "social" && segments[1] == "messages" -> {
+                pendingConversationId = segments[2]
+                showMessages = true
+            }
+            segments.size >= 2 && segments[0] == "social" && segments[1] == "support" -> {
+                menuDestination = "Support Center"
+                selectedTab = 4
+            }
+            segments.size >= 2 && segments[0] == "social" && segments[1] == "notifications" -> selectedTab = 3
             uri?.scheme == "tiwi" && uri.host == "call" && segments.isNotEmpty() -> {
                 runCatching { repository.getCall(segments[0]) }.getOrNull()?.let { incoming ->
                     if (incoming.calleeId == repository.currentUserId() && incoming.status in listOf("ringing", "connecting")) {
@@ -1456,6 +1488,31 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
             }
         }
         onDeepLinkConsumed()
+    }
+
+    LaunchedEffect(pendingConversationId, conversations) {
+        val id = pendingConversationId ?: return@LaunchedEffect
+        conversations.firstOrNull { it.id == id }?.let {
+            selectedChat = it
+            showMessages = false
+            pendingConversationId = null
+        }
+    }
+
+    LaunchedEffect(currentUser?.id, appVisible, showMessages) {
+        if (currentUser == null || !appVisible || showMessages) return@LaunchedEffect
+        val shownPreferences = appContext.getSharedPreferences("tiwi_activity_notifications", Context.MODE_PRIVATE)
+        var primed = false
+        while (true) {
+            runCatching { repository.refreshConversations(force = true) }
+            val refreshed = runCatching { repository.refreshNotifications() }.getOrDefault(emptyList())
+            val shown = shownPreferences.getStringSet("shown_ids", emptySet()).orEmpty()
+            val unseen = refreshed.filter { it.status == "unread" && it.id !in shown }
+            if (primed && unseen.isNotEmpty()) playActivityNotificationSound(appContext)
+            if (unseen.isNotEmpty()) shownPreferences.edit().putStringSet("shown_ids", (shown + unseen.map { it.id }).toList().takeLast(200).toSet()).apply()
+            primed = true
+            delay(8_000)
+        }
     }
 
     LaunchedEffect(currentUser?.id, appVisible) {
@@ -1494,6 +1551,7 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
                 TiwiTopBar(
                     avatarUrl = currentUser?.avatar,
                     avatarDecoration = currentProfile?.avatarDecoration,
+                    unreadMessages = unreadMessages,
                     onProfileClick = { showProfile = true },
                     onCreateClick = { showCreatePost = true },
                     onMessagesClick = { showMessages = true },
@@ -1503,7 +1561,7 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
         },
         bottomBar = { 
             if (!showProfile && !showCreatePost && !showMessages && !showConnect && selectedProfileUserId == null && selectedChat == null && selectedPostId == null && selectedEditPostId == null) {
-                TiwiBottomBar(selectedTab, dark = selectedTab == 2, avatarUrl = currentUser?.avatar, avatarDecoration = currentProfile?.avatarDecoration) {
+                TiwiBottomBar(selectedTab, dark = selectedTab == 2, avatarUrl = currentUser?.avatar, avatarDecoration = currentProfile?.avatarDecoration, unreadActivity = unreadActivity) {
                     initialReelId = null
                     selectedTab = it
                 } 
@@ -1567,7 +1625,8 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
                     repository,
                     onBack = { showMessages = false },
                     onChatClick = { selectedChat = it },
-                    onProfileClick = { showMessages = false; showProfile = true }
+                    onProfileClick = { showMessages = false; showProfile = true },
+                    onSupportCenter = { showMessages = false; menuDestination = "Support Center"; selectedTab = 4 }
                 )
                 showCreatePost -> CreatePostScreen(repository, onBack = { showCreatePost = false })
                 showProfile -> ProfileScreen(
@@ -1590,9 +1649,18 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
                         3 -> NotificationsScreen(
                             repository,
                             onProfileClick = { selectedProfileUserId = it },
-                            onPostClick = { selectedPostMediaIndex = null; selectedPostId = it }
+                            onPostClick = { selectedPostMediaIndex = null; selectedPostId = it },
+                            onSupportCenter = { menuDestination = "Support Center"; selectedTab = 4 }
                         )
-                        4 -> MenuScreen(repository, currentUser?.name.orEmpty(), currentUser?.avatar, onProfileClick = { showProfile = true }, onLogout = { repository.logout(); onLogout() })
+                        4 -> MenuScreen(
+                            repository,
+                            currentUser?.name.orEmpty(),
+                            currentUser?.avatar,
+                            initialSetting = menuDestination,
+                            onInitialSettingConsumed = { menuDestination = null },
+                            onProfileClick = { showProfile = true },
+                            onLogout = { repository.logout(); onLogout() }
+                        )
                     }
                 }
             }
@@ -1601,7 +1669,7 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
 }
 
 @Composable
-fun TiwiTopBar(avatarUrl: String?, avatarDecoration: SocialProfileDecoration? = null, onProfileClick: () -> Unit, onCreateClick: () -> Unit, onMessagesClick: () -> Unit, onConnectClick: () -> Unit) {
+fun TiwiTopBar(avatarUrl: String?, avatarDecoration: SocialProfileDecoration? = null, unreadMessages: Int = 0, onProfileClick: () -> Unit, onCreateClick: () -> Unit, onMessagesClick: () -> Unit, onConnectClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1633,7 +1701,11 @@ fun TiwiTopBar(avatarUrl: String?, avatarDecoration: SocialProfileDecoration? = 
             IconButton(
                 onClick = onMessagesClick,
                 modifier = Modifier.size(40.dp)
-            ) { Icon(Icons.AutoMirrored.Outlined.Send, contentDescription = "Messages", tint = Color(0xFF111318), modifier = Modifier.size(22.dp)) }
+            ) {
+                BadgedBox(badge = { if (unreadMessages > 0) Badge(Modifier.size(8.dp)) }) {
+                    Icon(Icons.AutoMirrored.Outlined.Send, contentDescription = "Messages", tint = Color(0xFF111318), modifier = Modifier.size(22.dp))
+                }
+            }
         }
     }
 }
@@ -3192,7 +3264,7 @@ private fun ProfileMentionSheet(repository: SocialRepository, onDismiss: () -> U
 }
 
 @Composable
-fun TiwiBottomBar(selectedTab: Int, dark: Boolean = false, avatarUrl: String? = null, avatarDecoration: SocialProfileDecoration? = null, onTabSelected: (Int) -> Unit) {
+fun TiwiBottomBar(selectedTab: Int, dark: Boolean = false, avatarUrl: String? = null, avatarDecoration: SocialProfileDecoration? = null, unreadActivity: Int = 0, onTabSelected: (Int) -> Unit) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
         color = if (dark) Color.Black else MaterialTheme.colorScheme.background,
@@ -3227,12 +3299,14 @@ fun TiwiBottomBar(selectedTab: Int, dark: Boolean = false, avatarUrl: String? = 
                             avatarDecoration,
                             Modifier.size(34.dp).graphicsLayer(scaleX = iconScale, scaleY = iconScale)
                         )
-                    } else Icon(
-                        imageVector = if (isSelected) filled else outlined,
-                        contentDescription = null,
-                        tint = if (dark) Color.White else if (isSelected) Color.Black else Color.Gray,
-                        modifier = Modifier.size(25.dp).graphicsLayer(scaleX = iconScale, scaleY = iconScale)
-                    )
+                    } else BadgedBox(badge = { if (index == 3 && unreadActivity > 0) Badge(Modifier.size(8.dp)) }) {
+                        Icon(
+                            imageVector = if (isSelected) filled else outlined,
+                            contentDescription = null,
+                            tint = if (dark) Color.White else if (isSelected) Color.Black else Color.Gray,
+                            modifier = Modifier.size(25.dp).graphicsLayer(scaleX = iconScale, scaleY = iconScale)
+                        )
+                    }
                 }
             }
         }
@@ -3702,7 +3776,8 @@ private fun WebRtcVideoSurface(track: VideoTrack?, eglContext: EglBase.Context, 
 fun NotificationsScreen(
     repository: SocialRepository,
     onProfileClick: (String) -> Unit = {},
-    onPostClick: (String) -> Unit = {}
+    onPostClick: (String) -> Unit = {},
+    onSupportCenter: () -> Unit = {}
 ) {
     val notifications by repository.notifications.collectAsState()
     val syncing by repository.syncing.collectAsState()
@@ -3735,6 +3810,7 @@ fun NotificationsScreen(
                             val actorId = notification.metadata["actorId"]?.toString()
                             val postId = notification.metadata["postId"]?.toString()
                             when {
+                                notification.metadata["destination"]?.toString() == "support_center" -> onSupportCenter()
                                 !postId.isNullOrBlank() -> onPostClick(postId)
                                 !actorId.isNullOrBlank() -> onProfileClick(actorId)
                             }
@@ -3761,12 +3837,16 @@ private fun ActivityNotificationRow(repository: SocialRepository, notification: 
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box {
-            TiwiAvatar(actorAvatar, R.drawable.img_tiwi_avatar_1, Modifier.size(45.dp).clip(CircleShape))
+            if (notification.metadata["destination"]?.toString() == "support_center") {
+                Image(painterResource(R.drawable.tiwi_app_icon), null, Modifier.size(45.dp).clip(CircleShape), contentScale = ContentScale.Crop)
+            } else TiwiAvatar(actorAvatar, R.drawable.img_tiwi_avatar_1, Modifier.size(45.dp).clip(CircleShape))
             val marker = when (notification.type) {
                 "follow" -> Icons.Outlined.PersonAdd
                 "post_like", "comment_like" -> Icons.Filled.Favorite
                 "post_comment", "comment_reply" -> Icons.Outlined.ChatBubbleOutline
                 "mention" -> Icons.Outlined.AlternateEmail
+                "report_received", "report_reviewed" -> Icons.Outlined.Flag
+                "verification_received", "verification_reviewed", "verification_approved", "verification_updated" -> Icons.Outlined.Verified
                 else -> Icons.Outlined.Notifications
             }
             Box(Modifier.align(Alignment.BottomEnd).size(17.dp).background(TiwiBlue, CircleShape), contentAlignment = Alignment.Center) { Icon(marker, null, tint = Color.White, modifier = Modifier.size(10.dp)) }
@@ -3794,15 +3874,32 @@ private fun ActivityNotificationRow(repository: SocialRepository, notification: 
 }
 
 @Composable
-fun MenuScreen(repository: SocialRepository, name: String, avatarUrl: String?, onProfileClick: () -> Unit, onLogout: () -> Unit) {
-    var selectedSetting by remember { mutableStateOf<String?>(null) }
+fun MenuScreen(
+    repository: SocialRepository,
+    name: String,
+    avatarUrl: String?,
+    initialSetting: String? = null,
+    onInitialSettingConsumed: () -> Unit = {},
+    onProfileClick: () -> Unit,
+    onLogout: () -> Unit
+) {
+    var selectedSetting by remember { mutableStateOf<String?>(initialSetting) }
     var selectedShortcut by remember { mutableStateOf<String?>(null) }
     var showEditProfile by remember { mutableStateOf(false) }
     val profile by repository.profile.collectAsState()
     val context = LocalContext.current
+    LaunchedEffect(initialSetting) {
+        if (!initialSetting.isNullOrBlank()) {
+            selectedSetting = initialSetting
+            onInitialSettingConsumed()
+        }
+    }
     selectedSetting?.let { setting ->
-        BackHandler { selectedSetting = null }
-        SocialSettingsPage(repository, profile, setting, onBack = { selectedSetting = null })
+        if (setting == "Support Center") SupportCenterPage(repository, onBack = { selectedSetting = null })
+        else {
+            BackHandler { selectedSetting = null }
+            SocialSettingsPage(repository, profile, setting, onBack = { selectedSetting = null })
+        }
         return
     }
     selectedShortcut?.let { shortcut ->
@@ -3935,6 +4032,7 @@ fun MenuScreen(repository: SocialRepository, name: String, avatarUrl: String?, o
                     Pair("Account Center", Icons.Default.AccountCircle),
                     Pair("Account Settings", Icons.Default.Settings),
                     Pair("Privacy Center", Icons.Default.Security),
+                    Pair("Support Center", Icons.Default.SupportAgent),
                     Pair("Help & Support", Icons.Default.Help),
                     Pair("About Tiwi", Icons.Default.Info)
                 )
@@ -3964,6 +4062,77 @@ fun MenuScreen(repository: SocialRepository, name: String, avatarUrl: String?, o
                     Text("Log Out", fontWeight = FontWeight.Bold)
                 }
                 Spacer(modifier = Modifier.height(32.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun SupportCenterPage(repository: SocialRepository, onBack: () -> Unit) {
+    val notifications by repository.notifications.collectAsState()
+    val scope = rememberCoroutineScope()
+    var selected by remember { mutableStateOf<SocialNotification?>(null) }
+    val rows = remember(notifications) {
+        notifications.filter { item ->
+            item.metadata["destination"]?.toString() == "support_center" ||
+                item.type.startsWith("report_") || item.type.startsWith("verification_")
+        }
+    }
+    LaunchedEffect(Unit) { runCatching { repository.refreshNotifications() } }
+    BackHandler {
+        if (selected != null) selected = null else onBack()
+    }
+    Column(Modifier.fillMaxSize().background(Color.White).statusBarsPadding()) {
+        Row(Modifier.fillMaxWidth().height(50.dp).padding(horizontal = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = { if (selected != null) selected = null else onBack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
+            Text(if (selected == null) "Support Center" else "Support message", fontWeight = FontWeight.Black, fontSize = 19.sp)
+        }
+        HorizontalDivider(thickness = .5.dp, color = Color(0xFFE4E7EC))
+        val active = selected
+        if (active != null) {
+            Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 18.dp, vertical = 20.dp)) {
+                Image(painterResource(R.drawable.tiwi_app_icon), null, Modifier.size(54.dp).clip(CircleShape), contentScale = ContentScale.Crop)
+                Text(active.title.ifBlank { "Tiwi Support" }, fontWeight = FontWeight.Black, fontSize = 21.sp, lineHeight = 26.sp, modifier = Modifier.padding(top = 14.dp))
+                Text(relativePostTime(active.createdAt), color = Color(0xFF667085), fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp))
+                Text(active.message, fontSize = 14.sp, lineHeight = 21.sp, color = Color(0xFF1D2939), modifier = Modifier.padding(top = 18.dp))
+                HorizontalDivider(Modifier.padding(vertical = 20.dp), color = Color(0xFFE4E7EC))
+                Row(verticalAlignment = Alignment.Top) {
+                    Icon(Icons.Outlined.Lock, null, tint = Color(0xFF667085), modifier = Modifier.size(18.dp))
+                    Text(
+                        "This is a private system message from Tiwi Team. Reports stay confidential and replies are not available here.",
+                        color = Color(0xFF667085),
+                        fontSize = 12.sp,
+                        lineHeight = 17.sp,
+                        modifier = Modifier.padding(start = 9.dp)
+                    )
+                }
+            }
+        } else if (rows.isEmpty()) {
+            Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                Icon(Icons.Outlined.SupportAgent, null, tint = Color(0xFF98A2B3), modifier = Modifier.size(46.dp))
+                Text("No support messages", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 10.dp))
+                Text("Report and verification decisions will appear here.", color = Color(0xFF667085), fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
+            }
+        } else LazyColumn(Modifier.fillMaxSize()) {
+            item {
+                Text("Updates from Tiwi Team", color = Color(0xFF667085), fontSize = 12.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp))
+            }
+            items(rows, key = { "support-${it.id}" }) { item ->
+                Row(
+                    Modifier.fillMaxWidth().background(if (item.status == "unread") Color(0xFFF2F7FF) else Color.White).clickable {
+                        selected = if (item.status == "unread") item.copy(status = "read") else item
+                        if (item.status == "unread") scope.launch { runCatching { repository.markNotificationRead(item.id) } }
+                    }.padding(horizontal = 15.dp, vertical = 11.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Image(painterResource(R.drawable.tiwi_app_icon), null, Modifier.size(43.dp).clip(CircleShape), contentScale = ContentScale.Crop)
+                    Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
+                        Text(item.title.ifBlank { "Tiwi Support" }, fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(item.message, color = Color(0xFF475467), fontSize = 11.sp, lineHeight = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    }
+                    if (item.status == "unread") Box(Modifier.size(8.dp).background(Color(0xFFE11900), CircleShape))
+                }
+                HorizontalDivider(Modifier.padding(start = 68.dp), thickness = .5.dp, color = Color(0xFFF0F1F3))
             }
         }
     }
@@ -4265,6 +4434,23 @@ private fun SocialSettingsPage(repository: SocialRepository, profile: SocialProf
                     Text("Notifications", fontWeight = FontWeight.Bold, color = Color.Gray, modifier = Modifier.padding(top = 8.dp))
                     SettingSwitch("Activity notifications", notifications) { notifications = it }
                     SettingSwitch("Notification sounds", notificationSound) { notificationSound = it }
+                    if (!NotificationManagerCompat.from(context).areNotificationsEnabled()) {
+                        Row(
+                            Modifier.fillMaxWidth().clip(RoundedCornerShape(9.dp)).background(Color(0xFFFFF4E5)).clickable {
+                                context.startActivity(Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                                    putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)
+                                })
+                            }.padding(horizontal = 11.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Outlined.NotificationsOff, null, tint = Color(0xFFB54708), modifier = Modifier.size(20.dp))
+                            Column(Modifier.weight(1f).padding(start = 9.dp)) {
+                                Text("Android notifications are off", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                Text("Turn them on to hear calls, messages and post alerts.", color = Color(0xFF7A2E0E), fontSize = 11.sp)
+                            }
+                            Icon(Icons.Default.ChevronRight, null, tint = Color(0xFFB54708))
+                        }
+                    }
                 }
                 isPrivacy -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Audience and visibility", fontWeight = FontWeight.Bold, color = Color.Gray)
@@ -5101,12 +5287,12 @@ fun ProfileScreen(
                         Modifier.requiredSize(98.dp).offset(y = (-26).dp),
                         animateDecoration = true
                     )
-                    Column(Modifier.weight(1f).padding(start = 9.dp, top = 5.dp, end = 2.dp)) {
+                    Column(Modifier.weight(1f).padding(start = 9.dp, top = 8.dp, end = 2.dp)) {
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
                             Text(name, fontWeight = FontWeight.Black, fontSize = 14.sp, lineHeight = 16.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
                             if (profile.verified) VerifiedBadge(profile.badgeType, 14.dp, Modifier.padding(start = 2.dp, top = 1.dp), onClick = { showVerified = true })
                         }
-                        Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                             ProfileStatItem("Posts", formatCount(profile.postCount.takeIf { it > 0 } ?: posts.size), Modifier.weight(1f))
                             ProfileStatItem("Followers", formatCount(profile.followerCount), Modifier.weight(1f)) { showPeople = "Followers" }
                             ProfileStatItem("Following", formatCount(profile.followingCount), Modifier.weight(1f)) { showPeople = "Following" }
@@ -7377,7 +7563,7 @@ private fun EditProfileDialog(repository: SocialRepository, profile: SocialProfi
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
-fun MessagesScreen(repository: SocialRepository, onBack: () -> Unit, onChatClick: (SocialConversation) -> Unit, onProfileClick: () -> Unit = {}) {
+fun MessagesScreen(repository: SocialRepository, onBack: () -> Unit, onChatClick: (SocialConversation) -> Unit, onProfileClick: () -> Unit = {}, onSupportCenter: () -> Unit = {}) {
     val chats by repository.conversations.collectAsState()
     val notifications by repository.notifications.collectAsState()
     val currentUser by repository.currentUser.collectAsState()
@@ -7461,7 +7647,7 @@ fun MessagesScreen(repository: SocialRepository, onBack: () -> Unit, onChatClick
             ExactMessengerBottomNavigation(
                 selected = tab,
                 unreadMessages = chats.sumOf { it.unreadCount },
-                unreadNotifications = notifications.count { it.status == "unread" },
+                unreadNotifications = notifications.count { it.status == "unread" && it.type !in listOf("message", "message_request") },
                 hasRequests = chats.any { it.requestStatus == "pending" && it.requestedById != currentUserId },
                 onSelect = { tab = it }
             )
@@ -7502,7 +7688,7 @@ fun MessagesScreen(repository: SocialRepository, onBack: () -> Unit, onChatClick
                 onAdd = { storyPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) },
                 onOpen = { selectedStory = it }
             )
-            2 -> ExactMessengerNotificationsPage(repository, notifications, chats, padding, onChatClick)
+            2 -> ExactMessengerNotificationsPage(repository, notifications, chats, padding, onChatClick, onSupportCenter)
             else -> ExactMessengerMenuPage(
                 repository = repository,
                 chats = chats,
@@ -7512,7 +7698,8 @@ fun MessagesScreen(repository: SocialRepository, onBack: () -> Unit, onChatClick
                 onNewMessage = { composerMode = "direct" },
                 onNewGroup = { composerMode = "group" },
                 onChat = onChatClick,
-                onProfile = onProfileClick
+                onProfile = onProfileClick,
+                onSupportCenter = onSupportCenter
             )
         }
     }
@@ -7914,7 +8101,8 @@ private fun ExactMessengerNotificationsPage(
     notifications: List<SocialNotification>,
     chats: List<SocialConversation>,
     contentPadding: PaddingValues,
-    onChat: (SocialConversation) -> Unit
+    onChat: (SocialConversation) -> Unit,
+    onSupportCenter: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
     val rows = remember(notifications, chats) {
@@ -7948,6 +8136,10 @@ private fun ExactMessengerNotificationsPage(
                     Modifier.fillMaxWidth().clickable {
                         scope.launch {
                             if (!notification.id.startsWith("chat-") && notification.status == "unread") runCatching { repository.markNotificationRead(notification.id) }
+                            if (notification.metadata["destination"]?.toString() == "support_center") {
+                                onSupportCenter()
+                                return@launch
+                            }
                             val conversationId = notification.metadata["conversationId"]?.toString() ?: notification.scopeId
                             chats.firstOrNull { it.id == conversationId }?.let(onChat)
                         }
@@ -7981,7 +8173,8 @@ private fun ExactMessengerMenuPage(
     onNewMessage: () -> Unit,
     onNewGroup: () -> Unit,
     onChat: (SocialConversation) -> Unit,
-    onProfile: () -> Unit
+    onProfile: () -> Unit,
+    onSupportCenter: () -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -7992,6 +8185,10 @@ private fun ExactMessengerMenuPage(
     LaunchedEffect(page) {
         if (page == "Archive") archived = runCatching { repository.archivedConversations() }.getOrDefault(emptyList())
         if (page == "Friend requests") people = runCatching { repository.searchProfiles("") }.getOrDefault(emptyList()).filter { !it.isFollowing && it.userId != repository.currentUserId() }
+    }
+    if (page == "Support Center") {
+        SupportCenterPage(repository, onBack = { page = null })
+        return
     }
     if (page != null) {
         Column(Modifier.fillMaxSize().padding(contentPadding).background(Color.White).statusBarsPadding()) {
@@ -8077,6 +8274,7 @@ private fun ExactMessengerMenuPage(
             ExactMenuRow(Icons.Filled.Storefront, "Marketplace") { context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://tiwlo.com/marketplace"))) }
             ExactMenuRow(Icons.Filled.Groups, "Communities") { onNewGroup() }
             ExactMenuRow(Icons.Filled.Help, "Support") { context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://tiwlo.com/support"))) }
+            ExactMenuRow(Icons.Filled.SupportAgent, "Support Center") { page = "Support Center" }
             ExactMenuRow(Icons.Filled.QuestionAnswer, "Message requests", if (requests.isNotEmpty()) requests.size.toString() else null) { page = "Message requests" }
             ExactMenuRow(Icons.Filled.Inventory2, "Archive") { page = "Archive" }
             HorizontalDivider(thickness = .6.dp, color = Color(0xFFDADDE1), modifier = Modifier.padding(vertical = 8.dp))
@@ -9294,9 +9492,7 @@ fun ChatDetailScreen(
     }
 
     LaunchedEffect(conversation.id) {
-        if (chatPreferences.getBoolean("read_receipts_${conversation.id}", true)) {
-            runCatching { repository.markConversationRead(conversation.id) }
-        }
+        runCatching { repository.markConversationRead(conversation.id) }
         while (true) {
             val refreshed = runCatching { repository.refreshMessages(conversation.id) }.getOrNull()
             if (refreshed != null && chatPreferences.getBoolean("auto_save_${conversation.id}", false)) {

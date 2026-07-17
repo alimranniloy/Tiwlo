@@ -583,6 +583,9 @@ class SocialRepository(context: Context) {
         client.execute("""mutation ReadTiwiChat(${D}id: ID!) { markSocialConversationRead(id: ${D}id) { id unreadCount } }""", mapOf("id" to id))
         _conversations.value = _conversations.value.map { if (it.id == id) it.copy(unreadCount = 0) else it }
         cache.saveConversations(_conversations.value)
+        _notifications.value = _notifications.value.map { item ->
+            if (item.scopeId == id && item.type in listOf("message", "message_request")) item.copy(status = "read") else item
+        }
     }
 
     suspend fun updateConversationMember(

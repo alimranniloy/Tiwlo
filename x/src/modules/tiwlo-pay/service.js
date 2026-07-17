@@ -11,7 +11,7 @@ const enabledGatewayStatuses = ['enabled', 'active'];
 const profileStatuses = new Set(['active', 'inactive', 'suspended']);
 const withdrawalStatuses = new Set(['pending', 'processing', 'paid', 'completed', 'rejected', 'cancelled']);
 
-const localHostnames = new Set(['localhost', '127.0.0.1', '0.0.0.0', '::1']);
+const localHostnames = new Set(['localhost', '127.0.0.1', '0.0.0.0', '::1', '[::1]']);
 const openWithdrawalStatuses = new Set(['pending', 'processing']);
 const terminalWithdrawalStatuses = new Set(['paid', 'completed', 'rejected', 'cancelled']);
 const minimumAutoWithdrawalAmount = 50;

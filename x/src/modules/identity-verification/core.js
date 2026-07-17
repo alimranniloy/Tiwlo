@@ -43,7 +43,7 @@ export const identityVerificationRequirement = (flow = 'account_recovery') => {
   };
 };
 
-const isLocalOrigin = (value = '') => /\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0)(?::\d+)?(?:\/|$)/i.test(String(value || ''));
+const isLocalOrigin = (value = '') => /\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[?::1\]?)(?::\d+)?(?:\/|$)/i.test(String(value || ''));
 
 const normalizeOrigin = (value = '') => {
   const text = clean(value).replace(/\/+$/, '');
