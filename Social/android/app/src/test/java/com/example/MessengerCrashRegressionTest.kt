@@ -93,6 +93,12 @@ class MessengerCrashRegressionTest {
         assertTrue(!shouldOwnVideoPlayer(visibleEnough = true, autoplay = false, startRequested = false))
     }
 
+    @Test
+    fun commentMentionsAreDetectedWithoutColoringNormalWords() {
+        val text = "Reply to @niloy and @tiwi_team, not normal text"
+        assertEquals(listOf(9..14, 20..29), mentionRanges(text))
+    }
+
     private fun createImage(context: Context, name: String, width: Int, height: Int): File {
         val file = File(context.cacheDir, "$name-test.jpg")
         Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also { bitmap ->

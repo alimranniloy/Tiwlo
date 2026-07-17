@@ -47,6 +47,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.pager.VerticalPager
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -88,6 +91,9 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -1186,20 +1192,28 @@ private fun playPostPublishedSound(context: Context) {
     }
 }
 
-private suspend fun saveRemoteImageToGallery(context: Context, sourceUrl: String): Boolean = withContext(Dispatchers.IO) {
+private suspend fun saveRemoteMediaToGallery(context: Context, sourceUrl: String, video: Boolean): Boolean = withContext(Dispatchers.IO) {
     runCatching {
-        val extension = sourceUrl.substringBefore('?').substringAfterLast('.', "jpg").takeIf { it.length in 2..5 } ?: "jpg"
-        val mime = if (extension.equals("png", true)) "image/png" else "image/jpeg"
+        val defaultExtension = if (video) "mp4" else "jpg"
+        val extension = sourceUrl.substringBefore('?').substringAfterLast('.', defaultExtension).takeIf { it.length in 2..5 } ?: defaultExtension
+        val mime = when {
+            video && extension.equals("webm", true) -> "video/webm"
+            video -> "video/mp4"
+            extension.equals("png", true) -> "image/png"
+            extension.equals("webp", true) -> "image/webp"
+            else -> "image/jpeg"
+        }
         val values = ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, "Tiwi-${System.currentTimeMillis()}.$extension")
             put(MediaStore.Images.Media.MIME_TYPE, mime)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/Tiwi")
+                put(MediaStore.Images.Media.RELATIVE_PATH, if (video) "Movies/Tiwi" else "Pictures/Tiwi")
                 put(MediaStore.Images.Media.IS_PENDING, 1)
             }
         }
         val resolver = context.contentResolver
-        val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+        val collection = if (video) MediaStore.Video.Media.EXTERNAL_CONTENT_URI else MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+        val uri = resolver.insert(collection, values)
             ?: throw IllegalStateException("Gallery could not create a file")
         try {
             URL(sourceUrl).openStream().use { input ->
@@ -1219,6 +1233,9 @@ private suspend fun saveRemoteImageToGallery(context: Context, sourceUrl: String
     }.getOrDefault(false)
 }
 
+private suspend fun saveRemoteImageToGallery(context: Context, sourceUrl: String): Boolean =
+    saveRemoteMediaToGallery(context, sourceUrl, video = false)
+
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink: String? = null, onDeepLinkConsumed: () -> Unit = {}) {
@@ -1232,6 +1249,7 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
     var selectedProfileUserId by remember { mutableStateOf<String?>(null) }
     var selectedChat by remember { mutableStateOf<SocialConversation?>(null) }
     var selectedPostId by remember { mutableStateOf<String?>(null) }
+    var selectedPostMediaIndex by remember { mutableStateOf<Int?>(null) }
     var initialReelId by remember { mutableStateOf<String?>(null) }
     var selectedEditPostId by remember { mutableStateOf<String?>(null) }
     var callRequest by remember { mutableStateOf<TiwiCallRequest?>(null) }
@@ -1294,7 +1312,7 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
         when {
             sharedPost != null -> sharedPost = null
             selectedEditPostId != null -> selectedEditPostId = null
-            selectedPostId != null -> selectedPostId = null
+            selectedPostId != null -> { selectedPostId = null; selectedPostMediaIndex = null }
             selectedProfileUserId != null -> selectedProfileUserId = null
             selectedChat != null -> { selectedChat = null; isRandomChat = false }
             showConnect -> showConnect = false
@@ -1331,7 +1349,10 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
         val uri = runCatching { android.net.Uri.parse(link) }.getOrNull()
         val segments = uri?.pathSegments.orEmpty()
         when {
-            segments.size >= 3 && segments[0] == "social" && segments[1] == "post" -> selectedPostId = segments[2]
+            segments.size >= 3 && segments[0] == "social" && segments[1] == "post" -> {
+                selectedPostMediaIndex = null
+                selectedPostId = segments[2]
+            }
             segments.size >= 3 && segments[0] == "social" && segments[1] == "profile" -> selectedProfileUserId = segments[2]
             uri?.scheme == "tiwi" && uri.host == "call" && segments.isNotEmpty() -> {
                 runCatching { repository.getCall(segments[0]) }.getOrNull()?.let { incoming ->
@@ -1408,10 +1429,22 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
         Box(modifier = Modifier.padding(innerPadding)) {
             when {
                 selectedEditPostId != null -> posts.firstOrNull { it.id == selectedEditPostId }?.let { editing -> EditPostPage(repository, editing, onBack = { selectedEditPostId = null }) } ?: run { selectedEditPostId = null }
-                selectedPostId != null -> PostDetailScreen(repository, selectedPostId!!, onBack = { selectedPostId = null }, onProfileClick = { selectedProfileUserId = it; selectedPostId = null }, onShare = { sharedPost = it }, onEdit = { selectedEditPostId = it }, onLinkedPost = { selectedPostId = it })
+                selectedPostId != null -> PostDetailScreen(
+                    repository = repository,
+                    postId = selectedPostId!!,
+                    initialMediaIndex = selectedPostMediaIndex,
+                    onBack = { selectedPostId = null; selectedPostMediaIndex = null },
+                    onProfileClick = { selectedProfileUserId = it; selectedPostId = null; selectedPostMediaIndex = null },
+                    onShare = { sharedPost = it },
+                    onEdit = { selectedEditPostId = it },
+                    onLinkedPost = { selectedPostMediaIndex = null; selectedPostId = it }
+                )
                 selectedProfileUserId != null -> ProfileScreen(
                     repository, posts.filter { it.authorId == selectedProfileUserId }, reels.filter { it.authorId == selectedProfileUserId }, userId = selectedProfileUserId,
-                    onBack = { selectedProfileUserId = null }, onPostClick = { selectedPostId = it }, onShare = { sharedPost = it }, onMessage = { id -> scope.launch { selectedChat = repository.createConversation(id); selectedProfileUserId = null } }, onEditPost = { selectedEditPostId = it },
+                    onBack = { selectedProfileUserId = null },
+                    onPostClick = { selectedPostMediaIndex = null; selectedPostId = it },
+                    onMediaClick = { id, index -> selectedPostMediaIndex = index; selectedPostId = id },
+                    onShare = { sharedPost = it }, onMessage = { id -> scope.launch { selectedChat = repository.createConversation(id); selectedProfileUserId = null } }, onEditPost = { selectedEditPostId = it },
                     onConnectionClick = { selectedProfileUserId = it }
                 )
                 showConnect -> RandomConnectScreen(
@@ -1456,7 +1489,8 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
                     posts.filter { it.authorId == repository.currentUserId() },
                     reels.filter { it.authorId == repository.currentUserId() },
                     onBack = { showProfile = false },
-                    onPostClick = { selectedPostId = it },
+                    onPostClick = { selectedPostMediaIndex = null; selectedPostId = it },
+                    onMediaClick = { id, index -> selectedPostMediaIndex = index; selectedPostId = id },
                     onShare = { sharedPost = it },
                     onEditPost = { selectedEditPostId = it },
                     onCreate = { showCreatePost = true },
@@ -1464,9 +1498,9 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
                 )
                 else -> {
                     when (selectedTab) {
-                        0 -> HomeFeed(reels, posts, repository, onShareClick = { sharedPost = it }, onAuthorClick = { selectedProfileUserId = it }, onPostClick = { selectedPostId = it }, onReelClick = { initialReelId = it; selectedTab = 2 }, onEditPost = { selectedEditPostId = it })
-                        1 -> SearchScreen(repository, onProfileClick = { selectedProfileUserId = it }, onPostClick = { selectedPostId = it })
-                        2 -> ReelsScreen(reels, repository, initialReelId = initialReelId, onOpen = { selectedPostId = it }, onShare = { reel -> sharedPost = posts.firstOrNull { it.id == reel.id } }, onAuthor = { selectedProfileUserId = it })
+                        0 -> HomeFeed(reels, posts, repository, onShareClick = { sharedPost = it }, onAuthorClick = { selectedProfileUserId = it }, onPostClick = { selectedPostMediaIndex = null; selectedPostId = it }, onMediaClick = { id, index -> selectedPostMediaIndex = index; selectedPostId = id }, onReelClick = { initialReelId = it; selectedTab = 2 }, onEditPost = { selectedEditPostId = it })
+                        1 -> SearchScreen(repository, onProfileClick = { selectedProfileUserId = it }, onPostClick = { selectedPostMediaIndex = null; selectedPostId = it })
+                        2 -> ReelsScreen(reels, repository, initialReelId = initialReelId, onOpen = { selectedPostMediaIndex = null; selectedPostId = it }, onShare = { reel -> sharedPost = posts.firstOrNull { it.id == reel.id } }, onAuthor = { selectedProfileUserId = it })
                         3 -> NotificationsScreen(repository)
                         4 -> MenuScreen(repository, currentUser?.name.orEmpty(), currentUser?.avatar, onProfileClick = { showProfile = true }, onLogout = { repository.logout(); onLogout() })
                     }
@@ -1527,6 +1561,7 @@ fun HomeFeed(
     onShareClick: (Post) -> Unit,
     onAuthorClick: (String) -> Unit,
     onPostClick: (String) -> Unit,
+    onMediaClick: (String, Int) -> Unit,
     onReelClick: (String) -> Unit,
     onEditPost: (String) -> Unit = {}
 ) {
@@ -1544,7 +1579,16 @@ fun HomeFeed(
             item { ReelsSection(reels, onReelClick) }
             itemsIndexed(posts, key = { _, post -> post.id }) { index, post ->
                 Column {
-                    PostCard(post, repository, { onShareClick(post) }, { onAuthorClick(post.authorId) }, { onPostClick(post.id) }, onEditRequest = { onEditPost(it.id) }, onOpenLinkedPost = onPostClick)
+                    PostCard(
+                        post,
+                        repository,
+                        { onShareClick(post) },
+                        { onAuthorClick(post.authorId) },
+                        { mediaIndex -> onMediaClick(post.id, mediaIndex) },
+                        onEditRequest = { onEditPost(it.id) },
+                        onOpenLinkedPost = onPostClick,
+                        onCommentProfile = onAuthorClick
+                    )
                     if (suggestions.isNotEmpty() && index % 2 == 1) {
                         SuggestedFriendsSection(suggestions, repository, onAuthorClick) { updated ->
                             suggestions = suggestions.map { if (it.userId == updated.userId) updated else it }
@@ -1685,7 +1729,16 @@ fun ReelItem(reel: Reel, autoplayPreview: Boolean = false, onClick: () -> Unit =
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun PostCard(post: Post, repository: SocialRepository, onShareClick: () -> Unit = {}, onAuthorClick: () -> Unit = {}, onOpen: () -> Unit = {}, onEditRequest: ((Post) -> Unit)? = null, onOpenLinkedPost: ((String) -> Unit)? = null) {
+fun PostCard(
+    post: Post,
+    repository: SocialRepository,
+    onShareClick: () -> Unit = {},
+    onAuthorClick: () -> Unit = {},
+    onOpen: (Int) -> Unit = {},
+    onEditRequest: ((Post) -> Unit)? = null,
+    onOpenLinkedPost: ((String) -> Unit)? = null,
+    onCommentProfile: (String) -> Unit = {}
+) {
     var isExpanded by remember { mutableStateOf(false) }
     var showMenu by remember { mutableStateOf(false) }
     var showEdit by remember { mutableStateOf(false) }
@@ -1694,6 +1747,7 @@ fun PostCard(post: Post, repository: SocialRepository, onShareClick: () -> Unit 
     var showVerified by remember { mutableStateOf(false) }
     var showPrivacy by remember { mutableStateOf(false) }
     var showCommentPolicy by remember { mutableStateOf(false) }
+    var showComments by remember { mutableStateOf(false) }
     var editBody by remember(post.content) { mutableStateOf(post.content) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -1705,22 +1759,22 @@ fun PostCard(post: Post, repository: SocialRepository, onShareClick: () -> Unit 
             .background(MaterialTheme.colorScheme.background)
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 9.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             DecoratedAvatar(
                 url = post.authorAvatarUrl,
                 fallback = post.authorAvatar,
                 decoration = post.authorDecoration,
-                modifier = Modifier.size(42.dp).clickable { onAuthorClick() },
+                modifier = Modifier.size(38.dp).clickable { onAuthorClick() },
                 contentScale = ContentScale.Crop
             )
-            Spacer(modifier = Modifier.width(8.dp))
+            Spacer(modifier = Modifier.width(7.dp))
             Column(modifier = Modifier.weight(1f).clickable { onAuthorClick() }) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         text = post.author,
-                        style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold)
+                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold, fontSize = 13.sp)
                     )
                     if (post.verified) {
                         Spacer(modifier = Modifier.width(2.dp))
@@ -1751,10 +1805,10 @@ fun PostCard(post: Post, repository: SocialRepository, onShareClick: () -> Unit 
             }
         }
 
-        if (post.content.isNotBlank()) Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 2.dp)) {
+        if (post.content.isNotBlank()) Column(modifier = Modifier.padding(horizontal = 9.dp, vertical = 1.dp)) {
             Text(
                 text = post.content,
-                style = MaterialTheme.typography.bodyMedium,
+                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp, lineHeight = 18.sp),
                 maxLines = if (isExpanded) Int.MAX_VALUE else 3,
                 overflow = TextOverflow.Ellipsis
             )
@@ -1770,10 +1824,10 @@ fun PostCard(post: Post, repository: SocialRepository, onShareClick: () -> Unit 
             }
         }
 
-        PostMediaGrid(post.media, onOpen) { linkedId -> onOpenLinkedPost?.invoke(linkedId) ?: onOpen() }
+        PostMediaGrid(post.media, onOpen) { linkedId -> onOpenLinkedPost?.invoke(linkedId) ?: onOpen(0) }
 
         if (post.likes + post.comments + post.shares + post.views > 0) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 9.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 if (post.likes > 0) {
                     Box(Modifier.size(18.dp).background(TiwiBlue, CircleShape), contentAlignment = Alignment.Center) {
                         Icon(Icons.Default.ThumbUp, null, tint = Color.White, modifier = Modifier.size(11.dp))
@@ -1795,7 +1849,7 @@ fun PostCard(post: Post, repository: SocialRepository, onShareClick: () -> Unit 
         }
 
         Row(
-            modifier = Modifier.fillMaxWidth().height(44.dp).padding(horizontal = 5.dp),
+            modifier = Modifier.fillMaxWidth().height(40.dp).padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             CompactPostAction(
@@ -1804,15 +1858,15 @@ fun PostCard(post: Post, repository: SocialRepository, onShareClick: () -> Unit 
                 tint = if (post.liked) Color.Red else Color.Gray,
                 description = "Like"
             ) { scope.launch { runCatching { repository.reactToPost(post.id) } } }
-            CompactPostAction(Icons.Outlined.ChatBubbleOutline, post.comments, description = "Comment", onClick = onOpen)
+            CompactPostAction(Icons.Outlined.ChatBubbleOutline, post.comments, description = "Comment") { showComments = true }
             CompactPostAction(Icons.Default.Repeat, post.shares, description = "Repost") {
                 scope.launch { runCatching { repository.repostPost(post.id) }.onSuccess { Toast.makeText(context, "Reposted", Toast.LENGTH_SHORT).show() } }
             }
-            IconButton(onClick = onShareClick, modifier = Modifier.size(36.dp)) { Icon(Icons.Outlined.Share, "Share", Modifier.size(20.dp), tint = Color.Gray) }
+            IconButton(onClick = onShareClick, modifier = Modifier.size(32.dp)) { Icon(Icons.Outlined.Share, "Share", Modifier.size(18.dp), tint = Color.Gray) }
             Spacer(Modifier.weight(1f))
             CompactPostAction(Icons.Outlined.BarChart, post.views, description = "Views") { scope.launch { runCatching { repository.viewPost(post.id) } } }
-            IconButton(onClick = { scope.launch { runCatching { repository.savePost(post.id, !post.saved) }.onSuccess { Toast.makeText(context, if (post.saved) "Removed from Saved" else "Saved", Toast.LENGTH_SHORT).show() } } }, modifier = Modifier.size(36.dp)) {
-                Icon(if (post.saved) Icons.Filled.Bookmark else Icons.Outlined.BookmarkBorder, "Save", Modifier.size(20.dp), tint = if (post.saved) TiwiBlue else Color.Gray)
+            IconButton(onClick = { scope.launch { runCatching { repository.savePost(post.id, !post.saved) }.onSuccess { Toast.makeText(context, if (post.saved) "Removed from Saved" else "Saved", Toast.LENGTH_SHORT).show() } } }, modifier = Modifier.size(32.dp)) {
+                Icon(if (post.saved) Icons.Filled.Bookmark else Icons.Outlined.BookmarkBorder, "Save", Modifier.size(18.dp), tint = if (post.saved) TiwiBlue else Color.Gray)
             }
         }
         
@@ -1856,6 +1910,7 @@ fun PostCard(post: Post, repository: SocialRepository, onShareClick: () -> Unit 
     if (showCommentPolicy) ChoiceDialog("Who can comment", listOf("everyone" to "Everyone", "followers" to "Followers", "none" to "No one"), post.commentPermission, { showCommentPolicy = false }) { value ->
         showCommentPolicy = false; scope.launch { runCatching { repository.updatePostOptions(post.id, commentPermission = value) } }
     }
+    if (showComments) CompactCommentsSheet(repository, post, onDismiss = { showComments = false }, onProfileClick = onCommentProfile)
 }
 
 @Composable
@@ -1867,8 +1922,8 @@ private fun CompactPostAction(
     onClick: () -> Unit
 ) {
     Row(verticalAlignment = Alignment.CenterVertically) {
-        IconButton(onClick = onClick, modifier = Modifier.size(34.dp)) {
-            Icon(icon, contentDescription = description, modifier = Modifier.size(20.dp), tint = tint)
+        IconButton(onClick = onClick, modifier = Modifier.size(31.dp)) {
+            Icon(icon, contentDescription = description, modifier = Modifier.size(18.dp), tint = tint)
         }
         if (count > 0) Text(formatCount(count), style = MaterialTheme.typography.labelSmall, color = Color.Gray)
     }
@@ -1934,16 +1989,16 @@ private fun ChoiceDialog(title: String, options: List<Pair<String, String>>, sel
 }
 
 @Composable
-private fun PostMediaGrid(media: List<SocialMedia>, onOpen: () -> Unit, onOpenLinkedPost: (String) -> Unit) {
+private fun PostMediaGrid(media: List<SocialMedia>, onOpen: (Int) -> Unit, onOpenLinkedPost: (String) -> Unit) {
     if (media.isEmpty()) return
     if (media.size == 1 && media.first().type == "shared_post") {
         val shared = media.first()
-        SharedPostCard(shared) { shared.sharedPostId?.let(onOpenLinkedPost) ?: onOpen() }
+        SharedPostCard(shared) { shared.sharedPostId?.let(onOpenLinkedPost) ?: onOpen(0) }
         return
     }
     val visible = media.take(4)
     val cell: @Composable (SocialMedia, Modifier, Int) -> Unit = { item, modifier, index ->
-        Box(modifier.clickable(onClick = onOpen).background(Color.Black)) {
+        Box(modifier.clickable { onOpen(index) }.background(Color.Black)) {
             if (item.type == "video") TiwiVideo(item.hlsUrl?.takeIf { item.processingStatus == "ready" } ?: item.url, Modifier.fillMaxSize(), autoplay = media.size == 1, fallbackUrl = item.url, posterUrl = item.thumbnailUrl)
             else AsyncImage(model = item.url, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
             if (index == 3 && media.size > 4) Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = .55f)), contentAlignment = Alignment.Center) {
@@ -1952,11 +2007,11 @@ private fun PostMediaGrid(media: List<SocialMedia>, onOpen: () -> Unit, onOpenLi
         }
     }
     when (visible.size) {
-        1 -> cell(visible[0], Modifier.fillMaxWidth().heightIn(min = 220.dp, max = 460.dp), 0)
-        2 -> Row(Modifier.fillMaxWidth().height(300.dp), horizontalArrangement = Arrangement.spacedBy(1.dp)) {
+        1 -> cell(visible[0], Modifier.fillMaxWidth().heightIn(min = 200.dp, max = 400.dp), 0)
+        2 -> Row(Modifier.fillMaxWidth().height(270.dp), horizontalArrangement = Arrangement.spacedBy(1.dp)) {
             visible.forEachIndexed { i, item -> cell(item, Modifier.weight(1f).fillMaxHeight(), i) }
         }
-        else -> Row(Modifier.fillMaxWidth().height(360.dp), horizontalArrangement = Arrangement.spacedBy(1.dp)) {
+        else -> Row(Modifier.fillMaxWidth().height(320.dp), horizontalArrangement = Arrangement.spacedBy(1.dp)) {
             cell(visible[0], Modifier.weight(1.2f).fillMaxHeight(), 0)
             Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(1.dp)) {
                 visible.drop(1).forEachIndexed { i, item -> cell(item, Modifier.weight(1f).fillMaxWidth(), i + 1) }
@@ -2016,7 +2071,16 @@ private fun VerifiedInfoSheet(name: String, avatar: String?, badgeType: String =
 }
 
 @Composable
-private fun PostDetailScreen(repository: SocialRepository, postId: String, onBack: () -> Unit, onProfileClick: (String) -> Unit, onShare: (Post) -> Unit, onEdit: (String) -> Unit = {}, onLinkedPost: (String) -> Unit = {}) {
+private fun PostDetailScreen(
+    repository: SocialRepository,
+    postId: String,
+    initialMediaIndex: Int? = null,
+    onBack: () -> Unit,
+    onProfileClick: (String) -> Unit,
+    onShare: (Post) -> Unit,
+    onEdit: (String) -> Unit = {},
+    onLinkedPost: (String) -> Unit = {}
+) {
     val feed by repository.feed.collectAsState()
     val commentsByPost by repository.comments.collectAsState()
     val post = feed.firstOrNull { it.id == postId }?.let(::toUiPost)
@@ -2025,7 +2089,8 @@ private fun PostDetailScreen(repository: SocialRepository, postId: String, onBac
     var text by remember { mutableStateOf("") }
     var replyTo by remember { mutableStateOf<SocialComment?>(null) }
     var sending by remember { mutableStateOf(false) }
-    var showMediaViewer by remember(postId) { mutableStateOf(false) }
+    var showMediaViewer by remember(postId, initialMediaIndex) { mutableStateOf(initialMediaIndex != null) }
+    var initialMediaPage by remember(postId, initialMediaIndex) { mutableIntStateOf(initialMediaIndex ?: 0) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
@@ -2035,7 +2100,7 @@ private fun PostDetailScreen(repository: SocialRepository, postId: String, onBac
     }
     if (showMediaViewer && post != null && post.media.isNotEmpty()) {
         BackHandler { showMediaViewer = false }
-        PostMediaViewerPage(post, repository, onBack = { showMediaViewer = false }, onProfileClick = onProfileClick)
+        PostMediaViewerPage(post, repository, initialPage = initialMediaPage, onBack = { showMediaViewer = false }, onProfileClick = onProfileClick)
         return
     }
     Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).imePadding()) {
@@ -2048,7 +2113,18 @@ private fun PostDetailScreen(repository: SocialRepository, postId: String, onBac
         }
         HorizontalDivider(thickness = .5.dp)
         LazyColumn(Modifier.weight(1f)) {
-            post?.let { item { PostCard(it, repository, onShareClick = { onShare(it) }, onAuthorClick = { onProfileClick(it.authorId) }, onOpen = { showMediaViewer = true }, onEditRequest = { value -> onEdit(value.id) }, onOpenLinkedPost = onLinkedPost) } }
+            post?.let { item {
+                PostCard(
+                    it,
+                    repository,
+                    onShareClick = { onShare(it) },
+                    onAuthorClick = { onProfileClick(it.authorId) },
+                    onOpen = { page -> initialMediaPage = page; showMediaViewer = true },
+                    onEditRequest = { value -> onEdit(value.id) },
+                    onOpenLinkedPost = onLinkedPost,
+                    onCommentProfile = onProfileClick
+                )
+            } }
             item { Text("Comments", modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp), fontWeight = FontWeight.Bold) }
             if (comments.isEmpty()) item { Text("Be the first to comment", color = Color.Gray, modifier = Modifier.padding(24.dp).fillMaxWidth(), textAlign = TextAlign.Center) }
             val byId = comments.associateBy { it.id }
@@ -2116,20 +2192,72 @@ private fun PostDetailScreen(repository: SocialRepository, postId: String, onBac
 }
 
 @Composable
-private fun PostMediaViewerPage(post: Post, repository: SocialRepository, onBack: () -> Unit, onProfileClick: (String) -> Unit) {
+private fun PostMediaViewerPage(
+    post: Post,
+    repository: SocialRepository,
+    initialPage: Int = 0,
+    onBack: () -> Unit,
+    onProfileClick: (String) -> Unit
+) {
     val visualMedia = remember(post.media) { post.media.filter { it.type == "image" || it.type == "video" } }
-    val pager = rememberPagerState(pageCount = { visualMedia.size.coerceAtLeast(1) })
+    val pager = rememberPagerState(initialPage = initialPage.coerceIn(0, (visualMedia.size - 1).coerceAtLeast(0)), pageCount = { visualMedia.size.coerceAtLeast(1) })
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    var showMenu by remember { mutableStateOf(false) }
+    var showComments by remember { mutableStateOf(false) }
+    val currentMedia = visualMedia.getOrNull(pager.currentPage)
     Column(Modifier.fillMaxSize().background(Color.Black).statusBarsPadding().navigationBarsPadding()) {
-        Row(Modifier.fillMaxWidth().height(50.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.White) }
+        Row(Modifier.fillMaxWidth().height(48.dp).padding(horizontal = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack, modifier = Modifier.size(42.dp)) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.White, modifier = Modifier.size(22.dp)) }
             Row(Modifier.weight(1f).clickable { onProfileClick(post.authorId) }, verticalAlignment = Alignment.CenterVertically) {
-                DecoratedAvatar(post.authorAvatarUrl, post.authorAvatar, post.authorDecoration, Modifier.size(38.dp))
-                Text(post.author, color = Color.White, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 8.dp))
+                DecoratedAvatar(post.authorAvatarUrl, post.authorAvatar, post.authorDecoration, Modifier.size(34.dp))
+                Text(post.author, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp, modifier = Modifier.padding(start = 7.dp), maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            if (visualMedia.size > 1) Text("${pager.currentPage + 1}/${visualMedia.size}", color = Color.White, modifier = Modifier.padding(end = 14.dp), fontWeight = FontWeight.Bold)
+            if (visualMedia.size > 1) Text("${pager.currentPage + 1}/${visualMedia.size}", color = Color.White, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 5.dp), fontWeight = FontWeight.Bold)
+            Box {
+                IconButton(onClick = { showMenu = true }, modifier = Modifier.size(42.dp)) { Icon(Icons.Default.MoreVert, "Media options", tint = Color.White, modifier = Modifier.size(22.dp)) }
+                DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+                    DropdownMenuItem(
+                        text = { Text("Download") },
+                        leadingIcon = { Icon(Icons.Outlined.Download, null) },
+                        enabled = currentMedia != null,
+                        onClick = {
+                            currentMedia?.let { media ->
+                                showMenu = false
+                                scope.launch {
+                                    val saved = saveRemoteMediaToGallery(context, media.url, video = media.type == "video")
+                                    Toast.makeText(context, if (saved) "Saved to gallery" else "Download failed", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text(if (post.saved) "Remove from Saved" else "Save post") },
+                        leadingIcon = { Icon(if (post.saved) Icons.Filled.Bookmark else Icons.Outlined.BookmarkBorder, null) },
+                        onClick = { showMenu = false; scope.launch { runCatching { repository.savePost(post.id, !post.saved) } } }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Copy link") },
+                        leadingIcon = { Icon(Icons.Outlined.Link, null) },
+                        onClick = {
+                            showMenu = false
+                            (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
+                                .setPrimaryClip(ClipData.newPlainText("Tiwi post", "https://tiwlo.com/social/post/${post.id}"))
+                            Toast.makeText(context, "Link copied", Toast.LENGTH_SHORT).show()
+                        }
+                    )
+                    if (post.authorId != repository.currentUserId()) DropdownMenuItem(
+                        text = { Text("Report post", color = Color(0xFFD92D20)) },
+                        leadingIcon = { Icon(Icons.Outlined.Report, null, tint = Color(0xFFD92D20)) },
+                        onClick = {
+                            showMenu = false
+                            scope.launch { runCatching { repository.reportContent("post", post.id, "inappropriate_content") }.onSuccess { Toast.makeText(context, "Report sent", Toast.LENGTH_SHORT).show() } }
+                        }
+                    )
+                }
+            }
         }
-        HorizontalPager(state = pager, modifier = Modifier.weight(1f).fillMaxWidth(), beyondViewportPageCount = 1) { page ->
+        HorizontalPager(state = pager, modifier = Modifier.weight(1f).fillMaxWidth(), beyondViewportPageCount = 0) { page ->
             val media = visualMedia.getOrNull(page)
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 when (media?.type) {
@@ -2139,15 +2267,35 @@ private fun PostMediaViewerPage(post: Post, repository: SocialRepository, onBack
                 }
             }
         }
-        Row(Modifier.fillMaxWidth().height(54.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = { scope.launch { runCatching { repository.reactToPost(post.id) } } }) { Icon(if (post.liked) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder, "Like", tint = if (post.liked) Color.Red else Color.White) }
-            Text(formatCount(post.likes), color = Color.White)
-            Spacer(Modifier.width(18.dp))
-            Icon(Icons.Outlined.ChatBubbleOutline, "Comments", tint = Color.White)
-            Text(formatCount(post.comments), color = Color.White, modifier = Modifier.padding(start = 6.dp))
-            Spacer(Modifier.weight(1f))
-            Text(relativePostTime(post.time), color = Color.LightGray, fontSize = 12.sp)
+        HorizontalDivider(color = Color.White.copy(alpha = .14f), thickness = .5.dp)
+        Row(
+            Modifier.fillMaxWidth().height(54.dp).padding(horizontal = 9.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceAround
+        ) {
+            MediaViewerAction(if (post.liked) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder, formatCount(post.likes), if (post.liked) Color(0xFFFF4D67) else Color.White) {
+                scope.launch { runCatching { repository.reactToPost(post.id) } }
+            }
+            MediaViewerAction(Icons.Outlined.ChatBubbleOutline, formatCount(post.comments)) { showComments = true }
+            MediaViewerAction(Icons.Default.Repeat, formatCount(post.shares)) {
+                scope.launch { runCatching { repository.repostPost(post.id) }.onSuccess { Toast.makeText(context, "Reposted", Toast.LENGTH_SHORT).show() } }
+            }
+            MediaViewerAction(if (post.saved) Icons.Filled.Bookmark else Icons.Outlined.BookmarkBorder, if (post.saved) "Saved" else "Save", if (post.saved) TiwiBlue else Color.White) {
+                scope.launch { runCatching { repository.savePost(post.id, !post.saved) } }
+            }
         }
+    }
+    if (showComments) CompactCommentsSheet(repository, post, onDismiss = { showComments = false }, onProfileClick = onProfileClick)
+}
+
+@Composable
+private fun MediaViewerAction(icon: ImageVector, label: String, tint: Color = Color.White, onClick: () -> Unit) {
+    Row(
+        Modifier.clip(RoundedCornerShape(16.dp)).clickable(onClick = onClick).padding(horizontal = 9.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(icon, label, tint = tint, modifier = Modifier.size(20.dp))
+        Text(label, color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 4.dp))
     }
 }
 
@@ -2245,31 +2393,196 @@ private fun CommentRow(
 ) {
     var menu by remember { mutableStateOf(false) }
     Row(
-        Modifier.fillMaxWidth().padding(start = if (comment.replyToId == null) 10.dp else 46.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
+        Modifier.fillMaxWidth().padding(start = if (comment.replyToId == null) 10.dp else 38.dp, end = 5.dp, top = 5.dp, bottom = 4.dp),
         verticalAlignment = Alignment.Top
     ) {
-        DecoratedAvatar(comment.author.avatar, R.drawable.img_tiwi_avatar_1, comment.authorProfile?.avatarDecoration, Modifier.size(38.dp).clickable(onClick = onProfile))
-        Spacer(Modifier.width(8.dp))
+        DecoratedAvatar(comment.author.avatar, R.drawable.img_tiwi_avatar_1, comment.authorProfile?.avatarDecoration, Modifier.size(34.dp).clickable(onClick = onProfile))
+        Spacer(Modifier.width(7.dp))
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(comment.author.name, fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                if (comment.authorProfile?.verified == true) VerifiedBadge(comment.authorProfile?.badgeType, 14.dp)
+                Text(comment.author.name, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                if (comment.authorProfile?.verified == true) VerifiedBadge(comment.authorProfile?.badgeType, 13.dp)
             }
-            Text(comment.body, color = MaterialTheme.colorScheme.onBackground)
+            Text(highlightMentions(comment.body), color = MaterialTheme.colorScheme.onBackground, fontSize = 13.sp, lineHeight = 18.sp)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(relativePostTime(comment.createdAt), fontSize = 11.sp, color = Color.Gray, modifier = Modifier.padding(end = 10.dp))
                 Text("Reply", modifier = Modifier.clickable(onClick = onReply).padding(vertical = 5.dp), fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color.Gray)
                 if (comment.reactionCount > 0) Text("  ${formatCount(comment.reactionCount)} likes", fontSize = 11.sp, color = Color.Gray)
             }
         }
-        IconButton(onClick = onLike, modifier = Modifier.size(34.dp)) {
-            Icon(if (comment.viewerLiked) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder, "Like comment", tint = if (comment.viewerLiked) Color.Red else Color.Gray, modifier = Modifier.size(16.dp))
+        IconButton(onClick = onLike, modifier = Modifier.size(30.dp)) {
+            Icon(if (comment.viewerLiked) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder, "Like comment", tint = if (comment.viewerLiked) Color.Red else Color.Gray, modifier = Modifier.size(15.dp))
         }
         Box {
             IconButton(onClick = { menu = true }, modifier = Modifier.size(30.dp)) { Icon(Icons.Default.MoreVert, null, modifier = Modifier.size(16.dp)) }
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                 DropdownMenuItem(text = { Text(if (isOwn) "Delete" else "Report") }, onClick = { menu = false; if (isOwn) onDelete() else onReport() })
             }
+        }
+    }
+}
+
+internal fun mentionRanges(value: String): List<IntRange> =
+    Regex("@[\\p{L}\\p{N}._-]+").findAll(value).map { it.range }.toList()
+
+private fun highlightMentions(value: String) = buildAnnotatedString {
+    var cursor = 0
+    mentionRanges(value).forEach { range ->
+        if (cursor < range.first) append(value.substring(cursor, range.first))
+        withStyle(SpanStyle(color = TiwiBlue, fontWeight = FontWeight.SemiBold)) {
+            append(value.substring(range.first, range.last + 1))
+        }
+        cursor = range.last + 1
+    }
+    if (cursor < value.length) append(value.substring(cursor))
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CompactCommentsSheet(
+    repository: SocialRepository,
+    post: Post,
+    onDismiss: () -> Unit,
+    onProfileClick: (String) -> Unit = {}
+) {
+    val commentsByPost by repository.comments.collectAsState()
+    val comments = commentsByPost[post.id].orEmpty()
+    val expandedReplies = remember(post.id) { mutableStateMapOf<String, Boolean>() }
+    var text by remember(post.id) { mutableStateOf("") }
+    var replyTo by remember(post.id) { mutableStateOf<SocialComment?>(null) }
+    var sending by remember(post.id) { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val byId = remember(comments) { comments.associateBy { it.id } }
+    val roots = remember(comments) { comments.filter { it.replyToId == null } }
+
+    LaunchedEffect(post.id) { runCatching { repository.refreshComments(post.id) } }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = Color.White,
+        contentColor = Color.Black,
+        tonalElevation = 0.dp,
+        dragHandle = { BottomSheetDefaults.DragHandle(width = 34.dp, height = 4.dp, color = Color(0xFFD0D5DD)) }
+    ) {
+        Column(Modifier.fillMaxWidth().imePadding()) {
+            Row(
+                Modifier.fillMaxWidth().height(48.dp).padding(horizontal = 14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("Comments", fontWeight = FontWeight.Black, fontSize = 17.sp)
+                    Text(
+                        "${formatCount(post.likes)} likes · ${formatCount(maxOf(post.comments, comments.size))} comments",
+                        color = Color(0xFF667085),
+                        fontSize = 10.sp
+                    )
+                }
+                IconButton(onClick = onDismiss, modifier = Modifier.size(34.dp)) {
+                    Icon(Icons.Default.Close, "Close comments", modifier = Modifier.size(19.dp))
+                }
+            }
+            HorizontalDivider(thickness = .5.dp, color = Color(0xFFE4E7EC))
+            LazyColumn(
+                Modifier.fillMaxWidth().weight(1f, fill = false).heightIn(min = 120.dp, max = 470.dp),
+                contentPadding = PaddingValues(vertical = 5.dp)
+            ) {
+                if (roots.isEmpty()) item {
+                    Column(
+                        Modifier.fillMaxWidth().padding(vertical = 34.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Icon(Icons.Outlined.ChatBubbleOutline, null, tint = Color(0xFF98A2B3), modifier = Modifier.size(30.dp))
+                        Text("Be the first to comment", fontWeight = FontWeight.Bold, fontSize = 14.sp, modifier = Modifier.padding(top = 7.dp))
+                    }
+                }
+                roots.forEach { root ->
+                    item(key = "sheet-root-${root.id}") {
+                        CommentRow(
+                            comment = root,
+                            isOwn = root.authorId == repository.currentUserId(),
+                            onProfile = { onProfileClick(root.authorId) },
+                            onReply = { replyTo = root; text = "@${root.author.name.substringBefore(' ')} " },
+                            onLike = { scope.launch { runCatching { repository.reactToComment(post.id, root.id) } } },
+                            onDelete = { scope.launch { runCatching { repository.deleteComment(post.id, root.id) } } },
+                            onReport = { scope.launch { runCatching { repository.reportContent("comment", root.id, "inappropriate_content") }.onSuccess { Toast.makeText(context, "Report sent", Toast.LENGTH_SHORT).show() } } }
+                        )
+                    }
+                    val replies = comments.filter { candidate ->
+                        if (candidate.replyToId == null) false
+                        else generateSequence(candidate.replyToId) { id -> byId[id]?.replyToId }.take(20).any { it == root.id }
+                    }.sortedBy { it.createdAt }
+                    val shown = if (expandedReplies[root.id] == true) replies else replies.take(1)
+                    items(shown, key = { "sheet-reply-${it.id}" }) { reply ->
+                        CommentRow(
+                            comment = reply,
+                            isOwn = reply.authorId == repository.currentUserId(),
+                            onProfile = { onProfileClick(reply.authorId) },
+                            onReply = { replyTo = reply; text = "@${reply.author.name.substringBefore(' ')} " },
+                            onLike = { scope.launch { runCatching { repository.reactToComment(post.id, reply.id) } } },
+                            onDelete = { scope.launch { runCatching { repository.deleteComment(post.id, reply.id) } } },
+                            onReport = { scope.launch { runCatching { repository.reportContent("comment", reply.id, "inappropriate_content") }.onSuccess { Toast.makeText(context, "Report sent", Toast.LENGTH_SHORT).show() } } }
+                        )
+                    }
+                    if (replies.size > shown.size) item(key = "sheet-more-${root.id}") {
+                        Text(
+                            "View ${replies.size - shown.size} more ${if (replies.size - shown.size == 1) "reply" else "replies"}",
+                            modifier = Modifier.padding(start = 72.dp, top = 1.dp, bottom = 6.dp).clickable { expandedReplies[root.id] = true },
+                            color = Color(0xFF667085), fontWeight = FontWeight.Bold, fontSize = 11.sp
+                        )
+                    }
+                }
+            }
+            replyTo?.let { target ->
+                Row(
+                    Modifier.fillMaxWidth().background(Color(0xFFF7F8FA)).padding(start = 13.dp, end = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Replying to ${target.author.name}", Modifier.weight(1f), color = Color(0xFF667085), fontSize = 10.sp)
+                    IconButton(onClick = { replyTo = null }, modifier = Modifier.size(28.dp)) { Icon(Icons.Default.Close, null, modifier = Modifier.size(15.dp)) }
+                }
+            }
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 7.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                DecoratedAvatar(repository.currentUser.value?.avatar, R.drawable.img_tiwi_avatar_1, repository.profile.value?.avatarDecoration, Modifier.size(32.dp))
+                Surface(
+                    Modifier.weight(1f).padding(start = 7.dp).heightIn(min = 38.dp),
+                    color = Color(0xFFF0F2F5),
+                    shape = RoundedCornerShape(20.dp),
+                    tonalElevation = 0.dp
+                ) {
+                    BasicTextField(
+                        value = text,
+                        onValueChange = { text = it.take(2000) },
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+                        textStyle = MaterialTheme.typography.bodyMedium.copy(color = Color(0xFF101828), fontSize = 13.sp),
+                        decorationBox = { inner -> if (text.isBlank()) Text("Write a comment…", color = Color(0xFF667085), fontSize = 13.sp); inner() }
+                    )
+                }
+                IconButton(
+                    enabled = text.isNotBlank() && !sending,
+                    modifier = Modifier.size(36.dp),
+                    onClick = {
+                        val body = text.trim()
+                        text = ""
+                        sending = true
+                        scope.launch {
+                            runCatching { repository.addComment(post.id, body, replyTo?.id) }
+                                .onFailure { Toast.makeText(context, it.message ?: "Comment failed", Toast.LENGTH_SHORT).show() }
+                            replyTo = null
+                            sending = false
+                        }
+                    }
+                ) {
+                    if (sending) CircularProgressIndicator(Modifier.size(17.dp), strokeWidth = 2.dp)
+                    else Icon(Icons.AutoMirrored.Outlined.Send, "Post comment", tint = if (text.isBlank()) Color(0xFF98A2B3) else TiwiBlue, modifier = Modifier.size(20.dp))
+                }
+            }
+            Spacer(Modifier.navigationBarsPadding().height(2.dp))
         }
     }
 }
@@ -4022,6 +4335,142 @@ private fun LegacyProfileScreen(repository: SocialRepository, posts: List<Post>,
     if (showEditProfile) EditProfileDialog(repository, profile, onDismiss = { showEditProfile = false })
 }
 
+private data class ProfileGalleryMedia(val postId: String, val mediaIndex: Int, val media: SocialMedia)
+
+@Composable
+private fun ProfileGalleryTile(item: ProfileGalleryMedia, modifier: Modifier, onClick: () -> Unit) {
+    Box(modifier.clip(RoundedCornerShape(10.dp)).background(Color(0xFFF0F2F5)).clickable(onClick = onClick)) {
+        AsyncImage(
+            model = if (item.media.type == "video") item.media.thumbnailUrl ?: item.media.url else item.media.url,
+            contentDescription = null,
+            modifier = Modifier.fillMaxSize(),
+            contentScale = ContentScale.Crop
+        )
+        if (item.media.type == "video") {
+            Box(Modifier.align(Alignment.Center).size(30.dp).background(Color.Black.copy(alpha = .52f), CircleShape), contentAlignment = Alignment.Center) {
+                Icon(Icons.Default.PlayArrow, "Video", tint = Color.White, modifier = Modifier.size(21.dp))
+            }
+            Text("VIDEO", color = Color.White, fontSize = 8.sp, fontWeight = FontWeight.Black, modifier = Modifier.align(Alignment.TopEnd).padding(5.dp).background(Color.Black.copy(alpha = .55f), RoundedCornerShape(5.dp)).padding(horizontal = 5.dp, vertical = 2.dp))
+        }
+    }
+}
+
+@Composable
+private fun ProfileGalleryPreview(items: List<ProfileGalleryMedia>, onViewAll: () -> Unit, onOpen: (String, Int) -> Unit) {
+    if (items.isEmpty()) return
+    Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 7.dp)) {
+        Row(Modifier.fillMaxWidth().height(32.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("Gallery", Modifier.weight(1f), fontWeight = FontWeight.Black, fontSize = 17.sp)
+            TextButton(onClick = onViewAll, contentPadding = PaddingValues(horizontal = 5.dp, vertical = 0.dp), modifier = Modifier.height(30.dp)) {
+                Text("View all", color = TiwiBlue, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Icon(Icons.Default.ChevronRight, null, tint = TiwiBlue, modifier = Modifier.size(16.dp))
+            }
+        }
+        Row(Modifier.fillMaxWidth().height(174.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            val first = items.first()
+            ProfileGalleryTile(first, Modifier.weight(1.05f).fillMaxHeight()) { onOpen(first.postId, first.mediaIndex) }
+            Column(Modifier.weight(2f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                repeat(2) { rowIndex ->
+                    Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        repeat(2) { columnIndex ->
+                            val index = 1 + rowIndex * 2 + columnIndex
+                            val item = items.getOrNull(index)
+                            if (item != null) ProfileGalleryTile(item, Modifier.weight(1f).fillMaxHeight()) { onOpen(item.postId, item.mediaIndex) }
+                            else Spacer(Modifier.weight(1f))
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProfileGalleryPage(items: List<ProfileGalleryMedia>, onBack: () -> Unit, onOpen: (String, Int) -> Unit) {
+    Column(Modifier.fillMaxSize().background(Color.White).statusBarsPadding()) {
+        Row(Modifier.fillMaxWidth().height(50.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
+            Column(Modifier.weight(1f)) {
+                Text("Gallery", fontWeight = FontWeight.Black, fontSize = 18.sp)
+                Text("${items.count { it.media.type == "image" }} photos · ${items.count { it.media.type == "video" }} videos", color = Color(0xFF667085), fontSize = 10.sp)
+            }
+        }
+        HorizontalDivider(thickness = .5.dp, color = Color(0xFFE4E7EC))
+        if (items.isEmpty()) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("No photos or videos yet", color = Color(0xFF667085)) }
+        else LazyVerticalGrid(
+            columns = GridCells.Fixed(3),
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(3.dp),
+            horizontalArrangement = Arrangement.spacedBy(3.dp),
+            verticalArrangement = Arrangement.spacedBy(3.dp)
+        ) {
+            gridItems(items, key = { "gallery-${it.postId}-${it.mediaIndex}-${it.media.url}" }) { item ->
+                ProfileGalleryTile(item, Modifier.fillMaxWidth().aspectRatio(1f)) { onOpen(item.postId, item.mediaIndex) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProfileTabStrip(labels: List<Pair<String, ImageVector>>, selected: Int, onSelect: (Int) -> Unit) {
+    Surface(
+        Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 7.dp),
+        color = Color.White,
+        shape = RoundedCornerShape(13.dp),
+        border = BorderStroke(.7.dp, Color(0xFFE4E7EC)),
+        tonalElevation = 0.dp
+    ) {
+        Row(Modifier.fillMaxWidth().height(48.dp).padding(4.dp), verticalAlignment = Alignment.CenterVertically) {
+            labels.forEachIndexed { index, (label, icon) ->
+                Row(
+                    Modifier.weight(1f).fillMaxHeight().clip(RoundedCornerShape(9.dp))
+                        .background(if (selected == index) Color(0xFFEAF3FF) else Color.Transparent)
+                        .clickable { onSelect(index) },
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(icon, label, tint = if (selected == index) TiwiBlue else Color(0xFF344054), modifier = Modifier.size(18.dp))
+                    Text(label, color = if (selected == index) TiwiBlue else Color(0xFF344054), fontSize = 10.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 4.dp), maxLines = 1)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProfileContentSearchPage(posts: List<Post>, onBack: () -> Unit, onOpen: (String) -> Unit) {
+    var query by remember { mutableStateOf("") }
+    val results = remember(posts, query) { if (query.isBlank()) posts else posts.filter { it.content.contains(query, true) } }
+    Column(Modifier.fillMaxSize().background(Color.White).statusBarsPadding()) {
+        Row(Modifier.fillMaxWidth().height(52.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
+            Surface(Modifier.weight(1f).padding(end = 12.dp).height(38.dp), color = Color(0xFFF0F2F5), shape = RoundedCornerShape(19.dp), tonalElevation = 0.dp) {
+                Row(Modifier.padding(horizontal = 11.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Search, null, tint = Color(0xFF667085), modifier = Modifier.size(18.dp))
+                    BasicTextField(query, { query = it }, Modifier.weight(1f).padding(start = 7.dp), singleLine = true, textStyle = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp, color = Color.Black), decorationBox = { inner -> if (query.isBlank()) Text("Search this profile", color = Color(0xFF667085), fontSize = 13.sp); inner() })
+                }
+            }
+        }
+        if (results.isEmpty()) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("No matching posts", color = Color(0xFF667085)) }
+        else LazyColumn(Modifier.fillMaxSize()) {
+            items(results, key = { "profile-search-${it.id}" }) { post ->
+                Row(Modifier.fillMaxWidth().clickable { onOpen(post.id) }.padding(horizontal = 13.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
+                    val media = post.media.firstOrNull { it.type == "image" || it.type == "video" }
+                    Box(Modifier.size(52.dp).clip(RoundedCornerShape(8.dp)).background(Color(0xFFF0F2F5))) {
+                        if (media != null) AsyncImage(media.thumbnailUrl ?: media.url, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                        if (media?.type == "video") Icon(Icons.Default.PlayArrow, null, tint = Color.White, modifier = Modifier.align(Alignment.Center).size(23.dp))
+                    }
+                    Column(Modifier.weight(1f).padding(start = 10.dp)) {
+                        Text(post.content.ifBlank { "Media post" }, maxLines = 2, overflow = TextOverflow.Ellipsis, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                        Text("${formatCount(post.likes)} likes · ${formatCount(post.comments)} comments", color = Color(0xFF667085), fontSize = 10.sp)
+                    }
+                    Icon(Icons.Default.ChevronRight, null, tint = Color(0xFF98A2B3), modifier = Modifier.size(18.dp))
+                }
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ProfileScreen(
@@ -4031,13 +4480,14 @@ fun ProfileScreen(
     userId: String? = null,
     onBack: () -> Unit,
     onPostClick: (String) -> Unit = {},
+    onMediaClick: (String, Int) -> Unit = { id, _ -> onPostClick(id) },
     onShare: (Post) -> Unit = {},
     onMessage: (String) -> Unit = {},
     onEditPost: (String) -> Unit = {},
     onCreate: () -> Unit = {},
     onConnectionClick: (String) -> Unit = {}
 ) {
-    var selectedTab by remember { mutableIntStateOf(0) }
+    var selectedTab by remember(userId) { mutableIntStateOf(0) }
     var isFollowing by remember { mutableStateOf(false) }
     var showEdit by remember { mutableStateOf(false) }
     var showVerified by remember { mutableStateOf(false) }
@@ -4045,6 +4495,9 @@ fun ProfileScreen(
     var showAllLinks by remember { mutableStateOf(false) }
     var showDashboard by remember { mutableStateOf(false) }
     var showConnections by remember { mutableStateOf(false) }
+    var showGallery by remember { mutableStateOf(false) }
+    var showProfileSearch by remember { mutableStateOf(false) }
+    var savedPosts by remember { mutableStateOf<List<Post>>(emptyList()) }
     var connections by remember(userId) { mutableStateOf<List<SocialProfile>>(emptyList()) }
     val ownProfile by repository.profile.collectAsState()
     val ownUser by repository.currentUser.collectAsState()
@@ -4058,6 +4511,21 @@ fun ProfileScreen(
     val context = LocalContext.current
     var effectPlayback by remember { mutableStateOf(SocialProfileEffectPlayback()) }
     var effectCycle by remember { mutableIntStateOf(0) }
+    val profileTabs = remember(isOwn) {
+        buildList {
+            add("Posts" to Icons.Outlined.GridView)
+            add("Reels" to Icons.Outlined.SmartDisplay)
+            if (isOwn) add("Saved" to Icons.Outlined.BookmarkBorder)
+            add("About" to Icons.Outlined.PersonOutline)
+        }
+    }
+    val galleryItems = remember(posts) {
+        posts.flatMap { post ->
+            post.media.mapIndexedNotNull { index, media ->
+                media.takeIf { it.type == "image" || it.type == "video" }?.let { ProfileGalleryMedia(post.id, index, it) }
+            }
+        }
+    }
     LaunchedEffect(userId) {
         loadingProfile = true
         val loaded = if (isOwn) runCatching { repository.refreshProfile() }.getOrNull()
@@ -4083,6 +4551,11 @@ fun ProfileScreen(
                 delay(interval * 1_000L)
                 effectCycle += 1
             }
+        }
+    }
+    LaunchedEffect(selectedTab, isOwn) {
+        if (isOwn && profileTabs.getOrNull(selectedTab)?.first == "Saved") {
+            savedPosts = runCatching { repository.savedPosts().map(::toUiPost) }.getOrDefault(emptyList())
         }
     }
 
@@ -4115,17 +4588,40 @@ fun ProfileScreen(
         )
         return
     }
+    if (showGallery) {
+        BackHandler { showGallery = false }
+        ProfileGalleryPage(galleryItems, onBack = { showGallery = false }) { postId, mediaIndex ->
+            showGallery = false
+            onMediaClick(postId, mediaIndex)
+        }
+        return
+    }
+    if (showProfileSearch) {
+        BackHandler { showProfileSearch = false }
+        ProfileContentSearchPage(posts, onBack = { showProfileSearch = false }) { postId ->
+            showProfileSearch = false
+            onPostClick(postId)
+        }
+        return
+    }
     if (profile == null) {
         ProfileSkeleton(onBack = onBack, loading = loadingProfile)
         return
     }
+    val selectedProfileTab = profileTabs.getOrNull(selectedTab)?.first ?: "Posts"
 
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
     Column(Modifier.fillMaxSize()) {
-        Row(Modifier.fillMaxWidth().statusBarsPadding().height(48.dp).padding(horizontal = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
-            Text("@${profile?.username.orEmpty()}", modifier = Modifier.weight(1f), textAlign = TextAlign.Center, fontWeight = FontWeight.Bold)
-            IconButton(onClick = { showMenu = true }) { Icon(Icons.Default.MoreHoriz, "Menu") }
+        Box(Modifier.fillMaxWidth().statusBarsPadding().height(48.dp)) {
+            IconButton(onClick = onBack, modifier = Modifier.align(Alignment.CenterStart)) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", modifier = Modifier.size(22.dp)) }
+            Row(Modifier.align(Alignment.Center), verticalAlignment = Alignment.CenterVertically) {
+                Text("@${profile.username}", fontWeight = FontWeight.Black, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 150.dp))
+                if (profile.verified) VerifiedBadge(profile.badgeType, 15.dp, Modifier.padding(start = 3.dp), onClick = { showVerified = true })
+            }
+            Row(Modifier.align(Alignment.CenterEnd).padding(end = 2.dp)) {
+                IconButton(onClick = { showProfileSearch = true }, modifier = Modifier.size(42.dp)) { Icon(Icons.Default.Search, "Search profile", modifier = Modifier.size(22.dp)) }
+                IconButton(onClick = { showMenu = true }, modifier = Modifier.size(42.dp)) { Icon(Icons.Default.Menu, "Menu", modifier = Modifier.size(23.dp)) }
+            }
         }
         HorizontalDivider(thickness = .5.dp, color = Color.LightGray.copy(alpha = .55f))
         PullToRefreshBox(
@@ -4138,72 +4634,81 @@ fun ProfileScreen(
         ) {
         LazyColumn(Modifier.fillMaxSize()) {
             item {
-                Box(Modifier.fillMaxWidth().height(132.dp).clip(RoundedCornerShape(bottomStart = 20.dp, bottomEnd = 20.dp))) {
-                    TiwiAvatar(profile?.coverUrl, R.drawable.img_tiwi_cover, Modifier.fillMaxSize(), ContentScale.Crop)
-                    if (isOwn) FilledTonalIconButton(
-                        onClick = { showEdit = true },
-                        modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp).size(36.dp),
-                        colors = IconButtonDefaults.filledTonalIconButtonColors(containerColor = Color.White, contentColor = Color.Black)
-                    ) { Icon(Icons.Default.CameraAlt, "Change cover", Modifier.size(18.dp)) }
-                }
-                Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    DecoratedAvatar(profile?.user?.avatar ?: if (isOwn) ownUser?.avatar else null, R.drawable.img_tiwi_avatar_1, profile?.avatarDecoration, Modifier.size(96.dp), animateDecoration = true)
-                    Row(Modifier.weight(1f), horizontalArrangement = Arrangement.SpaceEvenly) {
-                        ProfileStatItem("Posts", (profile?.postCount ?: posts.size).toString())
-                        ProfileStatItem("Followers", (profile?.followerCount ?: 0).toString())
-                        ProfileStatItem("Following", (profile?.followingCount ?: 0).toString())
+                Box(Modifier.fillMaxWidth().padding(horizontal = 10.dp).height(150.dp).clip(RoundedCornerShape(15.dp))) {
+                    TiwiAvatar(profile.coverUrl, R.drawable.img_tiwi_cover, Modifier.fillMaxSize(), ContentScale.Crop)
+                    if (isOwn) Surface(
+                        Modifier.align(Alignment.BottomEnd).padding(9.dp).height(32.dp).clip(RoundedCornerShape(16.dp)).clickable { showEdit = true },
+                        color = Color.White,
+                        tonalElevation = 0.dp
+                    ) {
+                        Row(Modifier.padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Outlined.CameraAlt, null, modifier = Modifier.size(16.dp))
+                            Text("Change cover", fontSize = 10.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 5.dp))
+                        }
                     }
                 }
-                Column(Modifier.padding(horizontal = 14.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(name, fontWeight = FontWeight.Bold)
-                        if (profile?.verified == true) VerifiedBadge(profile?.badgeType, 17.dp, Modifier.padding(start = 3.dp), onClick = { showVerified = true })
-                        if (!profile?.category.isNullOrBlank()) Text(" · ${profile?.category.orEmpty()}", color = Color(0xFF667085), fontSize = 11.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 2.dp))
+                Row(Modifier.fillMaxWidth().height(83.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.Top) {
+                    DecoratedAvatar(
+                        profile.user.avatar?.takeIf { it.isNotBlank() } ?: if (isOwn) ownUser?.avatar else null,
+                        R.drawable.img_tiwi_avatar_1,
+                        profile.avatarDecoration,
+                        Modifier.requiredSize(102.dp).offset(y = (-28).dp),
+                        animateDecoration = true
+                    )
+                    Column(Modifier.weight(.95f).padding(start = 8.dp, top = 8.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(name, fontWeight = FontWeight.Black, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            if (profile.verified) VerifiedBadge(profile.badgeType, 14.dp, Modifier.padding(start = 2.dp), onClick = { showVerified = true })
+                        }
+                        if (!profile.category.isNullOrBlank()) Text(profile.category.orEmpty(), color = Color(0xFF667085), fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        if (!profile.bio.isNullOrBlank()) Text(profile.bio.orEmpty(), fontSize = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, lineHeight = 14.sp, modifier = Modifier.padding(top = 3.dp))
                     }
-                    if (!profile?.bio.isNullOrBlank()) Text(profile?.bio.orEmpty(), fontSize = 14.sp)
-                    val socialLinks = profile?.preferences?.profileObjects("socialLinks").orEmpty().ifEmpty {
-                        profile?.preferences?.profileString("socialMedia")?.takeIf { it.isNotBlank() }?.let {
+                    Row(Modifier.weight(1.25f).padding(top = 10.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
+                        ProfileStatItem("Posts", (profile.postCount.takeIf { it > 0 } ?: posts.size).toString())
+                        ProfileStatItem("Followers", profile.followerCount.toString())
+                        ProfileStatItem("Following", profile.followingCount.toString())
+                    }
+                }
+                Column(Modifier.padding(horizontal = 12.dp)) {
+                    val socialLinks = profile.preferences.profileObjects("socialLinks").ifEmpty {
+                        profile.preferences.profileString("socialMedia").takeIf { it.isNotBlank() }?.let {
                             listOf(mapOf<String, Any?>("label" to "Social media", "url" to it))
                         }.orEmpty()
                     }
                     ProfileCompactInfo(profile, socialLinks, onShowAllLinks = { showAllLinks = true })
                 }
-                Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 7.dp), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                     if (isOwn) {
-                        ProfileActionButton("Edit profile", Modifier.weight(1f)) { showEdit = true }
-                        ProfileActionButton("Dashboard", Modifier.weight(1f), primary = true) { showDashboard = true }
+                        ProfileActionButton("Edit profile", Modifier.weight(1f), icon = Icons.Outlined.ManageAccounts) { showEdit = true }
+                        ProfileActionButton("Dashboard", Modifier.weight(1f), primary = true, icon = Icons.Outlined.TrendingUp) { showDashboard = true }
                     } else {
-                        ProfileActionButton(if (isFollowing) "Following" else "Follow", Modifier.weight(1f), primary = !isFollowing) {
+                        ProfileActionButton(if (isFollowing) "Following" else "Follow", Modifier.weight(1f), primary = !isFollowing, icon = if (isFollowing) Icons.Outlined.PersonRemove else Icons.Outlined.PersonAdd) {
                             userId?.let { id -> scope.launch { runCatching { repository.follow(id, !isFollowing) }.onSuccess { isFollowing = it.isFollowing } } }
                         }
-                        ProfileActionButton("Message", Modifier.weight(1f)) { userId?.let(onMessage) }
-                        ProfileActionButton("Share profile", Modifier.weight(1f)) {
-                            val profileId = profile?.userId ?: repository.currentUserId().orEmpty()
-                            shareDeepLink(context, "$name on Tiwi", profile?.bio.orEmpty(), "https://tiwlo.com/social/profile/$profileId")
+                        ProfileActionButton("Message", Modifier.weight(1f), icon = Icons.Outlined.ChatBubbleOutline) { userId?.let(onMessage) }
+                        ProfileActionButton("Share", Modifier.weight(.75f), icon = Icons.Outlined.Share) {
+                            val profileId = profile.userId.ifBlank { repository.currentUserId().orEmpty() }
+                            shareDeepLink(context, "$name on Tiwi", profile.bio.orEmpty(), "https://tiwlo.com/social/profile/$profileId")
                         }
                     }
                 }
-                val highlights = posts.flatMap { it.media }.filter { it.type == "image" }.take(8)
-                if (highlights.isNotEmpty()) LazyRow(contentPadding = PaddingValues(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    items(highlights) { media -> AsyncImage(model = media.url, contentDescription = null, modifier = Modifier.size(62.dp).clip(CircleShape), contentScale = ContentScale.Crop) }
-                }
-                Spacer(Modifier.height(8.dp))
+                ProfileGalleryPreview(galleryItems.take(5), onViewAll = { showGallery = true }, onOpen = onMediaClick)
             }
-            item {
-                TabRow(selectedTabIndex = selectedTab, containerColor = Color.Transparent, divider = {}, indicator = { positions -> TabRowDefaults.SecondaryIndicator(Modifier.tabIndicatorOffset(positions[selectedTab]), color = Color.Black) }) {
-                    listOf(Icons.Outlined.GridOn, Icons.Outlined.SmartDisplay, Icons.Outlined.Info).forEachIndexed { index, icon ->
-                        Tab(selected = selectedTab == index, onClick = { selectedTab = index }, icon = { Icon(icon, null) })
+            item { ProfileTabStrip(profileTabs, selectedTab) { selectedTab = it } }
+            when (selectedProfileTab) {
+                "Posts" -> items(posts, key = { it.id }) { post ->
+                    PostCard(post, repository, onShareClick = { onShare(post) }, onOpen = { mediaIndex -> onMediaClick(post.id, mediaIndex) }, onEditRequest = { onEditPost(it.id) }, onOpenLinkedPost = onPostClick, onCommentProfile = onConnectionClick)
+                }
+                "Reels" -> item {
+                    LazyRow(contentPadding = PaddingValues(horizontal = 8.dp, vertical = 3.dp), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                        items(reels, key = { it.id }) { reel -> ReelItem(reel) { onPostClick(reel.id) } }
                     }
                 }
-            }
-            when (selectedTab) {
-                0 -> {
-                    items(posts, key = { it.id }) { post -> PostCard(post, repository, onShareClick = { onShare(post) }, onOpen = { onPostClick(post.id) }, onEditRequest = { onEditPost(it.id) }, onOpenLinkedPost = onPostClick) }
+                "Saved" -> {
+                    if (savedPosts.isEmpty()) item { Text("No saved posts yet", color = Color(0xFF667085), textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(32.dp)) }
+                    else items(savedPosts, key = { "saved-${it.id}" }) { post -> PostCard(post, repository, onOpen = { mediaIndex -> onMediaClick(post.id, mediaIndex) }, onCommentProfile = onConnectionClick) }
                 }
-                1 -> item { LazyRow(contentPadding = PaddingValues(4.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) { items(reels) { ReelItem(it) } } }
-                else -> item {
-                    ProfileAboutDetails(profile, connections, isOwn, onEdit = { showEdit = true })
-                }
+                else -> item { ProfileAboutDetails(profile, connections, isOwn, onEdit = { showEdit = true }) }
             }
         }
         }
@@ -4239,18 +4744,22 @@ private fun openProfileUrl(context: Context, rawUrl: String) {
 private fun ProfileCompactFact(icon: ImageVector, text: String, onClick: (() -> Unit)? = null) {
     if (text.isBlank()) return
     Row(
-        Modifier.then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier).padding(end = 7.dp, bottom = 4.dp),
+        Modifier.padding(end = 6.dp, bottom = 5.dp)
+            .border(.7.dp, Color(0xFFE4E7EC), RoundedCornerShape(9.dp))
+            .clip(RoundedCornerShape(9.dp))
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+            .padding(horizontal = 8.dp, vertical = 5.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(icon, null, tint = if (onClick != null) TiwiBlue else Color.Black, modifier = Modifier.size(17.dp))
+        Icon(icon, null, tint = if (onClick != null) TiwiBlue else Color(0xFF344054), modifier = Modifier.size(15.dp))
         Text(
             text,
             color = if (onClick != null) TiwiBlue else Color(0xFF1D2939),
             fontWeight = FontWeight.ExtraBold,
-            fontSize = 12.sp,
+            fontSize = 10.sp,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(start = 4.dp).widthIn(max = 185.dp)
+            modifier = Modifier.padding(start = 4.dp).widthIn(max = 145.dp)
         )
     }
 }
@@ -4270,9 +4779,9 @@ private fun ProfileCompactInfo(
     val firstLinkLabel = firstLink?.get("label")?.toString().orEmpty()
     val firstLinkUrl = firstLink?.get("url")?.toString().orEmpty()
     FlowRow(
-        Modifier.fillMaxWidth().padding(top = 7.dp),
-        horizontalArrangement = Arrangement.spacedBy(1.dp),
-        verticalArrangement = Arrangement.spacedBy(1.dp)
+        Modifier.fillMaxWidth().padding(top = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(0.dp),
+        verticalArrangement = Arrangement.spacedBy(0.dp)
     ) {
         ProfileCompactFact(Icons.Outlined.Badge, profile.category.orEmpty())
         ProfileCompactFact(Icons.Outlined.LocationOn, profile.location.orEmpty())
@@ -6321,15 +6830,20 @@ private fun ProfileEffectStoreCard(
 }
 
 @Composable
-private fun ProfileActionButton(text: String, modifier: Modifier, primary: Boolean = false, onClick: () -> Unit) {
-    Button(
-        onClick = onClick,
-        modifier = modifier.height(34.dp),
-        contentPadding = PaddingValues(horizontal = 4.dp),
-        shape = RoundedCornerShape(7.dp),
-        elevation = ButtonDefaults.buttonElevation(0.dp),
-        colors = ButtonDefaults.buttonColors(containerColor = if (primary) TiwiBlue else Color(0xFFEFEFEF), contentColor = if (primary) Color.White else Color.Black)
-    ) { Text(text, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1) }
+private fun ProfileActionButton(text: String, modifier: Modifier, primary: Boolean = false, icon: ImageVector? = null, onClick: () -> Unit) {
+    Surface(
+        modifier.height(36.dp).clip(RoundedCornerShape(10.dp)).clickable(onClick = onClick),
+        color = if (primary) TiwiBlue else Color.White,
+        contentColor = if (primary) Color.White else Color(0xFF101828),
+        shape = RoundedCornerShape(10.dp),
+        border = if (primary) null else BorderStroke(.8.dp, Color(0xFFD0D5DD)),
+        tonalElevation = 0.dp
+    ) {
+        Row(Modifier.fillMaxSize().padding(horizontal = 5.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+            if (icon != null) Icon(icon, null, modifier = Modifier.size(16.dp))
+            Text(text, fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1, modifier = if (icon != null) Modifier.padding(start = 5.dp) else Modifier)
+        }
+    }
 }
 
 @Composable
@@ -9263,8 +9777,8 @@ private fun MessengerInfoRow(icon: ImageVector, title: String, subtitle: String?
 @Composable
 fun ProfileStatItem(label: String, value: String) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(text = value, style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.ExtraBold))
-        Text(text = label, style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+        Text(text = value, fontSize = 14.sp, fontWeight = FontWeight.Black, maxLines = 1)
+        Text(text = label, fontSize = 9.sp, color = Color(0xFF667085), maxLines = 1)
     }
 }
 
