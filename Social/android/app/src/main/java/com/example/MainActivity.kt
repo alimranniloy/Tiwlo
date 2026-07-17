@@ -43,6 +43,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -183,6 +185,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.collect
 import com.github.penfeizhou.animation.apng.APNGDrawable
 import org.webrtc.EglBase
 import org.webrtc.SurfaceViewRenderer
@@ -1478,6 +1481,7 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
     var selectedStoryAuthorId by remember { mutableStateOf<String?>(null) }
     var menuDestination by remember { mutableStateOf<String?>(null) }
     var pendingConversationId by remember { mutableStateOf<String?>(null) }
+    var feedHeaderVisible by remember { mutableStateOf(true) }
     
     val apiPosts by repository.feed.collectAsState()
     val currentUser by repository.currentUser.collectAsState()
@@ -1519,6 +1523,10 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
     }
     val hasOverlay = showProfile || showCreatePost || showStoryCreate || selectedStoryAuthorId != null || showLiveSetup || selectedLiveStream != null || showMessages || showConnect || selectedProfileUserId != null || selectedChat != null || selectedPostId != null || selectedEditPostId != null
     val darkChrome = selectedTab == 2 && !hasOverlay
+
+    LaunchedEffect(selectedTab, hasOverlay) {
+        if (selectedTab != 0 || hasOverlay) feedHeaderVisible = true
+    }
 
     if (showPermissionIntro) AlertDialog(
         onDismissRequest = {}, containerColor = Color.White, tonalElevation = 0.dp,
@@ -1751,22 +1759,28 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
         topBar = { 
             if (selectedTab != 2 && selectedTab != 4 && !showProfile && !showCreatePost && !showStoryCreate && selectedStoryAuthorId == null && !showMessages && !showConnect && selectedProfileUserId == null && selectedChat == null && selectedPostId == null && selectedEditPostId == null) {
                 TiwiTopBar(
-                    avatarUrl = currentUser?.avatar,
-                    avatarDecoration = currentProfile?.avatarDecoration,
-                    unreadMessages = unreadMessages,
-                    onProfileClick = { showProfile = true },
+                    visible = feedHeaderVisible,
+                    unreadActivity = unreadActivity,
                     onCreateClick = { showCreatePost = true },
-                    onMessagesClick = { showMessages = true },
+                    onNotificationsClick = { selectedTab = 3 },
                     onConnectClick = { showConnect = true }
                 ) 
             }
         },
         bottomBar = { 
             if (!showProfile && !showCreatePost && !showStoryCreate && selectedStoryAuthorId == null && !showMessages && !showConnect && selectedProfileUserId == null && selectedChat == null && selectedPostId == null && selectedEditPostId == null) {
-                TiwiBottomBar(selectedTab, dark = selectedTab == 2, avatarUrl = currentUser?.avatar, avatarDecoration = currentProfile?.avatarDecoration, unreadActivity = unreadActivity) {
-                    initialReelId = null
-                    selectedTab = it
-                } 
+                TiwiBottomBar(
+                    selectedTab = selectedTab,
+                    dark = selectedTab == 2,
+                    avatarUrl = currentUser?.avatar,
+                    onTabSelected = {
+                        initialReelId = null
+                        selectedTab = it
+                    },
+                    onMessagesClick = { showMessages = true },
+                    onProfileClick = { showProfile = true },
+                    unreadMessages = unreadMessages
+                )
             }
         },
         containerColor = if (darkChrome) Color.Black else MaterialTheme.colorScheme.background,
@@ -1854,7 +1868,7 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
                 )
                 else -> {
                     when (selectedTab) {
-                        0 -> HomeFeed(reels, posts, repository, storyGroups = storyGroups, onCreateStory = { showStoryCreate = true }, onOpenStory = { selectedStoryAuthorId = it }, onShareClick = { sharedPost = it }, onAuthorClick = { selectedProfileUserId = it }, onPostClick = { selectedPostMediaIndex = null; selectedPostId = it }, onMediaClick = { id, index -> selectedPostMediaIndex = index; selectedPostId = id }, onReelClick = { initialReelId = it; selectedTab = 2 }, onEditPost = { selectedEditPostId = it }, onLive = { live -> hostingLive = live.hostId == repository.currentUserId(); selectedLiveStream = live })
+                        0 -> HomeFeed(reels, posts, repository, storyGroups = storyGroups, onCreateStory = { showStoryCreate = true }, onOpenStory = { selectedStoryAuthorId = it }, onShareClick = { sharedPost = it }, onAuthorClick = { selectedProfileUserId = it }, onPostClick = { selectedPostMediaIndex = null; selectedPostId = it }, onMediaClick = { id, index -> selectedPostMediaIndex = index; selectedPostId = id }, onReelClick = { initialReelId = it; selectedTab = 2 }, onEditPost = { selectedEditPostId = it }, onLive = { live -> hostingLive = live.hostId == repository.currentUserId(); selectedLiveStream = live }, onHeaderVisibilityChanged = { feedHeaderVisible = it })
                         1 -> SearchScreen(repository, onProfileClick = { selectedProfileUserId = it }, onPostClick = { selectedPostMediaIndex = null; selectedPostId = it })
                         2 -> ReelsScreen(reels, repository, initialReelId = initialReelId, onOpen = { selectedPostMediaIndex = null; selectedPostId = it }, onShare = { reel -> sharedPost = posts.firstOrNull { it.id == reel.id } }, onAuthor = { selectedProfileUserId = it })
                         3 -> NotificationsScreen(
@@ -1881,41 +1895,34 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
 }
 
 @Composable
-fun TiwiTopBar(avatarUrl: String?, avatarDecoration: SocialProfileDecoration? = null, unreadMessages: Int = 0, onProfileClick: () -> Unit, onCreateClick: () -> Unit, onMessagesClick: () -> Unit, onConnectClick: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(Brush.horizontalGradient(listOf(Color.White.copy(alpha = .96f), Color(0xFFF3F7FF).copy(alpha = .92f))))
-            .statusBarsPadding()
-            .heightIn(min = 50.dp)
-            .padding(horizontal = 12.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween
+fun TiwiTopBar(visible: Boolean, unreadActivity: Int = 0, onCreateClick: () -> Unit, onNotificationsClick: () -> Unit, onConnectClick: () -> Unit) {
+    AnimatedVisibility(
+        visible = visible,
+        enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
+        exit = slideOutVertically(targetOffsetY = { -it }) + fadeOut()
     ) {
-        Text(
-            text = buildAnnotatedString {
-                withStyle(SpanStyle(color = Color(0xFF111318), fontWeight = FontWeight.ExtraBold)) { append("Tiwi") }
-                withStyle(SpanStyle(color = TiwiBlue, fontWeight = FontWeight.Black)) { append(".") }
-            },
-            style = MaterialTheme.typography.headlineSmall.copy(
-                fontWeight = FontWeight.ExtraBold,
-                letterSpacing = (-1).sp
+        Box(
+            modifier = Modifier.fillMaxWidth().background(Color.White).statusBarsPadding().height(52.dp)
+        ) {
+            Row(Modifier.align(Alignment.CenterStart).padding(start = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = onCreateClick, modifier = Modifier.size(44.dp)) {
+                    Icon(Icons.Outlined.AddBox, contentDescription = "Create post", tint = Color.Black, modifier = Modifier.size(27.dp))
+                }
+                IconButton(onClick = onConnectClick, modifier = Modifier.size(42.dp)) {
+                    Icon(Icons.Outlined.GroupAdd, contentDescription = "Find connected people", tint = Color.Black, modifier = Modifier.size(25.dp))
+                }
+            }
+            Text(
+                text = buildAnnotatedString {
+                    withStyle(SpanStyle(color = Color(0xFF111318), fontWeight = FontWeight.ExtraBold)) { append("Tiwi") }
+                    withStyle(SpanStyle(color = TiwiBlue, fontWeight = FontWeight.Black)) { append(".") }
+                },
+                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.ExtraBold, letterSpacing = (-.8).sp),
+                modifier = Modifier.align(Alignment.Center)
             )
-        )
-        
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onConnectClick, modifier = Modifier.size(40.dp)) {
-                Icon(Icons.Outlined.PersonSearch, contentDescription = "Find people", tint = TiwiBlue, modifier = Modifier.size(23.dp))
-            }
-            IconButton(onClick = onCreateClick, modifier = Modifier.size(40.dp)) {
-                Icon(Icons.Outlined.AddBox, contentDescription = "Create", tint = MaterialTheme.colorScheme.onBackground, modifier = Modifier.size(23.dp))
-            }
-            IconButton(
-                onClick = onMessagesClick,
-                modifier = Modifier.size(40.dp)
-            ) {
-                BadgedBox(badge = { if (unreadMessages > 0) Badge(Modifier.size(8.dp)) }) {
-                    Icon(Icons.AutoMirrored.Outlined.Send, contentDescription = "Messages", tint = Color(0xFF111318), modifier = Modifier.size(22.dp))
+            IconButton(onClick = onNotificationsClick, modifier = Modifier.align(Alignment.CenterEnd).padding(end = 6.dp).size(44.dp)) {
+                BadgedBox(badge = { if (unreadActivity > 0) Badge(Modifier.size(8.dp)) }) {
+                    Icon(Icons.Outlined.NotificationsNone, contentDescription = "Activity", tint = Color.Black, modifier = Modifier.size(26.dp))
                 }
             }
         }
@@ -1937,7 +1944,8 @@ fun HomeFeed(
     onMediaClick: (String, Int) -> Unit,
     onReelClick: (String) -> Unit,
     onEditPost: (String) -> Unit = {},
-    onLive: (SocialLiveStream) -> Unit = {}
+    onLive: (SocialLiveStream) -> Unit = {},
+    onHeaderVisibilityChanged: (Boolean) -> Unit = {}
 ) {
     val scope = rememberTiwiCoroutineScope()
     val syncing by repository.syncing.collectAsState()
@@ -1967,7 +1975,23 @@ fun HomeFeed(
         modifier = Modifier.fillMaxSize()
     ) {
         if (posts.isEmpty() && syncing) FeedSkeleton()
-        else LazyColumn(modifier = Modifier.fillMaxSize()) {
+        else {
+            val feedListState = rememberLazyListState()
+            LaunchedEffect(feedListState) {
+                var lastPosition = 0
+                snapshotFlow { feedListState.firstVisibleItemIndex * 10_000 + feedListState.firstVisibleItemScrollOffset }
+                    .collect { position ->
+                        val delta = position - lastPosition
+                        if (position <= 4 || delta < -8) onHeaderVisibilityChanged(true)
+                        else if (delta > 10) onHeaderVisibilityChanged(false)
+                        lastPosition = position
+                    }
+            }
+            LaunchedEffect(feedListState) {
+                snapshotFlow { feedListState.isScrollInProgress }
+                    .collect { scrolling -> if (!scrolling) onHeaderVisibilityChanged(true) }
+            }
+            LazyColumn(modifier = Modifier.fillMaxSize(), state = feedListState) {
             if (!online) item {
                 Row(Modifier.fillMaxWidth().background(Color(0xFFF4F6F8)).padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.size(28.dp).background(Color.White, CircleShape), contentAlignment = Alignment.Center) {
@@ -2037,6 +2061,7 @@ fun HomeFeed(
                         }
                     }
                 }
+            }
             }
         }
     }
@@ -4360,53 +4385,73 @@ private fun ProfileMentionSheet(repository: SocialRepository, onDismiss: () -> U
 }
 
 @Composable
-fun TiwiBottomBar(selectedTab: Int, dark: Boolean = false, avatarUrl: String? = null, avatarDecoration: SocialProfileDecoration? = null, unreadActivity: Int = 0, onTabSelected: (Int) -> Unit) {
+fun TiwiBottomBar(
+    selectedTab: Int,
+    dark: Boolean = false,
+    avatarUrl: String? = null,
+    onTabSelected: (Int) -> Unit,
+    onMessagesClick: () -> Unit,
+    onProfileClick: () -> Unit,
+    unreadMessages: Int = 0
+) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        color = if (dark) Color.Black else MaterialTheme.colorScheme.background,
+        color = if (dark) Color.Black else Color.White,
         tonalElevation = 0.dp,
         shadowElevation = 0.dp
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().navigationBarsPadding().height(54.dp),
+            modifier = Modifier.fillMaxWidth().navigationBarsPadding().height(58.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceAround
         ) {
             val items = listOf(
-                Icons.Outlined.Home to Icons.Filled.Home,
-                Icons.Outlined.Search to Icons.Filled.Search,
-                Icons.Outlined.SmartDisplay to Icons.Filled.SmartDisplay,
-                Icons.Outlined.FavoriteBorder to Icons.Filled.Favorite,
-                Icons.Outlined.Menu to Icons.Filled.Menu
+                Triple("home", Icons.Outlined.Home, Icons.Filled.Home),
+                Triple("reels", Icons.Outlined.SmartDisplay, Icons.Filled.SmartDisplay),
+                Triple("messages", Icons.Outlined.ChatBubbleOutline, Icons.Filled.ChatBubble),
+                Triple("search", Icons.Outlined.Search, Icons.Filled.Search),
+                Triple("profile", Icons.Outlined.PersonOutline, Icons.Filled.Person)
             )
-            
-            items.forEachIndexed { index, (outlined, filled) ->
-                val isSelected = selectedTab == index
-                val iconScale by animateFloatAsState(if (isSelected) 1.2f else 1f)
-                
+
+            items.forEach { (destination, outlined, filled) ->
+                val isSelected = when (destination) {
+                    "home" -> selectedTab == 0
+                    "reels" -> selectedTab == 2
+                    "search" -> selectedTab == 1
+                    else -> false
+                }
+                val iconScale by animateFloatAsState(if (isSelected) 1.08f else 1f, label = "bottom-$destination")
                 IconButton(
-                    onClick = { onTabSelected(index) },
-                    modifier = Modifier.size(48.dp)
+                    onClick = {
+                        when (destination) {
+                            "home" -> onTabSelected(0)
+                            "reels" -> onTabSelected(2)
+                            "search" -> onTabSelected(1)
+                            "messages" -> onMessagesClick()
+                            else -> onProfileClick()
+                        }
+                    },
+                    modifier = Modifier.size(50.dp)
                 ) {
-                    if (index == 4) {
-                        DecoratedAvatar(
+                    if (destination == "profile") {
+                        TiwiAvatar(
                             avatarUrl,
                             R.drawable.img_tiwi_avatar_1,
-                            avatarDecoration,
-                            Modifier.size(34.dp).graphicsLayer(scaleX = iconScale, scaleY = iconScale)
+                            Modifier.size(31.dp).clip(CircleShape).graphicsLayer(scaleX = iconScale, scaleY = iconScale),
+                            ContentScale.Crop
                         )
-                    } else Box(Modifier.size(31.dp), contentAlignment = Alignment.Center) {
+                    } else Box(Modifier.size(33.dp), contentAlignment = Alignment.Center) {
                         Icon(
                             imageVector = if (isSelected) filled else outlined,
                             contentDescription = null,
-                            tint = if (dark) Color.White else if (isSelected) Color.Black else Color.Gray,
-                            modifier = Modifier.size(25.dp).graphicsLayer(scaleX = iconScale, scaleY = iconScale)
+                            tint = if (dark) Color.White else Color(0xFF111111),
+                            modifier = Modifier.size(27.dp).graphicsLayer(scaleX = iconScale, scaleY = iconScale)
                         )
-                        if (index == 3 && unreadActivity > 0) {
+                        if (destination == "messages" && unreadMessages > 0) {
                             Box(
-                                Modifier.align(Alignment.TopEnd).offset(x = 1.dp, y = (-1).dp).size(9.dp)
+                                Modifier.align(Alignment.TopEnd).offset(x = 2.dp, y = 0.dp).size(9.dp)
                                     .background(Color(0xFFE11D48), CircleShape)
-                                    .border(1.5.dp, if (dark) Color.Black else MaterialTheme.colorScheme.background, CircleShape)
+                                    .border(1.5.dp, if (dark) Color.Black else Color.White, CircleShape)
                             )
                         }
                     }
