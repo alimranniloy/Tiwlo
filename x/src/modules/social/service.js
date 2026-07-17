@@ -2913,7 +2913,9 @@ const mapStream = (stream, actor) => ({
 
 const mapLiveParticipant = (participant) => ({
   ...participant,
-  viewerProfile: participant.viewer?.socialProfile || null
+  viewerProfile: participant.viewer?.socialProfile || null,
+  role: String(participant.status || '').startsWith('cohost_') ? 'cohost' : 'viewer',
+  microphoneEnabled: !String(participant.status || '').endsWith('_muted')
 });
 
 const mapLiveComment = (comment) => ({
@@ -2928,7 +2930,7 @@ const expireStaleLiveStreams = async (ctx) => {
     data: { status: 'ended', endedAt: new Date(), paused: false }
   });
   await ctx.prisma.socialLiveParticipant.updateMany({
-    where: { status: { in: ['joining', 'connected'] }, lastSeenAt: { lt: cutoff } },
+    where: { status: { in: ['joining', 'connected', 'cohost_joining', 'cohost_connected', 'cohost_muted'] }, lastSeenAt: { lt: cutoff } },
     data: { status: 'left', leftAt: new Date() }
   });
 };
@@ -2946,7 +2948,7 @@ const requireLiveViewerAccess = async (ctx, actor, stream) => {
 const refreshLiveViewerCount = async (ctx, streamId) => {
   const cutoff = new Date(Date.now() - 45_000);
   const viewerCount = await ctx.prisma.socialLiveParticipant.count({
-    where: { streamId, status: { in: ['joining', 'connected'] }, lastSeenAt: { gte: cutoff } }
+    where: { streamId, status: { in: ['joining', 'connected', 'cohost_joining', 'cohost_connected', 'cohost_muted'] }, lastSeenAt: { gte: cutoff } }
   });
   await ctx.prisma.socialLiveStream.update({ where: { id: streamId }, data: { viewerCount } });
   return viewerCount;
@@ -3051,7 +3053,7 @@ export const listLiveParticipants = async (ctx, streamId) => {
   if (stream.hostId !== actor.id && !isAdmin(actor)) forbidden();
   const cutoff = new Date(Date.now() - 45_000);
   const rows = await ctx.prisma.socialLiveParticipant.findMany({
-    where: { streamId, status: { in: ['joining', 'connected'] }, lastSeenAt: { gte: cutoff } },
+    where: { streamId, status: { in: ['joining', 'connected', 'cohost_joining', 'cohost_connected', 'cohost_muted'] }, lastSeenAt: { gte: cutoff } },
     include: liveParticipantInclude,
     orderBy: { joinedAt: 'asc' },
     take: 12
@@ -3060,23 +3062,66 @@ export const listLiveParticipants = async (ctx, streamId) => {
   return rows.map(mapLiveParticipant);
 };
 
-export const joinLiveStream = async (ctx, id) => {
+export const joinLiveStream = async (ctx, id, asCohost = false) => {
   const actor = await requireAuth(ctx);
   await expireStaleLiveStreams(ctx);
   const stream = await ctx.prisma.socialLiveStream.findUnique({ where: { id } });
   await requireLiveViewerAccess(ctx, actor, stream);
   if (stream.hostId === actor.id) forbidden('The host cannot join as a viewer');
   if (stream.status !== 'live') throw new AppError('This live has ended', 'LIVE_ENDED');
-  const activeCount = await ctx.prisma.socialLiveParticipant.count({ where: { streamId: id, status: { in: ['joining', 'connected'] }, lastSeenAt: { gte: new Date(Date.now() - 45_000) } } });
+  const now = new Date();
+  const activeCount = await ctx.prisma.socialLiveParticipant.count({ where: { streamId: id, status: { in: ['joining', 'connected', 'cohost_joining', 'cohost_connected', 'cohost_muted'] }, lastSeenAt: { gte: new Date(Date.now() - 45_000) } } });
   if (activeCount >= 12) throw new AppError('This live is currently full', 'LIVE_FULL');
+  let role = 'viewer';
+  if (asCohost) {
+    const invitations = await ctx.prisma.notification.findMany({
+      // The Android notification is marked read before its deep link is opened.
+      // An accepted invite stays valid for this one live stream so reopening the
+      // same broadcast does not turn a co-host back into a regular viewer.
+      where: { ownerId: actor.id, scope: 'social', type: 'live_cohost_invite', scopeId: id },
+      orderBy: { createdAt: 'desc' }, take: 10
+    });
+    const invitation = invitations.find((row) => row.metadata?.role === 'cohost' && row.metadata?.liveStreamId === id);
+    if (!invitation) forbidden('This co-host invitation is no longer available');
+    const cohostCount = await ctx.prisma.socialLiveParticipant.count({
+      where: { streamId: id, status: { in: ['cohost_joining', 'cohost_connected', 'cohost_muted'] }, lastSeenAt: { gte: new Date(Date.now() - 45_000) } }
+    });
+    if (cohostCount >= 6) throw new AppError('This live already has six co-hosts', 'LIVE_COHOST_FULL');
+    await ctx.prisma.notification.update({ where: { id: invitation.id }, data: { status: 'read', readAt: now } });
+    role = 'cohost';
+  }
   const participant = await ctx.prisma.socialLiveParticipant.upsert({
     where: { streamId_viewerId: { streamId: id, viewerId: actor.id } },
-    create: { streamId: id, viewerId: actor.id, status: 'joining' },
-    update: { status: 'joining', lastSeenAt: new Date(), leftAt: null, hostOffer: null, viewerAnswer: null, hostIce: [], viewerIce: [] },
+    create: { streamId: id, viewerId: actor.id, status: role === 'cohost' ? 'cohost_joining' : 'joining' },
+    update: { status: role === 'cohost' ? 'cohost_joining' : 'joining', lastSeenAt: now, leftAt: null, hostOffer: null, viewerAnswer: null, hostIce: [], viewerIce: [] },
     include: liveParticipantInclude
   });
   await refreshLiveViewerCount(ctx, id);
   return mapLiveParticipant(participant);
+};
+
+export const inviteLiveCohost = async (ctx, streamId, userId) => {
+  const actor = await requireAuth(ctx);
+  const stream = await ctx.prisma.socialLiveStream.findUnique({ where: { id: streamId } });
+  if (!stream) notFound('Live stream');
+  if (stream.hostId !== actor.id && !isAdmin(actor)) forbidden();
+  if (stream.status !== 'live') throw new AppError('This live has ended', 'LIVE_ENDED');
+  if (!userId || userId === stream.hostId) throw new AppError('Choose another person to invite', 'BAD_USER_INPUT');
+  const target = await ctx.prisma.user.findUnique({ where: { id: userId }, select: { id: true, status: true } });
+  if (!target || RESTRICTED_SOCIAL_STATUSES.has(String(target.status || '').toLowerCase())) notFound('User');
+  const activeCohosts = await ctx.prisma.socialLiveParticipant.count({
+    where: { streamId, status: { in: ['cohost_joining', 'cohost_connected', 'cohost_muted'] }, lastSeenAt: { gte: new Date(Date.now() - 45_000) } }
+  });
+  if (activeCohosts >= 6) throw new AppError('This live already has six co-hosts', 'LIVE_COHOST_FULL');
+  await createSocialNotification(ctx, {
+    ownerId: userId,
+    scopeId: streamId,
+    type: 'live_cohost_invite',
+    title: `${actor.name} invited you to co-host`,
+    message: `Join ${bounded(stream.title, 160) || 'this live'} with camera and microphone.`,
+    metadata: { liveStreamId: streamId, role: 'cohost', actorId: actor.id, actorName: actor.name, actorAvatar: actor.avatar || null }
+  });
+  return true;
 };
 
 export const signalLiveStream = async (ctx, input) => {
@@ -3091,7 +3136,20 @@ export const signalLiveStream = async (ctx, input) => {
   const data = { lastSeenAt: new Date() };
   if (host && input.offer !== undefined) data.hostOffer = input.offer;
   if (viewer && input.answer !== undefined) data.viewerAnswer = input.answer;
-  if (input.status) data.status = bounded(input.status, 30).toLowerCase();
+  if (input.status) {
+    const requested = bounded(input.status, 30).toLowerCase();
+    const cohost = String(participant.status || '').startsWith('cohost_');
+    // A co-host's mute state is shared with the host. Explicit mute/unmute
+    // requests win, while ordinary heartbeats preserve the latest state.
+    if (cohost) {
+      const muted = requested === 'muted' || requested === 'cohost_muted'
+        ? true
+        : requested === 'unmuted' || requested === 'cohost_connected'
+          ? false
+          : String(participant.status).endsWith('_muted');
+      data.status = requested === 'joining' || requested === 'cohost_joining' ? 'cohost_joining' : muted ? 'cohost_muted' : 'cohost_connected';
+    } else data.status = requested;
+  }
   if (input.iceCandidate) {
     if (host) data.hostIce = [...(Array.isArray(participant.hostIce) ? participant.hostIce : []), input.iceCandidate].slice(-100);
     else data.viewerIce = [...(Array.isArray(participant.viewerIce) ? participant.viewerIce : []), input.iceCandidate].slice(-100);
@@ -3119,7 +3177,7 @@ export const leaveLiveStream = async (ctx, id) => {
   if (stream.hostId === actor.id || isAdmin(actor)) {
     await ctx.prisma.$transaction([
       ctx.prisma.socialLiveStream.update({ where: { id }, data: { status: 'ended', endedAt: new Date(), paused: false, viewerCount: 0 } }),
-      ctx.prisma.socialLiveParticipant.updateMany({ where: { streamId: id, status: { in: ['joining', 'connected'] } }, data: { status: 'left', leftAt: new Date() } })
+      ctx.prisma.socialLiveParticipant.updateMany({ where: { streamId: id, status: { in: ['joining', 'connected', 'cohost_joining', 'cohost_connected', 'cohost_muted'] } }, data: { status: 'left', leftAt: new Date() } })
     ]);
     return true;
   }

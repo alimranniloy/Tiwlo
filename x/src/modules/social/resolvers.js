@@ -16,6 +16,14 @@ export const socialResolvers = {
   },
   SocialProfile: {
     user: (parent, _, ctx) => parent.user || ctx.prisma.user.findUnique({ where: { id: parent.userId } }),
+    // A profile is returned from several nested relations (live, messages and
+    // notifications) where the service does not attach the aggregate counts.
+    // These fields are non-null in GraphQL, so always resolve a numeric value
+    // instead of letting Prisma's missing scalar become `null` at runtime.
+    followerCount: async (parent, _, ctx) => Number(parent.followerCount ?? parent.user?._count?.socialFollowers ?? await ctx.prisma.socialFollow.count({ where: { followingId: parent.userId } })),
+    followingCount: async (parent, _, ctx) => Number(parent.followingCount ?? parent.user?._count?.socialFollowing ?? await ctx.prisma.socialFollow.count({ where: { followerId: parent.userId } })),
+    postCount: async (parent, _, ctx) => Number(parent.postCount ?? parent.user?._count?.socialPosts ?? await ctx.prisma.socialPost.count({ where: { authorId: parent.userId, status: 'active' } })),
+    isFollowing: (parent) => Boolean(parent.isFollowing),
     avatarDecoration: (parent, _, ctx) => parent.avatarDecoration || (parent.avatarDecorationId ? ctx.prisma.socialProfileDecoration.findUnique({ where: { id: parent.avatarDecorationId } }) : null),
     profileEffect: (parent, _, ctx) => parent.profileEffect || (parent.profileEffectId ? ctx.prisma.socialProfileDecoration.findUnique({ where: { id: parent.profileEffectId } }) : null),
     verified: (parent) => Boolean(parent.verified && (!parent.badgeExpiresAt || new Date(parent.badgeExpiresAt) > new Date())),
@@ -188,7 +196,8 @@ export const socialResolvers = {
     endSocialCall: (_, { id, status }, ctx) => api(service.endCall(ctx, id, status)),
     startSocialLiveStream: (_, { input }, ctx) => api(service.startLiveStream(ctx, input)),
     updateSocialLiveStream: (_, { id, status, viewerCount }, ctx) => api(service.updateLiveStream(ctx, id, status, viewerCount)),
-    joinSocialLiveStream: (_, { id }, ctx) => api(service.joinLiveStream(ctx, id)),
+    joinSocialLiveStream: (_, { id, asCohost }, ctx) => api(service.joinLiveStream(ctx, id, Boolean(asCohost))),
+    inviteSocialLiveCohost: (_, { streamId, userId }, ctx) => api(service.inviteLiveCohost(ctx, streamId, userId)),
     signalSocialLiveStream: (_, { input }, ctx) => api(service.signalLiveStream(ctx, input)),
     heartbeatSocialLiveStream: (_, { id, paused }, ctx) => api(service.heartbeatLiveStream(ctx, id, paused)),
     leaveSocialLiveStream: (_, { id }, ctx) => service.leaveLiveStream(ctx, id),

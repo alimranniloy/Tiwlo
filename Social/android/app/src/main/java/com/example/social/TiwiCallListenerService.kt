@@ -133,11 +133,13 @@ class TiwiCallListenerService : Service() {
         val postId = item.metadata["postId"]?.toString()
         val actorId = item.metadata["actorId"]?.toString()
         val conversationId = item.metadata["conversationId"]?.toString()
+        val liveStreamId = item.metadata["liveStreamId"]?.toString()
         val supportCenter = item.metadata["destination"]?.toString() == "support_center"
         val openIntent = Intent(this, MainActivity::class.java).apply {
             action = Intent.ACTION_VIEW
             val target = when {
                 supportCenter -> "https://tiwlo.com/social/support"
+                !liveStreamId.isNullOrBlank() -> "https://tiwlo.com/social/live/$liveStreamId"
                 !conversationId.isNullOrBlank() -> "https://tiwlo.com/social/messages/$conversationId"
                 !postId.isNullOrBlank() -> "https://tiwlo.com/social/post/$postId"
                 !actorId.isNullOrBlank() -> "https://tiwlo.com/social/profile/$actorId"

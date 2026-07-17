@@ -413,6 +413,8 @@ data class SocialLiveParticipant(
     val viewer: SocialUser = SocialUser(),
     val viewerProfile: SocialProfile? = null,
     val status: String = "joining",
+    val role: String = "viewer",
+    val microphoneEnabled: Boolean = true,
     val hostOffer: Map<String, Any?>? = null,
     val viewerAnswer: Map<String, Any?>? = null,
     val hostIce: List<Map<String, Any?>> = emptyList(),

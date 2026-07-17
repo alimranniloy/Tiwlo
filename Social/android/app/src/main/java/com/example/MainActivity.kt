@@ -143,6 +143,7 @@ import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
 import androidx.media3.datasource.cache.SimpleCache
 import androidx.media3.database.StandaloneDatabaseProvider
 import androidx.media3.exoplayer.DefaultLoadControl
+import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
@@ -1077,7 +1078,7 @@ private object TiwiPlaybackCache {
         return ExoPlayer.Builder(context)
             .setBandwidthMeter(bandwidthMeter)
             .setTrackSelector(trackSelector)
-            .setMediaSourceFactory(DefaultMediaSourceFactory(dataSource))
+            .setMediaSourceFactory(DefaultMediaSourceFactory(dataSource).setLoadErrorHandlingPolicy(DefaultLoadErrorHandlingPolicy(3)))
             .setLoadControl(loadControl)
             .build()
     }
@@ -1090,7 +1091,10 @@ private object TiwiPlaybackCoordinator {
 
     @Synchronized
     fun update(id: String, score: Float, eligible: Boolean) {
-        if (eligible && score >= .55f) scores[id] = score else scores.remove(id)
+        // Start preparing the nearest visible item before it reaches the exact
+        // centre.  The old .55 threshold left videos at their thumbnail until a
+        // manual tap on some screen sizes.
+        if (eligible && score >= .28f) scores[id] = score else scores.remove(id)
         activeId = scores.maxByOrNull { it.value }?.key
     }
 
@@ -1144,6 +1148,7 @@ private fun TiwiVideo(
     var playbackDuration by remember(activeUrl) { mutableLongStateOf(1L) }
     var scrubberVisible by remember(activeUrl) { mutableStateOf(false) }
     var scrubberToken by remember(activeUrl) { mutableLongStateOf(0L) }
+    var retryCount by remember(activeUrl) { mutableIntStateOf(0) }
     val playerId = remember(activeUrl) { "$activeUrl#${System.nanoTime()}" }
     val isActivePlayer = TiwiPlaybackCoordinator.activeId == playerId
     val shouldCreatePlayer = shouldOwnVideoPlayer(visibleEnough, autoplay, startRequested, coordinated, isActivePlayer)
@@ -1213,11 +1218,20 @@ private fun TiwiVideo(
             override fun onRenderedFirstFrame() {
                 renderedFirstFrame = true
                 buffering = false
+                retryCount = 0
             }
 
             override fun onPlayerError(error: PlaybackException) {
                 val fallback = fallbackUrl?.takeIf { it.isNotBlank() && it != activeUrl }
-                if (fallback != null) activeUrl = fallback else buffering = false
+                if (fallback != null) {
+                    activeUrl = fallback
+                } else if (retryCount < 2) {
+                    retryCount += 1
+                    buffering = true
+                    player.setMediaItem(MediaItem.fromUri(activeUrl))
+                    player.prepare()
+                    if ((autoplay || startRequested) && visibleEnough && !manuallyPaused) player.play()
+                } else buffering = false
             }
         }
         val observer = LifecycleEventObserver { _, event ->
@@ -1248,7 +1262,7 @@ private fun TiwiVideo(
             val ratio = verticalRatio * horizontalRatio
             val itemCenter = (bounds.top + bounds.bottom) / 2f
             val centerDistance = kotlin.math.abs(itemCenter - screenHeight / 2f) / screenHeight
-            visibleEnough = ratio >= .5f
+            visibleEnough = ratio >= .28f
             if (coordinated) TiwiPlaybackCoordinator.update(playerId, ratio - centerDistance * .15f, autoplay || startRequested)
         }
     ) {
@@ -1602,6 +1616,12 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
             runCatching { repository.markNotificationRead(notificationId) }
         }
         when {
+            segments.size >= 3 && segments[0] == "social" && segments[1] == "live" -> {
+                runCatching { repository.getLiveStream(segments[2]) }.getOrNull()?.let { live ->
+                    hostingLive = live.hostId == repository.currentUserId()
+                    selectedLiveStream = live
+                }
+            }
             segments.size >= 3 && segments[0] == "social" && segments[1] == "post" -> {
                 selectedPostMediaIndex = null
                 selectedPostId = segments[2]
@@ -4541,18 +4561,58 @@ private fun LiveSetupPage(repository: SocialRepository, onBack: () -> Unit, onSt
     val context = LocalContext.current
     val scope = rememberTiwiCoroutineScope()
     val user by repository.currentUser.collectAsState()
-    var title by remember { mutableStateOf("") }
+    var title by remember(user?.id) { mutableStateOf("") }
     var description by remember { mutableStateOf("") }
     var visibility by remember { mutableStateOf("public") }
     var commentsEnabled by remember { mutableStateOf(true) }
+    var shareToStory by remember { mutableStateOf(true) }
+    var route by remember { mutableStateOf("setup") }
+    var invitedPeople by remember { mutableStateOf<List<SocialProfile>>(emptyList()) }
     var busy by remember { mutableStateOf(false) }
 
+    if (route == "invite") {
+        LiveInvitePeoplePage(
+            repository = repository,
+            selected = invitedPeople,
+            onBack = { route = "setup" },
+            onApply = { invitedPeople = it.take(6); route = "setup" }
+        )
+        return
+    }
+    if (route == "settings") {
+        LiveAdvancedSettingsPage(
+            commentsEnabled = commentsEnabled,
+            shareToStory = shareToStory,
+            onCommentsChanged = { commentsEnabled = it },
+            onShareToStoryChanged = { shareToStory = it },
+            onBack = { route = "setup" }
+        )
+        return
+    }
+
     val start: () -> Unit = {
-        if (!busy && title.isNotBlank()) {
+        if (!busy) {
             busy = true
             scope.launch {
-                runCatching { repository.startLiveStream(title, description.takeIf(String::isNotBlank), visibility, commentsEnabled) }
-                    .onSuccess(onStarted)
+                val liveTitle = title.trim().ifBlank { "${user?.name?.ifBlank { "Tiwi" } ?: "Tiwi"}'s live" }
+                runCatching { repository.startLiveStream(liveTitle, description.takeIf(String::isNotBlank), visibility, commentsEnabled) }
+                    .onSuccess { live ->
+                        invitedPeople.forEach { person -> runCatching { repository.inviteLiveCohost(live.id, person.userId) } }
+                        if (shareToStory) runCatching {
+                            repository.createStory(
+                                visibility = visibility,
+                                metadata = mapOf("liveStreamId" to live.id, "kind" to "live_announcement"),
+                                items = listOf(mapOf(
+                                    "type" to "text",
+                                    "text" to "${liveTitle}\nLive now",
+                                    "background" to "#1265D6",
+                                    "durationMs" to 5_000,
+                                    "overlays" to listOf(mapOf("type" to "link", "label" to "Watch live", "url" to "https://tiwlo.com/social/live/${live.id}"))
+                                ))
+                            )
+                        }
+                        onStarted(live)
+                    }
                     .onFailure { Toast.makeText(context, it.message ?: "Live could not start", Toast.LENGTH_LONG).show() }
                 busy = false
             }
@@ -4568,41 +4628,121 @@ private fun LiveSetupPage(repository: SocialRepository, onBack: () -> Unit, onSt
         else permissionLauncher.launch(permissions)
     }
 
-    Column(Modifier.fillMaxSize().background(Color.White).imePadding()) {
-        ComposerPageHeader("Go live", onBack)
-        Box(Modifier.fillMaxWidth().height(220.dp).background(Color(0xFF101828)), contentAlignment = Alignment.Center) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                TiwiAvatar(user?.avatar, R.drawable.img_tiwi_avatar_1, Modifier.size(76.dp).clip(CircleShape))
-                Text("Camera preview starts securely when you go live", color = Color.White, fontSize = 11.sp, modifier = Modifier.padding(top = 10.dp))
-            }
-            Surface(Modifier.align(Alignment.TopStart).padding(10.dp), color = Color(0xFFE11D48), shape = RoundedCornerShape(5.dp), tonalElevation = 0.dp) {
-                Text("LIVE", color = Color.White, fontWeight = FontWeight.Black, fontSize = 10.sp, modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp))
+    Column(Modifier.fillMaxSize().background(Color.Black).imePadding().navigationBarsPadding()) {
+        Box(Modifier.weight(1f).fillMaxWidth().padding(8.dp).clip(RoundedCornerShape(18.dp)).background(Color(0xFF13161B))) {
+            Column(Modifier.fillMaxSize()) {
+                Box(Modifier.fillMaxWidth().weight(1f).background(Brush.verticalGradient(listOf(Color(0xFF1B2635), Color(0xFF06080C)))), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        TiwiAvatar(user?.avatar, R.drawable.img_tiwi_avatar_1, Modifier.size(74.dp).clip(CircleShape))
+                        Text("Camera starts when you go live", color = Color.White.copy(alpha = .72f), fontSize = 10.sp, modifier = Modifier.padding(top = 8.dp))
+                    }
+                    IconButton(onClick = onBack, modifier = Modifier.align(Alignment.TopEnd).padding(8.dp).size(37.dp).background(Color.Black.copy(alpha = .48f), CircleShape)) { Icon(Icons.Default.Close, "Cancel", tint = Color.White, modifier = Modifier.size(22.dp)) }
+                    Row(Modifier.align(Alignment.TopStart).padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        TiwiAvatar(user?.avatar, R.drawable.img_tiwi_avatar_1, Modifier.size(31.dp).clip(CircleShape))
+                        Column(Modifier.padding(start = 7.dp)) {
+                            Text(user?.name?.ifBlank { "Tiwi" } ?: "Tiwi", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                            Surface(color = Color.White, shape = RoundedCornerShape(8.dp), tonalElevation = 0.dp, modifier = Modifier.clickable { visibility = when (visibility) { "public" -> "followers"; "followers" -> "private"; else -> "public" } }) {
+                                Row(Modifier.padding(horizontal = 7.dp, vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) { Icon(if (visibility == "private") Icons.Default.Lock else if (visibility == "followers") Icons.Default.Groups else Icons.Default.Public, null, modifier = Modifier.size(12.dp)); Text(if (visibility == "private") "Only me" else if (visibility == "followers") "Followers" else "Public", fontSize = 10.sp, modifier = Modifier.padding(start = 3.dp)) }
+                            }
+                        }
+                    }
+                    Column(Modifier.align(Alignment.CenterEnd).padding(end = 11.dp), horizontalAlignment = Alignment.End) {
+                        LiveOverlayTool(Icons.Default.FlashOff, "Flash off") { Toast.makeText(context, "Flash is not available on this camera", Toast.LENGTH_SHORT).show() }
+                        LiveOverlayTool(Icons.Default.Cameraswitch, "Rotate") { Toast.makeText(context, "Camera can be switched after you go live", Toast.LENGTH_SHORT).show() }
+                    }
+                }
+                BasicTextField(
+                    value = description,
+                    onValueChange = { description = it.take(1_000) },
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 13.dp, vertical = 11.dp),
+                    textStyle = MaterialTheme.typography.bodyMedium.copy(color = Color.White, fontSize = 14.sp),
+                    decorationBox = { inner -> if (description.isBlank()) Text("Tap to add a description…", color = Color.White.copy(alpha = .72f), fontSize = 14.sp); inner() }
+                )
+                Row(Modifier.fillMaxWidth().padding(horizontal = 9.dp, vertical = 3.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
+                    LiveSetupAction(Icons.Default.PersonAdd, "Add people", invitedPeople.size.takeIf { it > 0 }?.toString()) { route = "invite" }
+                    LiveSetupAction(Icons.Default.ChatBubbleOutline, "Comments") { route = "settings" }
+                    LiveSetupAction(Icons.Default.Settings, "More") { route = "settings" }
+                }
             }
         }
-        OutlinedTextField(title, { title = it.take(160) }, Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), singleLine = true, label = { Text("Live title") }, shape = RoundedCornerShape(11.dp))
-        OutlinedTextField(description, { description = it.take(1000) }, Modifier.fillMaxWidth().padding(horizontal = 12.dp), minLines = 2, maxLines = 4, label = { Text("Say something about your live") }, shape = RoundedCornerShape(11.dp))
-        Text("Audience", fontWeight = FontWeight.Black, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp))
-        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
-            listOf("public" to "Public", "followers" to "Followers", "private" to "Only me").forEachIndexed { index, option ->
-                SegmentedButton(selected = visibility == option.first, onClick = { visibility = option.first }, shape = SegmentedButtonDefaults.itemShape(index, 3), label = { Text(option.second, fontSize = 10.sp) })
-            }
+        OutlinedTextField(title, { title = it.take(160) }, Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 3.dp), singleLine = true, label = { Text("Live title", color = Color.White.copy(alpha = .7f)) }, textStyle = MaterialTheme.typography.bodyMedium.copy(color = Color.White, fontSize = 12.sp), shape = RoundedCornerShape(9.dp), colors = OutlinedTextFieldDefaults.colors(unfocusedBorderColor = Color.White.copy(alpha = .22f), focusedBorderColor = TiwiBlue, unfocusedContainerColor = Color.Transparent, focusedContainerColor = Color.Transparent))
+        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.AutoAwesome, null, tint = Color.White.copy(alpha = .78f), modifier = Modifier.size(15.dp))
+            Text("Adaptive 360p–720p · Auto ends after 30 seconds offline", color = Color.White.copy(alpha = .66f), fontSize = 9.sp, modifier = Modifier.padding(start = 5.dp).weight(1f))
+            Text("${invitedPeople.size}/6 guests", color = TiwiBlue, fontSize = 9.sp, fontWeight = FontWeight.Bold)
         }
-        Row(Modifier.fillMaxWidth().clickable { commentsEnabled = !commentsEnabled }.padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Outlined.ChatBubbleOutline, null, Modifier.size(21.dp))
-            Column(Modifier.weight(1f).padding(start = 10.dp)) { Text("Live comments", fontWeight = FontWeight.Bold, fontSize = 13.sp); Text("Viewers can comment and reply", color = Color.Gray, fontSize = 10.sp) }
-            Switch(commentsEnabled, { commentsEnabled = it })
-        }
-        Text("Video quality changes automatically between 360p, 480p and 720p based on your connection. If the host stays offline for 30 seconds, the live ends safely.", color = Color(0xFF667085), fontSize = 10.sp, lineHeight = 14.sp, modifier = Modifier.padding(horizontal = 14.dp))
-        Spacer(Modifier.weight(1f))
         Button(
-            onClick = requestAndStart, enabled = title.isNotBlank() && !busy,
-            modifier = Modifier.fillMaxWidth().navigationBarsPadding().padding(12.dp).height(44.dp),
-            shape = RoundedCornerShape(10.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE11D48))
+            onClick = requestAndStart, enabled = !busy,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 7.dp).height(46.dp),
+            shape = RoundedCornerShape(8.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1877F2))
         ) {
             if (busy) CircularProgressIndicator(Modifier.size(18.dp), color = Color.White, strokeWidth = 2.dp)
-            else { Icon(Icons.Default.Videocam, null, Modifier.size(19.dp)); Text("Go live", Modifier.padding(start = 7.dp), fontWeight = FontWeight.Black) }
+            else { Icon(Icons.Default.Videocam, null, Modifier.size(19.dp)); Text("Go Live", Modifier.padding(start = 7.dp), fontWeight = FontWeight.Black) }
         }
     }
+}
+
+@Composable
+private fun LiveOverlayTool(icon: ImageVector, label: String, onClick: () -> Unit) {
+    Row(Modifier.padding(vertical = 4.dp).clickable(onClick = onClick), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, color = Color.White, fontSize = 11.sp, modifier = Modifier.padding(end = 7.dp))
+        Box(Modifier.size(29.dp).background(Color.Black.copy(alpha = .42f), CircleShape), contentAlignment = Alignment.Center) { Icon(icon, label, tint = Color.White, modifier = Modifier.size(17.dp)) }
+    }
+}
+
+@Composable
+private fun LiveSetupAction(icon: ImageVector, label: String, badge: String? = null, onClick: () -> Unit) {
+    Column(Modifier.width(84.dp).clickable(onClick = onClick).padding(vertical = 5.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(Modifier.size(31.dp).background(Color.White.copy(alpha = .12f), CircleShape), contentAlignment = Alignment.Center) {
+            Icon(icon, label, tint = Color.White, modifier = Modifier.size(17.dp))
+            badge?.let { Text(it, color = Color.White, fontSize = 8.sp, fontWeight = FontWeight.Black, modifier = Modifier.align(Alignment.TopEnd).background(TiwiBlue, CircleShape).padding(horizontal = 3.dp)) }
+        }
+        Text(label, color = Color.White.copy(alpha = .85f), fontSize = 9.sp, modifier = Modifier.padding(top = 3.dp), maxLines = 1)
+    }
+}
+
+@Composable
+private fun LiveInvitePeoplePage(repository: SocialRepository, selected: List<SocialProfile>, onBack: () -> Unit, onApply: (List<SocialProfile>) -> Unit) {
+    var query by remember { mutableStateOf("") }
+    var results by remember { mutableStateOf<List<SocialProfile>>(emptyList()) }
+    var chosen by remember(selected) { mutableStateOf(selected) }
+    LaunchedEffect(query) { delay(if (query.isBlank()) 0 else 250); results = runCatching { repository.searchProfiles(query) }.getOrDefault(emptyList()).filter { it.userId != repository.currentUserId() } }
+    Column(Modifier.fillMaxSize().background(Color(0xFF111318)).statusBarsPadding()) {
+        Row(Modifier.fillMaxWidth().height(52.dp).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.White) }; Text("Bring some friends", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Black, modifier = Modifier.weight(1f)); TextButton(onClick = { onApply(chosen) }) { Text("Done", color = TiwiBlue, fontWeight = FontWeight.Black) } }
+        Text("Invite up to six people. They receive a notification and can join with camera and microphone.", color = Color.White.copy(alpha = .68f), fontSize = 11.sp, lineHeight = 15.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 5.dp))
+        OutlinedTextField(query, { query = it }, Modifier.fillMaxWidth().padding(12.dp), singleLine = true, placeholder = { Text("Search people", color = Color.White.copy(alpha = .58f)) }, leadingIcon = { Icon(Icons.Default.Search, null, tint = Color.White.copy(alpha = .7f)) }, colors = OutlinedTextFieldDefaults.colors(unfocusedBorderColor = Color.White.copy(alpha = .22f), focusedBorderColor = TiwiBlue, unfocusedTextColor = Color.White, focusedTextColor = Color.White, unfocusedContainerColor = Color.Transparent, focusedContainerColor = Color.Transparent), shape = RoundedCornerShape(10.dp))
+        LazyColumn(Modifier.fillMaxSize()) {
+            items(results, key = { it.userId }) { person ->
+                val picked = chosen.any { it.userId == person.userId }
+                Row(Modifier.fillMaxWidth().clickable(enabled = picked || chosen.size < 6) { chosen = if (picked) chosen.filterNot { it.userId == person.userId } else chosen + person }.padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    TiwiAvatar(person.user.avatar, R.drawable.img_tiwi_avatar_1, Modifier.size(42.dp).clip(CircleShape))
+                    Column(Modifier.weight(1f).padding(start = 10.dp)) { Text(person.user.name, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp); Text("@${person.username}", color = Color.White.copy(alpha = .62f), fontSize = 10.sp) }
+                    Icon(if (picked) Icons.Default.CheckCircle else Icons.Outlined.PersonAdd, null, tint = if (picked) TiwiBlue else Color.White.copy(alpha = .78f), modifier = Modifier.size(22.dp))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LiveAdvancedSettingsPage(commentsEnabled: Boolean, shareToStory: Boolean, onCommentsChanged: (Boolean) -> Unit, onShareToStoryChanged: (Boolean) -> Unit, onBack: () -> Unit) {
+    Column(Modifier.fillMaxSize().background(Color(0xFF111318)).statusBarsPadding()) {
+        Row(Modifier.fillMaxWidth().height(54.dp).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.White) }; Text("Live settings", color = Color.White, fontWeight = FontWeight.Black, fontSize = 17.sp) }
+        LiveSettingsRow(Icons.Default.ChatBubbleOutline, "Comments", "Viewers can comment and reply", commentsEnabled, onCommentsChanged)
+        LiveSettingsRow(Icons.Default.Share, "Share to Story", "Publish a live announcement to your story", shareToStory, onShareToStoryChanged)
+        LiveStaticSettingsRow(Icons.Default.HighQuality, "Adaptive video quality", "Automatically uses 360p, 480p or 720p based on network")
+        LiveStaticSettingsRow(Icons.Default.Security, "Connection safety", "The live closes after 30 seconds without an internet connection")
+    }
+}
+
+@Composable
+private fun LiveSettingsRow(icon: ImageVector, title: String, subtitle: String, checked: Boolean, onChecked: (Boolean) -> Unit) {
+    Row(Modifier.fillMaxWidth().clickable { onChecked(!checked) }.padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) { Icon(icon, null, tint = Color.White, modifier = Modifier.size(22.dp)); Column(Modifier.weight(1f).padding(start = 12.dp)) { Text(title, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp); Text(subtitle, color = Color.White.copy(alpha = .6f), fontSize = 10.sp, lineHeight = 13.sp) }; Switch(checked, onChecked) }
+}
+
+@Composable
+private fun LiveStaticSettingsRow(icon: ImageVector, title: String, subtitle: String) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) { Icon(icon, null, tint = Color.White, modifier = Modifier.size(22.dp)); Column(Modifier.padding(start = 12.dp)) { Text(title, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp); Text(subtitle, color = Color.White.copy(alpha = .6f), fontSize = 10.sp, lineHeight = 13.sp) } }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -4614,6 +4754,8 @@ private fun LiveBroadcastScreen(repository: SocialRepository, stream: SocialLive
     val state by manager.state.collectAsState()
     val localVideo by manager.localVideo.collectAsState()
     val remoteVideo by manager.remoteVideo.collectAsState()
+    val cohostVideos by manager.cohostVideos.collectAsState()
+    val participants by manager.participants.collectAsState()
     val viewerCount by manager.viewerCount.collectAsState()
     val paused by manager.paused.collectAsState()
     val microphoneEnabled by manager.microphoneEnabled.collectAsState()
@@ -4622,11 +4764,15 @@ private fun LiveBroadcastScreen(repository: SocialRepository, stream: SocialLive
     var replyTo by remember { mutableStateOf<SocialLiveComment?>(null) }
     var started by remember { mutableStateOf(false) }
     val ownId = repository.currentUserId()
+    val notifications by repository.notifications.collectAsState()
+    val cohostRequested = !host && notifications.any { notification ->
+        notification.metadata["liveStreamId"]?.toString() == stream.id && notification.metadata["role"]?.toString() == "cohost"
+    }
 
     LaunchedEffect(stream.id, host) {
         if (!started) {
             started = true
-            runCatching { if (host) manager.startHost(stream) else manager.join(stream) }
+            runCatching { if (host) manager.startHost(stream) else manager.join(stream, asCohost = cohostRequested) }
                 .onFailure { Toast.makeText(context, it.message ?: "Could not open live", Toast.LENGTH_LONG).show(); onEnd() }
         }
     }
@@ -4666,6 +4812,27 @@ private fun LiveBroadcastScreen(repository: SocialRepository, stream: SocialLive
             onEnd()
         }, modifier = Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(6.dp).background(Color.Black.copy(alpha = .38f), CircleShape)) { Icon(Icons.Default.Close, "Close live", tint = Color.White) }
 
+        if (host && cohostVideos.isNotEmpty()) {
+            val cohosts = participants.filter { it.role == "cohost" && cohostVideos.containsKey(it.id) }.take(6)
+            LazyRow(
+                Modifier.align(Alignment.CenterEnd).fillMaxWidth().padding(start = 76.dp, end = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                reverseLayout = true
+            ) {
+                items(cohosts, key = { it.id }) { participant ->
+                    Box(Modifier.size(width = 82.dp, height = 116.dp).clip(RoundedCornerShape(9.dp)).background(Color(0xFF161A20)).clickable { manager.toggleCohostMicrophone(participant) }) {
+                        cohostVideos[participant.id]?.let { track -> WebRtcVideoSurface(track, manager.eglContext, Modifier.fillMaxSize(), mirror = false) }
+                        Surface(Modifier.align(Alignment.BottomCenter).padding(4.dp), color = Color.Black.copy(alpha = .6f), shape = RoundedCornerShape(6.dp), tonalElevation = 0.dp) {
+                            Row(Modifier.padding(horizontal = 5.dp, vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Icon(if (participant.microphoneEnabled) Icons.Default.Mic else Icons.Default.MicOff, null, tint = Color.White, modifier = Modifier.size(11.dp))
+                                Text(participant.viewer.name.ifBlank { "Guest" }, color = Color.White, fontSize = 8.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = 3.dp).widthIn(max = 49.dp))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         Column(Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(bottom = 82.dp)) {
             if (paused) Surface(color = Color.Black.copy(alpha = .62f), tonalElevation = 0.dp, modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp), shape = RoundedCornerShape(7.dp)) { Text("Live video is paused", color = Color.White, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp)) }
             LazyColumn(Modifier.fillMaxWidth().heightIn(max = 205.dp), contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -4692,6 +4859,9 @@ private fun LiveBroadcastScreen(repository: SocialRepository, stream: SocialLive
             Row(Modifier.fillMaxWidth().height(52.dp).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 if (host) {
                     IconButton(onClick = manager::togglePause) { Icon(if (paused) Icons.Default.PlayArrow else Icons.Default.Pause, "Pause live", tint = Color.White) }
+                    IconButton(onClick = manager::switchCamera) { Icon(Icons.Default.Cameraswitch, "Switch camera", tint = Color.White) }
+                    IconButton(onClick = manager::toggleMicrophone) { Icon(if (microphoneEnabled) Icons.Default.Mic else Icons.Default.MicOff, "Microphone", tint = Color.White) }
+                } else if (cohostRequested) {
                     IconButton(onClick = manager::switchCamera) { Icon(Icons.Default.Cameraswitch, "Switch camera", tint = Color.White) }
                     IconButton(onClick = manager::toggleMicrophone) { Icon(if (microphoneEnabled) Icons.Default.Mic else Icons.Default.MicOff, "Microphone", tint = Color.White) }
                 }

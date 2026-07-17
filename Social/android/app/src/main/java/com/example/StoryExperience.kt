@@ -1622,7 +1622,11 @@ private fun StoryViewerContent(
             }
     ) {
         StoryItemMedia(repository, item, Modifier.fillMaxSize())
-        Column(Modifier.align(Alignment.TopCenter).fillMaxWidth().padding(horizontal = 7.dp, vertical = 5.dp)) {
+        Column(
+            Modifier.align(Alignment.TopCenter).fillMaxWidth()
+                .background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = .46f), Color.Black.copy(alpha = .18f), Color.Transparent)))
+                .padding(horizontal = 7.dp, vertical = 5.dp)
+        ) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
                 frames.forEachIndexed { index, _ ->
                     val value = when { index < frameIndex -> 1f; index == frameIndex -> progress; else -> 0f }
@@ -1633,7 +1637,12 @@ private fun StoryViewerContent(
                 AsyncImage(group.author.avatar, null, Modifier.size(38.dp).clip(CircleShape).background(Color.DarkGray), contentScale = ContentScale.Crop)
                 Column(Modifier.weight(1f).padding(start = 8.dp)) {
                     Text(group.author.name, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp, maxLines = 1)
-                    Text(relativeStoryTime(frame.story.createdAt), color = Color.White.copy(alpha = .72f), fontSize = 9.sp)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(relativeStoryTime(frame.story.createdAt), color = Color.White.copy(alpha = .72f), fontSize = 9.sp)
+                        if (frame.story.authorId == repository.currentUserId()) {
+                            Text(" · ${frame.story.viewerCount} views", color = Color.White.copy(alpha = .78f), fontSize = 9.sp)
+                        }
+                    }
                 }
                 IconButton(onClick = onOptions, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.MoreHoriz, "Story options", tint = Color.White) }
                 IconButton(onClick = onClose, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.Close, "Close", tint = Color.White) }

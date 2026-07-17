@@ -966,12 +966,20 @@ class SocialRepository(context: Context) {
         return data.list("socialLiveParticipants").mapNotNull { it.objectMap()?.let(::mapLiveParticipant) }
     }
 
-    suspend fun joinLiveStream(id: String): SocialLiveParticipant {
+    suspend fun joinLiveStream(id: String, asCohost: Boolean = false): SocialLiveParticipant {
         val data = client.execute(
-            """mutation JoinTiwiLive(${D}id: ID!) { joinSocialLiveStream(id: ${D}id) { $LIVE_PARTICIPANT_FIELDS } }""",
-            mapOf("id" to id)
+            """mutation JoinTiwiLive(${D}id: ID!, ${D}cohost: Boolean) { joinSocialLiveStream(id: ${D}id, asCohost: ${D}cohost) { $LIVE_PARTICIPANT_FIELDS } }""",
+            mapOf("id" to id, "cohost" to asCohost)
         )
         return mapLiveParticipant(data.objectValue("joinSocialLiveStream") ?: throw SocialApiException("Could not join this live"))
+    }
+
+    suspend fun inviteLiveCohost(streamId: String, userId: String): Boolean {
+        val data = client.execute(
+            """mutation InviteTiwiLiveCohost(${D}streamId: ID!, ${D}userId: ID!) { inviteSocialLiveCohost(streamId: ${D}streamId, userId: ${D}userId) }""",
+            mapOf("streamId" to streamId, "userId" to userId)
+        )
+        return data.boolean("inviteSocialLiveCohost")
     }
 
     suspend fun signalLiveStream(
@@ -1509,7 +1517,8 @@ class SocialRepository(context: Context) {
     private fun mapLiveParticipant(value: Map<String, Any?>) = SocialLiveParticipant(
         id = value.string("id").orEmpty(), streamId = value.string("streamId").orEmpty(), viewerId = value.string("viewerId").orEmpty(),
         viewer = mapUser(value.objectValue("viewer") ?: emptyMap()), viewerProfile = value.objectValue("viewerProfile")?.let(::mapProfile),
-        status = value.string("status") ?: "joining", hostOffer = value.objectValue("hostOffer"), viewerAnswer = value.objectValue("viewerAnswer"),
+        status = value.string("status") ?: "joining", role = value.string("role") ?: "viewer", microphoneEnabled = value.boolean("microphoneEnabled"),
+        hostOffer = value.objectValue("hostOffer"), viewerAnswer = value.objectValue("viewerAnswer"),
         hostIce = value.list("hostIce").mapNotNull { it.objectMap() }, viewerIce = value.list("viewerIce").mapNotNull { it.objectMap() }
     )
 
@@ -1722,7 +1731,7 @@ class SocialRepository(context: Context) {
         const val CONVERSATION_FIELDS = "id type title avatarUrl requestStatus requestedById unreadCount updatedAt members { id userId role muted archived typingAt lastReadAt blocked user { $PUBLIC_USER_FIELDS } profile { id userId username verified badgeType avatarDecoration { $DECORATION_FIELDS } } } lastMessage { $MESSAGE_FIELDS }"
         const val CALL_FIELDS = "id conversationId callerId calleeId type status offer answer iceCandidates caller { $PUBLIC_USER_FIELDS } callee { $PUBLIC_USER_FIELDS }"
         const val LIVE_STREAM_FIELDS = "id hostId title description status visibility playbackUrl qualities viewerCount commentsEnabled paused lastHeartbeatAt startedAt endedAt host { $PUBLIC_USER_FIELDS } hostProfile { $PROFILE_FIELDS }"
-        const val LIVE_PARTICIPANT_FIELDS = "id streamId viewerId status hostOffer viewerAnswer hostIce viewerIce viewer { $PUBLIC_USER_FIELDS } viewerProfile { $PROFILE_FIELDS }"
+        const val LIVE_PARTICIPANT_FIELDS = "id streamId viewerId status role microphoneEnabled hostOffer viewerAnswer hostIce viewerIce viewer { $PUBLIC_USER_FIELDS } viewerProfile { $PROFILE_FIELDS }"
         const val LIVE_COMMENT_FIELDS = "id streamId authorId replyToId body status createdAt author { $PUBLIC_USER_FIELDS } authorProfile { $PROFILE_FIELDS }"
         const val NOTIFICATION_FIELDS = "id scope scopeId type title message status metadata readAt createdAt"
         const val GROUP_FIELDS = "id ownerId name description coverUrl privacy status memberCount viewerRole viewerJoined createdAt owner { $PUBLIC_USER_FIELDS }"

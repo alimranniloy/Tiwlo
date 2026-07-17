@@ -3095,6 +3095,8 @@ type SocialLiveParticipant {
   viewer: SocialPublicUser!
   viewerProfile: SocialProfile
   status: String!
+  role: String!
+  microphoneEnabled: Boolean!
   hostOffer: JSON
   viewerAnswer: JSON
   hostIce: JSON!
@@ -3676,7 +3678,8 @@ type Mutation {
   endSocialCall(id: ID!, status: String): SocialCallSession!
   startSocialLiveStream(input: SocialLiveStreamInput!): SocialLiveStream!
   updateSocialLiveStream(id: ID!, status: String!, viewerCount: Int): SocialLiveStream!
-  joinSocialLiveStream(id: ID!): SocialLiveParticipant!
+  joinSocialLiveStream(id: ID!, asCohost: Boolean): SocialLiveParticipant!
+  inviteSocialLiveCohost(streamId: ID!, userId: ID!): Boolean!
   signalSocialLiveStream(input: SocialLiveSignalInput!): SocialLiveParticipant!
   heartbeatSocialLiveStream(id: ID!, paused: Boolean): SocialLiveStream!
   leaveSocialLiveStream(id: ID!): Boolean!

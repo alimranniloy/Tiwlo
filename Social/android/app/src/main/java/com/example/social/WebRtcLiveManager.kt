@@ -58,6 +58,7 @@ class WebRtcLiveManager(context: Context, private val repository: SocialReposito
     private var currentStream: SocialLiveStream? = null
     private var ownParticipant: SocialLiveParticipant? = null
     private var hostMode = false
+    private var cohostMode = false
     private var disposed = false
     private var offlineSince: Long? = null
     private var iceServers: List<PeerConnection.IceServer> = listOf(
@@ -70,6 +71,10 @@ class WebRtcLiveManager(context: Context, private val repository: SocialReposito
     val localVideo: StateFlow<VideoTrack?> = _localVideo.asStateFlow()
     private val _remoteVideo = MutableStateFlow<VideoTrack?>(null)
     val remoteVideo: StateFlow<VideoTrack?> = _remoteVideo.asStateFlow()
+    private val _cohostVideos = MutableStateFlow<Map<String, VideoTrack>>(emptyMap())
+    val cohostVideos: StateFlow<Map<String, VideoTrack>> = _cohostVideos.asStateFlow()
+    private val _participants = MutableStateFlow<List<SocialLiveParticipant>>(emptyList())
+    val participants: StateFlow<List<SocialLiveParticipant>> = _participants.asStateFlow()
     private val _viewerCount = MutableStateFlow(0)
     val viewerCount: StateFlow<Int> = _viewerCount.asStateFlow()
     private val _paused = MutableStateFlow(false)
@@ -100,14 +105,17 @@ class WebRtcLiveManager(context: Context, private val repository: SocialReposito
         startHostPolling()
     }
 
-    suspend fun join(stream: SocialLiveStream) {
+    suspend fun join(stream: SocialLiveStream, asCohost: Boolean = false) {
         hostMode = false
         currentStream = stream
         _state.value = "Connecting…"
         iceServers = loadIceServers()
-        val participant = repository.joinLiveStream(stream.id)
+        val participant = repository.joinLiveStream(stream.id, asCohost)
         ownParticipant = participant
-        peers[participant.id] = createPeer(participant.id, viewer = true)
+        cohostMode = participant.role == "cohost"
+        if (cohostMode) startCapture()
+        _participants.value = listOf(participant)
+        peers[participant.id] = createPeer(participant.id, remoteIsHost = true, sendLocal = cohostMode)
         startViewerPolling(participant.id)
     }
 
@@ -123,6 +131,27 @@ class WebRtcLiveManager(context: Context, private val repository: SocialReposito
         val value = !_microphoneEnabled.value
         _microphoneEnabled.value = value
         localAudio?.setEnabled(value)
+        if (cohostMode) {
+            ownParticipant?.id?.let { participantId ->
+                scope.launch {
+                    runCatching {
+                        repository.signalLiveStream(
+                            participantId,
+                            status = if (value) "cohost_connected" else "cohost_muted"
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    fun toggleCohostMicrophone(participant: SocialLiveParticipant) {
+        if (!hostMode || participant.role != "cohost") return
+        scope.launch {
+            runCatching {
+                repository.signalLiveStream(participant.id, status = if (participant.microphoneEnabled) "muted" else "unmuted")
+            }
+        }
     }
 
     fun switchCamera() { cameraCapturer?.switchCamera(null) }
@@ -182,6 +211,7 @@ class WebRtcLiveManager(context: Context, private val repository: SocialReposito
                 try {
                     adaptCaptureToNetwork()
                     val participants = repository.liveParticipants(streamId)
+                    _participants.value = participants
                     _viewerCount.value = participants.size
                     participants.forEach { participant -> connectHostParticipant(participant) }
                     val active = participants.map { it.id }.toSet()
@@ -201,16 +231,16 @@ class WebRtcLiveManager(context: Context, private val repository: SocialReposito
     }
 
     private suspend fun connectHostParticipant(participant: SocialLiveParticipant) {
-        val peer = peers.getOrPut(participant.id) { createPeer(participant.id, viewer = false) }
+        val peer = peers.getOrPut(participant.id) { createPeer(participant.id, remoteIsHost = false, sendLocal = true) }
         if (peer.localDescription == null) {
             val offer = createOffer(peer)
             setLocal(peer, offer)
-            repository.signalLiveStream(participant.id, offer = offer.toMap(), status = "joining")
+            repository.signalLiveStream(participant.id, offer = offer.toMap(), status = if (participant.role == "cohost") "cohost_joining" else "joining")
         }
         val answer = participant.viewerAnswer.toSessionDescription(SessionDescription.Type.ANSWER)
         if (answer != null && remoteApplied.add(participant.id)) {
             setRemote(peer, answer)
-            repository.signalLiveStream(participant.id, status = "connected")
+            repository.signalLiveStream(participant.id, status = if (participant.role == "cohost") "cohost_connected" else "connected")
         }
         if (participant.id in remoteApplied) addCandidates(participant.id, peer, participant.viewerIce)
     }
@@ -244,15 +274,27 @@ class WebRtcLiveManager(context: Context, private val repository: SocialReposito
                         closeMedia()
                         break
                     }
-                    val latest = repository.signalLiveStream(participantId, status = if (remoteApplied.contains(participantId)) "connected" else "joining")
+                    val localStatus = when {
+                        cohostMode && !_microphoneEnabled.value -> "cohost_muted"
+                        cohostMode && remoteApplied.contains(participantId) -> "cohost_connected"
+                        cohostMode -> "cohost_joining"
+                        remoteApplied.contains(participantId) -> "connected"
+                        else -> "joining"
+                    }
+                    val latest = repository.signalLiveStream(participantId, status = localStatus)
                     ownParticipant = latest
+                    _participants.value = listOf(latest)
+                    if (cohostMode) {
+                        _microphoneEnabled.value = latest.microphoneEnabled
+                        localAudio?.setEnabled(latest.microphoneEnabled)
+                    }
                     val peer = peers[participantId] ?: break
                     val offer = latest.hostOffer.toSessionDescription(SessionDescription.Type.OFFER)
                     if (offer != null && remoteApplied.add(participantId)) {
                         setRemote(peer, offer)
                         val answer = createAnswer(peer)
                         setLocal(peer, answer)
-                        repository.signalLiveStream(participantId, answer = answer.toMap(), status = "connected")
+                        repository.signalLiveStream(participantId, answer = answer.toMap(), status = if (cohostMode) "cohost_connected" else "connected")
                     }
                     if (participantId in remoteApplied) addCandidates(participantId, peer, latest.hostIce)
                     heartbeatTick += 1
@@ -265,21 +307,21 @@ class WebRtcLiveManager(context: Context, private val repository: SocialReposito
         }
     }
 
-    private fun createPeer(participantId: String, viewer: Boolean): PeerConnection {
+    private fun createPeer(participantId: String, remoteIsHost: Boolean, sendLocal: Boolean): PeerConnection {
         val config = PeerConnection.RTCConfiguration(iceServers).apply {
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
             continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
         }
-        val peer = factory.createPeerConnection(config, peerObserver(participantId, viewer))
+        val peer = factory.createPeerConnection(config, peerObserver(participantId, remoteIsHost))
             ?: throw SocialApiException("Could not initialize live video")
-        if (!viewer) {
+        if (sendLocal) {
             localAudio?.let { peer.addTrack(it, listOf("tiwi-live")) }
             localVideoTrack?.let { peer.addTrack(it, listOf("tiwi-live")) }
         }
         return peer
     }
 
-    private fun peerObserver(participantId: String, viewer: Boolean) = object : PeerConnection.Observer {
+    private fun peerObserver(participantId: String, remoteIsHost: Boolean) = object : PeerConnection.Observer {
         override fun onSignalingChange(state: PeerConnection.SignalingState) = Unit
         override fun onIceConnectionChange(state: PeerConnection.IceConnectionState) {
             when (state) {
@@ -300,8 +342,12 @@ class WebRtcLiveManager(context: Context, private val repository: SocialReposito
         override fun onDataChannel(channel: DataChannel) = Unit
         override fun onRenegotiationNeeded() = Unit
         override fun onAddTrack(receiver: RtpReceiver, mediaStreams: Array<out MediaStream>) {
-            if (viewer) when (val track = receiver.track()) {
-                is VideoTrack -> { track.setEnabled(true); _remoteVideo.value = track }
+            when (val track = receiver.track()) {
+                is VideoTrack -> {
+                    track.setEnabled(true)
+                    if (remoteIsHost) _remoteVideo.value = track
+                    else _cohostVideos.value = _cohostVideos.value + (participantId to track)
+                }
                 is AudioTrack -> track.setEnabled(true)
             }
         }
@@ -356,6 +402,7 @@ class WebRtcLiveManager(context: Context, private val repository: SocialReposito
         peers.remove(id)?.let { it.close(); it.dispose() }
         remoteApplied.remove(id)
         candidateKeys.remove(id)
+        _cohostVideos.value = _cohostVideos.value - id
     }
 
     private fun closeMedia() {
@@ -364,7 +411,7 @@ class WebRtcLiveManager(context: Context, private val repository: SocialReposito
         runCatching { cameraCapturer?.stopCapture() }
         cameraCapturer?.dispose(); cameraCapturer = null
         textureHelper?.dispose(); textureHelper = null
-        localVideoTrack?.dispose(); localVideoTrack = null; _localVideo.value = null; _remoteVideo.value = null
+        localVideoTrack?.dispose(); localVideoTrack = null; _localVideo.value = null; _remoteVideo.value = null; _cohostVideos.value = emptyMap(); _participants.value = emptyList()
         videoSource?.dispose(); videoSource = null
         localAudio?.dispose(); localAudio = null
         audioSource?.dispose(); audioSource = null
