@@ -2776,6 +2776,7 @@ type SocialPost {
   type: String!
   body: String
   media: JSON!
+  metadata: JSON!
   thumbnailUrl: String
   hlsUrl: String
   processingStatus: String!
@@ -2797,10 +2798,34 @@ type SocialPost {
   reactionCount: Int!
   commentCount: Int!
   viewerReaction: String
+  recommended: Boolean!
+  recommendationLabel: String
   publishedAt: String
   deletedAt: String
   createdAt: String
   updatedAt: String
+}
+
+type SocialFeedModule {
+  id: ID!
+  kind: String!
+  insertAfter: Int!
+  title: String!
+  profiles: [SocialProfile!]!
+  posts: [SocialPost!]!
+}
+
+type SocialLinkPreview {
+  url: String!
+  canonicalUrl: String!
+  domain: String!
+  title: String!
+  description: String
+  imageUrl: String
+  siteName: String
+  faviconUrl: String
+  registeredAt: String
+  domainAgeYears: Int
 }
 
 type SocialModerationEvent {
@@ -3023,6 +3048,7 @@ input SocialPostInput {
   type: String
   body: String
   media: JSON
+  metadata: JSON
   thumbnailUrl: String
   hlsUrl: String
   processingStatus: String
@@ -3038,6 +3064,7 @@ input SocialPostUpdateInput {
   id: ID!
   body: String
   media: JSON
+  metadata: JSON
   thumbnailUrl: String
   hlsUrl: String
   processingStatus: String
@@ -3212,6 +3239,8 @@ type Query {
   socialFollowing(userId: ID, limit: Int): [SocialProfile!]!
   socialBlockedUsers(limit: Int): [SocialProfile!]!
   socialFeed(type: String, authorId: ID, groupId: ID, before: String, limit: Int): [SocialPost!]!
+  socialFeedModules(feedSize: Int): [SocialFeedModule!]!
+  socialLinkPreview(url: String!): SocialLinkPreview!
   socialStories(limit: Int): [SocialPost!]!
   socialProfileDecorations: [SocialProfileDecoration!]!
   socialProfileEffects: [SocialProfileDecoration!]!
@@ -3444,7 +3473,7 @@ type Mutation {
   sendSocialMessage(input: SocialMessageInput!): SocialMessage!
   editSocialMessage(id: ID!, body: String!): SocialMessage!
   markSocialConversationRead(id: ID!): SocialConversation!
-  updateSocialConversationMember(id: ID!, muted: Boolean, archived: Boolean, markUnread: Boolean, leave: Boolean): SocialConversation
+  updateSocialConversationMember(id: ID!, muted: Boolean, archived: Boolean, markUnread: Boolean, leave: Boolean, deleteForMe: Boolean): SocialConversation
   addSocialConversationMembers(id: ID!, userIds: [ID!]!): SocialConversation!
   setSocialConversationTyping(id: ID!, typing: Boolean!): SocialConversationMember!
   reactToSocialMessage(id: ID!, emoji: String!): SocialMessage!

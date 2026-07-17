@@ -1499,6 +1499,7 @@ model SocialPost {
   type              String                  @default("post")
   body              String?
   media             Json                    @default("[]")
+  metadata          Json                    @default("{}")
   thumbnailUrl      String?
   hlsUrl            String?
   processingStatus  String                  @default("ready")

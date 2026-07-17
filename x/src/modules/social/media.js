@@ -44,6 +44,21 @@ const runProcess = (command, args) => new Promise((resolve, reject) => {
   });
 });
 
+const probeVideoDimensions = (command, inputPath) => new Promise((resolve) => {
+  const child = spawn(command, ['-hide_banner', '-i', inputPath], { windowsHide: true });
+  let details = '';
+  let settled = false;
+  const finish = () => {
+    if (settled) return;
+    settled = true;
+    const match = details.match(/Video:.*?(\d{2,5})x(\d{2,5})(?:[\s,])/s);
+    resolve(match ? { width: Number(match[1]), height: Number(match[2]) } : null);
+  };
+  child.stderr.on('data', (chunk) => { details = `${details}${chunk}`.slice(-24000); });
+  child.once('error', finish);
+  child.once('close', finish);
+});
+
 const writeStatus = async (file, value) => {
   await writeFile(file, JSON.stringify({ ...value, updatedAt: new Date().toISOString() }, null, 2), 'utf8');
 };
@@ -51,11 +66,22 @@ const writeStatus = async (file, value) => {
 const transcodeVideo = async ({ inputPath, outputDir, publicBase, statusFile }) => {
   const ffmpeg = resolveSocialFfmpegPath();
   let thumbnailReady = false;
-  const qualities = [
-    { name: '360p', height: 360, bandwidth: 800000, resolution: '640x360' },
-    { name: '480p', height: 480, bandwidth: 1400000, resolution: '854x480' },
-    { name: '720p', height: 720, bandwidth: 2800000, resolution: '1280x720' }
+  const qualityLadder = [
+    { name: '120p', height: 120, bandwidth: 180000 },
+    { name: '240p', height: 240, bandwidth: 350000 },
+    { name: '320p', height: 320, bandwidth: 600000 },
+    { name: '480p', height: 480, bandwidth: 1200000 },
+    { name: '720p', height: 720, bandwidth: 2500000 },
+    { name: '1080p', height: 1080, bandwidth: 5000000 },
+    { name: '1440p', height: 1440, bandwidth: 9000000 },
+    { name: '2160p', height: 2160, bandwidth: 18000000 }
   ];
+  const dimensions = await probeVideoDimensions(ffmpeg, inputPath);
+  const sourceHeight = Number(dimensions?.height || 0);
+  const qualities = sourceHeight > 0
+    ? qualityLadder.filter((quality) => quality.height <= sourceHeight)
+    : qualityLadder;
+  if (!qualities.length) qualities.push(qualityLadder[0]);
   try {
     await mkdir(outputDir, { recursive: true });
     await writeStatus(statusFile, { status: 'processing', progress: 2, sourceUrl: publicBase.sourceUrl, hlsUrl: publicBase.hlsUrl, thumbnailUrl: null });
@@ -92,7 +118,8 @@ const transcodeVideo = async ({ inputPath, outputDir, publicBase, statusFile }) 
         '-hide_banner', '-loglevel', 'error', '-y', '-i', inputPath,
         '-vf', `scale=-2:min(${quality.height}\\,ih)`,
         '-c:v', 'libx264', '-profile:v', 'main', '-preset', 'veryfast', '-crf', '23',
-        '-c:a', 'aac', '-b:a', '128k', '-ac', '2',
+        '-g', '48', '-keyint_min', '48', '-sc_threshold', '0',
+        '-c:a', 'aac', '-b:a', quality.height <= 320 ? '64k' : quality.height < 720 ? '96k' : '128k', '-ac', '2',
         '-hls_time', '4', '-hls_playlist_type', 'vod', '-hls_flags', 'independent_segments',
         '-hls_segment_filename', join(qualityDir, 'segment-%05d.ts'),
         join(qualityDir, 'index.m3u8')
@@ -107,7 +134,7 @@ const transcodeVideo = async ({ inputPath, outputDir, publicBase, statusFile }) 
     }
     const master = ['#EXTM3U', '#EXT-X-VERSION:3'];
     for (const quality of qualities) {
-      master.push(`#EXT-X-STREAM-INF:BANDWIDTH=${quality.bandwidth},RESOLUTION=${quality.resolution}`);
+      master.push(`#EXT-X-STREAM-INF:BANDWIDTH=${quality.bandwidth},AVERAGE-BANDWIDTH=${Math.round(quality.bandwidth * 0.82)}`);
       master.push(`${quality.name}/index.m3u8`);
     }
     await writeFile(join(outputDir, 'master.m3u8'), `${master.join('\n')}\n`, 'utf8');

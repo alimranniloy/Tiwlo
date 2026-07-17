@@ -70,7 +70,11 @@ class PostUploadWorker(context: Context, parameters: WorkerParameters) : Corouti
             setProgress(workDataOf(KEY_PROGRESS to 90, KEY_STATUS to "Publishing to your feed"))
             setForeground(uploadForeground(notificationId, 90, "Publishing to your feed"))
             val type = if (uploaded.any { it.type == "video" }) "video" else "post"
-            val post = repository.createPost(manifest.optString("body"), type, uploaded, manifest.optString("visibility", "public"))
+            val metadata = manifest.optJSONObject("metadata")?.toMap().orEmpty()
+            val post = repository.createPost(
+                manifest.optString("body"), type, uploaded, manifest.optString("visibility", "public"),
+                metadata = metadata, location = manifest.optString("location").takeIf { it.isNotBlank() }
+            )
             setProgress(workDataOf(KEY_PROGRESS to 100, KEY_STATUS to "Post published", KEY_POST_ID to post.id))
             showComplete(notificationId, post.id)
             queueDirectory?.deleteRecursively()
@@ -146,7 +150,14 @@ class PostUploadWorker(context: Context, parameters: WorkerParameters) : Corouti
         private const val POST_CHANNEL = "tiwi_post_published_brand_v3"
         private const val COMPLETION_NOTIFICATION_MASK = 0x35A17
 
-        suspend fun enqueue(context: Context, uris: List<Uri>, body: String, visibility: String): UUID = withContext(Dispatchers.IO) {
+        suspend fun enqueue(
+            context: Context,
+            uris: List<Uri>,
+            body: String,
+            visibility: String,
+            metadata: Map<String, Any?> = emptyMap(),
+            location: String? = null
+        ): UUID = withContext(Dispatchers.IO) {
             val queueId = UUID.randomUUID()
             val directory = File(context.filesDir, "post-upload-queue/$queueId").apply { mkdirs() }
             val media = JSONArray()
@@ -167,6 +178,8 @@ class PostUploadWorker(context: Context, parameters: WorkerParameters) : Corouti
                 manifest.writeText(JSONObject()
                     .put("body", body.take(10_000))
                     .put("visibility", visibility)
+                    .put("metadata", JSONObject(metadata))
+                    .put("location", location)
                     .put("notificationId", queueId.hashCode())
                     .put("media", media).toString())
                 val request = OneTimeWorkRequestBuilder<PostUploadWorker>()
@@ -214,5 +227,20 @@ class PostUploadWorker(context: Context, parameters: WorkerParameters) : Corouti
         private fun rawSound(context: Context, resId: Int): Uri = Uri.parse("android.resource://${context.packageName}/$resId")
 
         private fun canNotify(context: Context): Boolean = Build.VERSION.SDK_INT < 33 || ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+
+        private fun JSONObject.toMap(): Map<String, Any?> = keys().asSequence().associateWith { key ->
+            when (val value = opt(key)) {
+                is JSONObject -> value.toMap()
+                is JSONArray -> (0 until value.length()).map { index ->
+                    when (val item = value.opt(index)) {
+                        is JSONObject -> item.toMap()
+                        JSONObject.NULL -> null
+                        else -> item
+                    }
+                }
+                JSONObject.NULL -> null
+                else -> value
+            }
+        }
     }
 }

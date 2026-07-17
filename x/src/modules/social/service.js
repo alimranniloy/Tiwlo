@@ -1,4 +1,6 @@
 import { randomBytes } from 'node:crypto';
+import { lookup } from 'node:dns/promises';
+import { isIP } from 'node:net';
 import { isAdmin, requireAdmin, requireAuth } from '../../core/auth.js';
 import { AppError, forbidden, notFound } from '../../core/errors.js';
 import { removeUndefined } from '../../core/format.js';
@@ -62,9 +64,41 @@ const GROUP_PRIVACIES = new Set(['public', 'private']);
 const GROUP_ROLES = new Set(['admin', 'editor', 'member']);
 const MESSAGE_TYPES = new Set(['text', 'image', 'video', 'audio', 'file', 'system']);
 const CALL_TYPES = new Set(['audio', 'video']);
+const PENDING_CALL_STATUSES = ['calling', 'ringing', 'connecting'];
+const ACTIVE_CALL_STATUSES = ['calling', 'ringing', 'connecting', 'active'];
+const CALL_EXPIRY_MS = 60_000;
+const ACTIVE_CALL_STALE_MS = 90_000;
+const ONLINE_CALL_WINDOW_MS = 75_000;
 const RESTRICTED_SOCIAL_STATUSES = new Set(['disabled', 'banned', 'blocked', 'suspended']);
 const SOCIAL_PRESENCE_TOUCH_MS = 60_000;
 const socialPresenceTouches = new Map();
+const linkPreviewCache = new Map();
+const domainAgeCache = new Map();
+
+const stableTextSeed = (value) => {
+  let hash = 2166136261;
+  for (const character of String(value || '')) {
+    hash ^= character.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+};
+
+const recommendationTokens = (...values) => {
+  const words = values.flatMap((value) => {
+    if (value === null || value === undefined) return [];
+    const text = typeof value === 'string' ? value : JSON.stringify(value);
+    return text.toLowerCase().match(/[\p{L}\p{N}_]{3,}/gu) || [];
+  });
+  return new Set(words.filter((word) => !['this', 'that', 'with', 'from', 'your', 'have', 'will', 'post', 'video'].includes(word)).slice(0, 120));
+};
+
+const tokenOverlap = (left, right) => {
+  if (!left.size || !right.size) return 0;
+  let matches = 0;
+  for (const token of left) if (right.has(token)) matches += 1;
+  return matches;
+};
 
 const createSocialNotification = async (ctx, {
   ownerId,
@@ -139,6 +173,181 @@ const createMessageNotification = async (ctx, actor, conversation, message) => {
 const bounded = (value, max = 5000) => {
   if (value === null || value === undefined) return value;
   return String(value).trim().slice(0, max);
+};
+
+const compactObject = (value, limits = {}) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return Object.fromEntries(Object.entries(limits).flatMap(([key, max]) => {
+    const item = value[key];
+    if (item === null || item === undefined) return [];
+    if (typeof max === 'number') return [[key, bounded(item, max)]];
+    if (max === 'boolean') return [[key, Boolean(item)]];
+    return [];
+  }));
+};
+
+const sanitizePostMetadata = (value) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const metadata = compactObject(value, {
+    music: 160, locationLabel: 160, feeling: 80, background: 24, crossPost: 'boolean'
+  });
+  const ids = (items) => Array.isArray(items) ? [...new Set(items.map((item) => bounded(item, 80)).filter(Boolean))].slice(0, 20) : [];
+  metadata.taggedUserIds = ids(value.taggedUserIds);
+  metadata.collaboratorIds = ids(value.collaboratorIds);
+  if (value.linkPreview && typeof value.linkPreview === 'object') {
+    metadata.linkPreview = compactObject(value.linkPreview, {
+      url: 2000, canonicalUrl: 2000, domain: 255, title: 300, description: 800,
+      imageUrl: 2000, siteName: 160, faviconUrl: 2000, registeredAt: 80
+    });
+    const age = Number(value.linkPreview.domainAgeYears);
+    if (Number.isFinite(age)) metadata.linkPreview.domainAgeYears = Math.max(0, Math.min(200, Math.floor(age)));
+  }
+  return metadata;
+};
+
+const isPrivateAddress = (address) => {
+  const value = String(address || '').toLowerCase().split('%')[0];
+  if (!value) return true;
+  if (value === '::1' || value === '::' || value.startsWith('fc') || value.startsWith('fd') || value.startsWith('fe8') || value.startsWith('fe9') || value.startsWith('fea') || value.startsWith('feb')) return true;
+  if (value.startsWith('::ffff:')) return isPrivateAddress(value.slice(7));
+  if (isIP(value) !== 4) return false;
+  const [a, b] = value.split('.').map(Number);
+  return a === 0 || a === 10 || a === 127 || a >= 224 ||
+    (a === 100 && b >= 64 && b <= 127) || (a === 169 && b === 254) ||
+    (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) ||
+    (a === 198 && (b === 18 || b === 19));
+};
+
+const assertPublicUrl = async (rawUrl) => {
+  let target;
+  try { target = new URL(bounded(rawUrl, 2000)); } catch { throw new AppError('Enter a valid link', 'BAD_USER_INPUT'); }
+  if (!['http:', 'https:'].includes(target.protocol)) throw new AppError('Only web links can be previewed', 'BAD_USER_INPUT');
+  const hostname = target.hostname.toLowerCase();
+  if (!hostname || hostname === 'localhost' || hostname.endsWith('.local') || hostname.endsWith('.internal')) throw new AppError('This link cannot be previewed', 'BAD_USER_INPUT');
+  if (isIP(hostname)) {
+    if (isPrivateAddress(hostname)) throw new AppError('This link cannot be previewed', 'BAD_USER_INPUT');
+  } else {
+    const addresses = await lookup(hostname, { all: true, verbatim: true }).catch(() => []);
+    if (!addresses.length || addresses.some(({ address }) => isPrivateAddress(address))) throw new AppError('This link cannot be previewed', 'BAD_USER_INPUT');
+  }
+  target.hash = '';
+  return target;
+};
+
+const decodeHtml = (value = '') => String(value)
+  .replace(/&amp;/gi, '&').replace(/&quot;/gi, '"').replace(/&#39;|&apos;/gi, "'")
+  .replace(/&lt;/gi, '<').replace(/&gt;/gi, '>').replace(/&#(\d+);/g, (_, code) => String.fromCodePoint(Number(code)));
+
+const htmlAttributes = (tag = '') => Object.fromEntries([...tag.matchAll(/([:\w-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/g)]
+  .map((match) => [match[1].toLowerCase(), decodeHtml(match[2] ?? match[3] ?? match[4] ?? '')]));
+
+const metaValue = (html, ...keys) => {
+  const wanted = new Set(keys.map((key) => key.toLowerCase()));
+  for (const match of html.matchAll(/<meta\b[^>]*>/gi)) {
+    const attributes = htmlAttributes(match[0]);
+    if (wanted.has(String(attributes.property || attributes.name || '').toLowerCase()) && attributes.content) return bounded(attributes.content, 2000);
+  }
+  return null;
+};
+
+const absoluteWebUrl = (value, base) => {
+  if (!value) return null;
+  try { return new URL(value, base).toString(); } catch { return null; }
+};
+
+const readLimitedHtml = async (response, maxBytes = 600_000) => {
+  if (!response.body?.getReader) return (await response.text()).slice(0, maxBytes);
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let size = 0;
+  let text = '';
+  while (size < maxBytes) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    text += decoder.decode(value, { stream: true });
+    if (size >= maxBytes) await reader.cancel();
+  }
+  return text.slice(0, maxBytes);
+};
+
+const domainRegistration = async (hostname) => {
+  const clean = hostname.replace(/^www\./, '');
+  const labels = clean.split('.').filter(Boolean);
+  const commonSecondLevel = new Set(['co', 'com', 'net', 'org', 'gov', 'ac', 'edu']);
+  const key = labels.length <= 2 ? clean
+    : commonSecondLevel.has(labels.at(-2)) && labels.at(-1)?.length === 2 ? labels.slice(-3).join('.')
+      : labels.slice(-2).join('.');
+  const cached = domainAgeCache.get(key);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 4_000);
+  let value = { registeredAt: null, domainAgeYears: null };
+  try {
+    const response = await fetch(`https://rdap.org/domain/${encodeURIComponent(key)}`, { signal: controller.signal, headers: { accept: 'application/rdap+json, application/json' } });
+    if (response.ok) {
+      const json = await response.json();
+      const event = (Array.isArray(json.events) ? json.events : []).find((item) => ['registration', 'registered'].includes(String(item.eventAction).toLowerCase()));
+      const date = event?.eventDate ? new Date(event.eventDate) : null;
+      if (date && !Number.isNaN(date.getTime())) value = {
+        registeredAt: date.toISOString(),
+        domainAgeYears: Math.max(0, Math.floor((Date.now() - date.getTime()) / 31_556_952_000))
+      };
+    }
+  } catch { /* A preview still works when a registry does not expose RDAP. */ }
+  finally { clearTimeout(timeout); }
+  domainAgeCache.set(key, { value, expiresAt: Date.now() + 86_400_000 });
+  return value;
+};
+
+export const getLinkPreview = async (ctx, rawUrl) => {
+  await requireAuth(ctx);
+  const original = await assertPublicUrl(rawUrl);
+  const cached = linkPreviewCache.get(original.toString());
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+  let target = original;
+  let response;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 7_000);
+  try {
+    for (let redirect = 0; redirect < 5; redirect += 1) {
+      response = await fetch(target, {
+        redirect: 'manual', signal: controller.signal,
+        headers: { accept: 'text/html,application/xhtml+xml;q=0.9', 'user-agent': 'TiwiLinkPreview/1.0 (+https://tiwlo.com)' }
+      });
+      if ([301, 302, 303, 307, 308].includes(response.status)) {
+        const location = response.headers.get('location');
+        if (!location) break;
+        target = await assertPublicUrl(new URL(location, target).toString());
+        continue;
+      }
+      break;
+    }
+    if (!response?.ok) throw new AppError('This link did not return a preview', 'BAD_USER_INPUT');
+    const contentType = response.headers.get('content-type') || '';
+    if (!contentType.includes('text/html') && !contentType.includes('application/xhtml+xml')) throw new AppError('This link has no web preview', 'BAD_USER_INPUT');
+    const html = await readLimitedHtml(response);
+    const canonicalMatch = html.match(/<link\b[^>]*rel\s*=\s*["'][^"']*canonical[^"']*["'][^>]*>/i);
+    const iconMatch = [...html.matchAll(/<link\b[^>]*>/gi)].map((match) => htmlAttributes(match[0])).find((attributes) => String(attributes.rel || '').toLowerCase().includes('icon'));
+    const canonical = absoluteWebUrl(canonicalMatch ? htmlAttributes(canonicalMatch[0]).href : null, target) || target.toString();
+    const titleTag = decodeHtml(html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]?.replace(/<[^>]+>/g, '').trim() || '');
+    const domainInfo = await domainRegistration(target.hostname);
+    const value = {
+      url: original.toString(), canonicalUrl: canonical, domain: target.hostname.replace(/^www\./, ''),
+      title: metaValue(html, 'og:title', 'twitter:title') || bounded(titleTag, 300) || target.hostname,
+      description: metaValue(html, 'og:description', 'twitter:description', 'description'),
+      imageUrl: absoluteWebUrl(metaValue(html, 'og:image', 'twitter:image'), target),
+      siteName: metaValue(html, 'og:site_name') || target.hostname.replace(/^www\./, ''),
+      faviconUrl: absoluteWebUrl(iconMatch?.href, target),
+      ...domainInfo
+    };
+    linkPreviewCache.set(original.toString(), { value, expiresAt: Date.now() + 600_000 });
+    if (linkPreviewCache.size > 500) linkPreviewCache.delete(linkPreviewCache.keys().next().value);
+    return value;
+  } catch (error) {
+    if (error instanceof AppError) throw error;
+    throw new AppError('Link preview is temporarily unavailable', 'UPSTREAM_ERROR');
+  } finally { clearTimeout(timeout); }
 };
 
 const reportTargetLabel = (targetType = '') => {
@@ -460,9 +669,21 @@ export const searchProfiles = async (ctx, query, limit) => {
   ]);
   const blockedIds = new Set(blocks.flatMap((row) => [row.userId, row.targetUserId]).filter((id) => id !== actor.id));
   const followingIds = new Set(following.map((row) => row.followingId));
+  const [followsActor, secondDegree] = await Promise.all([
+    ctx.prisma.socialFollow.findMany({ where: { followingId: actor.id }, select: { followerId: true }, take: 500 }),
+    followingIds.size ? ctx.prisma.socialFollow.findMany({
+      where: { followerId: { in: [...followingIds] }, followingId: { not: actor.id } },
+      select: { followingId: true }, take: 1000
+    }) : []
+  ]);
+  const followsActorIds = new Set(followsActor.map((row) => row.followerId));
+  const commonConnectionCounts = secondDegree.reduce((counts, row) => {
+    counts.set(row.followingId, (counts.get(row.followingId) || 0) + 1);
+    return counts;
+  }, new Map());
   const rows = await ctx.prisma.socialProfile.findMany({
     where: {
-      userId: { notIn: [actor.id, ...blockedIds] },
+      userId: { notIn: [actor.id, ...blockedIds, ...followingIds] },
       user: { status: 'active' },
       ...(search ? {
         OR: [
@@ -481,9 +702,10 @@ export const searchProfiles = async (ctx, query, limit) => {
     row,
     score: (row.user?.country && actor.country && row.user.country === actor.country ? 40 : 0)
       + (row.user?.primaryRegion && actor.primaryRegion && row.user.primaryRegion === actor.primaryRegion ? 15 : 0)
+      + (followsActorIds.has(row.userId) ? 70 : 0)
+      + Math.min(commonConnectionCounts.get(row.userId) || 0, 8) * 12
       + (row.verified ? 18 : 0)
       + Math.log1p(row.user?._count?.socialFollowers || 0) * 5
-      - (followingIds.has(row.userId) ? 30 : 0)
   })).sort((left, right) => right.score - left.score).slice(0, boundedLimit(limit, 30, 100));
   return Promise.all(ranked.map(({ row }) => mapProfile(ctx, row, actor.id)));
 };
@@ -663,8 +885,82 @@ const mapPost = (post) => ({
   commentCount: post._count?.comments || 0,
   saveCount: post._count?.savedBy || 0,
   viewerReaction: post.reactions?.[0]?.kind || null,
-  saved: Boolean(post.savedBy?.length)
+  saved: Boolean(post.savedBy?.length),
+  recommended: Boolean(post.recommended),
+  recommendationLabel: post.recommendationLabel || null
 });
+
+const hydrateSharedPostMedia = async (ctx, posts, viewerId) => {
+  const rows = Array.isArray(posts) ? posts : [posts];
+  const sharedItems = rows.flatMap((post) => (Array.isArray(post?.media) ? post.media : []))
+    .filter((item) => item?.type === 'shared_post' && item.sharedPostId);
+  if (!sharedItems.length) return rows;
+  const visibility = await feedVisibility(ctx, { id: viewerId });
+  const sourceIds = [...new Set(sharedItems.map((item) => item.sharedPostId))];
+  const sources = await ctx.prisma.socialPost.findMany({
+    where: { id: { in: sourceIds }, status: 'published', deletedAt: null, OR: visibility },
+    include: postInclude(viewerId)
+  });
+  const sourceById = new Map(sources.map((post) => [post.id, post]));
+  const postById = new Map(sourceById);
+  let pendingIds = [...new Set(sharedItems.flatMap((item) => [item.sharedRootPostId, item.sharedPostId]).filter(Boolean))];
+  for (let depth = 0; depth < 6 && pendingIds.length; depth += 1) {
+    const missing = pendingIds.filter((id) => !postById.has(id));
+    if (missing.length) {
+      const fetched = await ctx.prisma.socialPost.findMany({
+        where: { id: { in: missing }, status: 'published', deletedAt: null, OR: visibility },
+        include: postInclude(viewerId)
+      });
+      for (const post of fetched) postById.set(post.id, post);
+    }
+    pendingIds = [...new Set(pendingIds.flatMap((id) => {
+      const post = postById.get(id);
+      const share = (Array.isArray(post?.media) ? post.media : []).find((media) => media?.type === 'shared_post');
+      return [share?.sharedRootPostId, share?.sharedPostId];
+    }).filter((id) => id && !postById.has(id)))];
+  }
+  const resolveRoot = (item) => {
+    let currentId = item.sharedRootPostId || item.sharedPostId;
+    const visited = new Set();
+    while (currentId && !visited.has(currentId)) {
+      visited.add(currentId);
+      const current = postById.get(currentId);
+      if (!current) return null;
+      const share = (Array.isArray(current.media) ? current.media : []).find((media) => media?.type === 'shared_post');
+      if (!share) return current;
+      currentId = share.sharedRootPostId || share.sharedPostId;
+    }
+    return null;
+  };
+  return rows.map((post) => ({
+    ...post,
+    media: (Array.isArray(post.media) ? post.media : []).map((item) => {
+      if (item?.type !== 'shared_post' || !item.sharedPostId) return item;
+      const source = sourceById.get(item.sharedPostId);
+      const root = resolveRoot(item);
+      if (!root) return item;
+      const preview = (Array.isArray(root.media) ? root.media : []).find((media) => media?.type !== 'shared_post') || {};
+      const video = ['video', 'reel'].includes(preview.type || root.type);
+      return {
+        ...item,
+        url: preview.url || root.hlsUrl || item.url || '',
+        hlsUrl: preview.hlsUrl || root.hlsUrl || item.hlsUrl || null,
+        thumbnailUrl: preview.thumbnailUrl || root.thumbnailUrl || (video ? item.thumbnailUrl : preview.url) || '',
+        processingStatus: preview.processingStatus || root.processingStatus || item.processingStatus || 'ready',
+        sharedRootPostId: root.id,
+        sharedAuthorId: item.sharedAuthorId || source?.authorId || null,
+        sharedAuthor: item.sharedAuthor || source?.author?.name || source?.author?.socialProfile?.username || 'Tiwi User',
+        sharedAvatar: item.sharedAvatar || source?.author?.avatar || '',
+        sharedBody: root.body || '',
+        sharedMediaType: preview.type || root.type,
+        sharedViews: root.viewCount || 0,
+        sharedReactions: root._count?.reactions || 0,
+        sharedComments: root._count?.comments || 0,
+        sharedPublishedAt: root.publishedAt?.toISOString?.() || String(root.publishedAt || '')
+      };
+    })
+  }));
+};
 
 const feedVisibility = async (ctx, actor) => {
   const following = await ctx.prisma.socialFollow.findMany({ where: { followerId: actor.id }, select: { followingId: true } });
@@ -680,23 +976,34 @@ export const listFeed = async (ctx, args = {}) => {
   await requireSocialFeature(ctx);
   if (args.groupId && !await getGroup(ctx, args.groupId)) notFound('Group');
   const take = boundedLimit(args.limit);
-  const [favorites, snoozed, blocks, following, recentReactions] = await Promise.all([
+  const [favorites, snoozed, blocks, following, followers, recentReactions, actorProfile] = await Promise.all([
     ctx.prisma.socialFavorite.findMany({ where: { userId: actor.id }, select: { targetUserId: true } }),
     ctx.prisma.socialSnooze.findMany({ where: { userId: actor.id, until: { gt: new Date() } }, select: { targetUserId: true } }),
     ctx.prisma.socialBlock.findMany({ where: { OR: [{ userId: actor.id }, { targetUserId: actor.id }] }, select: { userId: true, targetUserId: true } }),
     ctx.prisma.socialFollow.findMany({ where: { followerId: actor.id }, select: { followingId: true } }),
+    ctx.prisma.socialFollow.findMany({ where: { followingId: actor.id }, select: { followerId: true } }),
     ctx.prisma.socialPostReaction.findMany({
-      where: { userId: actor.id }, select: { post: { select: { type: true, authorId: true } } }, orderBy: { updatedAt: 'desc' }, take: 100
-    })
+      where: { userId: actor.id },
+      select: { post: { select: { type: true, authorId: true, body: true, author: { select: { socialProfile: { select: { category: true } } } } } } },
+      orderBy: { updatedAt: 'desc' }, take: 100
+    }),
+    ctx.prisma.socialProfile.findUnique({ where: { userId: actor.id }, select: { category: true, preferences: true } })
   ]);
   const favoriteIds = new Set(favorites.map((row) => row.targetUserId));
   const followingIds = new Set(following.map((row) => row.followingId));
+  const followerIds = new Set(followers.map((row) => row.followerId));
+  const connectionIds = new Set([...followingIds].filter((id) => followerIds.has(id)));
   const hiddenAuthorIds = new Set([
     ...snoozed.map((row) => row.targetUserId),
     ...blocks.flatMap((row) => [row.userId, row.targetUserId]).filter((id) => id !== actor.id)
   ]);
   const typeAffinity = recentReactions.reduce((scores, row) => scores.set(row.post.type, (scores.get(row.post.type) || 0) + 1), new Map());
   const authorAffinity = recentReactions.reduce((scores, row) => scores.set(row.post.authorId, (scores.get(row.post.authorId) || 0) + 1), new Map());
+  const interestTokens = recommendationTokens(
+    actorProfile?.category,
+    actorProfile?.preferences,
+    ...recentReactions.slice(0, 40).flatMap((row) => [row.post.body, row.post.author?.socialProfile?.category])
+  );
   const where = {
     status: 'published',
     moderationStatus: 'approved',
@@ -714,12 +1021,13 @@ export const listFeed = async (ctx, args = {}) => {
     ...(args.before ? { publishedAt: { lt: safeDate(args.before) } } : {}),
     ...(String(args.type || '').toLowerCase() === 'story' ? { publishedAt: { gte: new Date(Date.now() - 86_400_000) } } : {})
   };
-  const rows = await ctx.prisma.socialPost.findMany({
+  const rawRows = await ctx.prisma.socialPost.findMany({
     where,
     include: postInclude(actor.id),
     orderBy: [...(args.authorId ? [{ pinned: 'desc' }] : []), { publishedAt: 'desc' }, { id: 'desc' }],
     take: args.authorId || args.groupId ? take : Math.min(take * 4, 200)
   });
+  const rows = await hydrateSharedPostMedia(ctx, rawRows, actor.id);
   if (args.authorId || args.groupId) return rows.map(mapPost);
   const now = Date.now();
   const ranked = rows.map((row) => {
@@ -727,16 +1035,20 @@ export const listFeed = async (ctx, args = {}) => {
     const reactions = row._count?.reactions || 0;
     const comments = row._count?.comments || 0;
     const engagement = Math.log1p(reactions + comments * 2.2 + (row.shareCount || 0) * 3 + Math.min(row.viewCount || 0, 50_000) * .025) * 10;
+    const contentMatch = tokenOverlap(interestTokens, recommendationTokens(row.body, row.author?.socialProfile?.category));
     const signals = {
-      favorite: favoriteIds.has(row.authorId) ? 90 : 0,
-      following: followingIds.has(row.authorId) ? 48 : 0,
-      country: actor.country && row.author?.country === actor.country ? 28 : 0,
-      region: actor.primaryRegion && row.author?.primaryRegion === actor.primaryRegion ? 12 : 0,
+      favorite: favoriteIds.has(row.authorId) ? 220 : 0,
+      following: followingIds.has(row.authorId) ? 145 : 0,
+      connection: connectionIds.has(row.authorId) ? 55 : 0,
+      country: actor.country && row.author?.country === actor.country ? 24 : 0,
+      region: actor.primaryRegion && row.author?.primaryRegion === actor.primaryRegion ? 14 : 0,
       contentAffinity: Math.min(typeAffinity.get(row.type) || 0, 12) * 2.5,
       creatorAffinity: Math.min(authorAffinity.get(row.authorId) || 0, 10) * 3,
+      interestAffinity: Math.min(contentMatch, 8) * 6,
       engagement,
       freshness: 75 / (1 + ageHours / 18),
-      verified: row.author?.socialProfile?.verified ? 5 : 0
+      verified: row.author?.socialProfile?.verified ? 5 : 0,
+      discovery: (stableTextSeed(`${actor.id}:${row.id}:${new Date().toISOString().slice(0, 10)}`) % 1000) / 1000 * 5
     };
     return { row, score: Object.values(signals).reduce((sum, value) => sum + value, 0), signals };
   }).sort((left, right) => right.score - left.score);
@@ -749,7 +1061,73 @@ export const listFeed = async (ctx, args = {}) => {
     diversified.push(item);
   }
   diversified.sort((left, right) => right.score - left.score);
-  return diversified.slice(0, take).map(({ row, signals }) => mapPost({ ...row, rankingSignals: signals }));
+  const priority = diversified.filter(({ row }) => favoriteIds.has(row.authorId) || followingIds.has(row.authorId));
+  const discovery = diversified.filter(({ row }) => !favoriteIds.has(row.authorId) && !followingIds.has(row.authorId));
+  const ordered = priority.splice(0, Math.min(4, priority.length));
+  while (ordered.length < diversified.length) {
+    if (discovery.length) ordered.push(discovery.shift());
+    if (discovery.length) ordered.push(discovery.shift());
+    if (priority.length) ordered.push(priority.shift());
+    if (!discovery.length && !priority.length) break;
+  }
+  return ordered.slice(0, take).map(({ row, signals }) => {
+    const recommended = row.authorId !== actor.id && !followingIds.has(row.authorId);
+    const showRecommendationLabel = recommended && (
+      signals.creatorAffinity >= 9 || signals.interestAffinity >= 12 ||
+      stableTextSeed(`${actor.id}:${row.id}:recommendation-label`) % 3 === 0
+    );
+    const recommendationLabel = !showRecommendationLabel ? null
+      : signals.creatorAffinity >= 9 ? 'Because you like this creator'
+        : signals.interestAffinity >= 12 ? 'Based on your activity'
+          : signals.country > 0 ? 'Popular near you'
+            : 'Suggested for you';
+    return mapPost({ ...row, rankingSignals: signals, recommended, recommendationLabel });
+  });
+};
+
+export const feedModulePositions = (actorId, feedSize, day = new Date().toISOString().slice(0, 10)) => {
+  const size = boundedLimit(feedSize, 60, 100);
+  const seed = stableTextSeed(`${actorId}:${day}:feed-modules`);
+  const positions = [];
+  if (size >= 2) positions.push(2);
+  let position = 2;
+  let stepIndex = 0;
+  while (position < size - 2 && positions.length < 6) {
+    const wideGap = stepIndex % 2 === 0;
+    const variance = (seed >>> (stepIndex * 3 % 24)) % (wideGap ? 5 : 4);
+    position += (wideGap ? 8 : 5) + variance;
+    if (position < size) positions.push(position);
+    stepIndex += 1;
+  }
+  return positions;
+};
+
+export const listFeedModules = async (ctx, feedSize) => {
+  const actor = await requireAuth(ctx);
+  await requireSocialFeature(ctx);
+  const day = new Date().toISOString().slice(0, 10);
+  const seed = stableTextSeed(`${actor.id}:${day}:feed-modules`);
+  const [profiles, reels] = await Promise.all([
+    searchProfiles(ctx, '', 24),
+    listFeed(ctx, { type: 'reel', limit: 24 })
+  ]);
+  const positions = feedModulePositions(actor.id, feedSize, day);
+  return positions.map((insertAfter, index) => {
+    const kind = index % 2 === 0 ? 'people' : 'reels';
+    const profileOffset = profiles.length ? (seed + index * 7) % profiles.length : 0;
+    const reelOffset = reels.length ? (seed + index * 5) % reels.length : 0;
+    const rotate = (items, offset, count) => items.length
+      ? [...items.slice(offset), ...items.slice(0, offset)].slice(0, count)
+      : [];
+    return {
+      id: `${day}-${kind}-${insertAfter}`,
+      kind,
+      insertAfter,
+      title: kind === 'people' ? 'People you may know' : 'Reels suggested for you',
+      profiles: kind === 'people' ? rotate(profiles, profileOffset, 8) : [],
+      posts: kind === 'reels' ? rotate(reels, reelOffset, 10) : []
+    };
+  }).filter((module) => module.profiles.length || module.posts.length);
 };
 
 export const listStories = async (ctx, args = {}) => listFeed(ctx, { ...args, type: 'story', limit: boundedLimit(args.limit, 50, 100) });
@@ -767,7 +1145,8 @@ export const getPost = async (ctx, id) => {
     if (blocked) forbidden('This post is unavailable');
   }
   if (post.visibility === 'private' && post.authorId !== actor.id && !isAdmin(actor)) forbidden();
-  return mapPost(post);
+  const [hydrated] = await hydrateSharedPostMedia(ctx, post, actor.id);
+  return mapPost(hydrated);
 };
 
 export const createPost = async (ctx, input) => {
@@ -786,6 +1165,7 @@ export const createPost = async (ctx, input) => {
   }
   const body = bounded(input.body, 10000);
   const media = Array.isArray(input.media) ? input.media.slice(0, 20) : [];
+  const metadata = sanitizePostMetadata(input.metadata);
   await enforceTextModeration(ctx, { userId: actor.id, targetType: 'post', text: body });
   validateOwnedMedia(actor.id, media);
   if (!body && media.length === 0) throw new AppError('A post needs text or media', 'BAD_USER_INPUT');
@@ -801,6 +1181,7 @@ export const createPost = async (ctx, input) => {
       type,
       body,
       media,
+      metadata,
       thumbnailUrl: bounded(input.thumbnailUrl, 2000),
       hlsUrl: bounded(input.hlsUrl, 2000),
       processingStatus: bounded(input.processingStatus, 40) || 'ready',
@@ -820,6 +1201,13 @@ export const createPost = async (ctx, input) => {
     where: { id: { in: mediaEvents.map((event) => event.id) } }, data: { postId: post.id }
   });
   await notifyMentions(ctx, actor, body, post.id, 'post', { postId: post.id });
+  const collaboratorIds = [...new Set([...(metadata.taggedUserIds || []), ...(metadata.collaboratorIds || [])])]
+    .filter((id) => id && id !== actor.id);
+  await Promise.all(collaboratorIds.map((ownerId) => upsertSocialActivityNotification(ctx, {
+    ownerId, scopeId: post.id, type: 'mention', actor,
+    singular: metadata.collaboratorIds?.includes(ownerId) ? 'Invited you to collaborate on a post' : 'Tagged you in a post',
+    plural: 'tagged you in a post', count: 1, metadata: { postId: post.id, targetType: 'post' }
+  })));
   return mapPost(post);
 };
 
@@ -844,6 +1232,7 @@ export const updatePost = async (ctx, input) => {
     data: removeUndefined({
       body: input.body === undefined ? undefined : bounded(input.body, 10000),
       media: updatedMedia === null ? undefined : updatedMedia,
+      metadata: input.metadata === undefined ? undefined : sanitizePostMetadata(input.metadata),
       thumbnailUrl: input.thumbnailUrl === undefined ? undefined : bounded(input.thumbnailUrl, 2000),
       hlsUrl: input.hlsUrl === undefined ? undefined : bounded(input.hlsUrl, 2000),
       processingStatus: input.processingStatus === undefined ? undefined : bounded(input.processingStatus, 40),
@@ -918,13 +1307,24 @@ export const reactToPost = async (ctx, id, kind) => {
 export const repostPost = async (ctx, id) => {
   const actor = await requireAuth(ctx);
   await requireSocialFeature(ctx, 'postingEnabled');
-  const original = await getPost(ctx, id);
-  if (!original) notFound('Post');
-  await ctx.prisma.socialPost.update({
-    where: { id },
+  const source = await getPost(ctx, id);
+  if (!source) notFound('Post');
+  const sourceShare = source.media?.find((item) => item?.type === 'shared_post');
+  const rootPostId = sourceShare?.sharedRootPostId || sourceShare?.sharedPostId || source.id;
+  const root = rootPostId === source.id ? source : await getPost(ctx, rootPostId);
+  if (!root) notFound('Original post');
+  const updates = [ctx.prisma.socialPost.update({
+    where: { id: source.id },
     data: { shareCount: { increment: 1 } }
-  });
-  const preview = original.media?.[0] || {};
+  })];
+  if (root.id !== source.id) updates.push(ctx.prisma.socialPost.update({
+    where: { id: root.id },
+    data: { shareCount: { increment: 1 } }
+  }));
+  await ctx.prisma.$transaction(updates);
+  const preview = root.media?.find((item) => item?.type !== 'shared_post') || root.media?.[0] || {};
+  const mediaUrl = preview.url || root.hlsUrl || root.thumbnailUrl || '';
+  const thumbnailUrl = preview.thumbnailUrl || root.thumbnailUrl || (preview.type === 'image' ? preview.url : '') || '';
   const repost = await ctx.prisma.socialPost.create({
     data: {
       authorId: actor.id,
@@ -934,31 +1334,34 @@ export const repostPost = async (ctx, id) => {
       processingStatus: 'ready',
       media: [{
         type: 'shared_post',
-        url: preview.thumbnailUrl || original.thumbnailUrl || preview.url || '',
-        thumbnailUrl: preview.thumbnailUrl || original.thumbnailUrl || '',
-        sharedPostId: original.id,
-        sharedAuthorId: original.authorId,
-        sharedAuthor: original.author?.name || original.authorProfile?.username || 'Tiwi User',
-        sharedAvatar: original.author?.avatar || '',
-        sharedBody: original.body || '',
-        sharedMediaType: preview.type || original.type,
-        sharedViews: original.viewCount || 0,
-        sharedReactions: original.reactionCount || 0,
-        sharedComments: original.commentCount || 0,
-        sharedPublishedAt: original.publishedAt?.toISOString?.() || String(original.publishedAt || '')
+        url: mediaUrl,
+        hlsUrl: preview.hlsUrl || root.hlsUrl || null,
+        thumbnailUrl,
+        processingStatus: preview.processingStatus || root.processingStatus || 'ready',
+        sharedPostId: source.id,
+        sharedRootPostId: root.id,
+        sharedAuthorId: source.authorId,
+        sharedAuthor: source.author?.name || source.authorProfile?.username || 'Tiwi User',
+        sharedAvatar: source.author?.avatar || '',
+        sharedBody: root.body || '',
+        sharedMediaType: preview.type || root.type,
+        sharedViews: root.viewCount || 0,
+        sharedReactions: root.reactionCount || 0,
+        sharedComments: root.commentCount || 0,
+        sharedPublishedAt: root.publishedAt?.toISOString?.() || String(root.publishedAt || '')
       }]
     },
     include: postInclude(actor.id)
   });
   await upsertSocialActivityNotification(ctx, {
-    ownerId: original.authorId,
-    scopeId: id,
+    ownerId: source.authorId,
+    scopeId: root.id,
     type: 'post_share',
     actor,
     singular: 'Shared your post',
     plural: 'shared your post',
-    count: Number(original.shareCount || 0) + 1,
-    metadata: { postId: id, repostId: repost.id }
+    count: Number(source.shareCount || 0) + 1,
+    metadata: { postId: root.id, sourcePostId: source.id, repostId: repost.id }
   });
   return mapPost(repost);
 };
@@ -1329,7 +1732,20 @@ export const listConversations = async (ctx, archived = false) => {
   const actor = await requireAuth(ctx);
   await requireSocialFeature(ctx, 'messagingEnabled');
   const rows = await ctx.prisma.socialConversation.findMany({
-    where: { members: { some: { userId: actor.id, archived: Boolean(archived) } } },
+    where: {
+      members: { some: { userId: actor.id, archived: Boolean(archived) } },
+      OR: [
+        {
+          messages: {
+            some: {
+              deletedAt: null,
+              NOT: { hiddenFor: { some: { userId: actor.id } } }
+            }
+          }
+        },
+        { members: { some: { userId: actor.id, lastReadAt: null } } }
+      ]
+    },
     include: conversationInclude(actor.id),
     orderBy: { updatedAt: 'desc' },
     take: 100
@@ -1491,7 +1907,7 @@ export const editMessage = async (ctx, id, body) => {
   if (message.senderId !== actor.id) forbidden();
   if (message.unsentAt) throw new AppError('An unsent message cannot be edited', 'BAD_USER_INPUT');
   const text = bounded(body, 8000);
-  if (!text) throw new AppError('Message cannot be empty', 'BAD_USER_INPUT');
+  if (!text && (!Array.isArray(message.media) || message.media.length === 0)) throw new AppError('Message cannot be empty', 'BAD_USER_INPUT');
   return mapMessage(await ctx.prisma.socialMessage.update({ where: { id }, data: { body: text, editedAt: new Date() }, include: messageInclude }));
 };
 
@@ -1523,7 +1939,7 @@ export const markConversationRead = async (ctx, id) => {
   return mapConversation(ctx, conversation, actor.id);
 };
 
-export const updateConversationMember = async (ctx, { id, muted, archived, markUnread, leave }) => {
+export const updateConversationMember = async (ctx, { id, muted, archived, markUnread, leave, deleteForMe }) => {
   const actor = await requireAuth(ctx);
   await requireSocialFeature(ctx, 'messagingEnabled');
   const membership = await requireConversationMember(ctx, id, actor.id);
@@ -1532,6 +1948,29 @@ export const updateConversationMember = async (ctx, { id, muted, archived, markU
     include: conversationInclude(actor.id)
   });
   if (!conversation) notFound('Conversation');
+
+  if (deleteForMe) {
+    const messages = await ctx.prisma.socialMessage.findMany({
+      where: { conversationId: id, deletedAt: null },
+      select: { id: true }
+    });
+    const now = new Date();
+    await ctx.prisma.$transaction([
+      ...(messages.length ? [ctx.prisma.socialMessageDeletion.createMany({
+        data: messages.map((message) => ({ messageId: message.id, userId: actor.id })),
+        skipDuplicates: true
+      })] : []),
+      ctx.prisma.socialConversationMember.update({
+        where: { id: membership.id },
+        data: { archived: false, lastReadAt: now }
+      }),
+      ctx.prisma.notification.updateMany({
+        where: { ownerId: actor.id, scope: 'social', scopeId: id, type: { in: ['message', 'message_request'] }, status: 'unread' },
+        data: { status: 'read', readAt: now }
+      })
+    ]);
+    return null;
+  }
 
   if (leave) {
     if (conversation.type === 'group') {
@@ -1653,12 +2092,35 @@ export const startCall = async (ctx, input) => {
   if (!callee || callee.status !== 'active') throw new AppError('This user is unavailable', 'BAD_USER_INPUT');
   if (callee.socialProfile?.privacy?.allowCalls === false) throw new AppError('This user is not accepting calls', 'FORBIDDEN');
   if (input.conversationId) await requireConversationMember(ctx, input.conversationId, actor.id);
+  const staleBefore = new Date(Date.now() - CALL_EXPIRY_MS);
+  const staleActiveBefore = new Date(Date.now() - ACTIVE_CALL_STALE_MS);
+  await ctx.prisma.socialCallSession.updateMany({
+    where: { status: { in: PENDING_CALL_STATUSES }, createdAt: { lt: staleBefore } },
+    data: { status: 'missed', endedAt: new Date() }
+  });
+  await ctx.prisma.socialCallSession.updateMany({
+    where: { status: 'active', updatedAt: { lt: staleActiveBefore } },
+    data: { status: 'failed', endedAt: new Date() }
+  });
+  const busyCall = await ctx.prisma.socialCallSession.findFirst({
+    where: {
+      status: { in: ACTIVE_CALL_STATUSES },
+      OR: [
+        { callerId: actor.id }, { calleeId: actor.id },
+        { callerId: input.calleeId }, { calleeId: input.calleeId }
+      ]
+    },
+    select: { id: true }
+  });
+  if (busyCall) throw new AppError('Line busy. This person is already on another call.', 'CONFLICT');
+  const calleeOnline = callee.socialLastActiveAt && Date.now() - callee.socialLastActiveAt.getTime() <= ONLINE_CALL_WINDOW_MS;
   const call = await ctx.prisma.socialCallSession.create({
     data: {
       conversationId: input.conversationId,
       callerId: actor.id,
       calleeId: input.calleeId,
       type,
+      status: calleeOnline ? 'ringing' : 'calling',
       offer: input.offer || undefined
     },
     include: callInclude
@@ -1689,14 +2151,18 @@ export const getCall = async (ctx, id) => {
 export const incomingCalls = async (ctx) => {
   const actor = await requireAuth(ctx);
   await requireSocialFeature(ctx, 'callsEnabled');
-  const expiry = new Date(Date.now() - 60_000);
+  const expiry = new Date(Date.now() - CALL_EXPIRY_MS);
   await ctx.prisma.socialCallSession.updateMany({
     where: {
       calleeId: actor.id,
-      status: { in: ['ringing', 'connecting'] },
+      status: { in: PENDING_CALL_STATUSES },
       createdAt: { lt: expiry }
     },
     data: { status: 'missed', endedAt: new Date() }
+  });
+  await ctx.prisma.socialCallSession.updateMany({
+    where: { calleeId: actor.id, status: 'calling', createdAt: { gte: expiry } },
+    data: { status: 'ringing' }
   });
   return ctx.prisma.socialCallSession.findMany({
     where: { calleeId: actor.id, status: { in: ['ringing', 'connecting'] } },

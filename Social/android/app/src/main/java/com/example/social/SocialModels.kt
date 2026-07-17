@@ -98,6 +98,7 @@ data class SocialMedia(
     val processingId: String? = null,
     val processingStatus: String = "ready",
     val sharedPostId: String? = null,
+    val sharedRootPostId: String? = null,
     val sharedAuthorId: String? = null,
     val sharedAuthor: String? = null,
     val sharedAvatar: String? = null,
@@ -106,7 +107,30 @@ data class SocialMedia(
     val sharedViews: Int = 0,
     val sharedReactions: Int = 0,
     val sharedComments: Int = 0,
-    val sharedPublishedAt: String? = null
+    val sharedPublishedAt: String? = null,
+    val title: String? = null,
+    val description: String? = null,
+    val siteName: String? = null,
+    val domain: String? = null,
+    val displayUrl: String? = null,
+    val domainAgeYears: Int? = null,
+    val forwarded: Boolean = false,
+    val forwardedFromName: String? = null,
+    val forwardedFromMessageId: String? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class SocialLinkPreview(
+    val url: String = "",
+    val canonicalUrl: String = "",
+    val domain: String = "",
+    val title: String = "",
+    val description: String? = null,
+    val imageUrl: String? = null,
+    val siteName: String? = null,
+    val faviconUrl: String? = null,
+    val registeredAt: String? = null,
+    val domainAgeYears: Int? = null
 )
 
 @JsonClass(generateAdapter = true)
@@ -118,6 +142,7 @@ data class SocialPost(
     val type: String = "post",
     val body: String = "",
     val media: List<SocialMedia> = emptyList(),
+    val metadata: Map<String, Any?> = emptyMap(),
     val thumbnailUrl: String? = null,
     val hlsUrl: String? = null,
     val processingStatus: String = "ready",
@@ -133,7 +158,19 @@ data class SocialPost(
     val reactionCount: Int = 0,
     val commentCount: Int = 0,
     val viewerReaction: String? = null,
+    val recommended: Boolean = false,
+    val recommendationLabel: String? = null,
     val publishedAt: String? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class SocialFeedModule(
+    val id: String = "",
+    val kind: String = "people",
+    val insertAfter: Int = 2,
+    val title: String = "Suggested for you",
+    val profiles: List<SocialProfile> = emptyList(),
+    val posts: List<SocialPost> = emptyList()
 )
 
 @JsonClass(generateAdapter = true)

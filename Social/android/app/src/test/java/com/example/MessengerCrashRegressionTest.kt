@@ -6,6 +6,8 @@ import android.graphics.BitmapFactory
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.test.core.app.ApplicationProvider
 import com.example.social.GraphQlClient
+import com.example.social.SocialMedia
+import com.example.social.isRetryableGraphQlOperation
 import com.example.ui.theme.TiwiTheme
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -102,7 +104,9 @@ class MessengerCrashRegressionTest {
             R.raw.tiwi_incoming_ring,
             R.raw.tiwi_outgoing_ring,
             R.raw.tiwi_activity_notification,
-            R.raw.tiwi_post_published
+            R.raw.tiwi_post_published,
+            R.raw.tiwi_like,
+            R.raw.tiwi_message
         ).forEach { sound ->
             context.resources.openRawResource(sound).use { stream -> assertTrue(stream.available() > 0) }
         }
@@ -113,9 +117,24 @@ class MessengerCrashRegressionTest {
     }
 
     @Test
+    fun onlyReadOnlyGraphQlOperationsAreAutomaticallyRetried() {
+        assertTrue(isRetryableGraphQlOperation("query Feed { socialFeed { id } }"))
+        assertTrue(isRetryableGraphQlOperation("{ socialFeed { id } }"))
+        assertTrue(!isRetryableGraphQlOperation("mutation Like { reactToSocialPost(id: \"1\") { id } }"))
+    }
+
+    @Test
     fun commentMentionsAreDetectedWithoutColoringNormalWords() {
         val text = "Reply to @niloy and @tiwi_team, not normal text"
         assertEquals(listOf(9..14, 20..29), mentionRanges(text))
+    }
+
+    @Test
+    fun repostChainsOpenTheRootPost() {
+        val chained = SocialMedia(type = "shared_post", sharedPostId = "immediate", sharedRootPostId = "root")
+        val legacy = SocialMedia(type = "shared_post", sharedPostId = "original")
+        assertEquals("root", linkedSharedPostId(chained))
+        assertEquals("original", linkedSharedPostId(legacy))
     }
 
     private fun createImage(context: Context, name: String, width: Int, height: Int): File {

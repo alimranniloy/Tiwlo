@@ -147,7 +147,9 @@ class TiwiCallListenerService : Service() {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
         val pending = PendingIntent.getActivity(this, item.id.hashCode(), openIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        val notification = NotificationCompat.Builder(this, ACTIVITY_CHANNEL)
+        val messageAlert = item.type in listOf("message", "message_request")
+        val sound = if (messageAlert) R.raw.tiwi_message else R.raw.tiwi_activity_notification
+        val notification = NotificationCompat.Builder(this, if (messageAlert) MESSAGE_CHANNEL else ACTIVITY_CHANNEL)
             .setSmallIcon(R.drawable.ic_tiwi_notification)
             .setLargeIcon(brandIcon)
             .setContentTitle(item.title.ifBlank { "Tiwi activity" })
@@ -158,7 +160,7 @@ class TiwiCallListenerService : Service() {
             .setAutoCancel(true)
             .setContentIntent(pending)
             .setGroup("tiwi_social_activity")
-            .setSound(rawSound(R.raw.tiwi_activity_notification))
+            .setSound(rawSound(sound))
             .build()
         NotificationManagerCompat.from(this).notify(item.id.hashCode(), notification)
         preferences.edit().putStringSet("shown_ids", (shown + item.id).toList().takeLast(200).toSet()).apply()
@@ -192,9 +194,16 @@ class TiwiCallListenerService : Service() {
             .build()
         manager.createNotificationChannel(
             NotificationChannel(ACTIVITY_CHANNEL, "Tiwi activity", NotificationManager.IMPORTANCE_DEFAULT).apply {
-                description = "Likes, comments, follows, mentions and messages"
+                description = "Likes, comments, follows and mentions"
                 enableVibration(true)
                 setSound(rawSound(R.raw.tiwi_activity_notification), activityAttributes)
+            }
+        )
+        manager.createNotificationChannel(
+            NotificationChannel(MESSAGE_CHANNEL, "Tiwi messages", NotificationManager.IMPORTANCE_DEFAULT).apply {
+                description = "New direct and group messages"
+                enableVibration(true)
+                setSound(rawSound(R.raw.tiwi_message), activityAttributes)
             }
         )
     }
@@ -205,6 +214,7 @@ class TiwiCallListenerService : Service() {
         private const val SERVICE_CHANNEL = "tiwi_call_connection"
         private const val CALL_CHANNEL = "tiwi_incoming_calls_brand_v3"
         private const val ACTIVITY_CHANNEL = "tiwi_social_activity_brand_v3"
+        private const val MESSAGE_CHANNEL = "tiwi_social_messages_brand_v1"
         private const val SERVICE_NOTIFICATION_ID = 4301
         const val INCOMING_NOTIFICATION_ID = 4302
     }

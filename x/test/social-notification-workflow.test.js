@@ -1,7 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { appOrigin } from '../src/core/email.js';
-import { adminResolveReport, markConversationRead, reportContent } from '../src/modules/social/service.js';
+import { adminResolveReport, feedModulePositions, markConversationRead, reportContent, startCall, updateConversationMember } from '../src/modules/social/service.js';
+
+test('feed modules start early then use varied stable gaps', () => {
+  const first = feedModulePositions('user-1', 60, '2026-07-17');
+  const second = feedModulePositions('user-1', 60, '2026-07-17');
+  assert.deepEqual(first, second);
+  assert.equal(first[0], 2);
+  assert.ok(first.length >= 4);
+  const gaps = first.slice(1).map((position, index) => position - first[index]);
+  assert.ok(gaps.every((gap) => gap >= 5));
+  assert.ok(new Set(gaps).size > 1);
+});
 
 test('customer email links never use a localhost origin', { concurrency: false }, () => {
   const previous = {
@@ -107,4 +118,81 @@ test('reading a conversation clears its server message notifications', async () 
   assert.equal(notificationUpdates.length, 1);
   assert.deepEqual(notificationUpdates[0].where.type.in, ['message', 'message_request']);
   assert.equal(notificationUpdates[0].data.status, 'read');
+});
+
+test('deleting a conversation hides its messages only for the requesting user', async () => {
+  const deletionBatches = [];
+  const memberUpdates = [];
+  const membership = { id: 'member-1', conversationId: 'chat-1', userId: 'user-1', lastReadAt: null };
+  const ctx = {
+    user: { id: 'user-1', role: 'user', status: 'active', signupSource: 'web' },
+    prisma: {
+      user: { update: async () => ({ id: 'user-1' }) },
+      systemSetting: { findUnique: async () => null },
+      socialConversationMember: {
+        findUnique: async () => membership,
+        update: async ({ data }) => { memberUpdates.push(data); return { ...membership, ...data }; }
+      },
+      socialConversation: {
+        findUnique: async () => ({ id: 'chat-1', type: 'direct', members: [membership], messages: [] })
+      },
+      socialMessage: { findMany: async () => [{ id: 'message-1' }, { id: 'message-2' }] },
+      socialMessageDeletion: {
+        createMany: async ({ data }) => { deletionBatches.push(data); return { count: data.length }; }
+      },
+      notification: { updateMany: async () => ({ count: 1 }) },
+      $transaction: async (operations) => Promise.all(operations)
+    }
+  };
+  const result = await updateConversationMember(ctx, { id: 'chat-1', deleteForMe: true });
+  assert.equal(result, null);
+  assert.deepEqual(deletionBatches[0], [
+    { messageId: 'message-1', userId: 'user-1' },
+    { messageId: 'message-2', userId: 'user-1' }
+  ]);
+  assert.equal(memberUpdates[0].archived, false);
+  assert.ok(memberUpdates[0].lastReadAt instanceof Date);
+});
+
+test('calls report busy and use calling until an offline callee reaches the API', async () => {
+  const created = [];
+  let busy = false;
+  let calleeLastActiveAt = new Date(Date.now() - 5 * 60_000);
+  const ctx = {
+    user: { id: 'caller-1', role: 'user', status: 'active', signupSource: 'web', name: 'Caller' },
+    prisma: {
+      user: {
+        update: async () => ({ id: 'caller-1' }),
+        findUnique: async () => ({
+          id: 'callee-1', status: 'active', name: 'Callee', avatar: null,
+          socialLastActiveAt: calleeLastActiveAt,
+          socialProfile: { privacy: { allowCalls: true } }
+        })
+      },
+      systemSetting: { findUnique: async () => null },
+      socialBlock: { findFirst: async () => null },
+      socialCallSession: {
+        updateMany: async () => ({ count: 0 }),
+        findFirst: async () => busy ? { id: 'busy-call' } : null,
+        create: async ({ data }) => {
+          const value = { id: `call-${created.length + 1}`, caller: ctx.user, callee: { id: 'callee-1', name: 'Callee' }, ...data };
+          created.push(value);
+          return value;
+        }
+      },
+      notification: { create: async ({ data }) => ({ id: 'notice-1', ...data }) }
+    }
+  };
+  const offlineCall = await startCall(ctx, { calleeId: 'callee-1', type: 'audio' });
+  assert.equal(offlineCall.status, 'calling');
+
+  calleeLastActiveAt = new Date();
+  const onlineCall = await startCall(ctx, { calleeId: 'callee-1', type: 'video' });
+  assert.equal(onlineCall.status, 'ringing');
+
+  busy = true;
+  await assert.rejects(
+    () => startCall(ctx, { calleeId: 'callee-1', type: 'audio' }),
+    /Line busy/i
+  );
 });

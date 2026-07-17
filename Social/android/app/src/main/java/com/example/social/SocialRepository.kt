@@ -24,6 +24,8 @@ class SocialRepository(context: Context) {
     val profile: StateFlow<SocialProfile?> = _profile.asStateFlow()
     private val _feed = MutableStateFlow(cache.feed())
     val feed: StateFlow<List<SocialPost>> = _feed.asStateFlow()
+    private val _feedModules = MutableStateFlow<List<SocialFeedModule>>(emptyList())
+    val feedModules: StateFlow<List<SocialFeedModule>> = _feedModules.asStateFlow()
     private val _conversations = MutableStateFlow(cache.conversations())
     val conversations: StateFlow<List<SocialConversation>> = _conversations.asStateFlow()
     private val _messages = MutableStateFlow<Map<String, List<SocialMessage>>>(emptyMap())
@@ -95,9 +97,10 @@ class SocialRepository(context: Context) {
             supervisorScope {
                 val profileJob = async { runCatching { refreshProfile() } }
                 val feedJob = async { runCatching { refreshFeed(force) } }
+                val feedModulesJob = async { runCatching { refreshFeedModules() } }
                 val chatJob = async { runCatching { refreshConversations(force) } }
                 val notificationJob = async { runCatching { refreshNotifications() } }
-                profileJob.await(); feedJob.await(); chatJob.await(); notificationJob.await()
+                profileJob.await(); feedJob.await(); feedModulesJob.await(); chatJob.await(); notificationJob.await()
             }
         } finally { _syncing.value = false }
     }
@@ -108,6 +111,15 @@ class SocialRepository(context: Context) {
         return data.list("socialFeed").mapNotNull { it.objectMap()?.let(::mapPost) }.also {
             _feed.value = it
             cache.saveFeed(it)
+        }
+    }
+
+    suspend fun refreshFeedModules(feedSize: Int = 60): List<SocialFeedModule> {
+        val data = client.execute(
+            "query TiwiFeedModules { socialFeedModules(feedSize: ${feedSize.coerceIn(1, 100)}) { $FEED_MODULE_FIELDS } }"
+        )
+        return data.list("socialFeedModules").mapNotNull { it.objectMap()?.let(::mapFeedModule) }.also {
+            _feedModules.value = it
         }
     }
 
@@ -228,14 +240,19 @@ class SocialRepository(context: Context) {
             _feed.value = _feed.value.map { post ->
                 if (post.authorId == userId) post.copy(authorProfile = (post.authorProfile ?: updated).copy(isFollowing = updated.isFollowing)) else post
             }
+            _feedModules.value = _feedModules.value.map { module ->
+                module.copy(profiles = module.profiles.map { if (it.userId == userId) updated else it })
+            }
             cache.saveFeed(_feed.value)
         }
     }
 
-    suspend fun createPost(body: String, type: String = "post", media: List<SocialMedia> = emptyList(), visibility: String = "public", groupId: String? = null): SocialPost {
-        val mediaInput = media.map { mapOf("url" to it.url, "type" to it.type, "hlsUrl" to it.hlsUrl, "thumbnailUrl" to it.thumbnailUrl, "mimeType" to it.mimeType, "processingId" to it.processingId, "processingStatus" to it.processingStatus) }
+    suspend fun createPost(body: String, type: String = "post", media: List<SocialMedia> = emptyList(), visibility: String = "public", groupId: String? = null, metadata: Map<String, Any?> = emptyMap(), location: String? = null): SocialPost {
+        val mediaInput = media.map(::mediaInput)
         val input = mapOf(
             "type" to type, "body" to body.trim(), "visibility" to visibility, "media" to mediaInput, "groupId" to groupId,
+            "metadata" to metadata,
+            "location" to location,
             "hlsUrl" to media.firstOrNull()?.hlsUrl,
             "thumbnailUrl" to media.firstOrNull()?.thumbnailUrl,
             "processingStatus" to (media.firstOrNull()?.processingStatus ?: "ready")
@@ -303,10 +320,7 @@ class SocialRepository(context: Context) {
 
     suspend fun updatePost(id: String, body: String, media: List<SocialMedia>?): SocialPost {
         val input = mutableMapOf<String, Any?>("id" to id, "body" to body.trim())
-        media?.let { items -> input["media"] = items.map { mapOf(
-            "url" to it.url, "type" to it.type, "hlsUrl" to it.hlsUrl, "thumbnailUrl" to it.thumbnailUrl,
-            "mimeType" to it.mimeType, "processingId" to it.processingId, "processingStatus" to it.processingStatus
-        ) } }
+        media?.let { items -> input["media"] = items.map(::mediaInput) }
         val data = client.execute(
             """mutation EditTiwiPost(${D}input: SocialPostUpdateInput!) { updateSocialPost(input: ${D}input) { $POST_FIELDS } }""",
             mapOf("input" to input)
@@ -549,9 +563,10 @@ class SocialRepository(context: Context) {
     }
 
     suspend fun sendMessage(conversationId: String, body: String, media: List<SocialMedia> = emptyList(), replyToId: String? = null): SocialMessage {
+        val messageType = media.firstOrNull { it.type in setOf("image", "video", "audio", "file") }?.type ?: "text"
         val local = SocialMessage(
             id = "local-${System.nanoTime()}", conversationId = conversationId, senderId = currentUserId().orEmpty(),
-            sender = _currentUser.value ?: SocialUser(), body = body.trim(), type = media.firstOrNull()?.type ?: "text",
+            sender = _currentUser.value ?: SocialUser(), body = body.trim(), type = messageType,
             media = media, replyToId = replyToId, deliveryStatus = "sending", sentAt = System.currentTimeMillis().toString()
         )
         val previous = cachedMessages(conversationId)
@@ -561,8 +576,8 @@ class SocialRepository(context: Context) {
             val data = client.execute(
                 """mutation SendTiwiMessage(${D}input: SocialMessageInput!) { sendSocialMessage(input: ${D}input) { $MESSAGE_FIELDS } }""",
                 mapOf("input" to mapOf(
-                    "conversationId" to conversationId, "body" to body.trim(), "type" to (media.firstOrNull()?.type ?: "text"),
-                    "media" to media.map { mapOf("url" to it.url, "type" to it.type, "hlsUrl" to it.hlsUrl, "thumbnailUrl" to it.thumbnailUrl, "mimeType" to it.mimeType) },
+                    "conversationId" to conversationId, "body" to body.trim(), "type" to messageType,
+                    "media" to media.map(::mediaInput),
                     "replyToId" to replyToId
                 ))
             )
@@ -579,6 +594,20 @@ class SocialRepository(context: Context) {
         }
     }
 
+    suspend fun linkPreview(url: String): SocialLinkPreview {
+        val data = client.execute(
+            """query TiwiLinkPreview(${D}url: String!) { socialLinkPreview(url: ${D}url) { url canonicalUrl domain title description imageUrl siteName faviconUrl registeredAt domainAgeYears } }""",
+            mapOf("url" to url)
+        )
+        val value = data.objectValue("socialLinkPreview") ?: throw SocialApiException("Link preview is unavailable")
+        return SocialLinkPreview(
+            url = value.string("url").orEmpty(), canonicalUrl = value.string("canonicalUrl").orEmpty(), domain = value.string("domain").orEmpty(),
+            title = value.string("title").orEmpty(), description = value.string("description"), imageUrl = absoluteUrl(value.string("imageUrl")),
+            siteName = value.string("siteName"), faviconUrl = absoluteUrl(value.string("faviconUrl")), registeredAt = value.string("registeredAt"),
+            domainAgeYears = value.number("domainAgeYears")?.toInt()
+        )
+    }
+
     suspend fun markConversationRead(id: String) {
         client.execute("""mutation ReadTiwiChat(${D}id: ID!) { markSocialConversationRead(id: ${D}id) { id unreadCount } }""", mapOf("id" to id))
         _conversations.value = _conversations.value.map { if (it.id == id) it.copy(unreadCount = 0) else it }
@@ -593,20 +622,25 @@ class SocialRepository(context: Context) {
         muted: Boolean? = null,
         archived: Boolean? = null,
         markUnread: Boolean = false,
-        leave: Boolean = false
+        leave: Boolean = false,
+        deleteForMe: Boolean = false
     ): SocialConversation? {
         val data = client.execute(
-            """mutation UpdateTiwiChat(${D}id: ID!, ${D}muted: Boolean, ${D}archived: Boolean, ${D}markUnread: Boolean, ${D}leave: Boolean) {
-                updateSocialConversationMember(id: ${D}id, muted: ${D}muted, archived: ${D}archived, markUnread: ${D}markUnread, leave: ${D}leave) { $CONVERSATION_FIELDS }
+            """mutation UpdateTiwiChat(${D}id: ID!, ${D}muted: Boolean, ${D}archived: Boolean, ${D}markUnread: Boolean, ${D}leave: Boolean, ${D}deleteForMe: Boolean) {
+                updateSocialConversationMember(id: ${D}id, muted: ${D}muted, archived: ${D}archived, markUnread: ${D}markUnread, leave: ${D}leave, deleteForMe: ${D}deleteForMe) { $CONVERSATION_FIELDS }
             }""",
-            mapOf("id" to id, "muted" to muted, "archived" to archived, "markUnread" to markUnread, "leave" to leave)
+            mapOf("id" to id, "muted" to muted, "archived" to archived, "markUnread" to markUnread, "leave" to leave, "deleteForMe" to deleteForMe)
         )
         val updated = data.objectValue("updateSocialConversationMember")?.let(::mapConversation)
         _conversations.value = when {
-            leave || archived == true -> _conversations.value.filterNot { it.id == id }
+            leave || archived == true || deleteForMe -> _conversations.value.filterNot { it.id == id }
             updated != null && _conversations.value.any { it.id == id } -> _conversations.value.map { if (it.id == id) updated else it }
             updated != null -> listOf(updated) + _conversations.value
             else -> _conversations.value
+        }
+        if (deleteForMe) {
+            _messages.value = _messages.value - id
+            cache.saveMessages(id, emptyList())
         }
         cache.saveConversations(_conversations.value)
         return updated
@@ -936,13 +970,16 @@ class SocialRepository(context: Context) {
         hlsUrl = absoluteUrl(value.string("hlsUrl")), thumbnailUrl = absoluteUrl(value.string("thumbnailUrl")),
         mimeType = value.string("mimeType"), processingId = value.string("processingId"),
         processingStatus = value.string("processingStatus") ?: "ready",
-        sharedPostId = value.string("sharedPostId"), sharedAuthorId = value.string("sharedAuthorId"),
+        sharedPostId = value.string("sharedPostId"), sharedRootPostId = value.string("sharedRootPostId"), sharedAuthorId = value.string("sharedAuthorId"),
         sharedAuthor = value.string("sharedAuthor"), sharedAvatar = absoluteUrl(value.string("sharedAvatar")),
         sharedBody = value.string("sharedBody"), sharedMediaType = value.string("sharedMediaType"),
         sharedViews = value.number("sharedViews")?.toInt() ?: 0,
         sharedReactions = value.number("sharedReactions")?.toInt() ?: 0,
         sharedComments = value.number("sharedComments")?.toInt() ?: 0,
-        sharedPublishedAt = value.string("sharedPublishedAt")
+        sharedPublishedAt = value.string("sharedPublishedAt"), title = value.string("title"), description = value.string("description"),
+        siteName = value.string("siteName"), domain = value.string("domain"), displayUrl = value.string("displayUrl"),
+        domainAgeYears = value.number("domainAgeYears")?.toInt(), forwarded = value.boolean("forwarded"),
+        forwardedFromName = value.string("forwardedFromName"), forwardedFromMessageId = value.string("forwardedFromMessageId")
     )
 
     private fun mapPost(value: Map<String, Any?>): SocialPost {
@@ -951,6 +988,7 @@ class SocialRepository(context: Context) {
             id = value.string("id").orEmpty(), authorId = value.string("authorId") ?: author.id, author = author,
             authorProfile = value.objectValue("authorProfile")?.let { mapProfile(it, author) }, type = value.string("type") ?: "post",
             body = value.string("body").orEmpty(), media = value.list("media").mapNotNull { it.objectMap()?.let(::mapMedia) },
+            metadata = value.objectValue("metadata") ?: emptyMap(),
             thumbnailUrl = absoluteUrl(value.string("thumbnailUrl")), hlsUrl = absoluteUrl(value.string("hlsUrl")),
             processingStatus = value.string("processingStatus") ?: "ready", visibility = value.string("visibility") ?: "public",
             commentPermission = value.string("commentPermission") ?: "everyone", pinned = value.boolean("pinned"),
@@ -958,9 +996,20 @@ class SocialRepository(context: Context) {
             status = value.string("status") ?: "published", viewCount = value.number("viewCount")?.toInt() ?: 0,
             shareCount = value.number("shareCount")?.toInt() ?: 0, saveCount = value.number("saveCount")?.toInt() ?: 0,
             reactionCount = value.number("reactionCount")?.toInt() ?: 0,
-            commentCount = value.number("commentCount")?.toInt() ?: 0, viewerReaction = value.string("viewerReaction"), publishedAt = value.string("publishedAt")
+            commentCount = value.number("commentCount")?.toInt() ?: 0, viewerReaction = value.string("viewerReaction"),
+            recommended = value.boolean("recommended"), recommendationLabel = value.string("recommendationLabel"),
+            publishedAt = value.string("publishedAt")
         )
     }
+
+    private fun mapFeedModule(value: Map<String, Any?>) = SocialFeedModule(
+        id = value.string("id").orEmpty(),
+        kind = value.string("kind") ?: "people",
+        insertAfter = value.number("insertAfter")?.toInt() ?: 2,
+        title = value.string("title") ?: "Suggested for you",
+        profiles = value.list("profiles").mapNotNull { it.objectMap()?.let(::mapProfile) },
+        posts = value.list("posts").mapNotNull { it.objectMap()?.let(::mapPost) }
+    )
 
     private fun mapMessage(value: Map<String, Any?>) = SocialMessage(
         id = value.string("id").orEmpty(), conversationId = value.string("conversationId").orEmpty(), senderId = value.string("senderId").orEmpty(),
@@ -1044,6 +1093,18 @@ class SocialRepository(context: Context) {
         cache.saveFeed(_feed.value)
     }
 
+    private fun mediaInput(media: SocialMedia): Map<String, Any?> = mapOf(
+        "url" to media.url, "type" to media.type, "hlsUrl" to media.hlsUrl, "thumbnailUrl" to media.thumbnailUrl,
+        "mimeType" to media.mimeType, "processingId" to media.processingId, "processingStatus" to media.processingStatus,
+        "sharedPostId" to media.sharedPostId, "sharedRootPostId" to media.sharedRootPostId, "sharedAuthorId" to media.sharedAuthorId,
+        "sharedAuthor" to media.sharedAuthor, "sharedAvatar" to media.sharedAvatar, "sharedBody" to media.sharedBody,
+        "sharedMediaType" to media.sharedMediaType, "sharedViews" to media.sharedViews, "sharedReactions" to media.sharedReactions,
+        "sharedComments" to media.sharedComments, "sharedPublishedAt" to media.sharedPublishedAt,
+        "title" to media.title, "description" to media.description, "siteName" to media.siteName, "domain" to media.domain,
+        "displayUrl" to media.displayUrl, "domainAgeYears" to media.domainAgeYears, "forwarded" to media.forwarded,
+        "forwardedFromName" to media.forwardedFromName, "forwardedFromMessageId" to media.forwardedFromMessageId
+    ).filterValues { it != null }
+
     private fun mapReset(value: Map<String, Any?>) = PasswordResetChallenge(
         value.string("challengeId").orEmpty(), value.string("channel") ?: "email", value.string("destination").orEmpty(),
         value.string("expiresAt").orEmpty(), value.string("resendAvailableAt").orEmpty(), value.string("message").orEmpty()
@@ -1058,7 +1119,8 @@ class SocialRepository(context: Context) {
         const val PUBLIC_USER_FIELDS = "id name avatar status socialLastActiveAt"
         const val DECORATION_FIELDS = "id slug kind name assetUrl fileName mimeType animated width height priceUsd status sortOrder owned applied ownershipSource"
         const val PROFILE_FIELDS = "id userId username bio about category website location coverUrl verified badgeType badgePlan badgeExpiresAt avatarDecoration { $DECORATION_FIELDS } profileEffect { $DECORATION_FIELDS } privacy preferences followerCount followingCount postCount isFollowing createdAt user { $PUBLIC_USER_FIELDS }"
-        const val POST_FIELDS = "id authorId type body media thumbnailUrl hlsUrl processingStatus visibility commentPermission pinned groupId saved status viewCount shareCount saveCount reactionCount commentCount viewerReaction publishedAt author { $PUBLIC_USER_FIELDS } authorProfile { id userId username verified badgeType isFollowing avatarDecoration { $DECORATION_FIELDS } }"
+        const val POST_FIELDS = "id authorId type body media metadata thumbnailUrl hlsUrl processingStatus visibility commentPermission pinned groupId saved status viewCount shareCount saveCount reactionCount commentCount viewerReaction recommended recommendationLabel publishedAt author { $PUBLIC_USER_FIELDS } authorProfile { id userId username verified badgeType isFollowing avatarDecoration { $DECORATION_FIELDS } }"
+        const val FEED_MODULE_FIELDS = "id kind insertAfter title profiles { $PROFILE_FIELDS } posts { $POST_FIELDS }"
         const val COMMENT_FIELDS = "id postId authorId replyToId body status reactionCount viewerLiked createdAt author { $PUBLIC_USER_FIELDS } authorProfile { id userId username verified badgeType avatarDecoration { $DECORATION_FIELDS } }"
         const val MESSAGE_FIELDS = "id conversationId senderId type body media replyToId deliveryStatus sentAt deliveredAt readAt editedAt unsentAt reactions { id userId emoji } sender { $PUBLIC_USER_FIELDS } senderProfile { id userId username avatarDecoration { $DECORATION_FIELDS } }"
         const val CONVERSATION_FIELDS = "id type title avatarUrl requestStatus requestedById unreadCount updatedAt members { id userId role muted archived typingAt lastReadAt blocked user { $PUBLIC_USER_FIELDS } profile { id userId username verified badgeType avatarDecoration { $DECORATION_FIELDS } } } lastMessage { $MESSAGE_FIELDS }"

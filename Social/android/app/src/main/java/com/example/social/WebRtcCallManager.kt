@@ -107,10 +107,11 @@ class WebRtcCallManager(
             val started = repository.startCall(conversationId, calleeId, video, offer.toMap())
             _call.value = started
             sendPendingCandidates()
-            _state.value = "Ringing…"
+            _state.value = if (started.status == "calling") "Calling…" else "Ringing…"
             startPolling(started.id)
         } catch (error: Exception) {
             _state.value = error.message ?: "Call failed"
+            closeMedia()
             throw error
         }
     }
@@ -250,6 +251,7 @@ class WebRtcCallManager(
         pollJob?.cancel()
         pollJob = scope.launch {
             var ringingSeconds = 0
+            var activeHeartbeatSeconds = 0
             while (!disposed) {
                 try {
                     val latest = repository.getCall(callId) ?: break
@@ -263,11 +265,20 @@ class WebRtcCallManager(
                     }
                     if (remoteDescriptionApplied) addRemoteCandidates(latest)
                     when (latest.status) {
-                        "active" -> _state.value = "Connected"
+                        "calling" -> _state.value = "Calling…"
+                        "ringing", "connecting" -> if (!remoteDescriptionApplied) _state.value = "Ringing…"
+                        "active" -> {
+                            _state.value = "Connected"
+                            activeHeartbeatSeconds += 1
+                            if (activeHeartbeatSeconds >= 15) {
+                                activeHeartbeatSeconds = 0
+                                runCatching { repository.signalCall(callId, status = "active") }
+                            }
+                        }
                         "declined" -> { _state.value = "Declined"; closeMedia(); break }
                         "ended", "missed", "failed" -> { _state.value = "Call ended"; closeMedia(); break }
                     }
-                    if (latest.status == "ringing" && latest.answer == null) {
+                    if (latest.status in setOf("calling", "ringing", "connecting") && latest.answer == null) {
                         ringingSeconds += 1
                         if (ringingSeconds >= 45) {
                             runCatching { repository.endCall(callId, "missed") }
@@ -276,6 +287,7 @@ class WebRtcCallManager(
                             break
                         }
                     } else ringingSeconds = 0
+                    if (latest.status != "active") activeHeartbeatSeconds = 0
                 } catch (_: Exception) {
                     // A cached call remains usable through a brief network interruption.
                 }

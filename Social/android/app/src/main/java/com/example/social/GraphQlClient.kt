@@ -24,6 +24,7 @@ import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.asRequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.File
+import java.io.IOException
 import java.net.URI
 import java.util.concurrent.TimeUnit
 
@@ -43,24 +44,45 @@ internal class GraphQlClient(context: Context, private val token: () -> String?)
 
     suspend fun execute(query: String, variables: Map<String, Any?> = emptyMap()): Map<String, Any?> = withContext(Dispatchers.IO) {
         val payload = mapAdapter.toJson(mapOf("query" to query, "variables" to variables))
-        val builder = Request.Builder()
-            .url("$baseUrl/graphql")
-            .header("Accept", "application/json")
-            .header("Cache-Control", "no-cache")
-            .post(payload.toRequestBody(JSON))
-        token()?.takeIf { it.isNotBlank() }?.let { builder.header("Authorization", "Bearer $it") }
-        http.newCall(builder.build()).execute().use { response ->
-            val text = response.body?.string().orEmpty()
-            val root = runCatching { mapAdapter.fromJson(text) }.getOrNull()
-            val errors = root?.list("errors")
-            if (!response.isSuccessful || !errors.isNullOrEmpty()) {
-                val error = errors?.firstOrNull()?.objectMap()
-                val message = error?.string("message") ?: root?.string("error") ?: "Tiwlo API request failed (${response.code})"
-                val code = error?.objectValue("extensions")?.string("code")
-                throw SocialApiException(message, code)
+        val retryable = isRetryableGraphQlOperation(query)
+        repeat(MAX_QUERY_RETRIES + 1) { attempt ->
+            try {
+                val builder = Request.Builder()
+                    .url("$baseUrl/graphql")
+                    .header("Accept", "application/json")
+                    .header("Cache-Control", "no-cache")
+                    .post(payload.toRequestBody(JSON))
+                token()?.takeIf { it.isNotBlank() }?.let { builder.header("Authorization", "Bearer $it") }
+                return@withContext http.newCall(builder.build()).execute().use { response ->
+                    val text = response.body?.string().orEmpty()
+                    val root = runCatching { mapAdapter.fromJson(text) }.getOrNull()
+                    val errors = root?.list("errors")
+                    if (response.code in RETRYABLE_HTTP_CODES && retryable) {
+                        throw RetryableApiException("Tiwlo API is temporarily unavailable (${response.code})")
+                    }
+                    if (!response.isSuccessful || !errors.isNullOrEmpty()) {
+                        val error = errors?.firstOrNull()?.objectMap()
+                        val message = error?.string("message") ?: root?.string("error") ?: "Tiwlo API request failed (${response.code})"
+                        val code = error?.objectValue("extensions")?.string("code")
+                        throw SocialApiException(message, code)
+                    }
+                    root?.objectValue("data")
+                        ?: if (retryable) throw RetryableApiException("Tiwlo API returned an incomplete response")
+                        else throw SocialApiException("Tiwlo API returned no data")
+                }
+            } catch (error: Exception) {
+                val networkFailure = error is IOException || error is RetryableApiException
+                if (!networkFailure || !retryable || attempt >= MAX_QUERY_RETRIES) {
+                    if (networkFailure) throw SocialApiException(
+                        "Network is weak or unavailable. Your saved content is still safe; please try again.",
+                        "NETWORK"
+                    )
+                    throw error
+                }
+                delay(RETRY_DELAYS_MS[attempt])
             }
-            root?.objectValue("data") ?: throw SocialApiException("Tiwlo API returned no data")
         }
+        throw SocialApiException("Network is weak or unavailable. Your saved content is still safe; please try again.", "NETWORK")
     }
 
     suspend fun getJson(path: String): Map<String, Any?> = requestJson(Request.Builder().url(absoluteUrl(path).orEmpty()).get().build())
@@ -71,12 +93,29 @@ internal class GraphQlClient(context: Context, private val token: () -> String?)
     }
 
     private suspend fun requestJson(request: Request): Map<String, Any?> = withContext(Dispatchers.IO) {
-        http.newCall(request).execute().use { response ->
-            val text = response.body?.string().orEmpty()
-            val value = runCatching { mapAdapter.fromJson(text) }.getOrNull()
-            if (!response.isSuccessful || value == null) throw SocialApiException(value?.string("error") ?: "Secure API request failed (${response.code})")
-            value
+        val retryable = request.method == "GET"
+        repeat(MAX_QUERY_RETRIES + 1) { attempt ->
+            try {
+                return@withContext http.newCall(request).execute().use { response ->
+                    val text = response.body?.string().orEmpty()
+                    val value = runCatching { mapAdapter.fromJson(text) }.getOrNull()
+                    if (response.code in RETRYABLE_HTTP_CODES && retryable) throw RetryableApiException("Secure API is temporarily unavailable")
+                    if (!response.isSuccessful || value == null) throw SocialApiException(value?.string("error") ?: "Secure API request failed (${response.code})")
+                    value
+                }
+            } catch (error: Exception) {
+                val networkFailure = error is IOException || error is RetryableApiException
+                if (!networkFailure || !retryable || attempt >= MAX_QUERY_RETRIES) {
+                    if (networkFailure) throw SocialApiException(
+                        "Network is weak or unavailable. Please check the connection and try again.",
+                        "NETWORK"
+                    )
+                    throw error
+                }
+                delay(RETRY_DELAYS_MS[attempt])
+            }
         }
+        throw SocialApiException("Network is weak or unavailable. Please check the connection and try again.", "NETWORK")
     }
 
     suspend fun uploadMedia(resolver: ContentResolver, uri: Uri, kind: String, onProgress: ((Int) -> Unit)? = null): MediaUploadResult = withContext(Dispatchers.IO) {
@@ -293,10 +332,20 @@ internal class GraphQlClient(context: Context, private val token: () -> String?)
     private companion object {
         const val CHUNK_THRESHOLD = 512L * 1024L
         const val DEFAULT_CHUNK_SIZE = 768 * 1024
+        const val MAX_QUERY_RETRIES = 2
+        val RETRY_DELAYS_MS = longArrayOf(350L, 900L)
+        val RETRYABLE_HTTP_CODES = setOf(408, 425, 429, 500, 502, 503, 504)
         val JSON = "application/json; charset=utf-8".toMediaType()
         val OCTET = "application/octet-stream".toMediaType()
         val EMPTY_BODY: RequestBody = ByteArray(0).toRequestBody(OCTET)
     }
+}
+
+private class RetryableApiException(message: String) : IOException(message)
+
+internal fun isRetryableGraphQlOperation(query: String): Boolean {
+    val operation = query.trimStart()
+    return operation.startsWith("query", ignoreCase = true) || operation.startsWith("{")
 }
 
 internal fun Any?.objectMap(): Map<String, Any?>? = (this as? Map<*, *>)?.entries?.associate { it.key.toString() to it.value }
