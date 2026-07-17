@@ -16,6 +16,9 @@ import android.graphics.ImageDecoder
 import android.media.RingtoneManager
 import android.media.MediaRecorder
 import android.net.Uri
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
@@ -117,6 +120,8 @@ import androidx.core.view.WindowCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.work.WorkInfo
+import androidx.work.WorkManager
 import com.example.ui.theme.TiwiTheme
 import com.example.ui.theme.TiwiBlue
 import com.example.ui.theme.TiwiPurple
@@ -151,6 +156,7 @@ import com.example.social.SocialUser
 import com.example.social.SocialVerificationOptions
 import com.example.social.SocialVerificationPackage
 import com.example.social.PasswordResetChallenge
+import com.example.social.PostUploadWorker
 import com.example.social.WebRtcCallManager
 import com.example.social.TiwiCallListenerService
 import kotlinx.coroutines.delay
@@ -585,6 +591,7 @@ data class Post(
     val likes: Int,
     val comments: Int,
     val shares: Int,
+    val saves: Int = 0,
     val views: Int = 0,
     val liked: Boolean = false,
     val verified: Boolean = false,
@@ -753,6 +760,7 @@ private fun toUiPost(value: SocialPost): Post {
         likes = value.reactionCount,
         comments = value.commentCount,
         shares = value.shareCount,
+        saves = value.saveCount,
         views = value.viewCount,
         liked = value.viewerReaction == "like",
         verified = value.authorProfile?.verified == true,
@@ -1236,6 +1244,52 @@ private suspend fun saveRemoteMediaToGallery(context: Context, sourceUrl: String
 private suspend fun saveRemoteImageToGallery(context: Context, sourceUrl: String): Boolean =
     saveRemoteMediaToGallery(context, sourceUrl, video = false)
 
+private fun currentNetworkAvailable(context: Context): Boolean {
+    val manager = context.getSystemService(ConnectivityManager::class.java)
+    val network = manager.activeNetwork ?: return false
+    val capabilities = manager.getNetworkCapabilities(network) ?: return false
+    return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) && capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+}
+
+@Composable
+private fun rememberNetworkAvailable(): State<Boolean> {
+    val context = LocalContext.current
+    return produceState(initialValue = currentNetworkAvailable(context), context) {
+        val manager = context.getSystemService(ConnectivityManager::class.java)
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) { value = currentNetworkAvailable(context) }
+            override fun onLost(network: Network) { value = currentNetworkAvailable(context) }
+            override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) { value = currentNetworkAvailable(context) }
+        }
+        runCatching { manager.registerDefaultNetworkCallback(callback) }
+        awaitDispose { runCatching { manager.unregisterNetworkCallback(callback) } }
+    }
+}
+
+private data class PendingUploadSnapshot(val active: Boolean = false, val progress: Int = 0, val status: String = "")
+
+@Composable
+private fun rememberPendingUploadSnapshot(): State<PendingUploadSnapshot> {
+    val context = LocalContext.current
+    return produceState(initialValue = PendingUploadSnapshot(), context) {
+        while (true) {
+            value = withContext(Dispatchers.IO) {
+                val work = runCatching { WorkManager.getInstance(context).getWorkInfosByTag(PostUploadWorker.TAG).get() }.getOrDefault(emptyList())
+                val active = work.firstOrNull { it.state == WorkInfo.State.RUNNING }
+                    ?: work.firstOrNull { it.state == WorkInfo.State.ENQUEUED || it.state == WorkInfo.State.BLOCKED }
+                if (active == null) PendingUploadSnapshot()
+                else PendingUploadSnapshot(
+                    active = true,
+                    progress = active.progress.getInt(PostUploadWorker.KEY_PROGRESS, if (active.state == WorkInfo.State.RUNNING) 2 else 0),
+                    status = active.progress.getString(PostUploadWorker.KEY_STATUS)
+                        ?: if (active.state == WorkInfo.State.RUNNING) "Uploading your post" else "Waiting for internet connection"
+                )
+            }
+            delay(1_000)
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink: String? = null, onDeepLinkConsumed: () -> Unit = {}) {
@@ -1501,7 +1555,11 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
                         0 -> HomeFeed(reels, posts, repository, onShareClick = { sharedPost = it }, onAuthorClick = { selectedProfileUserId = it }, onPostClick = { selectedPostMediaIndex = null; selectedPostId = it }, onMediaClick = { id, index -> selectedPostMediaIndex = index; selectedPostId = id }, onReelClick = { initialReelId = it; selectedTab = 2 }, onEditPost = { selectedEditPostId = it })
                         1 -> SearchScreen(repository, onProfileClick = { selectedProfileUserId = it }, onPostClick = { selectedPostMediaIndex = null; selectedPostId = it })
                         2 -> ReelsScreen(reels, repository, initialReelId = initialReelId, onOpen = { selectedPostMediaIndex = null; selectedPostId = it }, onShare = { reel -> sharedPost = posts.firstOrNull { it.id == reel.id } }, onAuthor = { selectedProfileUserId = it })
-                        3 -> NotificationsScreen(repository)
+                        3 -> NotificationsScreen(
+                            repository,
+                            onProfileClick = { selectedProfileUserId = it },
+                            onPostClick = { selectedPostMediaIndex = null; selectedPostId = it }
+                        )
                         4 -> MenuScreen(repository, currentUser?.name.orEmpty(), currentUser?.avatar, onProfileClick = { showProfile = true }, onLogout = { repository.logout(); onLogout() })
                     }
                 }
@@ -1515,6 +1573,7 @@ fun TiwiTopBar(avatarUrl: String?, avatarDecoration: SocialProfileDecoration? = 
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .background(Brush.horizontalGradient(listOf(Color.White.copy(alpha = .96f), Color(0xFFF3F7FF).copy(alpha = .92f))))
             .statusBarsPadding()
             .heightIn(min = 50.dp)
             .padding(horizontal = 12.dp, vertical = 4.dp),
@@ -1537,17 +1596,11 @@ fun TiwiTopBar(avatarUrl: String?, avatarDecoration: SocialProfileDecoration? = 
             IconButton(onClick = onCreateClick, modifier = Modifier.size(40.dp)) {
                 Icon(Icons.Outlined.AddBox, contentDescription = "Create", tint = MaterialTheme.colorScheme.onBackground, modifier = Modifier.size(23.dp))
             }
-            IconButton(onClick = onMessagesClick, modifier = Modifier.size(40.dp)) {
-                Icon(Icons.AutoMirrored.Outlined.Send, contentDescription = "Messages", tint = MaterialTheme.colorScheme.onBackground, modifier = Modifier.size(23.dp))
-            }
-            Spacer(modifier = Modifier.width(2.dp))
-            DecoratedAvatar(
-                url = avatarUrl,
-                fallback = R.drawable.img_tiwi_avatar_1,
-                decoration = avatarDecoration,
-                modifier = Modifier.size(38.dp).clickable { onProfileClick() },
-                contentScale = ContentScale.Crop
-            )
+            FilledTonalIconButton(
+                onClick = onMessagesClick,
+                modifier = Modifier.size(36.dp),
+                colors = IconButtonDefaults.filledTonalIconButtonColors(containerColor = Color(0xFFE7F0FF), contentColor = TiwiBlue)
+            ) { Icon(Icons.Outlined.Forum, contentDescription = "Messages", modifier = Modifier.size(20.dp)) }
         }
     }
 }
@@ -1567,8 +1620,18 @@ fun HomeFeed(
 ) {
     val scope = rememberCoroutineScope()
     val syncing by repository.syncing.collectAsState()
+    val online by rememberNetworkAvailable()
+    val pendingUpload by rememberPendingUploadSnapshot()
+    var observedUpload by remember { mutableStateOf(false) }
     var suggestions by remember { mutableStateOf<List<SocialProfile>>(emptyList()) }
     LaunchedEffect(Unit) { suggestions = runCatching { repository.searchProfiles() }.getOrDefault(emptyList()).take(12) }
+    LaunchedEffect(pendingUpload.active) {
+        if (pendingUpload.active) observedUpload = true
+        else if (observedUpload) {
+            observedUpload = false
+            runCatching { repository.refreshAll(force = true) }
+        }
+    }
     PullToRefreshBox(
         isRefreshing = syncing,
         onRefresh = { scope.launch { repository.refreshAll(force = true) } },
@@ -1576,6 +1639,22 @@ fun HomeFeed(
     ) {
         if (posts.isEmpty() && syncing) FeedSkeleton()
         else LazyColumn(modifier = Modifier.fillMaxSize()) {
+            if (!online) item {
+                Row(Modifier.fillMaxWidth().background(Color(0xFFFFF4E5)).padding(horizontal = 12.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Outlined.WifiOff, null, tint = Color(0xFFB54708), modifier = Modifier.size(17.dp))
+                    Text("No internet connection · Showing saved posts", color = Color(0xFF7A2E0E), fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 7.dp))
+                }
+            }
+            if (pendingUpload.active) item {
+                Column(Modifier.fillMaxWidth().background(Color(0xFFEAF3FF)).padding(horizontal = 12.dp, vertical = 7.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Outlined.CloudUpload, null, tint = TiwiBlue, modifier = Modifier.size(17.dp))
+                        Text(pendingUpload.status, color = Color(0xFF2457A7), fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f).padding(start = 7.dp))
+                        Text("${pendingUpload.progress}%", color = Color(0xFF2457A7), fontSize = 10.sp)
+                    }
+                    LinearProgressIndicator(progress = { pendingUpload.progress / 100f }, modifier = Modifier.fillMaxWidth().padding(top = 5.dp).height(3.dp), color = TiwiBlue, trackColor = Color.White)
+                }
+            }
             item { ReelsSection(reels, onReelClick) }
             itemsIndexed(posts, key = { _, post -> post.id }) { index, post ->
                 Column {
@@ -1748,6 +1827,7 @@ fun PostCard(
     var showPrivacy by remember { mutableStateOf(false) }
     var showCommentPolicy by remember { mutableStateOf(false) }
     var showComments by remember { mutableStateOf(false) }
+    var showReactions by remember { mutableStateOf(false) }
     var editBody by remember(post.content) { mutableStateOf(post.content) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -1807,7 +1887,7 @@ fun PostCard(
 
         if (post.content.isNotBlank()) Column(modifier = Modifier.padding(horizontal = 9.dp, vertical = 1.dp)) {
             Text(
-                text = post.content,
+                text = highlightMentions(post.content),
                 style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp, lineHeight = 18.sp),
                 maxLines = if (isExpanded) Int.MAX_VALUE else 3,
                 overflow = TextOverflow.Ellipsis
@@ -1826,25 +1906,22 @@ fun PostCard(
 
         PostMediaGrid(post.media, onOpen) { linkedId -> onOpenLinkedPost?.invoke(linkedId) ?: onOpen(0) }
 
-        if (post.likes + post.comments + post.shares + post.views > 0) {
+        if (post.likes + post.comments + post.shares + post.saves + post.views > 0) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 9.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 if (post.likes > 0) {
-                    Box(Modifier.size(18.dp).background(TiwiBlue, CircleShape), contentAlignment = Alignment.Center) {
-                        Icon(Icons.Default.ThumbUp, null, tint = Color.White, modifier = Modifier.size(11.dp))
+                    Row(Modifier.clip(RoundedCornerShape(8.dp)).clickable { showReactions = true }.padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.size(18.dp).background(TiwiBlue, CircleShape), contentAlignment = Alignment.Center) {
+                            Icon(Icons.Default.ThumbUp, null, tint = Color.White, modifier = Modifier.size(11.dp))
+                        }
+                        Spacer(Modifier.width(4.dp))
+                        Text(formatCount(post.likes), color = Color.Gray, fontSize = 11.sp)
                     }
-                    Spacer(Modifier.width(4.dp))
-                    Text(formatCount(post.likes), color = Color.Gray, fontSize = 12.sp)
                 }
                 Spacer(Modifier.weight(1f))
-                Text(
-                    listOfNotNull(
-                        post.comments.takeIf { it > 0 }?.let { "${formatCount(it)} comments" },
-                        post.shares.takeIf { it > 0 }?.let { "${formatCount(it)} reposts" },
-                        post.views.takeIf { it > 0 }?.let { "${formatCount(it)} views" }
-                    ).joinToString(" · "),
-                    color = Color.Gray,
-                    fontSize = 12.sp
-                )
+                if (post.comments > 0) Text("${formatCount(post.comments)} comments", color = Color.Gray, fontSize = 10.sp, modifier = Modifier.clickable { showComments = true }.padding(2.dp))
+                if (post.shares > 0) Text(" · ${formatCount(post.shares)} reposts", color = Color.Gray, fontSize = 10.sp)
+                if (post.saves > 0) Text(" · ${formatCount(post.saves)} saves", color = Color.Gray, fontSize = 10.sp)
+                if (post.views > 0) Text(" · ${formatCount(post.views)} views", color = Color.Gray, fontSize = 10.sp)
             }
         }
 
@@ -1911,6 +1988,13 @@ fun PostCard(
         showCommentPolicy = false; scope.launch { runCatching { repository.updatePostOptions(post.id, commentPermission = value) } }
     }
     if (showComments) CompactCommentsSheet(repository, post, onDismiss = { showComments = false }, onProfileClick = onCommentProfile)
+    if (showReactions) SocialPeopleDialog(
+        title = "People who liked this",
+        repository = repository,
+        load = { repository.postReactions(post.id) },
+        onDismiss = { showReactions = false },
+        onProfileClick = { showReactions = false; onCommentProfile(it) }
+    )
 }
 
 @Composable
@@ -2133,7 +2217,7 @@ private fun PostDetailScreen(
                 item(key = root.id) {
                     CommentRow(
                         comment = root, isOwn = root.authorId == repository.currentUserId(), onProfile = { onProfileClick(root.authorId) },
-                        onReply = { replyTo = root; text = "@${root.author.name} " },
+                        onReply = { replyTo = root; text = "@${root.authorProfile?.username?.ifBlank { root.author.name.substringBefore(' ') } ?: root.author.name.substringBefore(' ')} " },
                         onLike = { scope.launch { runCatching { repository.reactToComment(postId, root.id) } } },
                         onDelete = { scope.launch { runCatching { repository.deleteComment(postId, root.id) } } },
                         onReport = { scope.launch { runCatching { repository.reportContent("comment", root.id, "inappropriate_content") }.onSuccess { Toast.makeText(context, "Report sent", Toast.LENGTH_SHORT).show() } } }
@@ -2146,7 +2230,7 @@ private fun PostDetailScreen(
                 items(shown, key = { it.id }) { comment ->
                     CommentRow(
                         comment = comment, isOwn = comment.authorId == repository.currentUserId(), onProfile = { onProfileClick(comment.authorId) },
-                        onReply = { replyTo = comment; text = "@${comment.author.name} " },
+                        onReply = { replyTo = comment; text = "@${comment.authorProfile?.username?.ifBlank { comment.author.name.substringBefore(' ') } ?: comment.author.name.substringBefore(' ')} " },
                         onLike = { scope.launch { runCatching { repository.reactToComment(postId, comment.id) } } },
                         onDelete = { scope.launch { runCatching { repository.deleteComment(postId, comment.id) } } },
                         onReport = { scope.launch { runCatching { repository.reportContent("comment", comment.id, "inappropriate_content") }.onSuccess { Toast.makeText(context, "Report sent", Toast.LENGTH_SHORT).show() } } }
@@ -2437,6 +2521,108 @@ private fun highlightMentions(value: String) = buildAnnotatedString {
     if (cursor < value.length) append(value.substring(cursor))
 }
 
+@Composable
+private fun SocialPeoplePage(
+    title: String,
+    repository: SocialRepository,
+    load: suspend () -> List<SocialProfile>,
+    onBack: () -> Unit,
+    onProfileClick: (String) -> Unit = {},
+    followBackMode: Boolean = false,
+    unblockMode: Boolean = false,
+    emptyText: String = "No people to show"
+) {
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    var people by remember(title) { mutableStateOf<List<SocialProfile>>(emptyList()) }
+    var loading by remember(title) { mutableStateOf(true) }
+    var refreshKey by remember(title) { mutableIntStateOf(0) }
+    var busyId by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(title, refreshKey) {
+        loading = true
+        runCatching { load() }
+            .onSuccess { people = it }
+            .onFailure { Toast.makeText(context, it.message ?: "People could not load", Toast.LENGTH_LONG).show() }
+        loading = false
+    }
+    Column(Modifier.fillMaxSize().background(Color.White).statusBarsPadding()) {
+        Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack, modifier = Modifier.size(44.dp)) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", modifier = Modifier.size(21.dp)) }
+            Text(title, Modifier.weight(1f), fontWeight = FontWeight.Black, fontSize = 17.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        HorizontalDivider(thickness = .5.dp, color = Color(0xFFE4E7EC))
+        when {
+            loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(Modifier.size(27.dp), strokeWidth = 2.4.dp) }
+            people.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(emptyText, color = Color(0xFF667085), fontSize = 13.sp) }
+            else -> LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(vertical = 4.dp)) {
+                items(people, key = { "people-${title}-${it.userId}" }) { person ->
+                    Row(
+                        Modifier.fillMaxWidth().clickable(enabled = !unblockMode) { onProfileClick(person.userId) }.padding(horizontal = 12.dp, vertical = 7.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        DecoratedAvatar(person.user.avatar, R.drawable.img_tiwi_avatar_1, person.avatarDecoration, Modifier.size(43.dp), animateDecoration = false)
+                        Column(Modifier.weight(1f).padding(horizontal = 9.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(person.user.name.ifBlank { person.username.ifBlank { "Tiwlo User" } }, fontWeight = FontWeight.ExtraBold, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                if (person.verified) VerifiedBadge(person.badgeType, 14.dp, Modifier.padding(start = 3.dp))
+                            }
+                            Text("@${person.username}", color = Color(0xFF667085), fontSize = 10.sp, maxLines = 1)
+                        }
+                        if (person.userId != repository.currentUserId()) {
+                            val label = when {
+                                unblockMode -> "Unblock"
+                                person.isFollowing -> "Following"
+                                followBackMode -> "Follow back"
+                                else -> "Follow"
+                            }
+                            OutlinedButton(
+                                enabled = busyId != person.userId,
+                                onClick = {
+                                    busyId = person.userId
+                                    scope.launch {
+                                        if (unblockMode) runCatching { repository.blockUser(person.userId, false) }
+                                            .onSuccess { people = people.filterNot { it.userId == person.userId } }
+                                            .onFailure { Toast.makeText(context, it.message ?: "Unblock failed", Toast.LENGTH_LONG).show() }
+                                        else runCatching { repository.follow(person.userId, !person.isFollowing) }
+                                            .onSuccess { updated -> people = people.map { if (it.userId == updated.userId) updated else it } }
+                                            .onFailure { Toast.makeText(context, it.message ?: "Follow failed", Toast.LENGTH_LONG).show() }
+                                        busyId = null
+                                    }
+                                },
+                                modifier = Modifier.height(31.dp),
+                                shape = RoundedCornerShape(8.dp),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                                border = BorderStroke(.8.dp, if (unblockMode) Color(0xFFFDA29B) else Color(0xFFD0D5DD))
+                            ) {
+                                if (busyId == person.userId) CircularProgressIndicator(Modifier.size(13.dp), strokeWidth = 1.8.dp)
+                                else Text(label, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = if (unblockMode) Color(0xFFB42318) else if (person.isFollowing) Color(0xFF475467) else TiwiBlue)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SocialPeopleDialog(
+    title: String,
+    repository: SocialRepository,
+    load: suspend () -> List<SocialProfile>,
+    onDismiss: () -> Unit,
+    onProfileClick: (String) -> Unit
+) {
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = onDismiss,
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
+    ) {
+        Surface(Modifier.fillMaxSize(), color = Color.White, tonalElevation = 0.dp) {
+            SocialPeoplePage(title, repository, load, onDismiss, onProfileClick)
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun CompactCommentsSheet(
@@ -2451,6 +2637,7 @@ private fun CompactCommentsSheet(
     var text by remember(post.id) { mutableStateOf("") }
     var replyTo by remember(post.id) { mutableStateOf<SocialComment?>(null) }
     var sending by remember(post.id) { mutableStateOf(false) }
+    var showReactions by remember(post.id) { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -2474,11 +2661,10 @@ private fun CompactCommentsSheet(
             ) {
                 Column(Modifier.weight(1f)) {
                     Text("Comments", fontWeight = FontWeight.Black, fontSize = 17.sp)
-                    Text(
-                        "${formatCount(post.likes)} likes · ${formatCount(maxOf(post.comments, comments.size))} comments",
-                        color = Color(0xFF667085),
-                        fontSize = 10.sp
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("${formatCount(post.likes)} likes", color = TiwiBlue, fontSize = 10.sp, fontWeight = FontWeight.Bold, modifier = Modifier.clickable { showReactions = true })
+                        Text(" · ${formatCount(maxOf(post.comments, comments.size))} comments", color = Color(0xFF667085), fontSize = 10.sp)
+                    }
                 }
                 IconButton(onClick = onDismiss, modifier = Modifier.size(34.dp)) {
                     Icon(Icons.Default.Close, "Close comments", modifier = Modifier.size(19.dp))
@@ -2504,7 +2690,7 @@ private fun CompactCommentsSheet(
                             comment = root,
                             isOwn = root.authorId == repository.currentUserId(),
                             onProfile = { onProfileClick(root.authorId) },
-                            onReply = { replyTo = root; text = "@${root.author.name.substringBefore(' ')} " },
+                            onReply = { replyTo = root; text = "@${root.authorProfile?.username?.ifBlank { root.author.name.substringBefore(' ') } ?: root.author.name.substringBefore(' ')} " },
                             onLike = { scope.launch { runCatching { repository.reactToComment(post.id, root.id) } } },
                             onDelete = { scope.launch { runCatching { repository.deleteComment(post.id, root.id) } } },
                             onReport = { scope.launch { runCatching { repository.reportContent("comment", root.id, "inappropriate_content") }.onSuccess { Toast.makeText(context, "Report sent", Toast.LENGTH_SHORT).show() } } }
@@ -2520,7 +2706,7 @@ private fun CompactCommentsSheet(
                             comment = reply,
                             isOwn = reply.authorId == repository.currentUserId(),
                             onProfile = { onProfileClick(reply.authorId) },
-                            onReply = { replyTo = reply; text = "@${reply.author.name.substringBefore(' ')} " },
+                            onReply = { replyTo = reply; text = "@${reply.authorProfile?.username?.ifBlank { reply.author.name.substringBefore(' ') } ?: reply.author.name.substringBefore(' ')} " },
                             onLike = { scope.launch { runCatching { repository.reactToComment(post.id, reply.id) } } },
                             onDelete = { scope.launch { runCatching { repository.deleteComment(post.id, reply.id) } } },
                             onReport = { scope.launch { runCatching { repository.reportContent("comment", reply.id, "inappropriate_content") }.onSuccess { Toast.makeText(context, "Report sent", Toast.LENGTH_SHORT).show() } } }
@@ -2585,6 +2771,13 @@ private fun CompactCommentsSheet(
             Spacer(Modifier.navigationBarsPadding().height(2.dp))
         }
     }
+    if (showReactions) SocialPeopleDialog(
+        title = "People who liked this",
+        repository = repository,
+        load = { repository.postReactions(post.id) },
+        onDismiss = { showReactions = false },
+        onProfileClick = { showReactions = false; onDismiss(); onProfileClick(it) }
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -2727,6 +2920,7 @@ fun CreatePostScreen(repository: SocialRepository, onBack: () -> Unit) {
     var busy by remember { mutableStateOf(false) }
     var uploadProgress by remember { mutableIntStateOf(0) }
     var uploadStatus by remember { mutableStateOf("") }
+    var showMentionPicker by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val user by repository.currentUser.collectAsState()
@@ -2760,32 +2954,19 @@ fun CreatePostScreen(repository: SocialRepository, onBack: () -> Unit) {
                         uploadStatus = "Preparing your post"
                         showPostUploadNotification(context, uploadProgress, uploadStatus)
                         try {
-                            val media = selectedUris.mapIndexed { index, uri ->
-                                uploadStatus = "Uploading ${index + 1} of ${selectedUris.size}"
-                                uploadProgress = if (selectedUris.isEmpty()) 45 else 5 + ((index * 75) / selectedUris.size)
-                                showPostUploadNotification(context, uploadProgress, uploadStatus)
-                                repository.uploadMedia(context.contentResolver, uri, "post") { fileProgress ->
-                                    val total = selectedUris.size.coerceAtLeast(1)
-                                    uploadProgress = 5 + (((index * 80) + (fileProgress * 80 / 100)) / total)
-                                    showPostUploadNotification(context, uploadProgress, "Uploading ${index + 1} of ${selectedUris.size}")
-                                }
-                            }
-                            uploadProgress = 88
-                            uploadStatus = "Publishing to the feed"
-                            showPostUploadNotification(context, uploadProgress, uploadStatus)
-                            val postType = if (media.any { it.type == "video" }) "video" else "post"
-                            repository.createPost(text, postType, media, visibility)
-                            uploadProgress = 100
-                            uploadStatus = "Post published"
-                            showPostUploadNotification(context, 100, uploadStatus, complete = true)
-                            playPostPublishedSound(context)
+                            PostUploadWorker.enqueue(context, selectedUris, text, visibility)
+                            uploadProgress = 4
+                            uploadStatus = if (currentNetworkAvailable(context)) "Upload started in the background" else "Queued until internet is available"
+                            NotificationManagerCompat.from(context).cancel(POST_UPLOAD_NOTIFICATION)
+                            Toast.makeText(context, uploadStatus, Toast.LENGTH_SHORT).show()
                             onBack()
                         } catch (error: Exception) {
                             NotificationManagerCompat.from(context).cancel(POST_UPLOAD_NOTIFICATION)
                             Toast.makeText(context, error.message ?: "Post failed", Toast.LENGTH_LONG).show()
                         } finally {
                             busy = false
-                            if (uploadProgress < 100) { uploadProgress = 0; uploadStatus = "" }
+                            uploadProgress = 0
+                            uploadStatus = ""
                         }
                     }
                 },
@@ -2894,9 +3075,54 @@ fun CreatePostScreen(repository: SocialRepository, onBack: () -> Unit) {
                 pickerType = ActivityResultContracts.PickVisualMedia.VideoOnly
                 mediaPicker.launch(PickVisualMediaRequest(pickerType))
             }) { Icon(Icons.Default.VideoLibrary, "Video", tint = TiwiPurple) }
-            IconButton(onClick = {}) { Icon(Icons.Default.PersonAdd, "Tag", tint = TiwiPink) }
+            IconButton(onClick = { showMentionPicker = true }) { Icon(Icons.Default.PersonAdd, "Mention", tint = TiwiPink) }
             IconButton(onClick = {}) { Icon(Icons.Default.LocationOn, "Location", tint = Color.Red) }
             IconButton(onClick = {}) { Icon(Icons.Default.Gif, "Gif", tint = TiwiBlue) }
+        }
+    }
+    if (showMentionPicker) ProfileMentionSheet(
+        repository = repository,
+        onDismiss = { showMentionPicker = false },
+        onSelect = { profile ->
+            val mention = "@${profile.username}"
+            if (!text.contains(mention, ignoreCase = true)) text = listOf(text.trimEnd(), mention).filter { it.isNotBlank() }.joinToString(" ") + " "
+            showMentionPicker = false
+        }
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ProfileMentionSheet(repository: SocialRepository, onDismiss: () -> Unit, onSelect: (SocialProfile) -> Unit) {
+    var query by remember { mutableStateOf("") }
+    var people by remember { mutableStateOf<List<SocialProfile>>(emptyList()) }
+    var loading by remember { mutableStateOf(true) }
+    LaunchedEffect(query) {
+        delay(220)
+        loading = true
+        people = runCatching { repository.searchProfiles(query) }.getOrDefault(emptyList()).take(30)
+        loading = false
+    }
+    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = Color.White, tonalElevation = 0.dp) {
+        Column(Modifier.fillMaxWidth().heightIn(max = 520.dp).navigationBarsPadding()) {
+            Text("Mention someone", fontWeight = FontWeight.Black, fontSize = 17.sp, modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp))
+            OutlinedTextField(
+                query, { query = it.take(80) }, singleLine = true, placeholder = { Text("Search name or username") },
+                leadingIcon = { Icon(Icons.Default.Search, null, modifier = Modifier.size(19.dp)) },
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp), shape = RoundedCornerShape(20.dp)
+            )
+            if (loading) Box(Modifier.fillMaxWidth().height(90.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp) }
+            else LazyColumn(Modifier.fillMaxWidth()) {
+                items(people, key = { "mention-${it.userId}" }) { person ->
+                    Row(Modifier.fillMaxWidth().clickable { onSelect(person) }.padding(horizontal = 13.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
+                        DecoratedAvatar(person.user.avatar, R.drawable.img_tiwi_avatar_1, person.avatarDecoration, Modifier.size(40.dp), animateDecoration = false)
+                        Column(Modifier.padding(start = 9.dp)) {
+                            Text(person.user.name.ifBlank { person.username }, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            Text("@${person.username}", color = TiwiBlue, fontSize = 10.sp)
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -3378,27 +3604,99 @@ private fun WebRtcVideoSurface(track: VideoTrack?, eglContext: EglBase.Context, 
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun NotificationsScreen(repository: SocialRepository) {
-    Column(modifier = Modifier.fillMaxSize()) {
-        Text(
-            text = "Activity",
-            modifier = Modifier.padding(16.dp),
-            style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold)
-        )
-        
-        val notifications = emptyList<String>()
-        
-        if (notifications.isEmpty()) Box(Modifier.fillMaxSize().padding(bottom = 72.dp), contentAlignment = Alignment.Center) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Box(Modifier.size(72.dp).background(Color(0xFFF2F4F7), CircleShape), contentAlignment = Alignment.Center) { Icon(Icons.Outlined.NotificationsNone, null, tint = Color(0xFF667085), modifier = Modifier.size(32.dp)) }
-                Spacer(Modifier.height(14.dp))
-                Text("No notifications yet", fontWeight = FontWeight.Bold, fontSize = 17.sp)
-                Text("Likes, comments, follows and mentions will appear here.", color = Color.Gray, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 5.dp, start = 28.dp, end = 28.dp))
+fun NotificationsScreen(
+    repository: SocialRepository,
+    onProfileClick: (String) -> Unit = {},
+    onPostClick: (String) -> Unit = {}
+) {
+    val notifications by repository.notifications.collectAsState()
+    val syncing by repository.syncing.collectAsState()
+    val scope = rememberCoroutineScope()
+    LaunchedEffect(Unit) {
+        while (true) {
+            runCatching { repository.refreshNotifications() }
+            delay(20_000)
+        }
+    }
+    PullToRefreshBox(
+        isRefreshing = syncing,
+        onRefresh = { scope.launch { runCatching { repository.refreshNotifications() } } },
+        modifier = Modifier.fillMaxSize()
+    ) {
+        Column(Modifier.fillMaxSize().background(Color.White)) {
+            Text("Activity", modifier = Modifier.padding(horizontal = 14.dp, vertical = 11.dp), fontSize = 22.sp, fontWeight = FontWeight.Black)
+            if (notifications.isEmpty()) Box(Modifier.fillMaxSize().padding(bottom = 72.dp), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Box(Modifier.size(62.dp).background(Color(0xFFF2F4F7), CircleShape), contentAlignment = Alignment.Center) { Icon(Icons.Outlined.NotificationsNone, null, tint = Color(0xFF667085), modifier = Modifier.size(29.dp)) }
+                    Spacer(Modifier.height(11.dp))
+                    Text("No notifications yet", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                    Text("Likes, comments, follows and mentions will appear here.", color = Color.Gray, fontSize = 11.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 4.dp, start = 28.dp, end = 28.dp))
+                }
+            } else LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 8.dp)) {
+                items(notifications, key = { "activity-${it.id}" }) { notification ->
+                    ActivityNotificationRow(repository, notification) {
+                        scope.launch {
+                            if (notification.status == "unread") runCatching { repository.markNotificationRead(notification.id) }
+                            val actorId = notification.metadata["actorId"]?.toString()
+                            val postId = notification.metadata["postId"]?.toString()
+                            when {
+                                !postId.isNullOrBlank() -> onPostClick(postId)
+                                !actorId.isNullOrBlank() -> onProfileClick(actorId)
+                            }
+                        }
+                    }
+                }
             }
-        } else LazyColumn { items(notifications) { note ->
-            ListItem(leadingContent = { Box(modifier = Modifier.size(40.dp).clip(CircleShape).background(TiwiBlue.copy(alpha = 0.1f)), contentAlignment = Alignment.Center) { Icon(Icons.Default.Notifications, contentDescription = null, tint = TiwiBlue) } }, headlineContent = { Text(note) }, supportingContent = { Text("2 hours ago") }, colors = ListItemDefaults.colors(containerColor = Color.Transparent))
-        } }
+        }
+    }
+}
+
+@Composable
+private fun ActivityNotificationRow(repository: SocialRepository, notification: SocialNotification, onOpen: () -> Unit) {
+    val actorId = notification.metadata["actorId"]?.toString().orEmpty()
+    val actorAvatar = notification.metadata["actorAvatar"]?.toString()
+    var actorProfile by remember(actorId) { mutableStateOf<SocialProfile?>(null) }
+    var busy by remember(actorId) { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    LaunchedEffect(actorId, notification.type) {
+        if (notification.type == "follow" && actorId.isNotBlank()) actorProfile = runCatching { repository.refreshProfile(actorId) }.getOrNull()
+    }
+    Row(
+        Modifier.fillMaxWidth().background(if (notification.status == "unread") Color(0xFFF2F7FF) else Color.White).clickable(onClick = onOpen).padding(horizontal = 12.dp, vertical = 7.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box {
+            TiwiAvatar(actorAvatar, R.drawable.img_tiwi_avatar_1, Modifier.size(45.dp).clip(CircleShape))
+            val marker = when (notification.type) {
+                "follow" -> Icons.Outlined.PersonAdd
+                "post_like", "comment_like" -> Icons.Filled.Favorite
+                "post_comment", "comment_reply" -> Icons.Outlined.ChatBubbleOutline
+                "mention" -> Icons.Outlined.AlternateEmail
+                else -> Icons.Outlined.Notifications
+            }
+            Box(Modifier.align(Alignment.BottomEnd).size(17.dp).background(TiwiBlue, CircleShape), contentAlignment = Alignment.Center) { Icon(marker, null, tint = Color.White, modifier = Modifier.size(10.dp)) }
+        }
+        Column(Modifier.weight(1f).padding(horizontal = 9.dp)) {
+            Text(notification.title.ifBlank { "Tiwi activity" }, fontWeight = FontWeight.ExtraBold, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text("${notification.message} · ${relativePostTime(notification.createdAt)}", color = Color(0xFF475467), fontSize = 10.sp, lineHeight = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        }
+        if (notification.type == "follow" && actorId.isNotBlank() && actorProfile?.isFollowing != true) {
+            Button(
+                enabled = !busy,
+                onClick = {
+                    busy = true
+                    scope.launch {
+                        runCatching { repository.follow(actorId, true) }.onSuccess { actorProfile = it }
+                        busy = false
+                    }
+                },
+                modifier = Modifier.height(30.dp),
+                contentPadding = PaddingValues(horizontal = 9.dp, vertical = 0.dp),
+                shape = RoundedCornerShape(8.dp)
+            ) { if (busy) CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 1.7.dp, color = Color.White) else Text("Follow back", fontSize = 9.sp, fontWeight = FontWeight.Bold) }
+        } else if (notification.status == "unread") Box(Modifier.size(8.dp).background(TiwiBlue, CircleShape))
     }
 }
 
@@ -3826,6 +4124,7 @@ private fun SocialSettingsPage(repository: SocialRepository, profile: SocialProf
     var pendingVerificationPlan by remember { mutableStateOf<SocialVerificationPackage?>(null) }
     var packageBusy by remember { mutableStateOf<String?>(null) }
     var optionsLoading by remember { mutableStateOf(false) }
+    var showBlockedUsers by remember { mutableStateOf(false) }
 
     if (page == "Profile decoration") {
         ProfileDecorationPage(repository, profile, onBack)
@@ -3833,6 +4132,18 @@ private fun SocialSettingsPage(repository: SocialRepository, profile: SocialProf
     }
     if (page == "Account Center") {
         AccountCenterPage(repository, currentUser, onBack)
+        return
+    }
+    if (showBlockedUsers) {
+        BackHandler { showBlockedUsers = false }
+        SocialPeoplePage(
+            title = "Blocked accounts",
+            repository = repository,
+            load = { repository.blockedUsers() },
+            onBack = { showBlockedUsers = false },
+            unblockMode = true,
+            emptyText = "You haven't blocked anyone"
+        )
         return
     }
 
@@ -3874,6 +4185,17 @@ private fun SocialSettingsPage(repository: SocialRepository, profile: SocialProf
                     SettingSwitch("Read receipts", readReceipts) { readReceipts = it }
                     SettingSwitch("Allow mentions", allowMentions) { allowMentions = it }
                     SettingSwitch("Review tags before showing", tagReview) { tagReview = it }
+                    Row(
+                        Modifier.fillMaxWidth().clip(RoundedCornerShape(9.dp)).clickable { showBlockedUsers = true }.padding(horizontal = 4.dp, vertical = 9.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Outlined.Block, null, tint = Color(0xFFB42318), modifier = Modifier.size(21.dp))
+                        Column(Modifier.weight(1f).padding(start = 10.dp)) {
+                            Text("Blocked accounts", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            Text("Review and unblock people", color = Color(0xFF667085), fontSize = 10.sp)
+                        }
+                        Icon(Icons.Default.ChevronRight, null, tint = Color(0xFF98A2B3), modifier = Modifier.size(19.dp))
+                    }
                     Text("Content and data", fontWeight = FontWeight.Bold, color = Color.Gray, modifier = Modifier.padding(top = 8.dp))
                     SettingSwitch("Show sensitive media", sensitiveMedia) { sensitiveMedia = it }
                     SettingSwitch("Personalized ads", personalizedAds) { personalizedAds = it }
@@ -4497,6 +4819,7 @@ fun ProfileScreen(
     var showConnections by remember { mutableStateOf(false) }
     var showGallery by remember { mutableStateOf(false) }
     var showProfileSearch by remember { mutableStateOf(false) }
+    var showPeople by remember(userId) { mutableStateOf<String?>(null) }
     var savedPosts by remember { mutableStateOf<List<Post>>(emptyList()) }
     var connections by remember(userId) { mutableStateOf<List<SocialProfile>>(emptyList()) }
     val ownProfile by repository.profile.collectAsState()
@@ -4604,6 +4927,30 @@ fun ProfileScreen(
         }
         return
     }
+    if (showPeople != null && profile != null) {
+        val peopleType = showPeople.orEmpty()
+        BackHandler { showPeople = null }
+        SocialPeoplePage(
+            title = peopleType,
+            repository = repository,
+            load = {
+                when (peopleType) {
+                    "Followers" -> repository.followers(profile.userId)
+                    "Following" -> repository.following(profile.userId)
+                    else -> repository.connections(profile.userId, 100)
+                }
+            },
+            onBack = { showPeople = null },
+            onProfileClick = { id -> showPeople = null; onConnectionClick(id) },
+            followBackMode = isOwn && peopleType == "Followers",
+            emptyText = when (peopleType) {
+                "Followers" -> "No followers yet"
+                "Following" -> "Not following anyone yet"
+                else -> "No connections yet"
+            }
+        )
+        return
+    }
     if (profile == null) {
         ProfileSkeleton(onBack = onBack, loading = loadingProfile)
         return
@@ -4612,12 +4959,9 @@ fun ProfileScreen(
 
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
     Column(Modifier.fillMaxSize()) {
-        Box(Modifier.fillMaxWidth().statusBarsPadding().height(48.dp)) {
+        Box(Modifier.fillMaxWidth().background(Brush.horizontalGradient(listOf(Color.White.copy(alpha = .97f), Color(0xFFF5F8FF).copy(alpha = .93f)))).statusBarsPadding().height(48.dp)) {
             IconButton(onClick = onBack, modifier = Modifier.align(Alignment.CenterStart)) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", modifier = Modifier.size(22.dp)) }
-            Row(Modifier.align(Alignment.Center), verticalAlignment = Alignment.CenterVertically) {
-                Text("@${profile.username}", fontWeight = FontWeight.Black, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 150.dp))
-                if (profile.verified) VerifiedBadge(profile.badgeType, 15.dp, Modifier.padding(start = 3.dp), onClick = { showVerified = true })
-            }
+            Text("@${profile.username}", fontWeight = FontWeight.Black, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.align(Alignment.Center).widthIn(max = 150.dp))
             Row(Modifier.align(Alignment.CenterEnd).padding(end = 2.dp)) {
                 IconButton(onClick = { showProfileSearch = true }, modifier = Modifier.size(42.dp)) { Icon(Icons.Default.Search, "Search profile", modifier = Modifier.size(22.dp)) }
                 IconButton(onClick = { showMenu = true }, modifier = Modifier.size(42.dp)) { Icon(Icons.Default.Menu, "Menu", modifier = Modifier.size(23.dp)) }
@@ -4647,26 +4991,26 @@ fun ProfileScreen(
                         }
                     }
                 }
-                Row(Modifier.fillMaxWidth().height(83.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.Top) {
+                Row(Modifier.fillMaxWidth().heightIn(min = 86.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.Top) {
                     DecoratedAvatar(
                         profile.user.avatar?.takeIf { it.isNotBlank() } ?: if (isOwn) ownUser?.avatar else null,
                         R.drawable.img_tiwi_avatar_1,
                         profile.avatarDecoration,
-                        Modifier.requiredSize(102.dp).offset(y = (-28).dp),
+                        Modifier.requiredSize(98.dp).offset(y = (-26).dp),
                         animateDecoration = true
                     )
-                    Column(Modifier.weight(.95f).padding(start = 8.dp, top = 8.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(name, fontWeight = FontWeight.Black, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            if (profile.verified) VerifiedBadge(profile.badgeType, 14.dp, Modifier.padding(start = 2.dp), onClick = { showVerified = true })
+                    Column(Modifier.weight(1f).padding(start = 7.dp, top = 6.dp, end = 3.dp)) {
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+                            Text(name, fontWeight = FontWeight.Black, fontSize = 14.sp, lineHeight = 16.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                            if (profile.verified) VerifiedBadge(profile.badgeType, 14.dp, Modifier.padding(start = 2.dp, top = 1.dp), onClick = { showVerified = true })
                         }
-                        if (!profile.category.isNullOrBlank()) Text(profile.category.orEmpty(), color = Color(0xFF667085), fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        if (!profile.bio.isNullOrBlank()) Text(profile.bio.orEmpty(), fontSize = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, lineHeight = 14.sp, modifier = Modifier.padding(top = 3.dp))
+                        if (!profile.category.isNullOrBlank()) Text(profile.category.orEmpty(), color = Color(0xFF667085), fontSize = 9.sp, lineHeight = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        if (!profile.bio.isNullOrBlank()) Text(profile.bio.orEmpty(), fontSize = 10.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, lineHeight = 12.sp, modifier = Modifier.padding(top = 1.dp))
                     }
-                    Row(Modifier.weight(1.25f).padding(top = 10.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
-                        ProfileStatItem("Posts", (profile.postCount.takeIf { it > 0 } ?: posts.size).toString())
-                        ProfileStatItem("Followers", profile.followerCount.toString())
-                        ProfileStatItem("Following", profile.followingCount.toString())
+                    Row(Modifier.width(116.dp).padding(top = 7.dp), horizontalArrangement = Arrangement.spacedBy(0.dp)) {
+                        ProfileStatItem("Posts", formatCount(profile.postCount.takeIf { it > 0 } ?: posts.size), Modifier.weight(1f))
+                        ProfileStatItem("Followers", formatCount(profile.followerCount), Modifier.weight(1f)) { showPeople = "Followers" }
+                        ProfileStatItem("Following", formatCount(profile.followingCount), Modifier.weight(1f)) { showPeople = "Following" }
                     }
                 }
                 Column(Modifier.padding(horizontal = 12.dp)) {
@@ -4744,22 +5088,22 @@ private fun openProfileUrl(context: Context, rawUrl: String) {
 private fun ProfileCompactFact(icon: ImageVector, text: String, onClick: (() -> Unit)? = null) {
     if (text.isBlank()) return
     Row(
-        Modifier.padding(end = 6.dp, bottom = 5.dp)
-            .border(.7.dp, Color(0xFFE4E7EC), RoundedCornerShape(9.dp))
-            .clip(RoundedCornerShape(9.dp))
+        Modifier.padding(end = 4.dp, bottom = 3.dp)
+            .border(.6.dp, Color(0xFFE4E7EC), RoundedCornerShape(7.dp))
+            .clip(RoundedCornerShape(7.dp))
             .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
-            .padding(horizontal = 8.dp, vertical = 5.dp),
+            .padding(horizontal = 6.dp, vertical = 3.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(icon, null, tint = if (onClick != null) TiwiBlue else Color(0xFF344054), modifier = Modifier.size(15.dp))
+        Icon(icon, null, tint = if (onClick != null) TiwiBlue else Color(0xFF344054), modifier = Modifier.size(13.dp))
         Text(
             text,
             color = if (onClick != null) TiwiBlue else Color(0xFF1D2939),
             fontWeight = FontWeight.ExtraBold,
-            fontSize = 10.sp,
+            fontSize = 9.sp,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(start = 4.dp).widthIn(max = 145.dp)
+            modifier = Modifier.padding(start = 3.dp).widthIn(max = 120.dp)
         )
     }
 }
@@ -4779,7 +5123,7 @@ private fun ProfileCompactInfo(
     val firstLinkLabel = firstLink?.get("label")?.toString().orEmpty()
     val firstLinkUrl = firstLink?.get("url")?.toString().orEmpty()
     FlowRow(
-        Modifier.fillMaxWidth().padding(top = 4.dp),
+        Modifier.fillMaxWidth().padding(top = 1.dp),
         horizontalArrangement = Arrangement.spacedBy(0.dp),
         verticalArrangement = Arrangement.spacedBy(0.dp)
     ) {
@@ -8696,6 +9040,7 @@ fun ChatDetailScreen(
     val messagesByConversation by repository.messages.collectAsState()
     var liveConversation by remember(conversation.id) { mutableStateOf(conversation) }
     val contact = liveConversation.members.firstOrNull { it.userId != repository.currentUserId() }
+    val contactBlocked = liveConversation.type == "direct" && contact?.blocked == true
     val contactTyping = (parseSocialDate(contact?.typingAt)?.time ?: 0L) > System.currentTimeMillis() - 6_000L
     val name = chatPreferences.getString("nickname_${conversation.id}", null)?.takeIf { it.isNotBlank() }
         ?: liveConversation.title ?: contact?.user?.name.orEmpty()
@@ -8713,6 +9058,10 @@ fun ChatDetailScreen(
     }?.id
     val scope = rememberCoroutineScope()
     val sendAttachments: (List<Uri>) -> Unit = send@ { selectedUris ->
+        if (contactBlocked) {
+            Toast.makeText(context, "You can't message this blocked account", Toast.LENGTH_SHORT).show()
+            return@send
+        }
         val uris = selectedUris.distinct().take(10)
         if (uris.isEmpty()) return@send
         if (pendingAttachmentUris.isNotEmpty()) {
@@ -8759,7 +9108,11 @@ fun ChatDetailScreen(
             }
         }
     }
-    val startRecording: () -> Unit = {
+    val startRecording: () -> Unit = start@ {
+        if (contactBlocked) {
+            Toast.makeText(context, "Voice messages are unavailable for blocked accounts", Toast.LENGTH_SHORT).show()
+            return@start
+        }
         val file = File(context.cacheDir, "tiwi-voice-${System.currentTimeMillis()}.m4a")
         runCatching {
             @Suppress("DEPRECATION")
@@ -8882,14 +9235,17 @@ fun ChatDetailScreen(
                 } else {
                     IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "Back") }
                     Box {
-                        DecoratedAvatar(contact?.user?.avatar ?: liveConversation.avatarUrl, R.drawable.img_tiwi_avatar_1, contact?.profile?.avatarDecoration, Modifier.size(48.dp).clickable { contact?.userId?.let(onProfileClick) }, animateDecoration = true)
-                        if (liveConversation.type == "direct" && isSociallyActive(contact?.user?.socialLastActiveAt)) Box(Modifier.align(Alignment.BottomEnd).size(13.dp).background(Color.White, CircleShape).padding(2.dp).background(Color(0xFF31A24C), CircleShape))
+                        if (contactBlocked) Box(Modifier.size(48.dp).background(Color(0xFFF2F4F7), CircleShape), contentAlignment = Alignment.Center) {
+                            Icon(Icons.Outlined.Person, null, tint = Color(0xFF98A2B3), modifier = Modifier.size(25.dp))
+                        } else DecoratedAvatar(contact?.user?.avatar ?: liveConversation.avatarUrl, R.drawable.img_tiwi_avatar_1, contact?.profile?.avatarDecoration, Modifier.size(48.dp).clickable { contact?.userId?.let(onProfileClick) }, animateDecoration = true)
+                        if (!contactBlocked && liveConversation.type == "direct" && isSociallyActive(contact?.user?.socialLastActiveAt)) Box(Modifier.align(Alignment.BottomEnd).size(13.dp).background(Color.White, CircleShape).padding(2.dp).background(Color(0xFF31A24C), CircleShape))
                     }
                     Spacer(modifier = Modifier.width(7.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(name, fontWeight = FontWeight.Bold)
                         Text(
-                            if (contactTyping) "Typing…"
+                            if (contactBlocked) "Blocked account"
+                            else if (contactTyping) "Typing…"
                             else if (liveConversation.type == "group") "${liveConversation.members.size} members"
                             else socialPresenceLabel(contact?.user?.socialLastActiveAt),
                             style = MaterialTheme.typography.labelSmall,
@@ -8897,8 +9253,8 @@ fun ChatDetailScreen(
                         )
                     }
                     if (liveConversation.type == "direct") {
-                        IconButton(onClick = { onCall(false) }) { Icon(Icons.Default.Call, contentDescription = "Call", tint = Color(0xFF0866FF), modifier = Modifier.size(27.dp)) }
-                        IconButton(onClick = { onCall(true) }) { Icon(Icons.Default.VideoCall, contentDescription = "Video Call", tint = Color(0xFF0866FF), modifier = Modifier.size(29.dp)) }
+                        IconButton(enabled = !contactBlocked, onClick = { onCall(false) }) { Icon(Icons.Default.Call, contentDescription = "Call", tint = if (contactBlocked) Color(0xFFBFC5CE) else Color(0xFF0866FF), modifier = Modifier.size(27.dp)) }
+                        IconButton(enabled = !contactBlocked, onClick = { onCall(true) }) { Icon(Icons.Default.VideoCall, contentDescription = "Video Call", tint = if (contactBlocked) Color(0xFFBFC5CE) else Color(0xFF0866FF), modifier = Modifier.size(29.dp)) }
                     }
                     IconButton(onClick = { showInfo = true }) { Icon(Icons.Default.Info, contentDescription = "Info", tint = Color(0xFF0866FF), modifier = Modifier.size(28.dp)) }
                 }
@@ -9246,10 +9602,10 @@ fun ChatDetailScreen(
                 modifier = Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 4.dp, vertical = 5.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(onClick = { filePicker.launch("*/*") }) { Icon(Icons.Default.AddCircle, contentDescription = "More", tint = TiwiBlue) }
-                IconButton(onClick = { mediaPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }) { Icon(Icons.Default.CameraAlt, contentDescription = "Camera", tint = TiwiBlue) }
-                IconButton(onClick = { galleryPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) }) { Icon(Icons.Default.Image, contentDescription = "Gallery", tint = TiwiBlue) }
-                if (messageText.isBlank()) IconButton(onClick = {
+                IconButton(enabled = !contactBlocked, onClick = { filePicker.launch("*/*") }) { Icon(Icons.Default.AddCircle, contentDescription = "More", tint = if (contactBlocked) Color(0xFFBFC5CE) else TiwiBlue) }
+                IconButton(enabled = !contactBlocked, onClick = { mediaPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }) { Icon(Icons.Default.CameraAlt, contentDescription = "Camera", tint = if (contactBlocked) Color(0xFFBFC5CE) else TiwiBlue) }
+                IconButton(enabled = !contactBlocked, onClick = { galleryPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) }) { Icon(Icons.Default.Image, contentDescription = "Gallery", tint = if (contactBlocked) Color(0xFFBFC5CE) else TiwiBlue) }
+                if (messageText.isBlank()) IconButton(enabled = !contactBlocked, onClick = {
                     chatHaptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
                     if (recording) finishRecording()
                     else if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) startRecording()
@@ -9269,13 +9625,13 @@ fun ChatDetailScreen(
                         BasicTextField(
                             value = messageText,
                             onValueChange = { if (!recording) messageText = it.take(8000) },
-                            enabled = !recording,
+                            enabled = !recording && !contactBlocked,
                             textStyle = MaterialTheme.typography.bodyLarge.copy(color = Color(0xFF1C1E21), fontSize = 16.sp),
                             modifier = Modifier.weight(1f).padding(vertical = 10.dp),
                             decorationBox = { inner ->
                                 if (messageText.isBlank()) {
                                     Text(
-                                        if (recording) "Recording voice message…" else "Message",
+                                        if (contactBlocked) "Messaging unavailable" else if (recording) "Recording voice message…" else "Message",
                                         color = if (recording) Color(0xFFD92D20) else Color(0xFF65676B),
                                         fontSize = 16.sp
                                     )
@@ -9283,12 +9639,12 @@ fun ChatDetailScreen(
                                 inner()
                             }
                         )
-                        IconButton(onClick = { showEmojiPicker = !showEmojiPicker }, modifier = Modifier.size(36.dp)) {
-                            Icon(Icons.Outlined.EmojiEmotions, "Emoji", tint = TiwiBlue, modifier = Modifier.size(23.dp))
+                        IconButton(enabled = !contactBlocked, onClick = { showEmojiPicker = !showEmojiPicker }, modifier = Modifier.size(36.dp)) {
+                            Icon(Icons.Outlined.EmojiEmotions, "Emoji", tint = if (contactBlocked) Color(0xFFBFC5CE) else TiwiBlue, modifier = Modifier.size(23.dp))
                         }
                     }
                 }
-                IconButton(onClick = {
+                IconButton(enabled = !contactBlocked, onClick = {
                     chatHaptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
                     if (messageText.isBlank()) {
                         scope.launch { runCatching { repository.sendMessage(conversation.id, "👍", replyToId = replyTo?.id) } }
@@ -9775,10 +10131,13 @@ private fun MessengerInfoRow(icon: ImageVector, title: String, subtitle: String?
 }
 
 @Composable
-fun ProfileStatItem(label: String, value: String) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(text = value, fontSize = 14.sp, fontWeight = FontWeight.Black, maxLines = 1)
-        Text(text = label, fontSize = 9.sp, color = Color(0xFF667085), maxLines = 1)
+fun ProfileStatItem(label: String, value: String, modifier: Modifier = Modifier, onClick: (() -> Unit)? = null) {
+    Column(
+        modifier = modifier.clip(RoundedCornerShape(7.dp)).then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier).padding(horizontal = 2.dp, vertical = 3.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(text = value, fontSize = 13.sp, fontWeight = FontWeight.Black, maxLines = 1)
+        Text(text = label, fontSize = 8.sp, color = Color(0xFF667085), maxLines = 1)
     }
 }
 

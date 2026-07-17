@@ -22,8 +22,8 @@ android {
     applicationId = "com.aistudio.tiwi.social.nqpzm"
     minSdk = 24
     targetSdk = 36
-    versionCode = 23
-    versionName = "4.1"
+    versionCode = 24
+    versionName = "4.2"
     buildConfigField("String", "TIWLO_API_BASE_URL", "\"${tiwloApiBaseUrl.trimEnd('/')}/\"")
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -96,6 +96,7 @@ dependencies {
   implementation(libs.androidx.lifecycle.runtime.compose)
   implementation(libs.androidx.lifecycle.runtime.ktx)
   implementation(libs.androidx.lifecycle.viewmodel.compose)
+  implementation("androidx.work:work-runtime-ktx:2.10.1")
   implementation(libs.androidx.navigation.compose)
   implementation(libs.androidx.room.ktx)
   implementation(libs.androidx.room.runtime)

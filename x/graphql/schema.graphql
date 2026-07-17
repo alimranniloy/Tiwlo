@@ -2793,6 +2793,7 @@ type SocialPost {
   aspectRatio: Float
   viewCount: Int!
   shareCount: Int!
+  saveCount: Int!
   reactionCount: Int!
   commentCount: Int!
   viewerReaction: String
@@ -2870,6 +2871,7 @@ type SocialConversationMember {
   archived: Boolean!
   typingAt: String
   lastReadAt: String
+  blocked: Boolean!
   joinedAt: String
 }
 
@@ -3206,12 +3208,16 @@ type Query {
   socialProfile(userId: ID, username: String): SocialProfile
   socialSearch(query: String, limit: Int): [SocialProfile!]!
   socialConnections(userId: ID, limit: Int): [SocialProfile!]!
+  socialFollowers(userId: ID, limit: Int): [SocialProfile!]!
+  socialFollowing(userId: ID, limit: Int): [SocialProfile!]!
+  socialBlockedUsers(limit: Int): [SocialProfile!]!
   socialFeed(type: String, authorId: ID, groupId: ID, before: String, limit: Int): [SocialPost!]!
   socialStories(limit: Int): [SocialPost!]!
   socialProfileDecorations: [SocialProfileDecoration!]!
   socialProfileEffects: [SocialProfileDecoration!]!
   socialPost(id: ID!): SocialPost
   socialComments(postId: ID!, before: String, limit: Int): [SocialComment!]!
+  socialPostReactions(postId: ID!, limit: Int): [SocialProfile!]!
   socialSavedPosts(limit: Int): [SocialPost!]!
   socialMemories(limit: Int): [SocialPost!]!
   socialGroups(search: String, mine: Boolean, limit: Int): [SocialGroup!]!

@@ -141,6 +141,69 @@ const bounded = (value, max = 5000) => {
   return String(value).trim().slice(0, max);
 };
 
+const upsertSocialActivityNotification = async (ctx, {
+  ownerId,
+  scopeId,
+  type,
+  actor,
+  singular,
+  plural,
+  count,
+  metadata = {}
+}) => {
+  if (!ownerId || ownerId === actor.id) return null;
+  const existing = await ctx.prisma.notification.findFirst({
+    where: { ownerId, scope: 'social', scopeId, type, status: 'unread' },
+    orderBy: { createdAt: 'desc' }
+  });
+  const normalizedCount = Math.max(1, Number(count) || Number(existing?.metadata?.count) + 1 || 1);
+  const actorIds = [...new Set([actor.id, ...((Array.isArray(existing?.metadata?.actorIds) ? existing.metadata.actorIds : []))])].slice(0, 12);
+  const nextMetadata = {
+    ...(existing?.metadata && typeof existing.metadata === 'object' ? existing.metadata : {}),
+    ...metadata,
+    count: normalizedCount,
+    actorIds,
+    actorId: actor.id,
+    actorName: actor.name,
+    actorAvatar: actor.avatar || null
+  };
+  const message = normalizedCount > 1 ? `${normalizedCount} people ${plural}` : singular;
+  if (existing) return ctx.prisma.notification.update({
+    where: { id: existing.id },
+    data: { title: actor.name, message, metadata: nextMetadata, updatedAt: new Date() }
+  });
+  return createSocialNotification(ctx, {
+    ownerId,
+    scopeId,
+    type,
+    title: actor.name,
+    message,
+    metadata: nextMetadata
+  });
+};
+
+const notifyMentions = async (ctx, actor, text, scopeId, targetType, metadata = {}, excludedIds = []) => {
+  const usernames = [...new Set([...String(text || '').matchAll(/@([a-z0-9_.-]{2,40})/gi)].map((match) => match[1].toLowerCase()))];
+  if (!usernames.length) return;
+  const profiles = await ctx.prisma.socialProfile.findMany({
+    where: { username: { in: usernames } },
+    select: { userId: true, username: true, privacy: true }
+  });
+  const excluded = new Set([actor.id, ...excludedIds]);
+  await Promise.all(profiles.filter((profile) => !excluded.has(profile.userId) && profile.privacy?.allowMentions !== false).map((profile) =>
+    upsertSocialActivityNotification(ctx, {
+      ownerId: profile.userId,
+      scopeId,
+      type: 'mention',
+      actor,
+      singular: `Mentioned you in a ${targetType}`,
+      plural: `mentioned you in a ${targetType}`,
+      count: 1,
+      metadata: { ...metadata, targetType, mentionedUsername: profile.username }
+    })
+  ));
+};
+
 const safeDate = (value) => {
   if (!value) return undefined;
   const date = new Date(value);
@@ -437,6 +500,69 @@ export const listConnections = async (ctx, userId, limit) => {
   return Promise.all(rows.map((row) => mapProfile(ctx, row, actor.id)));
 };
 
+const profilesForIds = async (ctx, ids, viewerId, limit) => {
+  const normalized = [...new Set(ids.filter(Boolean))].slice(0, boundedLimit(limit, 50, 100));
+  if (!normalized.length) return [];
+  const rows = await ctx.prisma.socialProfile.findMany({
+    where: { userId: { in: normalized } },
+    include: profileInclude
+  });
+  const byUser = new Map(rows.map((row) => [row.userId, row]));
+  return Promise.all(normalized.map((id) => byUser.get(id)).filter(Boolean).map((row) => mapProfile(ctx, row, viewerId)));
+};
+
+const visibleSocialIds = async (ctx, actorId, ids) => {
+  if (!ids.length) return [];
+  const blocks = await ctx.prisma.socialBlock.findMany({
+    where: { OR: [{ userId: actorId }, { targetUserId: actorId }] },
+    select: { userId: true, targetUserId: true }
+  });
+  const blockedIds = new Set(blocks.flatMap((row) => [row.userId, row.targetUserId]).filter((id) => id !== actorId));
+  return ids.filter((id) => !blockedIds.has(id));
+};
+
+export const listFollowers = async (ctx, userId, limit) => {
+  const actor = await requireAuth(ctx);
+  await requireSocialFeature(ctx);
+  const targetId = userId || actor.id;
+  await getProfile(ctx, { userId: targetId });
+  const rows = await ctx.prisma.socialFollow.findMany({
+    where: { followingId: targetId },
+    select: { followerId: true },
+    orderBy: { createdAt: 'desc' },
+    take: boundedLimit(limit, 50, 100)
+  });
+  const ids = await visibleSocialIds(ctx, actor.id, rows.map((row) => row.followerId));
+  return profilesForIds(ctx, ids, actor.id, limit);
+};
+
+export const listFollowing = async (ctx, userId, limit) => {
+  const actor = await requireAuth(ctx);
+  await requireSocialFeature(ctx);
+  const targetId = userId || actor.id;
+  await getProfile(ctx, { userId: targetId });
+  const rows = await ctx.prisma.socialFollow.findMany({
+    where: { followerId: targetId },
+    select: { followingId: true },
+    orderBy: { createdAt: 'desc' },
+    take: boundedLimit(limit, 50, 100)
+  });
+  const ids = await visibleSocialIds(ctx, actor.id, rows.map((row) => row.followingId));
+  return profilesForIds(ctx, ids, actor.id, limit);
+};
+
+export const listBlockedUsers = async (ctx, limit) => {
+  const actor = await requireAuth(ctx);
+  await requireSocialFeature(ctx);
+  const rows = await ctx.prisma.socialBlock.findMany({
+    where: { userId: actor.id },
+    select: { targetUserId: true },
+    orderBy: { createdAt: 'desc' },
+    take: boundedLimit(limit, 50, 100)
+  });
+  return profilesForIds(ctx, rows.map((row) => row.targetUserId), actor.id, limit);
+};
+
 export const followUser = async (ctx, userId, follow) => {
   const actor = await requireAuth(ctx);
   await requireSocialFeature(ctx);
@@ -455,12 +581,15 @@ export const followUser = async (ctx, userId, follow) => {
       create: { followerId: actor.id, followingId: userId },
       update: {}
     });
-    await createSocialNotification(ctx, {
+    const followerCount = await ctx.prisma.socialFollow.count({ where: { followingId: userId } });
+    await upsertSocialActivityNotification(ctx, {
       ownerId: userId,
-      scopeId: actor.id,
+      scopeId: 'followers',
       type: 'follow',
-      title: actor.name,
-      message: 'Started following you',
+      actor,
+      singular: 'Started following you',
+      plural: 'started following you',
+      count: followerCount,
       metadata: { actorId: actor.id, actorName: actor.name, actorAvatar: actor.avatar || null }
     });
   } else {
@@ -502,7 +631,7 @@ const postInclude = (viewerId) => ({
     _count: { select: { socialFollowers: true, socialFollowing: true, socialPosts: true } },
     socialFollowers: viewerId ? { where: { followerId: viewerId }, take: 1 } : false
   } },
-  _count: { select: { reactions: true, comments: true } },
+  _count: { select: { reactions: true, comments: true, savedBy: true } },
   reactions: viewerId ? { where: { userId: viewerId }, take: 1 } : false,
   savedBy: viewerId ? { where: { userId: viewerId }, take: 1 } : false
 });
@@ -518,6 +647,7 @@ const mapPost = (post) => ({
   } : null,
   reactionCount: post._count?.reactions || 0,
   commentCount: post._count?.comments || 0,
+  saveCount: post._count?.savedBy || 0,
   viewerReaction: post.reactions?.[0]?.kind || null,
   saved: Boolean(post.savedBy?.length)
 });
@@ -675,6 +805,7 @@ export const createPost = async (ctx, input) => {
   if (mediaEvents.length) await ctx.prisma.socialModerationEvent.updateMany({
     where: { id: { in: mediaEvents.map((event) => event.id) } }, data: { postId: post.id }
   });
+  await notifyMentions(ctx, actor, body, post.id, 'post', { postId: post.id });
   return mapPost(post);
 };
 
@@ -746,7 +877,8 @@ export const reactToPost = async (ctx, id, kind) => {
   if (!post) notFound('Post');
   const normalized = bounded(kind || 'like', 30).toLowerCase();
   const existing = await ctx.prisma.socialPostReaction.findUnique({ where: { postId_userId: { postId: id, userId: actor.id } } });
-  if (existing?.kind === normalized) {
+  const removing = existing?.kind === normalized;
+  if (removing) {
     await ctx.prisma.socialPostReaction.delete({ where: { id: existing.id } });
   } else {
     await ctx.prisma.socialPostReaction.upsert({
@@ -755,7 +887,18 @@ export const reactToPost = async (ctx, id, kind) => {
       update: { kind: normalized }
     });
   }
-  return getPost(ctx, id);
+  const updated = await getPost(ctx, id);
+  if (!removing && updated) await upsertSocialActivityNotification(ctx, {
+    ownerId: post.authorId,
+    scopeId: id,
+    type: 'post_like',
+    actor,
+    singular: 'Liked your post',
+    plural: 'liked your post',
+    count: updated.reactionCount,
+    metadata: { postId: id }
+  });
+  return updated;
 };
 
 export const repostPost = async (ctx, id) => {
@@ -792,6 +935,16 @@ export const repostPost = async (ctx, id) => {
       }]
     },
     include: postInclude(actor.id)
+  });
+  await upsertSocialActivityNotification(ctx, {
+    ownerId: original.authorId,
+    scopeId: id,
+    type: 'post_share',
+    actor,
+    singular: 'Shared your post',
+    plural: 'shared your post',
+    count: Number(original.shareCount || 0) + 1,
+    metadata: { postId: id, repostId: repost.id }
   });
   return mapPost(repost);
 };
@@ -1003,6 +1156,20 @@ export const listComments = async (ctx, { postId, before, limit }) => {
   return rows.map(mapComment);
 };
 
+export const listPostReactions = async (ctx, postId, limit) => {
+  const actor = await requireAuth(ctx);
+  await requireSocialFeature(ctx);
+  if (!await getPost(ctx, postId)) notFound('Post');
+  const rows = await ctx.prisma.socialPostReaction.findMany({
+    where: { postId },
+    select: { userId: true },
+    orderBy: { updatedAt: 'desc' },
+    take: boundedLimit(limit, 50, 100)
+  });
+  const ids = await visibleSocialIds(ctx, actor.id, rows.map((row) => row.userId));
+  return profilesForIds(ctx, ids, actor.id, limit);
+};
+
 export const addComment = async (ctx, postId, body, replyToId) => {
   const actor = await requireAuth(ctx);
   await requireSocialFeature(ctx, 'postingEnabled');
@@ -1016,14 +1183,37 @@ export const addComment = async (ctx, postId, body, replyToId) => {
   const text = bounded(body, 2000);
   if (!text) throw new AppError('Comment cannot be empty', 'BAD_USER_INPUT');
   await enforceTextModeration(ctx, { userId: actor.id, targetType: 'comment', targetId: postId, text });
+  let parent = null;
   if (replyToId) {
-    const parent = await ctx.prisma.socialComment.findUnique({ where: { id: replyToId } });
+    parent = await ctx.prisma.socialComment.findUnique({ where: { id: replyToId } });
     if (!parent || parent.postId !== postId) throw new AppError('Reply target is not part of this post', 'BAD_USER_INPUT');
   }
   const row = await ctx.prisma.socialComment.create({
     data: { postId, authorId: actor.id, body: text, replyToId },
     include: commentInclude(actor.id)
   });
+  const commentCount = await ctx.prisma.socialComment.count({ where: { postId, status: 'published' } });
+  await upsertSocialActivityNotification(ctx, {
+    ownerId: post.authorId,
+    scopeId: postId,
+    type: 'post_comment',
+    actor,
+    singular: 'Commented on your post',
+    plural: 'commented on your post',
+    count: commentCount,
+    metadata: { postId, commentId: row.id }
+  });
+  if (parent && parent.authorId !== post.authorId) await upsertSocialActivityNotification(ctx, {
+    ownerId: parent.authorId,
+    scopeId: parent.id,
+    type: 'comment_reply',
+    actor,
+    singular: 'Replied to your comment',
+    plural: 'replied to your comment',
+    count: 1,
+    metadata: { postId, commentId: row.id, parentCommentId: parent.id }
+  });
+  await notifyMentions(ctx, actor, text, row.id, 'comment', { postId, commentId: row.id }, [post.authorId, parent?.authorId].filter(Boolean));
   return mapComment(row);
 };
 
@@ -1037,7 +1227,18 @@ export const reactToComment = async (ctx, id) => {
   });
   if (existing) await ctx.prisma.socialCommentReaction.delete({ where: { id: existing.id } });
   else await ctx.prisma.socialCommentReaction.create({ data: { commentId: id, userId: actor.id } });
-  return mapComment(await ctx.prisma.socialComment.findUnique({ where: { id }, include: commentInclude(actor.id) }));
+  const updated = mapComment(await ctx.prisma.socialComment.findUnique({ where: { id }, include: commentInclude(actor.id) }));
+  if (!existing) await upsertSocialActivityNotification(ctx, {
+    ownerId: comment.authorId,
+    scopeId: id,
+    type: 'comment_like',
+    actor,
+    singular: 'Liked your comment',
+    plural: 'liked your comment',
+    count: updated.reactionCount,
+    metadata: { postId: comment.postId, commentId: id }
+  });
+  return updated;
 };
 
 export const deleteComment = async (ctx, id) => {
@@ -1066,6 +1267,15 @@ const mapMessage = (message) => ({ ...message, senderProfile: message.sender?.so
 
 const mapConversation = async (ctx, conversation, actorId) => {
   const member = conversation.members?.find((row) => row.userId === actorId);
+  const otherIds = (conversation.members || []).map((row) => row.userId).filter((id) => id !== actorId);
+  const blocks = otherIds.length ? await ctx.prisma.socialBlock.findMany({
+    where: { OR: [
+      { userId: actorId, targetUserId: { in: otherIds } },
+      { targetUserId: actorId, userId: { in: otherIds } }
+    ] },
+    select: { userId: true, targetUserId: true }
+  }) : [];
+  const blockedIds = new Set(blocks.map((row) => row.userId === actorId ? row.targetUserId : row.userId));
   const unreadCount = await ctx.prisma.socialMessage.count({
     where: {
       conversationId: conversation.id,
@@ -1077,7 +1287,15 @@ const mapConversation = async (ctx, conversation, actorId) => {
   });
   return {
     ...conversation,
-    members: (conversation.members || []).map((row) => ({ ...row, profile: row.user?.socialProfile || null })),
+    members: (conversation.members || []).map((row) => {
+      const blocked = blockedIds.has(row.userId);
+      return {
+        ...row,
+        blocked,
+        user: blocked ? { ...row.user, name: 'Tiwlo User', avatar: null, socialProfile: null } : row.user,
+        profile: blocked ? null : row.user?.socialProfile || null
+      };
+    }),
     lastMessage: conversation.messages?.[0] ? mapMessage(conversation.messages[0]) : null,
     unreadCount
   };
@@ -1208,6 +1426,18 @@ export const sendMessage = async (ctx, input) => {
   const actor = await requireAuth(ctx);
   await requireSocialFeature(ctx, 'messagingEnabled');
   await requireConversationMember(ctx, input.conversationId, actor.id);
+  const directConversation = await ctx.prisma.socialConversation.findUnique({
+    where: { id: input.conversationId },
+    select: { type: true, members: { select: { userId: true } } }
+  });
+  if (directConversation?.type === 'direct') {
+    const recipientIds = directConversation.members.map((member) => member.userId).filter((id) => id !== actor.id);
+    const blocked = await ctx.prisma.socialBlock.findFirst({ where: { OR: [
+      { userId: actor.id, targetUserId: { in: recipientIds } },
+      { targetUserId: actor.id, userId: { in: recipientIds } }
+    ] } });
+    if (blocked) forbidden('You cannot message this blocked account');
+  }
   const type = String(input.type || 'text').toLowerCase();
   if (!MESSAGE_TYPES.has(type)) throw new AppError('Invalid message type', 'BAD_USER_INPUT');
   const body = bounded(input.body, 8000);
@@ -1390,6 +1620,11 @@ export const startCall = async (ctx, input) => {
   const type = String(input.type || 'video').toLowerCase();
   if (!CALL_TYPES.has(type)) throw new AppError('Invalid call type', 'BAD_USER_INPUT');
   if (input.calleeId === actor.id) throw new AppError('You cannot call yourself', 'BAD_USER_INPUT');
+  const blocked = await ctx.prisma.socialBlock.findFirst({ where: { OR: [
+    { userId: actor.id, targetUserId: input.calleeId },
+    { targetUserId: actor.id, userId: input.calleeId }
+  ] } });
+  if (blocked) forbidden('You cannot call this blocked account');
   const callee = await ctx.prisma.user.findUnique({ where: { id: input.calleeId }, include: { socialProfile: true } });
   if (!callee || callee.status !== 'active') throw new AppError('This user is unavailable', 'BAD_USER_INPUT');
   if (callee.socialProfile?.privacy?.allowCalls === false) throw new AppError('This user is not accepting calls', 'FORBIDDEN');

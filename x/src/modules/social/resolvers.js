@@ -35,7 +35,8 @@ export const socialResolvers = {
       await requireAdmin(ctx);
       return parent.author || ctx.prisma.user.findUnique({ where: { id: parent.authorId } });
     },
-    authorProfile: (parent, _, ctx) => parent.authorProfile || parent.author?.socialProfile || ctx.prisma.socialProfile.findUnique({ where: { userId: parent.authorId } })
+    authorProfile: (parent, _, ctx) => parent.authorProfile || parent.author?.socialProfile || ctx.prisma.socialProfile.findUnique({ where: { userId: parent.authorId } }),
+    saveCount: (parent) => Number(parent.saveCount ?? parent._count?.savedBy ?? 0)
   },
   SocialComment: {
     author: (parent, _, ctx) => parent.author || ctx.prisma.user.findUnique({ where: { id: parent.authorId } }),
@@ -50,7 +51,8 @@ export const socialResolvers = {
   },
   SocialConversationMember: {
     user: (parent, _, ctx) => parent.user || ctx.prisma.user.findUnique({ where: { id: parent.userId } }),
-    profile: (parent, _, ctx) => parent.profile || parent.user?.socialProfile || ctx.prisma.socialProfile.findUnique({ where: { userId: parent.userId } })
+    profile: (parent, _, ctx) => parent.profile || parent.user?.socialProfile || ctx.prisma.socialProfile.findUnique({ where: { userId: parent.userId } }),
+    blocked: (parent) => Boolean(parent.blocked)
   },
   SocialMessage: {
     sender: (parent, _, ctx) => parent.sender || ctx.prisma.user.findUnique({ where: { id: parent.senderId } }),
@@ -68,12 +70,16 @@ export const socialResolvers = {
     socialProfile: (_, args, ctx) => api(service.getProfile(ctx, args)),
     socialSearch: (_, { query, limit }, ctx) => api(service.searchProfiles(ctx, query, limit)),
     socialConnections: (_, { userId, limit }, ctx) => api(service.listConnections(ctx, userId, limit)),
+    socialFollowers: (_, { userId, limit }, ctx) => api(service.listFollowers(ctx, userId, limit)),
+    socialFollowing: (_, { userId, limit }, ctx) => api(service.listFollowing(ctx, userId, limit)),
+    socialBlockedUsers: (_, { limit }, ctx) => api(service.listBlockedUsers(ctx, limit)),
     socialFeed: (_, args, ctx) => api(service.listFeed(ctx, args)),
     socialStories: (_, args, ctx) => api(service.listStories(ctx, args)),
     socialProfileDecorations: (_, __, ctx) => api(service.listProfileDecorations(ctx)),
     socialProfileEffects: (_, __, ctx) => api(service.listProfileEffects(ctx)),
     socialPost: (_, { id }, ctx) => api(service.getPost(ctx, id)),
     socialComments: (_, args, ctx) => api(service.listComments(ctx, args)),
+    socialPostReactions: (_, { postId, limit }, ctx) => api(service.listPostReactions(ctx, postId, limit)),
     socialSavedPosts: (_, { limit }, ctx) => api(service.listSavedPosts(ctx, limit)),
     socialMemories: (_, { limit }, ctx) => api(service.listMemories(ctx, limit)),
     socialGroups: (_, args, ctx) => api(service.listGroups(ctx, args)),

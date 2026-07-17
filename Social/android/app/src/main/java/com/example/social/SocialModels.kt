@@ -129,6 +129,7 @@ data class SocialPost(
     val status: String = "published",
     val viewCount: Int = 0,
     val shareCount: Int = 0,
+    val saveCount: Int = 0,
     val reactionCount: Int = 0,
     val commentCount: Int = 0,
     val viewerReaction: String? = null,
@@ -182,7 +183,8 @@ data class SocialConversationMember(
     val muted: Boolean = false,
     val archived: Boolean = false,
     val typingAt: String? = null,
-    val lastReadAt: String? = null
+    val lastReadAt: String? = null,
+    val blocked: Boolean = false
 )
 
 @JsonClass(generateAdapter = true)

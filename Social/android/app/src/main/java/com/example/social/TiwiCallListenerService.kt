@@ -33,6 +33,7 @@ class TiwiCallListenerService : Service() {
     private var pollJob: Job? = null
     private lateinit var repository: SocialRepository
     private var shownCallId: String? = null
+    private var notificationPollTick = 0
 
     override fun onCreate() {
         super.onCreate()
@@ -56,6 +57,12 @@ class TiwiCallListenerService : Service() {
                     } else if (incoming == null && shownCallId != null) {
                         NotificationManagerCompat.from(this@TiwiCallListenerService).cancel(INCOMING_NOTIFICATION_ID)
                         shownCallId = null
+                    }
+                    if (notificationPollTick++ % 5 == 0) {
+                        runCatching { repository.refreshNotifications() }.getOrDefault(emptyList())
+                            .filter { it.status == "unread" && it.type != "call" }
+                            .take(8)
+                            .forEach(::showActivityNotification)
                     }
                     delay(3000)
                 }
@@ -113,6 +120,38 @@ class TiwiCallListenerService : Service() {
         NotificationManagerCompat.from(this).notify(INCOMING_NOTIFICATION_ID, notification)
     }
 
+    private fun showActivityNotification(item: SocialNotification) {
+        if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
+        val preferences = getSharedPreferences("tiwi_activity_notifications", MODE_PRIVATE)
+        val shown = preferences.getStringSet("shown_ids", emptySet()).orEmpty()
+        if (item.id in shown) return
+        val postId = item.metadata["postId"]?.toString()
+        val actorId = item.metadata["actorId"]?.toString()
+        val openIntent = Intent(this, MainActivity::class.java).apply {
+            action = Intent.ACTION_VIEW
+            data = when {
+                !postId.isNullOrBlank() -> android.net.Uri.parse("https://tiwlo.com/social/post/$postId")
+                !actorId.isNullOrBlank() -> android.net.Uri.parse("https://tiwlo.com/social/profile/$actorId")
+                else -> null
+            }
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        }
+        val pending = PendingIntent.getActivity(this, item.id.hashCode(), openIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val notification = NotificationCompat.Builder(this, ACTIVITY_CHANNEL)
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setContentTitle(item.title.ifBlank { "Tiwi activity" })
+            .setContentText(item.message)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(item.message))
+            .setCategory(NotificationCompat.CATEGORY_SOCIAL)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setAutoCancel(true)
+            .setContentIntent(pending)
+            .setGroup("tiwi_social_activity")
+            .build()
+        NotificationManagerCompat.from(this).notify(item.id.hashCode(), notification)
+        preferences.edit().putStringSet("shown_ids", (shown + item.id).toList().takeLast(200).toSet()).apply()
+    }
+
     private fun createChannels() {
         if (Build.VERSION.SDK_INT < 26) return
         val manager = getSystemService(NotificationManager::class.java)
@@ -136,11 +175,18 @@ class TiwiCallListenerService : Service() {
                 lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
             }
         )
+        manager.createNotificationChannel(
+            NotificationChannel(ACTIVITY_CHANNEL, "Tiwi activity", NotificationManager.IMPORTANCE_DEFAULT).apply {
+                description = "Likes, comments, follows, mentions and messages"
+                enableVibration(true)
+            }
+        )
     }
 
     companion object {
         private const val SERVICE_CHANNEL = "tiwi_call_connection"
         private const val CALL_CHANNEL = "tiwi_incoming_calls"
+        private const val ACTIVITY_CHANNEL = "tiwi_social_activity"
         private const val SERVICE_NOTIFICATION_ID = 4301
         private const val INCOMING_NOTIFICATION_ID = 4302
     }
