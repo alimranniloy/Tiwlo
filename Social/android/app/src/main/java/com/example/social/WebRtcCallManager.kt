@@ -1,6 +1,8 @@
 package com.example.social
 
 import android.content.Context
+import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraManager
 import android.media.AudioManager
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
@@ -55,6 +57,8 @@ class WebRtcCallManager(
     private val audioDeviceModule: JavaAudioDeviceModule
     private var peerConnection: PeerConnection? = null
     private var cameraCapturer: CameraVideoCapturer? = null
+    private var activeCameraName: String? = null
+    private var flashEnabled = false
     private var surfaceTextureHelper: SurfaceTextureHelper? = null
     private var videoSource: VideoSource? = null
     private var audioSource: AudioSource? = null
@@ -153,7 +157,29 @@ class WebRtcCallManager(
     }
 
     fun switchCamera() {
-        cameraCapturer?.switchCamera(null)
+        cameraCapturer?.switchCamera(object : CameraVideoCapturer.CameraSwitchHandler {
+            override fun onCameraSwitchDone(isFrontCamera: Boolean) {
+                val enumerator = Camera2Enumerator(appContext)
+                activeCameraName = enumerator.deviceNames.firstOrNull { enumerator.isFrontFacing(it) == isFrontCamera }
+                if (flashEnabled) setFlash(false)
+            }
+            override fun onCameraSwitchError(errorDescription: String) {
+                _state.value = errorDescription.ifBlank { "Could not switch camera" }
+            }
+        })
+    }
+
+    /** Returns the new torch state, or null when the selected camera has no flash. */
+    fun toggleFlash(): Boolean? {
+        val cameraId = activeCameraName ?: return null
+        val manager = appContext.getSystemService(CameraManager::class.java) ?: return null
+        val available = runCatching {
+            manager.getCameraCharacteristics(cameraId)
+                .get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
+        }.getOrDefault(false)
+        if (!available) return null
+        val next = !flashEnabled
+        return if (setFlash(next)) next else null
     }
 
     fun toggleSpeaker() {
@@ -212,6 +238,7 @@ class WebRtcCallManager(
         val cameraName = enumerator.deviceNames.firstOrNull(enumerator::isFrontFacing)
             ?: enumerator.deviceNames.firstOrNull()
             ?: throw SocialApiException("No camera is available")
+        activeCameraName = cameraName
         val capturer = enumerator.createCapturer(cameraName, null)
             ?: throw SocialApiException("The camera could not start")
         cameraCapturer = capturer
@@ -385,9 +412,11 @@ class WebRtcCallManager(
         pollJob = null
         reconnectTimeoutJob?.cancel()
         reconnectTimeoutJob = null
+        if (flashEnabled) setFlash(false)
         runCatching { cameraCapturer?.stopCapture() }
         cameraCapturer?.dispose()
         cameraCapturer = null
+        activeCameraName = null
         surfaceTextureHelper?.dispose()
         surfaceTextureHelper = null
         _localVideo.value?.dispose()
@@ -405,6 +434,16 @@ class WebRtcCallManager(
         abandonAudioFocus()
         _speakerEnabled.value = false
         audioManager.mode = previousAudioMode
+    }
+
+    private fun setFlash(enabled: Boolean): Boolean {
+        val cameraId = activeCameraName ?: return false
+        val manager = appContext.getSystemService(CameraManager::class.java) ?: return false
+        return runCatching {
+            manager.setTorchMode(cameraId, enabled)
+            flashEnabled = enabled
+            true
+        }.getOrDefault(false)
     }
 
     @Suppress("DEPRECATION")

@@ -1,6 +1,9 @@
 package com.example.social
 
 import android.content.Context
+import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraManager
+import android.media.AudioManager
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import kotlinx.coroutines.CoroutineScope
@@ -41,6 +44,9 @@ import kotlin.coroutines.suspendCoroutine
 class WebRtcLiveManager(context: Context, private val repository: SocialRepository) {
     private val appContext = context.applicationContext
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val audioManager = appContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+    private val previousAudioMode = audioManager.mode
+    private val previousSpeakerState = audioManager.isSpeakerphoneOn
     private val eglBase = EglBase.create()
     val eglContext: EglBase.Context get() = eglBase.eglBaseContext
     private val audioDeviceModule: JavaAudioDeviceModule
@@ -49,6 +55,8 @@ class WebRtcLiveManager(context: Context, private val repository: SocialReposito
     private val remoteApplied = mutableSetOf<String>()
     private val candidateKeys = mutableMapOf<String, MutableSet<String>>()
     private var cameraCapturer: CameraVideoCapturer? = null
+    private var activeCameraName: String? = null
+    private var flashEnabled = false
     private var textureHelper: SurfaceTextureHelper? = null
     private var videoSource: VideoSource? = null
     private var audioSource: AudioSource? = null
@@ -98,6 +106,7 @@ class WebRtcLiveManager(context: Context, private val repository: SocialReposito
     suspend fun startHost(stream: SocialLiveStream) {
         hostMode = true
         currentStream = stream
+        prepareLiveAudio()
         _state.value = "Starting live…"
         iceServers = loadIceServers()
         startCapture()
@@ -105,9 +114,22 @@ class WebRtcLiveManager(context: Context, private val repository: SocialReposito
         startHostPolling()
     }
 
+    /** Starts the exact WebRTC capture pipeline used by a live, before a stream is created. */
+    suspend fun startPreview() {
+        if (localVideoTrack != null) return
+        _state.value = "Starting cameraâ€¦"
+        startCapture()
+        _state.value = "Camera ready"
+    }
+
+    fun stopPreview() {
+        if (currentStream == null) closeMedia()
+    }
+
     suspend fun join(stream: SocialLiveStream, asCohost: Boolean = false) {
         hostMode = false
         currentStream = stream
+        prepareLiveAudio()
         _state.value = "Connecting…"
         iceServers = loadIceServers()
         val participant = repository.joinLiveStream(stream.id, asCohost)
@@ -154,7 +176,31 @@ class WebRtcLiveManager(context: Context, private val repository: SocialReposito
         }
     }
 
-    fun switchCamera() { cameraCapturer?.switchCamera(null) }
+    fun switchCamera() {
+        cameraCapturer?.switchCamera(object : CameraVideoCapturer.CameraSwitchHandler {
+            override fun onCameraSwitchDone(isFrontCamera: Boolean) {
+                val enumerator = Camera2Enumerator(appContext)
+                activeCameraName = enumerator.deviceNames.firstOrNull { enumerator.isFrontFacing(it) == isFrontCamera }
+                if (flashEnabled) setFlash(false)
+            }
+            override fun onCameraSwitchError(errorDescription: String) {
+                _state.value = errorDescription.ifBlank { "Could not switch camera" }
+            }
+        })
+    }
+
+    /** Returns the new flash state, or null if the active camera has no torch. */
+    fun toggleFlash(): Boolean? {
+        val cameraId = activeCameraName ?: return null
+        val manager = appContext.getSystemService(CameraManager::class.java) ?: return null
+        val available = runCatching {
+            manager.getCameraCharacteristics(cameraId)
+                .get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
+        }.getOrDefault(false)
+        if (!available) return null
+        val next = !flashEnabled
+        return if (setFlash(next)) next else null
+    }
 
     fun end() {
         val id = currentStream?.id
@@ -177,6 +223,7 @@ class WebRtcLiveManager(context: Context, private val repository: SocialReposito
         val enumerator = Camera2Enumerator(appContext)
         val camera = enumerator.deviceNames.firstOrNull(enumerator::isFrontFacing) ?: enumerator.deviceNames.firstOrNull()
             ?: throw SocialApiException("No camera is available")
+        activeCameraName = camera
         cameraCapturer = enumerator.createCapturer(camera, null) ?: throw SocialApiException("Camera could not start")
         textureHelper = SurfaceTextureHelper.create("TiwiLiveCamera", eglContext)
         videoSource = factory.createVideoSource(false).also { source ->
@@ -408,13 +455,35 @@ class WebRtcLiveManager(context: Context, private val repository: SocialReposito
     private fun closeMedia() {
         pollJob?.cancel(); pollJob = null
         peers.keys.toList().forEach(::removePeer)
+        if (flashEnabled) setFlash(false)
         runCatching { cameraCapturer?.stopCapture() }
-        cameraCapturer?.dispose(); cameraCapturer = null
+        cameraCapturer?.dispose(); cameraCapturer = null; activeCameraName = null
         textureHelper?.dispose(); textureHelper = null
         localVideoTrack?.dispose(); localVideoTrack = null; _localVideo.value = null; _remoteVideo.value = null; _cohostVideos.value = emptyMap(); _participants.value = emptyList()
         videoSource?.dispose(); videoSource = null
         localAudio?.dispose(); localAudio = null
         audioSource?.dispose(); audioSource = null
+        @Suppress("DEPRECATION")
+        run {
+            audioManager.isSpeakerphoneOn = previousSpeakerState
+            audioManager.mode = previousAudioMode
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun prepareLiveAudio() {
+        audioManager.mode = AudioManager.MODE_NORMAL
+        audioManager.isSpeakerphoneOn = true
+    }
+
+    private fun setFlash(enabled: Boolean): Boolean {
+        val cameraId = activeCameraName ?: return false
+        val manager = appContext.getSystemService(CameraManager::class.java) ?: return false
+        return runCatching {
+            manager.setTorchMode(cameraId, enabled)
+            flashEnabled = enabled
+            true
+        }.getOrDefault(false)
     }
 
     private suspend fun createOffer(peer: PeerConnection): SessionDescription = suspendCoroutine { continuation ->
