@@ -97,6 +97,7 @@ import androidx.compose.animation.core.*
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.res.painterResource
@@ -1499,6 +1500,7 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
     val appLifecycleOwner = LocalLifecycleOwner.current
     var appVisible by remember { mutableStateOf(appLifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) }
     val appView = LocalView.current
+    val density = LocalDensity.current
     val appActivity = appContext as? Activity
     val permissionPreferences = remember { appContext.getSharedPreferences("tiwi_first_run_permissions", Context.MODE_PRIVATE) }
     var showPermissionIntro by remember { mutableStateOf(!permissionPreferences.getBoolean("requested_v1", false)) }
@@ -1523,6 +1525,11 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
     }
     val hasOverlay = showProfile || showCreatePost || showStoryCreate || selectedStoryAuthorId != null || showLiveSetup || selectedLiveStream != null || showMessages || showConnect || selectedProfileUserId != null || selectedChat != null || selectedPostId != null || selectedEditPostId != null
     val darkChrome = selectedTab == 2 && !hasOverlay
+    val feedContentOffset by animateFloatAsState(
+        targetValue = if (selectedTab == 0 && !hasOverlay && !feedHeaderVisible) -with(density) { 52.dp.toPx() } else 0f,
+        animationSpec = tween(180),
+        label = "feed-under-header"
+    )
 
     LaunchedEffect(selectedTab, hasOverlay) {
         if (selectedTab != 0 || hasOverlay) feedHeaderVisible = true
@@ -1778,7 +1785,7 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
                         selectedTab = it
                     },
                     onMessagesClick = { showMessages = true },
-                    onProfileClick = { showProfile = true },
+                    onProfileClick = { menuDestination = null; selectedTab = 4 },
                     unreadMessages = unreadMessages
                 )
             }
@@ -1786,7 +1793,7 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
         containerColor = if (darkChrome) Color.Black else MaterialTheme.colorScheme.background,
         contentWindowInsets = WindowInsets(0, 0, 0, 0)
     ) { innerPadding ->
-        Box(modifier = Modifier.padding(innerPadding)) {
+        Box(modifier = Modifier.padding(innerPadding).graphicsLayer { translationY = feedContentOffset }) {
             when {
                 selectedEditPostId != null -> posts.firstOrNull { it.id == selectedEditPostId }?.let { editing -> EditPostPage(repository, editing, onBack = { selectedEditPostId = null }) } ?: run { selectedEditPostId = null }
                 selectedPostId != null -> PostDetailScreen(
@@ -1896,21 +1903,16 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
 
 @Composable
 fun TiwiTopBar(visible: Boolean, unreadActivity: Int = 0, onCreateClick: () -> Unit, onNotificationsClick: () -> Unit, onConnectClick: () -> Unit) {
-    AnimatedVisibility(
-        visible = visible,
-        enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
-        exit = slideOutVertically(targetOffsetY = { -it }) + fadeOut()
-    ) {
+    val headerOffset by animateFloatAsState(if (visible) 0f else -1f, animationSpec = tween(180), label = "top-header-offset")
+    Box(modifier = Modifier.fillMaxWidth().statusBarsPadding().height(52.dp)) {
         Box(
-            modifier = Modifier.fillMaxWidth().background(Color.White).statusBarsPadding().height(52.dp)
+            modifier = Modifier.fillMaxSize().background(Color.White).graphicsLayer {
+                translationY = size.height * headerOffset
+                alpha = 1f + headerOffset
+            }
         ) {
-            Row(Modifier.align(Alignment.CenterStart).padding(start = 5.dp), verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = onCreateClick, modifier = Modifier.size(44.dp)) {
-                    Icon(Icons.Outlined.AddBox, contentDescription = "Create post", tint = Color.Black, modifier = Modifier.size(27.dp))
-                }
-                IconButton(onClick = onConnectClick, modifier = Modifier.size(42.dp)) {
-                    Icon(Icons.Outlined.GroupAdd, contentDescription = "Find connected people", tint = Color.Black, modifier = Modifier.size(25.dp))
-                }
+            IconButton(onClick = onCreateClick, modifier = Modifier.align(Alignment.CenterStart).padding(start = 7.dp).size(46.dp)) {
+                InstagramCreateGlyph()
             }
             Text(
                 text = buildAnnotatedString {
@@ -1920,12 +1922,58 @@ fun TiwiTopBar(visible: Boolean, unreadActivity: Int = 0, onCreateClick: () -> U
                 style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.ExtraBold, letterSpacing = (-.8).sp),
                 modifier = Modifier.align(Alignment.Center)
             )
-            IconButton(onClick = onNotificationsClick, modifier = Modifier.align(Alignment.CenterEnd).padding(end = 6.dp).size(44.dp)) {
-                BadgedBox(badge = { if (unreadActivity > 0) Badge(Modifier.size(8.dp)) }) {
-                    Icon(Icons.Outlined.NotificationsNone, contentDescription = "Activity", tint = Color.Black, modifier = Modifier.size(26.dp))
+            Row(Modifier.align(Alignment.CenterEnd).padding(end = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = onConnectClick, modifier = Modifier.size(43.dp)) {
+                    ConnectedPeopleGlyph()
+                }
+                IconButton(onClick = onNotificationsClick, modifier = Modifier.size(44.dp)) {
+                    BadgedBox(badge = { if (unreadActivity > 0) Badge(Modifier.size(8.dp)) }) {
+                        Icon(Icons.Outlined.NotificationsNone, contentDescription = "Activity", tint = Color.Black, modifier = Modifier.size(26.dp))
+                    }
                 }
             }
         }
+    }
+}
+
+/** Compact linked-people mark used for the connection action. */
+@Composable
+private fun ConnectedPeopleGlyph(modifier: Modifier = Modifier) {
+    Canvas(modifier.size(27.dp)) {
+        val stroke = 2.35.dp.toPx()
+        val cap = StrokeCap.Round
+        val personStyle = Stroke(width = stroke, cap = cap)
+        val cornerWidth = 3.4.dp.toPx()
+        val corner = 4.dp.toPx()
+        // Linked corner strokes, matching the connection symbol rather than a generic add-person icon.
+        drawRoundRect(Color.Black, Offset(1.dp.toPx(), 1.dp.toPx()), androidx.compose.ui.geometry.Size(11.dp.toPx(), cornerWidth), androidx.compose.ui.geometry.CornerRadius(corner, corner))
+        drawRoundRect(Color.Black, Offset(1.dp.toPx(), 1.dp.toPx()), androidx.compose.ui.geometry.Size(cornerWidth, 11.dp.toPx()), androidx.compose.ui.geometry.CornerRadius(corner, corner))
+        drawRoundRect(Color.Black, Offset(size.width - 4.4.dp.toPx(), size.height - 12.dp.toPx()), androidx.compose.ui.geometry.Size(cornerWidth, 11.dp.toPx()), androidx.compose.ui.geometry.CornerRadius(corner, corner))
+        drawRoundRect(Color.Black, Offset(size.width - 12.dp.toPx(), size.height - 4.4.dp.toPx()), androidx.compose.ui.geometry.Size(11.dp.toPx(), cornerWidth), androidx.compose.ui.geometry.CornerRadius(corner, corner))
+        // Two clean profile outlines.
+        drawCircle(Color.Black, radius = 4.25.dp.toPx(), center = Offset(size.width * .69f, size.height * .29f), style = personStyle)
+        drawArc(Color.Black, startAngle = 188f, sweepAngle = 164f, useCenter = false, topLeft = Offset(size.width * .44f, size.height * .43f), size = androidx.compose.ui.geometry.Size(12.dp.toPx(), 9.dp.toPx()), style = personStyle)
+        drawCircle(Color.Black, radius = 3.55.dp.toPx(), center = Offset(size.width * .33f, size.height * .60f), style = personStyle)
+        drawArc(Color.Black, startAngle = 188f, sweepAngle = 164f, useCenter = false, topLeft = Offset(size.width * .08f, size.height * .72f), size = androidx.compose.ui.geometry.Size(11.dp.toPx(), 8.dp.toPx()), style = personStyle)
+    }
+}
+
+/** Rounded-square create control matching the compact Instagram-style post action. */
+@Composable
+private fun InstagramCreateGlyph(modifier: Modifier = Modifier) {
+    Canvas(modifier.size(29.dp)) {
+        val stroke = 2.55.dp.toPx()
+        val inset = 2.2.dp.toPx()
+        val corner = 7.dp.toPx()
+        drawRoundRect(
+            color = Color.Black,
+            topLeft = Offset(inset, inset),
+            size = androidx.compose.ui.geometry.Size(size.width - inset * 2, size.height - inset * 2),
+            cornerRadius = androidx.compose.ui.geometry.CornerRadius(corner, corner),
+            style = Stroke(width = stroke)
+        )
+        drawLine(Color.Black, Offset(size.width * .5f, size.height * .30f), Offset(size.width * .5f, size.height * .70f), stroke, StrokeCap.Round)
+        drawLine(Color.Black, Offset(size.width * .30f, size.height * .5f), Offset(size.width * .70f, size.height * .5f), stroke, StrokeCap.Round)
     }
 }
 
@@ -1986,10 +2034,6 @@ fun HomeFeed(
                         else if (delta > 10) onHeaderVisibilityChanged(false)
                         lastPosition = position
                     }
-            }
-            LaunchedEffect(feedListState) {
-                snapshotFlow { feedListState.isScrollInProgress }
-                    .collect { scrolling -> if (!scrolling) onHeaderVisibilityChanged(true) }
             }
             LazyColumn(modifier = Modifier.fillMaxSize(), state = feedListState) {
             if (!online) item {
@@ -4400,11 +4444,13 @@ fun TiwiBottomBar(
         tonalElevation = 0.dp,
         shadowElevation = 0.dp
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().navigationBarsPadding().height(58.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceAround
-        ) {
+        Column(Modifier.fillMaxWidth()) {
+            HorizontalDivider(thickness = .5.dp, color = if (dark) Color.White.copy(alpha = .12f) else Color(0xFFE8EAED))
+            Row(
+                modifier = Modifier.fillMaxWidth().navigationBarsPadding().height(58.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceAround
+            ) {
             val items = listOf(
                 Triple("home", Icons.Outlined.Home, Icons.Filled.Home),
                 Triple("reels", Icons.Outlined.SmartDisplay, Icons.Filled.SmartDisplay),
@@ -4457,6 +4503,7 @@ fun TiwiBottomBar(
                     }
                 }
             }
+        }
         }
     }
 }
