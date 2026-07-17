@@ -194,7 +194,17 @@ const compactObject = (value, limits = {}) => {
 const sanitizePostMetadata = (value) => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
   const metadata = compactObject(value, {
-    music: 160, locationLabel: 160, feeling: 80, background: 24, crossPost: 'boolean'
+    music: 160,
+    locationLabel: 160,
+    feeling: 80,
+    background: 24,
+    crossPost: 'boolean',
+    shareToStory: 'boolean',
+    monetizationRequested: 'boolean',
+    abTestEnabled: 'boolean',
+    abTestVariant: 10000,
+    aiGenerated: 'boolean',
+    scheduledAt: 80
   });
   const ids = (items) => Array.isArray(items) ? [...new Set(items.map((item) => bounded(item, 80)).filter(Boolean))].slice(0, 20) : [];
   metadata.taggedUserIds = ids(value.taggedUserIds);

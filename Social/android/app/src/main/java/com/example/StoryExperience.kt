@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.media.MediaPlayer
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
@@ -80,6 +81,7 @@ import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCut
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Event
@@ -169,6 +171,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.media3.common.MediaItem
+import androidx.media3.common.C
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
@@ -235,6 +238,9 @@ private data class StoryDraft(
     val cropScale: Float = 1f,
     val cropX: Float = 0f,
     val cropY: Float = 0f,
+    val videoDurationMs: Long = 0L,
+    val videoTrimStartMs: Long = 0L,
+    val videoTrimDurationMs: Long = 15_000L,
     val overlays: List<StoryOverlayDraft> = emptyList(),
     val music: SocialStoryMusicTrack? = null,
     val musicStartMs: Long = 0L,
@@ -272,6 +278,16 @@ private suspend fun loadStoryDeviceMedia(context: Context, gifOnly: Boolean = fa
             }
         }.orEmpty()
     }.getOrDefault(emptyList())
+}
+
+private suspend fun storyVideoDurationMs(context: Context, uri: Uri): Long = withContext(Dispatchers.IO) {
+    runCatching {
+        val retriever = MediaMetadataRetriever()
+        try {
+            retriever.setDataSource(context, uri)
+            retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+        } finally { retriever.release() }
+    }.getOrDefault(0L).coerceAtLeast(0L)
 }
 
 private fun cameraBitmapUri(context: Context, bitmap: Bitmap): Uri? = runCatching {
@@ -397,28 +413,39 @@ fun TiwiStoryTray(
         contentPadding = PaddingValues(horizontal = 9.dp, vertical = 6.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        item(key = "story-own") {
+        item(key = "story-create") {
             Column(Modifier.width(itemWidth), horizontalAlignment = Alignment.CenterHorizontally) {
                 Box(Modifier.size(avatarSize)) {
-                    StoryRing(
-                        total = mine?.stories?.sumOf { it.items.size.coerceAtLeast(1) } ?: 1,
-                        unseen = 0,
-                        modifier = Modifier.fillMaxSize().clickable { if (mine == null) onCreate() else onOpen(mine.authorId) }
-                    ) {
-                        AsyncImage(
-                            model = currentUser?.avatar,
-                            contentDescription = "Your story",
-                            modifier = Modifier.fillMaxSize().clip(CircleShape).background(Color(0xFFE9ECF1)),
-                            contentScale = ContentScale.Crop
-                        )
-                    }
+                    AsyncImage(
+                        model = currentUser?.avatar,
+                        contentDescription = "Create story",
+                        modifier = Modifier.fillMaxSize().clip(CircleShape).background(Color(0xFFE9ECF1)).clickable(onClick = onCreate),
+                        contentScale = ContentScale.Crop
+                    )
                     Box(
                         Modifier.align(Alignment.BottomEnd).size(20.dp).background(StoryBlue, CircleShape)
                             .border(2.dp, Color.White, CircleShape).clickable(onClick = onCreate),
                         contentAlignment = Alignment.Center
                     ) { Icon(Icons.Default.Add, "Create story", tint = Color.White, modifier = Modifier.size(14.dp)) }
                 }
-                Text(if (mine == null) "Your story" else "Your story", fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))
+                Text("Create story", fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))
+            }
+        }
+        if (mine != null) item(key = "story-own") {
+            Column(Modifier.width(itemWidth).clickable { onOpen(mine.authorId) }, horizontalAlignment = Alignment.CenterHorizontally) {
+                StoryRing(
+                    total = mine.stories.sumOf { it.items.size.coerceAtLeast(1) }.coerceAtLeast(mine.stories.size),
+                    unseen = 0,
+                    modifier = Modifier.size(avatarSize)
+                ) {
+                    AsyncImage(
+                        model = currentUser?.avatar,
+                        contentDescription = "Your story",
+                        modifier = Modifier.fillMaxSize().clip(CircleShape).background(Color(0xFFE9ECF1)),
+                        contentScale = ContentScale.Crop
+                    )
+                }
+                Text("Your story", fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))
             }
         }
         items(others, key = { "story-group-${it.authorId}" }) { group ->
@@ -597,13 +624,21 @@ fun TiwiStoryCreatePage(
                             }
                             overlay.asInput(assetUrl)
                         }
+                        val draftMusic = draft.music
                         val common = mapOf(
                             "filter" to mapOf("name" to draft.filter),
-                            "transform" to mapOf("scale" to draft.cropScale, "x" to draft.cropX, "y" to draft.cropY, "collage" to draft.collage),
+                            "transform" to mapOf(
+                                "scale" to draft.cropScale,
+                                "x" to draft.cropX,
+                                "y" to draft.cropY,
+                                "collage" to draft.collage,
+                                "trimStartMs" to draft.videoTrimStartMs,
+                                "trimDurationMs" to draft.videoTrimDurationMs.coerceIn(1_000L, 60_000L)
+                            ),
                             "overlays" to overlayInputs,
                             "altText" to draft.altText.takeIf { it.isNotBlank() },
                             "aiGenerated" to draft.aiGenerated,
-                            "music" to draft.music?.let { track -> mapOf(
+                            "music" to draftMusic?.let { track -> mapOf(
                                 "id" to track.id, "title" to track.title, "artist" to track.artist,
                                 "artworkUrl" to track.artworkUrl, "streamUrl" to track.streamUrl,
                                 "startMs" to draft.musicStartMs, "durationMs" to draft.musicDurationMs
@@ -616,11 +651,13 @@ fun TiwiStoryCreatePage(
                             ))
                             uploaded.isNotEmpty() -> uploaded.mapIndexed { index, media -> common + mapOf(
                                 "type" to media.type, "media" to storyMediaInput(media), "text" to draft.text,
-                                "background" to draft.background, "durationMs" to if (media.type == "video") 15_000 else 5_000, "sortOrder" to index
+                                "background" to draft.background,
+                                "durationMs" to if (media.type == "video") draft.videoTrimDurationMs.coerceIn(1_000L, 60_000L).toInt() else 5_000,
+                                "sortOrder" to index
                             ) }
-                            draft.music != null && draft.text.isBlank() -> listOf(common + mapOf(
+                            draftMusic != null && draft.text.isBlank() -> listOf(common + mapOf(
                                 "type" to "music", "media" to emptyMap<String, Any?>(),
-                                "text" to "${draft.music.title}\n${draft.music.artist}", "background" to draft.background,
+                                "text" to "${draftMusic.title}\n${draftMusic.artist}", "background" to draft.background,
                                 "durationMs" to draft.musicDurationMs.toInt(), "sortOrder" to 0
                             ))
                             else -> listOf(common + mapOf(
@@ -848,9 +885,22 @@ private fun StoryEditorPage(
     val context = LocalContext.current
     val firstUri = draft.uris.firstOrNull()
     val firstMime = remember(firstUri) { firstUri?.let { context.contentResolver.getType(it).orEmpty() }.orEmpty() }
+    val isVideo = firstUri != null && firstMime.startsWith("video/")
     var cropScale by remember(draft.cropScale) { mutableFloatStateOf(draft.cropScale) }
     var cropX by remember(draft.cropX) { mutableFloatStateOf(draft.cropX) }
     var cropY by remember(draft.cropY) { mutableFloatStateOf(draft.cropY) }
+    LaunchedEffect(firstUri, firstMime) {
+        if (firstUri != null && isVideo) {
+            val duration = storyVideoDurationMs(context, firstUri)
+            if (duration > 0L) onDraft(
+                draft.copy(
+                    videoDurationMs = duration,
+                    videoTrimStartMs = 0L,
+                    videoTrimDurationMs = duration.coerceIn(1_000L, 60_000L)
+                )
+            )
+        }
+    }
     Box(Modifier.fillMaxSize().background(Color.Black).statusBarsPadding().navigationBarsPadding()) {
         Box(
             Modifier.fillMaxSize().padding(top = 4.dp, bottom = 106.dp).clip(RoundedCornerShape(20.dp)).background(Color.Black)
@@ -866,7 +916,13 @@ private fun StoryEditorPage(
         ) {
             when {
                 draft.collage && draft.uris.isNotEmpty() -> StoryCollagePreview(draft.uris, draft.filter)
-                firstUri != null && firstMime.startsWith("video/") -> StoryVideoPlayer(firstUri.toString(), paused = false, modifier = Modifier.fillMaxSize())
+                firstUri != null && firstMime.startsWith("video/") -> StoryVideoPlayer(
+                    firstUri.toString(),
+                    paused = false,
+                    modifier = Modifier.fillMaxSize(),
+                    clipStartMs = draft.videoTrimStartMs,
+                    clipDurationMs = draft.videoTrimDurationMs
+                )
                 firstUri != null -> AsyncImage(
                     firstUri,
                     "Story preview",
@@ -914,6 +970,9 @@ private fun StoryEditorPage(
             IconButton(onClick = { onTool(StoryCreatePage.MORE) }, enabled = !publishing, modifier = Modifier.size(42.dp).background(Color.Black.copy(alpha = .45f), CircleShape)) { Icon(Icons.Default.MoreHoriz, "More", tint = Color.White) }
         }
         Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().background(Color.Black)) {
+            if (isVideo && draft.videoDurationMs > 0L) StoryVideoTrimControl(draft) { start, duration ->
+                onDraft(draft.copy(videoTrimStartMs = start, videoTrimDurationMs = duration))
+            }
             LazyRow(
                 Modifier.fillMaxWidth().height(62.dp),
                 contentPadding = PaddingValues(horizontal = 10.dp),
@@ -957,6 +1016,38 @@ private fun StoryEditorPage(
             }
         }
     }
+}
+
+@Composable
+private fun StoryVideoTrimControl(draft: StoryDraft, onChange: (Long, Long) -> Unit) {
+    val totalSeconds = (draft.videoDurationMs / 1_000f).coerceAtLeast(1f)
+    val startSeconds = (draft.videoTrimStartMs / 1_000f).coerceIn(0f, totalSeconds - .5f)
+    val endSeconds = ((draft.videoTrimStartMs + draft.videoTrimDurationMs) / 1_000f)
+        .coerceIn((startSeconds + .5f).coerceAtMost(totalSeconds), totalSeconds)
+    Column(Modifier.fillMaxWidth().padding(horizontal = 13.dp, vertical = 5.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.ContentCut, "Trim video", tint = Color.White, modifier = Modifier.size(15.dp))
+            Text("Video clip", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 5.dp))
+            Spacer(Modifier.weight(1f))
+            Text("${storyDurationLabel(startSeconds)} – ${storyDurationLabel(endSeconds)} · max 1:00", color = Color.White.copy(alpha = .76f), fontSize = 9.sp)
+        }
+        RangeSlider(
+            value = startSeconds..endSeconds,
+            onValueChange = { selected ->
+                val start = selected.start.coerceIn(0f, totalSeconds - .5f)
+                val end = selected.endInclusive.coerceIn(start + .5f, totalSeconds)
+                val cappedEnd = minOf(end, start + 60f)
+                onChange((start * 1_000).toLong(), ((cappedEnd - start) * 1_000).toLong().coerceIn(1_000L, 60_000L))
+            },
+            valueRange = 0f..totalSeconds,
+            modifier = Modifier.fillMaxWidth().height(30.dp)
+        )
+    }
+}
+
+private fun storyDurationLabel(seconds: Float): String {
+    val total = seconds.toInt().coerceAtLeast(0)
+    return "%d:%02d".format(Locale.getDefault(), total / 60, total % 60)
 }
 
 @Composable
@@ -1098,6 +1189,61 @@ private fun StoryStickerPage(onBack: () -> Unit, onChoose: (String, String) -> U
             item {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(13.dp)) {
                     items(emoji) { value -> Text(value, fontSize = 36.sp, modifier = Modifier.clickable { onChoose("emoji", value) }.padding(3.dp)) }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun StoryGifPage(
+    media: List<StoryDeviceMedia>,
+    onBack: () -> Unit,
+    onBrowse: () -> Unit,
+    onSelect: (StoryDeviceMedia) -> Unit
+) {
+    Column(Modifier.fillMaxSize().background(Color.White).navigationBarsPadding()) {
+        StoryPageHeader("GIF", onBack)
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(Icons.Default.GifBox, null, tint = StoryPink, modifier = Modifier.size(22.dp))
+            Text("Choose a GIF", fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+            OutlinedButton(onClick = onBrowse, contentPadding = PaddingValues(horizontal = 11.dp, vertical = 4.dp)) {
+                Icon(Icons.Outlined.PhotoLibrary, null, modifier = Modifier.size(16.dp))
+                Text("Browse", fontSize = 11.sp, modifier = Modifier.padding(start = 4.dp))
+            }
+        }
+        if (media.isEmpty()) {
+            Column(
+                Modifier.fillMaxSize().padding(28.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                Icon(Icons.Outlined.ImageNotSupported, null, tint = Color(0xFF98A2B3), modifier = Modifier.size(36.dp))
+                Text("No GIFs found on this device", color = Color(0xFF667085), fontSize = 13.sp, modifier = Modifier.padding(top = 10.dp))
+                TextButton(onClick = onBrowse) { Text("Browse files") }
+            }
+        } else {
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(3),
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(2.dp),
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                items(media, key = { it.uri.toString() }) { item ->
+                    Box(Modifier.aspectRatio(1f).background(Color(0xFFEFF1F4)).clickable { onSelect(item) }) {
+                        AsyncImage(item.uri, "GIF", Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                        Surface(
+                            Modifier.align(Alignment.BottomEnd).padding(4.dp),
+                            color = Color.Black.copy(alpha = .58f),
+                            shape = RoundedCornerShape(4.dp),
+                            tonalElevation = 0.dp
+                        ) { Text("GIF", color = Color.White, fontSize = 8.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)) }
+                    }
                 }
             }
         }
@@ -1406,7 +1552,7 @@ fun TiwiStoryViewerPage(
         if (!paused) {
             progress.snapTo(0f)
             runCatching { repository.viewStory(current.story.id, current.item.sortOrder) }
-            val duration = current.item.durationMs.coerceIn(2_500, 30_000)
+            val duration = current.item.durationMs.coerceIn(2_500, 60_000)
             progress.animateTo(1f, tween(duration, easing = LinearEasing))
             if (progress.value >= .999f) advance()
         }
@@ -1552,7 +1698,17 @@ private fun StoryItemMedia(repository: SocialRepository, item: SocialStoryItem, 
             }
             media.firstOrNull()?.type == "video" -> {
                 val entry = media.first()
-                StoryVideoPlayer(repository.absoluteUrl(entry.hlsUrl?.takeIf { entry.processingStatus == "ready" } ?: entry.url).orEmpty(), paused = false, modifier = Modifier.fillMaxSize(), poster = repository.absoluteUrl(entry.thumbnailUrl))
+                val trimStart = item.transform["trimStartMs"]?.toString()?.toLongOrNull()?.coerceAtLeast(0L) ?: 0L
+                val trimDuration = item.transform["trimDurationMs"]?.toString()?.toLongOrNull()
+                    ?: item.durationMs.toLong()
+                StoryVideoPlayer(
+                    repository.absoluteUrl(entry.hlsUrl?.takeIf { entry.processingStatus == "ready" } ?: entry.url).orEmpty(),
+                    paused = false,
+                    modifier = Modifier.fillMaxSize(),
+                    poster = repository.absoluteUrl(entry.thumbnailUrl),
+                    clipStartMs = trimStart,
+                    clipDurationMs = trimDuration.coerceIn(1_000L, 60_000L)
+                )
             }
             media.isNotEmpty() -> AsyncImage(
                 repository.absoluteUrl(media.first().url), item.altText.orEmpty().ifBlank { "Story" }, Modifier.fillMaxSize(),
@@ -1585,13 +1741,26 @@ private fun StoryRenderedOverlays(overlays: List<Map<String, Any?>>) {
 }
 
 @Composable
-private fun StoryVideoPlayer(source: String, paused: Boolean, modifier: Modifier = Modifier, poster: String? = null) {
+private fun StoryVideoPlayer(
+    source: String,
+    paused: Boolean,
+    modifier: Modifier = Modifier,
+    poster: String? = null,
+    clipStartMs: Long = 0L,
+    clipDurationMs: Long? = null
+) {
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current
-    val player = remember(source) {
+    val player = remember(source, clipStartMs, clipDurationMs) {
         source.takeIf { it.isNotBlank() }?.let {
             ExoPlayer.Builder(context).build().apply {
-                setMediaItem(MediaItem.fromUri(it)); repeatMode = Player.REPEAT_MODE_ONE; playWhenReady = !paused; prepare()
+                val item = MediaItem.Builder().setUri(it).setClippingConfiguration(
+                    MediaItem.ClippingConfiguration.Builder()
+                        .setStartPositionMs(clipStartMs.coerceAtLeast(0L))
+                        .setEndPositionMs(clipDurationMs?.let { duration -> (clipStartMs + duration).coerceAtLeast(1L) } ?: C.TIME_END_OF_SOURCE)
+                        .build()
+                ).build()
+                setMediaItem(item); repeatMode = Player.REPEAT_MODE_ONE; playWhenReady = !paused; prepare()
             }
         }
     }

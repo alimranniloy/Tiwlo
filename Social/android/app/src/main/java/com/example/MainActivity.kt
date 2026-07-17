@@ -3529,6 +3529,16 @@ fun CreatePostScreen(repository: SocialRepository, onBack: () -> Unit, onLive: (
     var feeling by remember { mutableStateOf<String?>(null) }
     var background by remember { mutableStateOf<String?>(null) }
     var crossPost by remember { mutableStateOf(false) }
+    var commentPermission by remember { mutableStateOf("everyone") }
+    var scheduledAtMillis by remember { mutableStateOf<Long?>(null) }
+    var shareToStory by remember { mutableStateOf(false) }
+    var selectedGroupId by remember { mutableStateOf<String?>(null) }
+    var selectedGroupName by remember { mutableStateOf<String?>(null) }
+    var monetizationRequested by remember { mutableStateOf(false) }
+    var abTestEnabled by remember { mutableStateOf(false) }
+    var abTestVariant by remember { mutableStateOf("") }
+    var aiGeneratedLabel by remember { mutableStateOf(false) }
+    var returnToPostSettings by remember { mutableStateOf(false) }
     var locationDraft by remember { mutableStateOf("") }
     var linkPreview by remember { mutableStateOf<SocialLinkPreview?>(null) }
     var previewLoading by remember { mutableStateOf(false) }
@@ -3557,6 +3567,39 @@ fun CreatePostScreen(repository: SocialRepository, onBack: () -> Unit, onLive: (
     BackHandler(enabled = busy) { }
 
     when (composerPage) {
+        "settings" -> {
+            TiwiPostSettingsPage(
+                repository = repository,
+                draft = PostSettingsDraft(
+                    visibility = visibility,
+                    commentPermission = commentPermission,
+                    scheduleAtMillis = scheduledAtMillis,
+                    shareToStory = shareToStory,
+                    groupId = selectedGroupId,
+                    groupName = selectedGroupName,
+                    monetization = monetizationRequested,
+                    abTest = abTestEnabled,
+                    abVariant = abTestVariant,
+                    aiGenerated = aiGeneratedLabel
+                ),
+                onBack = { composerPage = null },
+                onChange = { settings ->
+                    visibility = settings.visibility
+                    commentPermission = settings.commentPermission
+                    scheduledAtMillis = settings.scheduleAtMillis
+                    shareToStory = settings.shareToStory
+                    selectedGroupId = settings.groupId
+                    selectedGroupName = settings.groupName
+                    monetizationRequested = settings.monetization
+                    abTestEnabled = settings.abTest
+                    abTestVariant = settings.abVariant
+                    aiGeneratedLabel = settings.aiGenerated
+                },
+                onInviteCollaborator = { returnToPostSettings = true; composerPage = "people" },
+                onShare = { composerPage = "publish" }
+            )
+            return
+        }
         "music" -> {
             ComposerChoicePage(
                 title = "Add music", queryHint = "Search music",
@@ -3596,13 +3639,13 @@ fun CreatePostScreen(repository: SocialRepository, onBack: () -> Unit, onLive: (
         "people" -> {
             ComposerPeoplePage(
                 repository = repository, tagged = taggedPeople, collaborators = collaborators,
-                onBack = { composerPage = null },
+                onBack = { composerPage = if (returnToPostSettings) { returnToPostSettings = false; "settings" } else null },
                 onDone = { newTagged, newCollaborators ->
                     taggedPeople = newTagged
                     collaborators = newCollaborators
                     val mentions = newTagged.map { "@${it.username}" }.filterNot { text.contains(it, ignoreCase = true) }
                     if (mentions.isNotEmpty()) text = listOf(text.trimEnd(), mentions.joinToString(" ")).filter { it.isNotBlank() }.joinToString(" ") + " "
-                    composerPage = null
+                    composerPage = if (returnToPostSettings) { returnToPostSettings = false; "settings" } else null
                 }
             )
             return
@@ -3650,16 +3693,44 @@ fun CreatePostScreen(repository: SocialRepository, onBack: () -> Unit, onLive: (
                         "crossPost" to crossPost,
                         "taggedUserIds" to taggedPeople.map { it.userId },
                         "collaboratorIds" to collaborators.map { it.userId },
+                        "shareToStory" to shareToStory,
+                        "monetizationRequested" to monetizationRequested,
+                        "abTestEnabled" to abTestEnabled,
+                        "abTestVariant" to abTestVariant.takeIf { abTestEnabled && it.isNotBlank() },
+                        "aiGenerated" to aiGeneratedLabel,
+                        "scheduledAt" to scheduledAtMillis?.toString(),
                         "linkPreview" to linkPreview?.asMetadata()
                     ).filterValues { value -> value != null && value != "" }
-                    PostUploadWorker.enqueue(context, selectedUris, text, visibility, metadata, location)
-                    Toast.makeText(context, if (currentNetworkAvailable(context)) "Posting in the background" else "Queued until you're online", Toast.LENGTH_SHORT).show()
+                    PostUploadWorker.enqueue(
+                        context = context,
+                        uris = selectedUris,
+                        body = text,
+                        visibility = visibility,
+                        commentPermission = commentPermission,
+                        groupId = selectedGroupId,
+                        metadata = metadata,
+                        location = location,
+                        initialDelayMillis = (scheduledAtMillis ?: System.currentTimeMillis()).minus(System.currentTimeMillis()).coerceAtLeast(0L)
+                    )
+                    Toast.makeText(
+                        context,
+                        when {
+                            scheduledAtMillis != null -> "Post scheduled for ${SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date(scheduledAtMillis!!))}"
+                            currentNetworkAvailable(context) -> "Posting in the background"
+                            else -> "Queued until you're online"
+                        },
+                        Toast.LENGTH_SHORT
+                    ).show()
                     onBack()
                 } catch (error: Exception) {
                     Toast.makeText(context, error.message ?: "Post failed", Toast.LENGTH_LONG).show()
                 } finally { busy = false }
             }
         }
+    }
+
+    LaunchedEffect(composerPage) {
+        if (composerPage == "publish") publish()
     }
 
     Column(Modifier.fillMaxSize().background(Color.White).imePadding()) {
@@ -3669,7 +3740,7 @@ fun CreatePostScreen(repository: SocialRepository, onBack: () -> Unit, onLive: (
             }
             Text("New post", modifier = Modifier.align(Alignment.Center), fontSize = 18.sp, fontWeight = FontWeight.ExtraBold, color = Color.Black)
             Button(
-                onClick = publish,
+                onClick = { composerPage = "settings" },
                 enabled = !busy && (text.isNotBlank() || selectedUris.isNotEmpty() || linkPreview != null),
                 modifier = Modifier.align(Alignment.CenterEnd).padding(end = 8.dp).height(36.dp),
                 contentPadding = PaddingValues(horizontal = 15.dp),
@@ -5014,37 +5085,35 @@ fun MenuScreen(
         return
     }
     Column(
-        modifier = Modifier.fillMaxSize().background(Color(0xFFF4F5F7)).statusBarsPadding()
-            .verticalScroll(rememberScrollState()).padding(horizontal = 12.dp).navigationBarsPadding()
+        modifier = Modifier.fillMaxSize().background(Color.White).statusBarsPadding()
+            .verticalScroll(rememberScrollState()).navigationBarsPadding()
     ) {
         Surface(
             modifier = Modifier.fillMaxWidth(),
             color = Color.White,
-            shape = RoundedCornerShape(22.dp),
+            shape = RoundedCornerShape(0.dp),
             tonalElevation = 0.dp
         ) {
             Column {
-                Box(Modifier.fillMaxWidth().height(154.dp)) {
-                    TiwiAvatar(profile?.coverUrl, R.drawable.img_tiwi_cover, Modifier.fillMaxWidth().height(114.dp), ContentScale.Crop)
+                Box(Modifier.fillMaxWidth().height(150.dp)) {
+                    TiwiAvatar(profile?.coverUrl, R.drawable.img_tiwi_cover, Modifier.fillMaxWidth().height(110.dp), ContentScale.Crop)
                     DecoratedAvatar(
                         avatarUrl,
                         R.drawable.img_tiwi_avatar_1,
                         profile?.avatarDecoration,
-                        Modifier.align(Alignment.BottomStart).padding(start = 14.dp).size(92.dp)
+                        Modifier.align(Alignment.BottomStart).padding(start = 16.dp).size(82.dp),
+                        animateDecoration = false
                     )
                 }
-                Row(Modifier.fillMaxWidth().clickable(onClick = onProfileClick).padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.fillMaxWidth().clickable(onClick = onProfileClick).padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(name, style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
-                            if (profile?.verified == true) VerifiedBadge(profile?.badgeType, 17.dp, Modifier.padding(start = 3.dp))
-                        }
+                        Text(name, style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
                         Text("@${profile?.username.orEmpty()}  ·  View your profile", style = MaterialTheme.typography.labelMedium, color = Color(0xFF667085))
                     }
                     FilledTonalIconButton(
                         onClick = { showEditProfile = true },
-                        modifier = Modifier.size(38.dp),
-                        colors = IconButtonDefaults.filledTonalIconButtonColors(containerColor = Color(0xFFEEEAFE), contentColor = Color(0xFF5865F2))
+                        modifier = Modifier.size(34.dp),
+                        colors = IconButtonDefaults.filledTonalIconButtonColors(containerColor = Color(0xFFF0F2F5), contentColor = Color(0xFF344054))
                     ) { Icon(Icons.Default.Edit, "Edit profile", modifier = Modifier.size(18.dp)) }
                 }
                 HorizontalDivider(color = Color(0xFFEEF0F3))
@@ -5058,37 +5127,37 @@ fun MenuScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(14.dp))
-        Text("Discover", color = Color(0xFF667085), fontSize = 11.sp, fontWeight = FontWeight.Black, modifier = Modifier.padding(start = 3.dp, bottom = 7.dp))
+        Spacer(modifier = Modifier.height(12.dp))
+        Text("Profile tools", color = Color(0xFF667085), fontSize = 11.sp, fontWeight = FontWeight.Black, modifier = Modifier.padding(start = 16.dp, bottom = 7.dp))
 
         Surface(
             modifier = Modifier.fillMaxWidth().clickable { selectedSetting = "Verified badge" },
             color = Color(0xFFEAF2FF),
-            shape = RoundedCornerShape(18.dp),
+            shape = RoundedCornerShape(0.dp),
             tonalElevation = 0.dp
         ) {
-            Row(Modifier.padding(horizontal = 15.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(46.dp).background(Color.White, RoundedCornerShape(14.dp)), contentAlignment = Alignment.Center) { VerifiedBadge("blue", 25.dp) }
+            Row(Modifier.padding(horizontal = 16.dp, vertical = 11.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(38.dp).background(Color.White, RoundedCornerShape(11.dp)), contentAlignment = Alignment.Center) { VerifiedBadge("blue", 21.dp) }
                 Column(Modifier.weight(1f).padding(start = 11.dp)) {
-                    Text("Apply for a verified badge", fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                    Text("Protection, identity and notable status", color = Color(0xFF475467), fontSize = 12.sp)
+                    Text("Get verified", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    Text("Identity and account protection", color = Color(0xFF475467), fontSize = 11.sp)
                 }
                 Icon(Icons.Default.ChevronRight, null, tint = Color(0xFF2457A7))
             }
         }
 
-        Spacer(modifier = Modifier.height(8.dp))
+        HorizontalDivider(color = Color(0xFFE7EAF0))
         Surface(
             modifier = Modifier.fillMaxWidth().clickable { showEditProfile = true },
             color = Color(0xFFF4F0FF),
-            shape = RoundedCornerShape(18.dp),
+            shape = RoundedCornerShape(0.dp),
             tonalElevation = 0.dp
         ) {
-            Row(Modifier.padding(horizontal = 15.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(46.dp).background(Color.White, RoundedCornerShape(14.dp)), contentAlignment = Alignment.Center) { Icon(Icons.Outlined.AutoAwesome, null, tint = Color(0xFF7F56D9)) }
+            Row(Modifier.padding(horizontal = 16.dp, vertical = 11.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(38.dp).background(Color.White, RoundedCornerShape(11.dp)), contentAlignment = Alignment.Center) { Icon(Icons.Outlined.AutoAwesome, null, tint = Color(0xFF7F56D9)) }
                 Column(Modifier.weight(1f).padding(start = 11.dp)) {
-                    Text("Decorate your profile", fontWeight = FontWeight.Bold, fontSize = 15.sp, color = Color(0xFF2D1B69))
-                    Text("Avatar decorations and full-page effects", color = Color(0xFF625B71), fontSize = 12.sp)
+                    Text("Customise your profile", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = Color(0xFF2D1B69))
+                    Text("Avatar decoration and profile effects", color = Color(0xFF625B71), fontSize = 11.sp)
                 }
                 Icon(Icons.Default.ChevronRight, "Open Edit profile", tint = Color(0xFF7F56D9), modifier = Modifier.size(21.dp))
             }
@@ -5097,26 +5166,27 @@ fun MenuScreen(
 
         Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Column {
-                Text("Your shortcuts", style = MaterialTheme.typography.titleSmall, color = Color(0xFF667085), fontWeight = FontWeight.Bold)
-                Spacer(modifier = Modifier.height(8.dp))
+                Text("Shortcuts", style = MaterialTheme.typography.titleSmall, color = Color(0xFF667085), fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 16.dp))
+                Spacer(modifier = Modifier.height(7.dp))
                 val shortcuts = listOf(
                     Triple("Saved", Icons.Default.Bookmark, TiwiPurple),
                     Triple("Memories", Icons.Default.History, TiwiBlue),
                     Triple("Groups", Icons.Default.Group, TiwiPink)
                 )
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    shortcuts.chunked(2).forEach { shortcutRow ->
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(horizontal = 12.dp)) {
+                    shortcuts.chunked(3).forEach { shortcutRow ->
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             shortcutRow.forEach { shortcut ->
                                 Surface(
-                                    modifier = Modifier.weight(1f).height(72.dp).clickable { selectedShortcut = shortcut.first },
+                                    modifier = Modifier.weight(1f).height(76.dp).clickable { selectedShortcut = shortcut.first },
                                     color = Color.White,
-                                    shape = RoundedCornerShape(16.dp),
+                                    shape = RoundedCornerShape(12.dp),
+                                    border = BorderStroke(.7.dp, Color(0xFFE7EAF0)),
                                     tonalElevation = 0.dp
                                 ) {
-                                    Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                                        Box(Modifier.size(38.dp).background(shortcut.third.copy(alpha = .12f), RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) { Icon(shortcut.second, null, tint = shortcut.third, modifier = Modifier.size(21.dp)) }
-                                        Text(shortcut.first, Modifier.padding(start = 9.dp), fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                    Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.Center) {
+                                        Box(Modifier.size(30.dp).background(shortcut.third.copy(alpha = .12f), RoundedCornerShape(10.dp)), contentAlignment = Alignment.Center) { Icon(shortcut.second, null, tint = shortcut.third, modifier = Modifier.size(18.dp)) }
+                                        Text(shortcut.first, Modifier.padding(top = 7.dp), fontWeight = FontWeight.Bold, fontSize = 11.sp)
                                     }
                                 }
                             }
@@ -5127,12 +5197,13 @@ fun MenuScreen(
             }
             
             Column {
-                Text("Settings & support", style = MaterialTheme.typography.titleSmall, color = Color(0xFF667085), fontWeight = FontWeight.Bold)
+                Text("Settings & support", style = MaterialTheme.typography.titleSmall, color = Color(0xFF667085), fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 16.dp))
                 Spacer(modifier = Modifier.height(8.dp))
                 val settings = listOf(
                     Pair("Account Center", Icons.Default.AccountCircle),
                     Pair("Account Settings", Icons.Default.Settings),
                     Pair("Privacy Center", Icons.Default.Security),
+                    Pair("Notifications", Icons.Default.Notifications),
                     Pair("Support Center", Icons.Default.SupportAgent),
                     Pair("Help & Support", Icons.Default.Help),
                     Pair("About Tiwi", Icons.Default.Info)

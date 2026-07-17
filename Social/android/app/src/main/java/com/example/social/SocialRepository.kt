@@ -474,10 +474,10 @@ class SocialRepository(context: Context) {
         }
     }
 
-    suspend fun createPost(body: String, type: String = "post", media: List<SocialMedia> = emptyList(), visibility: String = "public", groupId: String? = null, metadata: Map<String, Any?> = emptyMap(), location: String? = null): SocialPost {
+    suspend fun createPost(body: String, type: String = "post", media: List<SocialMedia> = emptyList(), visibility: String = "public", groupId: String? = null, commentPermission: String = "everyone", metadata: Map<String, Any?> = emptyMap(), location: String? = null): SocialPost {
         val mediaInput = media.map(::mediaInput)
         val input = mapOf(
-            "type" to type, "body" to body.trim(), "visibility" to visibility, "media" to mediaInput, "groupId" to groupId,
+            "type" to type, "body" to body.trim(), "visibility" to visibility, "commentPermission" to commentPermission, "media" to mediaInput, "groupId" to groupId,
             "metadata" to metadata,
             "location" to location,
             "hlsUrl" to media.firstOrNull()?.hlsUrl,

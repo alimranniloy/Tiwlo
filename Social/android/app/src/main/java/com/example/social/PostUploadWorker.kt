@@ -73,8 +73,39 @@ class PostUploadWorker(context: Context, parameters: WorkerParameters) : Corouti
             val metadata = manifest.optJSONObject("metadata")?.toMap().orEmpty()
             val post = repository.createPost(
                 manifest.optString("body"), type, uploaded, manifest.optString("visibility", "public"),
-                metadata = metadata, location = manifest.optString("location").takeIf { it.isNotBlank() }
+                groupId = manifest.optString("groupId").takeIf { it.isNotBlank() },
+                commentPermission = manifest.optString("commentPermission", "everyone"),
+                metadata = metadata,
+                location = manifest.optString("location").takeIf { it.isNotBlank() }
             )
+            if (metadata["shareToStory"] == true) {
+                runCatching {
+                    val storyMedia = uploaded.map { media -> mapOf(
+                        "url" to media.url,
+                        "type" to media.type,
+                        "hlsUrl" to media.hlsUrl,
+                        "thumbnailUrl" to media.thumbnailUrl,
+                        "mimeType" to media.mimeType,
+                        "processingId" to media.processingId,
+                        "processingStatus" to media.processingStatus
+                    ).filterValues { it != null } }
+                    repository.createStory(
+                        caption = manifest.optString("body").takeIf { it.isNotBlank() },
+                        visibility = manifest.optString("visibility", "public"),
+                        metadata = mapOf("sharedPostId" to post.id),
+                        items = listOf(
+                            mapOf(
+                                "type" to when { storyMedia.isEmpty() -> "text"; storyMedia.first()["type"] == "video" -> "video"; else -> "image" },
+                                "media" to if (storyMedia.size <= 1) storyMedia.firstOrNull().orEmpty() else mapOf("items" to storyMedia),
+                                "text" to manifest.optString("body").takeIf { it.isNotBlank() },
+                                "background" to "#111827",
+                                "durationMs" to if (storyMedia.firstOrNull()?.get("type") == "video") 60_000 else 5_000,
+                                "sortOrder" to 0
+                            )
+                        )
+                    )
+                }
+            }
             setProgress(workDataOf(KEY_PROGRESS to 100, KEY_STATUS to "Post published", KEY_POST_ID to post.id))
             showComplete(notificationId, post.id)
             queueDirectory?.deleteRecursively()
@@ -155,8 +186,11 @@ class PostUploadWorker(context: Context, parameters: WorkerParameters) : Corouti
             uris: List<Uri>,
             body: String,
             visibility: String,
+            commentPermission: String = "everyone",
+            groupId: String? = null,
             metadata: Map<String, Any?> = emptyMap(),
-            location: String? = null
+            location: String? = null,
+            initialDelayMillis: Long = 0L
         ): UUID = withContext(Dispatchers.IO) {
             val queueId = UUID.randomUUID()
             val directory = File(context.filesDir, "post-upload-queue/$queueId").apply { mkdirs() }
@@ -178,6 +212,8 @@ class PostUploadWorker(context: Context, parameters: WorkerParameters) : Corouti
                 manifest.writeText(JSONObject()
                     .put("body", body.take(10_000))
                     .put("visibility", visibility)
+                    .put("commentPermission", commentPermission)
+                    .put("groupId", groupId)
                     .put("metadata", JSONObject(metadata))
                     .put("location", location)
                     .put("notificationId", queueId.hashCode())
@@ -185,6 +221,7 @@ class PostUploadWorker(context: Context, parameters: WorkerParameters) : Corouti
                 val request = OneTimeWorkRequestBuilder<PostUploadWorker>()
                     .setInputData(workDataOf(KEY_MANIFEST to manifest.absolutePath))
                     .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+                    .setInitialDelay(initialDelayMillis.coerceAtLeast(0L), TimeUnit.MILLISECONDS)
                     .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 15, TimeUnit.SECONDS)
                     .addTag(TAG)
                     .build()
