@@ -18,7 +18,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import org.webrtc.AudioSource
 import org.webrtc.AudioTrack
+import org.webrtc.Camera1Enumerator
 import org.webrtc.Camera2Enumerator
+import org.webrtc.CameraEnumerator
 import org.webrtc.CameraVideoCapturer
 import org.webrtc.DataChannel
 import org.webrtc.DefaultVideoDecoderFactory
@@ -179,7 +181,7 @@ class WebRtcLiveManager(context: Context, private val repository: SocialReposito
     fun switchCamera() {
         cameraCapturer?.switchCamera(object : CameraVideoCapturer.CameraSwitchHandler {
             override fun onCameraSwitchDone(isFrontCamera: Boolean) {
-                val enumerator = Camera2Enumerator(appContext)
+                val enumerator = cameraEnumerator()
                 activeCameraName = enumerator.deviceNames.firstOrNull { enumerator.isFrontFacing(it) == isFrontCamera }
                 if (flashEnabled) setFlash(false)
             }
@@ -220,11 +222,11 @@ class WebRtcLiveManager(context: Context, private val repository: SocialReposito
     }
 
     private suspend fun startCapture() {
-        val enumerator = Camera2Enumerator(appContext)
+        val enumerator = cameraEnumerator()
         val camera = enumerator.deviceNames.firstOrNull(enumerator::isFrontFacing) ?: enumerator.deviceNames.firstOrNull()
             ?: throw SocialApiException("No camera is available")
         activeCameraName = camera
-        cameraCapturer = enumerator.createCapturer(camera, null) ?: throw SocialApiException("Camera could not start")
+        cameraCapturer = enumerator.createCapturer(camera, cameraEvents()) ?: throw SocialApiException("Camera could not start")
         textureHelper = SurfaceTextureHelper.create("TiwiLiveCamera", eglContext)
         videoSource = factory.createVideoSource(false).also { source ->
             cameraCapturer?.initialize(textureHelper, appContext, source.capturerObserver)
@@ -233,6 +235,27 @@ class WebRtcLiveManager(context: Context, private val repository: SocialReposito
         localVideoTrack = factory.createVideoTrack("tiwi-live-video", videoSource).also { _localVideo.value = it }
         audioSource = factory.createAudioSource(MediaConstraints())
         localAudio = factory.createAudioTrack("tiwi-live-audio", audioSource)
+    }
+
+    /** Camera2 is preferred; Camera1 is a reliable fallback for preview on older/broken devices. */
+    private fun cameraEnumerator(): CameraEnumerator =
+        if (Camera2Enumerator.isSupported(appContext)) Camera2Enumerator(appContext) else Camera1Enumerator(false)
+
+    private fun cameraEvents() = object : CameraVideoCapturer.CameraEventsHandler {
+        override fun onCameraError(errorDescription: String) {
+            _state.value = errorDescription.ifBlank { "Camera preview failed" }
+        }
+        override fun onCameraDisconnected() {
+            _state.value = "Camera disconnected"
+        }
+        override fun onCameraFreezed(errorDescription: String) {
+            _state.value = "Camera preview is frozen"
+        }
+        override fun onCameraOpening(cameraName: String) = Unit
+        override fun onFirstFrameAvailable() {
+            if (_state.value.contains("camera", ignoreCase = true) || _state.value.contains("Preparing", ignoreCase = true)) _state.value = "Camera ready"
+        }
+        override fun onCameraClosed() = Unit
     }
 
     private fun startHostPolling() {

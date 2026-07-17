@@ -1633,10 +1633,20 @@ export const replyToStory = async (ctx, id, itemId, body) => {
   if (!text) throw new AppError('Write a reply first', 'BAD_USER_INPUT');
   await enforceTextModeration(ctx, { userId: actor.id, targetType: 'story_reply', targetId: id, text });
   const conversation = await createConversation(ctx, { memberIds: [story.authorId], type: 'direct' });
+  const storyMedia = storyMediaEntries(item);
+  const preview = storyMedia[0] || {};
   const message = await sendMessage(ctx, {
     conversationId: conversation.id, type: 'text', body: text,
     media: [{
-      type: 'story_reference', storyId: id, itemId, authorId: story.authorId
+      type: 'story_reference',
+      storyId: id,
+      itemId,
+      authorId: story.authorId,
+      url: preview.url || '',
+      hlsUrl: preview.hlsUrl || '',
+      thumbnailUrl: preview.thumbnailUrl || preview.url || '',
+      title: `${story.author?.name || 'Tiwi user'}'s story`,
+      description: bounded(item.text, 160) || 'Tap to view the story'
     }]
   });
   const reply = await ctx.prisma.socialStoryReply.create({

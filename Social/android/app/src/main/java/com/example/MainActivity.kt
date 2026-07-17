@@ -2004,6 +2004,7 @@ fun HomeFeed(
                     currentUser = currentUser,
                     currentProfile = currentProfile,
                     compact = true,
+                    feedEmphasis = true,
                     onCreate = onCreateStory,
                     onOpen = onOpenStory
                 )
@@ -2113,7 +2114,13 @@ private fun SuggestedReelsSection(module: SocialFeedModule, onReelClick: (String
         Text(module.title, modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp), fontWeight = FontWeight.Bold, fontSize = 14.sp)
         LazyRow(contentPadding = PaddingValues(horizontal = 10.dp), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
             itemsIndexed(reels, key = { _, reel -> "${module.id}-${reel.id}" }) { index, reel ->
-                ReelItem(reel, autoplayPreview = index == 0, width = 112.dp, height = 198.dp) { onReelClick(reel.id) }
+                ReelItem(
+                    reel,
+                    autoplayPreview = index == 0,
+                    width = 112.dp,
+                    height = 198.dp,
+                    showFeedAuthor = true
+                ) { onReelClick(reel.id) }
             }
         }
     }
@@ -2157,14 +2164,21 @@ fun ReelsSection(reels: List<Reel>, onReelClick: (String) -> Unit = {}) {
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             itemsIndexed(reels.take(16), key = { _, reel -> reel.id }) { index, reel ->
-                ReelItem(reel, autoplayPreview = index < 3) { onReelClick(reel.id) }
+                ReelItem(reel, autoplayPreview = index < 3, showFeedAuthor = true) { onReelClick(reel.id) }
             }
         }
     }
 }
 
 @Composable
-fun ReelItem(reel: Reel, autoplayPreview: Boolean = false, width: Dp = 126.dp, height: Dp = 224.dp, onClick: () -> Unit = {}) {
+fun ReelItem(
+    reel: Reel,
+    autoplayPreview: Boolean = false,
+    width: Dp = 126.dp,
+    height: Dp = 224.dp,
+    showFeedAuthor: Boolean = false,
+    onClick: () -> Unit = {}
+) {
     Box(
         modifier = Modifier
             .size(width = width, height = height)
@@ -2195,16 +2209,46 @@ fun ReelItem(reel: Reel, autoplayPreview: Boolean = false, width: Dp = 126.dp, h
                     )
                 )
         )
-        Text(
-            text = reel.author,
-            modifier = Modifier
-                .align(Alignment.BottomStart)
-                .padding(8.dp),
-            color = Color.White,
-            style = MaterialTheme.typography.labelSmall,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
+        if (showFeedAuthor) {
+            // Feed rails intentionally use a plain avatar. Decorations belong
+            // on profile surfaces, not on these small discovery cards.
+            Column(
+                modifier = Modifier.align(Alignment.BottomStart).padding(7.dp),
+                horizontalAlignment = Alignment.Start
+            ) {
+                Box(Modifier.size(29.dp)) {
+                    TiwiAvatar(
+                        url = reel.authorAvatarUrl,
+                        fallback = R.drawable.img_tiwi_avatar_1,
+                        modifier = Modifier.fillMaxSize().clip(CircleShape).border(1.5.dp, Color.White, CircleShape)
+                    )
+                    if (reel.verified) {
+                        Box(
+                            Modifier.align(Alignment.BottomEnd).offset(x = 2.dp, y = 2.dp)
+                                .size(13.dp).background(Color.White, CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) { VerifiedBadge(reel.badgeType, 12.dp) }
+                    }
+                }
+                Text(
+                    text = reel.author,
+                    modifier = Modifier.padding(top = 3.dp),
+                    color = Color.White,
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, fontWeight = FontWeight.SemiBold),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        } else {
+            Text(
+                text = reel.author,
+                modifier = Modifier.align(Alignment.BottomStart).padding(8.dp),
+                color = Color.White,
+                style = MaterialTheme.typography.labelSmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
         Box(Modifier.matchParentSize().clickable(onClick = onClick))
     }
 }
@@ -2245,6 +2289,31 @@ private fun SocialMedia.asLinkPreview(): SocialLinkPreview? {
         url = displayUrl ?: url, canonicalUrl = displayUrl ?: url, domain = domain.orEmpty(), title = title.orEmpty(),
         description = description, imageUrl = thumbnailUrl, siteName = siteName, domainAgeYears = domainAgeYears
     )
+}
+
+private fun postBackgroundColor(value: Any?): Color? = value?.toString()
+    ?.trim()
+    ?.takeIf { it.startsWith("#") }
+    ?.let { raw -> runCatching { Color(android.graphics.Color.parseColor(raw)) }.getOrNull() }
+
+private fun isDarkPostBackground(value: Any?): Boolean = value?.toString()?.uppercase(Locale.US) in setOf(
+    "#111827", "#1877F2", "#C026D3", "#EA580C"
+)
+
+private fun backgroundPostTextSize(length: Int) = when {
+    length > 360 -> 13.sp
+    length > 240 -> 15.sp
+    length > 150 -> 17.sp
+    length > 85 -> 19.sp
+    else -> 22.sp
+}
+
+private fun backgroundPostLineHeight(length: Int) = when {
+    length > 360 -> 17.sp
+    length > 240 -> 19.sp
+    length > 150 -> 22.sp
+    length > 85 -> 25.sp
+    else -> 28.sp
 }
 
 @Composable
@@ -2301,6 +2370,8 @@ fun PostCard(
     val scope = rememberTiwiCoroutineScope()
     val context = LocalContext.current
     val isOwn = post.authorId == repository.currentUserId()
+    val backgroundColor = postBackgroundColor(post.metadata["background"])
+    val darkBackground = isDarkPostBackground(post.metadata["background"])
 
     Column(
         modifier = Modifier
@@ -2349,27 +2420,45 @@ fun PostCard(
                     }
                 }
             }
-            IconButton(onClick = { showMenu = true }, modifier = Modifier.size(40.dp).background(Color(0xFFF2F4F7), CircleShape)) {
-                Icon(Icons.Default.MoreHoriz, contentDescription = "Post options", modifier = Modifier.size(23.dp))
+            IconButton(onClick = { showMenu = true }, modifier = Modifier.size(40.dp)) {
+                PostOptionsGlyph()
             }
         }
 
-        if (post.content.isNotBlank()) Column(modifier = Modifier.padding(horizontal = 9.dp, vertical = 1.dp)) {
-            Text(
-                text = highlightMentions(post.content),
-                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp, lineHeight = 18.sp),
-                maxLines = if (isExpanded) Int.MAX_VALUE else 3,
-                overflow = TextOverflow.Ellipsis
-            )
-            if (post.content.length > 100) {
+        if (post.content.isNotBlank()) {
+            val normalPost = backgroundColor == null
+            Column(
+                modifier = if (normalPost) {
+                    Modifier.padding(horizontal = 9.dp, vertical = 2.dp)
+                } else {
+                    Modifier.fillMaxWidth().padding(horizontal = 9.dp, vertical = 4.dp)
+                        .aspectRatio(1f).clip(RoundedCornerShape(14.dp)).background(backgroundColor ?: Color.Transparent)
+                        .padding(18.dp)
+                },
+                verticalArrangement = if (normalPost) Arrangement.Top else Arrangement.Center
+            ) {
                 Text(
-                    text = if (isExpanded) "See less" else "See more",
-                    modifier = Modifier
-                        .clickable { isExpanded = !isExpanded }
-                        .padding(vertical = 2.dp),
-                    color = TiwiBlue,
-                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold)
+                    text = highlightMentions(post.content),
+                    color = if (normalPost) MaterialTheme.colorScheme.onBackground else if (darkBackground) Color.White else Color.Black,
+                    style = MaterialTheme.typography.bodyMedium.copy(
+                        fontSize = if (normalPost) 14.sp else backgroundPostTextSize(post.content.length),
+                        lineHeight = if (normalPost) 20.sp else backgroundPostLineHeight(post.content.length),
+                        fontWeight = if (normalPost) FontWeight.Normal else FontWeight.SemiBold,
+                        textAlign = if (normalPost) TextAlign.Start else TextAlign.Center
+                    ),
+                    maxLines = if (isExpanded) Int.MAX_VALUE else if (normalPost) 3 else 12,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.fillMaxWidth()
                 )
+                if (post.content.length > 100) {
+                    Text(
+                        text = if (isExpanded) "See less" else "See more",
+                        modifier = Modifier.clickable { isExpanded = !isExpanded }.padding(top = 4.dp),
+                        color = if (normalPost) TiwiBlue else if (darkBackground) Color.White.copy(alpha = .88f) else Color.Black.copy(alpha = .72f),
+                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                        textAlign = if (normalPost) TextAlign.Start else TextAlign.Center
+                    )
+                }
             }
         }
 
@@ -2476,6 +2565,29 @@ fun PostCard(
         onDismiss = { showReactions = false },
         onProfileClick = { showReactions = false; onCommentProfile(it) }
     )
+}
+
+/** Compact two-line action glyph used consistently for post actions. */
+@Composable
+private fun PostOptionsGlyph(modifier: Modifier = Modifier) {
+    Canvas(modifier.size(24.dp)) {
+        val strokeWidth = 2.7.dp.toPx()
+        val start = 2.dp.toPx()
+        drawLine(
+            color = Color.Black,
+            start = Offset(start, size.height * .36f),
+            end = Offset(size.width - start, size.height * .36f),
+            strokeWidth = strokeWidth,
+            cap = StrokeCap.Round
+        )
+        drawLine(
+            color = Color.Black,
+            start = Offset(start, size.height * .67f),
+            end = Offset(size.width * .63f, size.height * .67f),
+            strokeWidth = strokeWidth,
+            cap = StrokeCap.Round
+        )
+    }
 }
 
 @Composable
@@ -2631,14 +2743,13 @@ private fun SharedPostCard(media: SocialMedia, onOpenPost: () -> Unit, onOpenPro
                         TiwiVideo(
                             url = media.hlsUrl?.takeIf { media.processingStatus == "ready" } ?: media.url,
                             modifier = Modifier.fillMaxSize(),
-                            autoplay = true,
+                            autoplay = false,
                             fallbackUrl = media.url,
                             posterUrl = media.thumbnailUrl,
                             muted = false,
                             coordinated = true,
-                            interactive = false
+                            interactive = true
                         )
-                        Box(Modifier.matchParentSize().clickable(onClick = onOpenPost))
                     } else {
                         AsyncImage(model = media.url, contentDescription = "Shared post media", modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                     }
@@ -2648,6 +2759,44 @@ private fun SharedPostCard(media: SocialMedia, onOpenPost: () -> Unit, onOpenPro
                 "${media.sharedReactions} reactions  ·  ${media.sharedComments} comments  ·  ${media.sharedViews} views",
                 modifier = Modifier.padding(10.dp), fontSize = 12.sp, color = Color.Gray
             )
+        }
+    }
+}
+
+@Composable
+private fun StoryReferenceCard(media: SocialMedia, onOpenStory: () -> Unit) {
+    Surface(
+        modifier = Modifier.widthIn(max = 270.dp).padding(horizontal = 3.dp, vertical = 2.dp).clickable(onClick = onOpenStory),
+        color = Color.White,
+        shape = RoundedCornerShape(13.dp),
+        border = BorderStroke(.7.dp, Color(0xFFE0E3E8)),
+        tonalElevation = 0.dp
+    ) {
+        Column {
+            Box(Modifier.fillMaxWidth().height(150.dp).background(Color(0xFF1E293B)), contentAlignment = Alignment.Center) {
+                when {
+                    media.type == "story_reference" && media.hlsUrl?.isNotBlank() == true -> TiwiVideo(
+                        url = media.hlsUrl,
+                        fallbackUrl = media.url,
+                        posterUrl = media.thumbnailUrl,
+                        modifier = Modifier.fillMaxSize(),
+                        autoplay = false,
+                        muted = false,
+                        coordinated = false,
+                        interactive = true
+                    )
+                    media.thumbnailUrl?.isNotBlank() == true -> AsyncImage(media.thumbnailUrl, "Story preview", Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                    media.url.isNotBlank() -> AsyncImage(media.url, "Story preview", Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                    else -> Icon(Icons.Outlined.AutoStories, null, tint = Color.White, modifier = Modifier.size(34.dp))
+                }
+            }
+            Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Outlined.AutoStories, null, tint = TiwiBlue, modifier = Modifier.size(17.dp))
+                Column(Modifier.padding(start = 7.dp).weight(1f)) {
+                    Text(media.title ?: "Story reply", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 12.sp, maxLines = 1)
+                    Text(media.description?.takeIf { it.isNotBlank() } ?: "Tap to view this story", color = Color(0xFF667085), fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
         }
     }
 }
@@ -3753,6 +3902,9 @@ fun CreatePostScreen(repository: SocialRepository, onBack: () -> Unit, onLive: (
         if (composerPage == "publish") publish()
     }
 
+    val selectedBackgroundColor = postBackgroundColor(background)
+    val selectedBackgroundIsDark = isDarkPostBackground(background)
+
     Column(Modifier.fillMaxSize().background(Color.White).imePadding()) {
         Box(Modifier.fillMaxWidth().statusBarsPadding().height(52.dp)) {
             IconButton(onClick = onBack, enabled = !busy, modifier = Modifier.align(Alignment.CenterStart).padding(start = 5.dp)) {
@@ -3777,7 +3929,7 @@ fun CreatePostScreen(repository: SocialRepository, onBack: () -> Unit, onLive: (
         }
 
         LazyRow(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
             contentPadding = PaddingValues(horizontal = 14.dp),
             horizontalArrangement = Arrangement.spacedBy(7.dp)
         ) {
@@ -3789,16 +3941,21 @@ fun CreatePostScreen(repository: SocialRepository, onBack: () -> Unit, onLive: (
 
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
             Box(
-                Modifier.fillMaxWidth().heightIn(min = if (selectedUris.isEmpty() && linkPreview == null) 260.dp else 110.dp)
-                    .then(background?.let { Modifier.background(Color(android.graphics.Color.parseColor(it))) } ?: Modifier)
-                    .padding(horizontal = 16.dp, vertical = 14.dp),
-                contentAlignment = if (background != null) Alignment.Center else Alignment.TopStart
+                if (selectedBackgroundColor != null) {
+                    Modifier.fillMaxWidth().padding(horizontal = 14.dp)
+                        .aspectRatio(1f).clip(RoundedCornerShape(14.dp)).background(selectedBackgroundColor)
+                        .padding(horizontal = 20.dp, vertical = 18.dp)
+                } else {
+                    Modifier.fillMaxWidth().heightIn(min = if (selectedUris.isEmpty() && linkPreview == null) 260.dp else 110.dp)
+                        .padding(horizontal = 16.dp, vertical = 14.dp)
+                },
+                contentAlignment = if (selectedBackgroundColor != null) Alignment.Center else Alignment.TopStart
             ) {
                 if (text.isBlank()) Text(
                     "What's on your mind?",
-                    color = if (background == "#111827") Color.White.copy(alpha = .72f) else Color(0xFF74777D),
+                    color = if (selectedBackgroundIsDark) Color.White.copy(alpha = .72f) else Color(0xFF74777D),
                     fontSize = 20.sp,
-                    textAlign = if (background != null) TextAlign.Center else TextAlign.Start,
+                    textAlign = if (selectedBackgroundColor != null) TextAlign.Center else TextAlign.Start,
                     modifier = Modifier.fillMaxWidth()
                 )
                 BasicTextField(
@@ -3806,11 +3963,11 @@ fun CreatePostScreen(repository: SocialRepository, onBack: () -> Unit, onLive: (
                     onValueChange = { text = it.take(10_000) },
                     modifier = Modifier.fillMaxWidth(),
                     textStyle = MaterialTheme.typography.bodyLarge.copy(
-                        color = if (background == "#111827") Color.White else Color.Black,
-                        fontSize = if (background != null) 23.sp else 18.sp,
-                        lineHeight = if (background != null) 29.sp else 24.sp,
-                        fontWeight = if (background != null) FontWeight.Bold else FontWeight.Normal,
-                        textAlign = if (background != null) TextAlign.Center else TextAlign.Start
+                        color = if (selectedBackgroundIsDark) Color.White else Color.Black,
+                        fontSize = if (selectedBackgroundColor != null) backgroundPostTextSize(text.length) else 18.sp,
+                        lineHeight = if (selectedBackgroundColor != null) backgroundPostLineHeight(text.length) else 24.sp,
+                        fontWeight = if (selectedBackgroundColor != null) FontWeight.Bold else FontWeight.Normal,
+                        textAlign = if (selectedBackgroundColor != null) TextAlign.Center else TextAlign.Start
                     ),
                     cursorBrush = SolidColor(TiwiBlue)
                 )
@@ -5155,7 +5312,6 @@ private fun WebRtcVideoSurface(track: VideoTrack?, eglContext: EglBase.Context, 
                 init(eglContext, null)
                 setEnableHardwareScaler(true)
                 setMirror(mirror)
-                setZOrderMediaOverlay(mirror)
                 renderer = this
             }
         },
@@ -5331,12 +5487,11 @@ fun MenuScreen(
             Column {
                 Box(Modifier.fillMaxWidth().height(150.dp)) {
                     TiwiAvatar(profile?.coverUrl, R.drawable.img_tiwi_cover, Modifier.fillMaxWidth().height(110.dp), ContentScale.Crop)
-                    DecoratedAvatar(
+                    TiwiAvatar(
                         avatarUrl,
                         R.drawable.img_tiwi_avatar_1,
-                        profile?.avatarDecoration,
-                        Modifier.align(Alignment.BottomStart).padding(start = 16.dp).size(82.dp),
-                        animateDecoration = false
+                        Modifier.align(Alignment.BottomStart).padding(start = 16.dp).size(82.dp).clip(CircleShape),
+                        ContentScale.Crop
                     )
                 }
                 Row(Modifier.fillMaxWidth().clickable(onClick = onProfileClick).padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -6722,12 +6877,12 @@ fun ProfileScreen(
                         if (category.isNotBlank()) Text(category, color = Color(0xFF667085), fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 2.dp))
                     }
                 }
-                Row(Modifier.fillMaxWidth().padding(horizontal = 26.dp, vertical = 2.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
+                Row(Modifier.fillMaxWidth().padding(start = 26.dp, end = 26.dp, bottom = 7.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
                     ProfileStatItem("Posts", formatCount(profile.postCount.takeIf { it > 0 } ?: posts.size), Modifier.width(76.dp))
                     ProfileStatItem("Followers", formatCount(profile.followerCount), Modifier.width(76.dp)) { showPeople = "Followers" }
                     ProfileStatItem("Following", formatCount(profile.followingCount), Modifier.width(76.dp)) { showPeople = "Following" }
                 }
-                Column(Modifier.padding(horizontal = 12.dp)) {
+                Column(Modifier.padding(horizontal = 12.dp, vertical = 2.dp)) {
                     if (!profile.bio.isNullOrBlank()) Text(
                         profile.bio.orEmpty(),
                         fontSize = 12.sp,
@@ -10476,7 +10631,7 @@ private fun MessengerActionRow(icon: ImageVector, label: String, onClick: () -> 
 @Composable
 private fun MessengerStoryViewer(story: SocialPost, repository: SocialRepository, onClose: () -> Unit) {
     val media = story.media.firstOrNull()
-    Box(Modifier.fillMaxSize().background(Color.Black).statusBarsPadding().navigationBarsPadding()) {
+    Box(Modifier.fillMaxSize().background(Color.Black)) {
         when (media?.type) {
             "video" -> TiwiVideo(
                 media.hlsUrl?.takeIf { media.processingStatus == "ready" } ?: media.url,
@@ -10489,7 +10644,7 @@ private fun MessengerStoryViewer(story: SocialPost, repository: SocialRepository
                 model = repository.absoluteUrl(media.url),
                 contentDescription = "Story",
                 modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.Fit
+                contentScale = ContentScale.Crop
             )
             else -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(story.body, color = Color.White, fontSize = 24.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(28.dp))
@@ -10501,7 +10656,7 @@ private fun MessengerStoryViewer(story: SocialPost, repository: SocialRepository
             color = Color.White,
             trackColor = Color.White.copy(alpha = .35f)
         )
-        Row(Modifier.fillMaxWidth().align(Alignment.TopStart).padding(top = 14.dp, start = 12.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().align(Alignment.TopStart).statusBarsPadding().padding(top = 8.dp, start = 12.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             DecoratedAvatar(story.author.avatar, R.drawable.img_tiwi_avatar_1, story.authorProfile?.avatarDecoration, Modifier.size(42.dp))
             Column(Modifier.weight(1f).padding(start = 9.dp)) {
                 Text(story.author.name, color = Color.White, fontWeight = FontWeight.Bold)
@@ -11286,7 +11441,13 @@ fun ChatDetailScreen(
                                     if (target != null) context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://tiwlo.com/social/post/$target")))
                                 }, onOpenProfile = { shared.sharedAuthorId?.let(onProfileClick) })
                             }
-                            message.media.filter { it.type !in listOf("image", "video", "audio", "link_preview", "shared_post", "forwarded_message") }.forEach {
+                            message.media.filter { it.type == "story_reference" }.forEach { story ->
+                                StoryReferenceCard(story) {
+                                    val target = story.storyId?.takeIf { it.isNotBlank() }
+                                    if (target != null) context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://tiwlo.com/social/story/$target")))
+                                }
+                            }
+                            message.media.filter { it.type !in listOf("image", "video", "audio", "link_preview", "shared_post", "story_reference", "forwarded_message") }.forEach {
                                 Text(it.title ?: "Attachment", modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp), color = if (isMe) Color.White else Color.Black)
                             }
                             if (msg.isNotBlank()) Text(

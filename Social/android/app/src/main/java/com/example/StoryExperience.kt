@@ -400,16 +400,27 @@ fun TiwiStoryTray(
     currentProfile: SocialProfile?,
     modifier: Modifier = Modifier,
     compact: Boolean = true,
+    feedEmphasis: Boolean = false,
     onCreate: () -> Unit,
     onOpen: (String) -> Unit
 ) {
     val currentId = currentUser?.id
     val mine = remember(groups, currentId) { groups.firstOrNull { it.authorId == currentId } }
     val others = remember(groups, currentId) { groups.filterNot { it.authorId == currentId } }
-    val avatarSize = if (compact) 58.dp else 66.dp
-    val itemWidth = if (compact) 68.dp else 76.dp
+    // Only the feed tray is enlarged. Messenger and the full story page keep
+    // their tighter rhythm.
+    val avatarSize = when {
+        compact && feedEmphasis -> 62.dp
+        compact -> 58.dp
+        else -> 66.dp
+    }
+    val itemWidth = when {
+        compact && feedEmphasis -> 72.dp
+        compact -> 68.dp
+        else -> 76.dp
+    }
     LazyRow(
-        modifier = modifier.fillMaxWidth().height(if (compact) 91.dp else 104.dp),
+        modifier = modifier.fillMaxWidth().height(if (compact && feedEmphasis) 96.dp else if (compact) 91.dp else 104.dp),
         contentPadding = PaddingValues(horizontal = 9.dp, vertical = 6.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp)
     ) {
@@ -1613,7 +1624,7 @@ private fun StoryViewerContent(
     var reply by remember(frame.item.id) { mutableStateOf("") }
     var showReactions by remember { mutableStateOf(false) }
     Box(
-        Modifier.fillMaxSize().background(Color.Black).statusBarsPadding().navigationBarsPadding()
+        Modifier.fillMaxSize().background(Color.Black)
             .pointerInput(frame.item.id) {
                 detectTapGestures(
                     onPress = { onPause(true); tryAwaitRelease(); onPause(false) },
@@ -1623,7 +1634,7 @@ private fun StoryViewerContent(
     ) {
         StoryItemMedia(repository, item, Modifier.fillMaxSize())
         Column(
-            Modifier.align(Alignment.TopCenter).fillMaxWidth()
+            Modifier.align(Alignment.TopCenter).fillMaxWidth().statusBarsPadding()
                 .background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = .46f), Color.Black.copy(alpha = .18f), Color.Transparent)))
                 .padding(horizontal = 7.dp, vertical = 5.dp)
         ) {
@@ -1666,21 +1677,21 @@ private fun StoryViewerContent(
             }
         }
         if (paused) Box(Modifier.align(Alignment.Center).size(54.dp).background(Color.Black.copy(alpha = .5f), CircleShape), contentAlignment = Alignment.Center) { Icon(Icons.Default.Pause, "Paused", tint = Color.White, modifier = Modifier.size(31.dp)) }
-        Row(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Surface(Modifier.weight(1f).heightIn(min = 40.dp), color = Color.Black.copy(alpha = .42f), shape = RoundedCornerShape(22.dp), border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = .65f)), tonalElevation = 0.dp) {
+        Row(Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding().padding(horizontal = 10.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+            Surface(Modifier.weight(1f).heightIn(min = 38.dp), color = Color.Black.copy(alpha = .38f), shape = RoundedCornerShape(21.dp), border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = .55f)), tonalElevation = 0.dp) {
                 BasicTextField(
                     value = reply,
                     onValueChange = { reply = it.take(1_000) },
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 13.dp, vertical = 11.dp),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 13.dp, vertical = 9.dp),
                     textStyle = MaterialTheme.typography.bodyMedium.copy(color = Color.White, fontSize = 12.sp),
                     singleLine = true,
                     decorationBox = { inner -> if (reply.isBlank()) Text(if (frame.story.allowReplies) "Reply…" else "Replies are off", color = Color.White.copy(alpha = .75f), fontSize = 12.sp); inner() }
                 )
             }
-            IconButton(onClick = { showReactions = !showReactions }, modifier = Modifier.size(41.dp)) { Icon(Icons.Outlined.SentimentSatisfied, "React", tint = Color.White, modifier = Modifier.size(25.dp)) }
-            IconButton(enabled = reply.isNotBlank() && frame.story.allowReplies, onClick = { val value = reply.trim(); reply = ""; onReply(value) }, modifier = Modifier.size(41.dp)) { Icon(Icons.AutoMirrored.Filled.Send, "Send reply", tint = if (reply.isBlank()) Color.White.copy(alpha = .4f) else StoryBlue, modifier = Modifier.size(22.dp)) }
+            IconButton(onClick = { showReactions = !showReactions }, modifier = Modifier.size(39.dp)) { Icon(Icons.Outlined.SentimentSatisfied, "React", tint = Color.White, modifier = Modifier.size(24.dp)) }
+            IconButton(enabled = reply.isNotBlank() && frame.story.allowReplies, onClick = { val value = reply.trim(); reply = ""; onReply(value) }, modifier = Modifier.size(39.dp)) { Icon(Icons.AutoMirrored.Filled.Send, "Send reply", tint = if (reply.isBlank()) Color.White.copy(alpha = .4f) else StoryBlue, modifier = Modifier.size(21.dp)) }
         }
-        AnimatedVisibility(showReactions, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 58.dp)) {
+        AnimatedVisibility(showReactions, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 50.dp)) {
             Surface(color = Color.White, shape = RoundedCornerShape(25.dp), tonalElevation = 0.dp) {
                 Row(Modifier.padding(horizontal = 8.dp, vertical = 5.dp)) {
                     listOf("❤️", "😂", "😮", "😢", "😡", "👍").forEach { emoji -> Text(emoji, fontSize = 25.sp, modifier = Modifier.clickable { onReact(emoji); showReactions = false }.padding(horizontal = 4.dp)) }

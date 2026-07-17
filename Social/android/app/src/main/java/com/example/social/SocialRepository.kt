@@ -1300,7 +1300,8 @@ class SocialRepository(context: Context) {
         sharedViews = value.number("sharedViews")?.toInt() ?: 0,
         sharedReactions = value.number("sharedReactions")?.toInt() ?: 0,
         sharedComments = value.number("sharedComments")?.toInt() ?: 0,
-        sharedPublishedAt = value.string("sharedPublishedAt"), title = value.string("title"), description = value.string("description"),
+        sharedPublishedAt = value.string("sharedPublishedAt"), storyId = value.string("storyId"), storyItemId = value.string("itemId"),
+        storyAuthorId = value.string("authorId"), title = value.string("title"), description = value.string("description"),
         siteName = value.string("siteName"), domain = value.string("domain"), displayUrl = value.string("displayUrl"),
         domainAgeYears = value.number("domainAgeYears")?.toInt(), forwarded = value.boolean("forwarded"),
         forwardedFromName = value.string("forwardedFromName"), forwardedFromMessageId = value.string("forwardedFromMessageId")

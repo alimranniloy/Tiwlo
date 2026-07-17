@@ -18,7 +18,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import org.webrtc.AudioSource
 import org.webrtc.AudioTrack
+import org.webrtc.Camera1Enumerator
 import org.webrtc.Camera2Enumerator
+import org.webrtc.CameraEnumerator
 import org.webrtc.CameraVideoCapturer
 import org.webrtc.DataChannel
 import org.webrtc.DefaultVideoDecoderFactory
@@ -159,7 +161,7 @@ class WebRtcCallManager(
     fun switchCamera() {
         cameraCapturer?.switchCamera(object : CameraVideoCapturer.CameraSwitchHandler {
             override fun onCameraSwitchDone(isFrontCamera: Boolean) {
-                val enumerator = Camera2Enumerator(appContext)
+                val enumerator = cameraEnumerator()
                 activeCameraName = enumerator.deviceNames.firstOrNull { enumerator.isFrontFacing(it) == isFrontCamera }
                 if (flashEnabled) setFlash(false)
             }
@@ -234,12 +236,12 @@ class WebRtcCallManager(
     }
 
     private fun startLocalVideo() {
-        val enumerator = Camera2Enumerator(appContext)
+        val enumerator = cameraEnumerator()
         val cameraName = enumerator.deviceNames.firstOrNull(enumerator::isFrontFacing)
             ?: enumerator.deviceNames.firstOrNull()
             ?: throw SocialApiException("No camera is available")
         activeCameraName = cameraName
-        val capturer = enumerator.createCapturer(cameraName, null)
+        val capturer = enumerator.createCapturer(cameraName, cameraEvents())
             ?: throw SocialApiException("The camera could not start")
         cameraCapturer = capturer
         surfaceTextureHelper = SurfaceTextureHelper.create("TiwiCamera", eglContext)
@@ -251,6 +253,27 @@ class WebRtcCallManager(
             it.setEnabled(true)
             peerConnection?.addTrack(it, listOf("tiwi-stream"))
         }
+    }
+
+    /** Camera2 is preferred, while Camera1 keeps preview working on devices with broken Camera2 output. */
+    private fun cameraEnumerator(): CameraEnumerator =
+        if (Camera2Enumerator.isSupported(appContext)) Camera2Enumerator(appContext) else Camera1Enumerator(false)
+
+    private fun cameraEvents() = object : CameraVideoCapturer.CameraEventsHandler {
+        override fun onCameraError(errorDescription: String) {
+            _state.value = errorDescription.ifBlank { "Camera preview failed" }
+        }
+        override fun onCameraDisconnected() {
+            _state.value = "Camera disconnected"
+        }
+        override fun onCameraFreezed(errorDescription: String) {
+            _state.value = "Camera preview is frozen"
+        }
+        override fun onCameraOpening(cameraName: String) = Unit
+        override fun onFirstFrameAvailable() {
+            if (_state.value.contains("Camera", ignoreCase = true)) _state.value = "Connectingâ€¦"
+        }
+        override fun onCameraClosed() = Unit
     }
 
     private suspend fun loadIceServers(): List<PeerConnection.IceServer> {
