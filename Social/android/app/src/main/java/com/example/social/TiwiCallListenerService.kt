@@ -7,8 +7,9 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.BitmapFactory
 import android.media.AudioAttributes
-import android.media.RingtoneManager
+import android.net.Uri
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
@@ -34,6 +35,7 @@ class TiwiCallListenerService : Service() {
     private lateinit var repository: SocialRepository
     private var shownCallId: String? = null
     private var notificationPollTick = 0
+    private val brandIcon by lazy { BitmapFactory.decodeResource(resources, R.drawable.tiwi_app_icon) }
 
     override fun onCreate() {
         super.onCreate()
@@ -81,7 +83,7 @@ class TiwiCallListenerService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     private fun serviceNotification() = NotificationCompat.Builder(this, SERVICE_CHANNEL)
-        .setSmallIcon(R.mipmap.ic_launcher)
+        .setSmallIcon(R.drawable.ic_tiwi_notification)
         .setContentTitle("Tiwi calls are ready")
         .setContentText("Listening securely for incoming audio and video calls")
         .setOngoing(true)
@@ -104,7 +106,8 @@ class TiwiCallListenerService : Service() {
         )
         val label = if (call.type == "video") "Incoming Tiwi video call" else "Incoming Tiwi audio call"
         val notification = NotificationCompat.Builder(this, CALL_CHANNEL)
-            .setSmallIcon(R.mipmap.ic_launcher)
+            .setSmallIcon(R.drawable.ic_tiwi_notification)
+            .setLargeIcon(brandIcon)
             .setContentTitle(call.caller.name.ifBlank { "Tiwi user" })
             .setContentText(label)
             .setCategory(NotificationCompat.CATEGORY_CALL)
@@ -115,7 +118,7 @@ class TiwiCallListenerService : Service() {
             .setContentIntent(pending)
             .setFullScreenIntent(pending, true)
             .setVibrate(longArrayOf(0, 700, 350, 700, 350, 700))
-            .setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE))
+            .setSound(rawSound(R.raw.tiwi_incoming_ring))
             .build()
         NotificationManagerCompat.from(this).notify(INCOMING_NOTIFICATION_ID, notification)
     }
@@ -138,7 +141,8 @@ class TiwiCallListenerService : Service() {
         }
         val pending = PendingIntent.getActivity(this, item.id.hashCode(), openIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val notification = NotificationCompat.Builder(this, ACTIVITY_CHANNEL)
-            .setSmallIcon(R.mipmap.ic_launcher)
+            .setSmallIcon(R.drawable.ic_tiwi_notification)
+            .setLargeIcon(brandIcon)
             .setContentTitle(item.title.ifBlank { "Tiwi activity" })
             .setContentText(item.message)
             .setStyle(NotificationCompat.BigTextStyle().bigText(item.message))
@@ -147,6 +151,7 @@ class TiwiCallListenerService : Service() {
             .setAutoCancel(true)
             .setContentIntent(pending)
             .setGroup("tiwi_social_activity")
+            .setSound(rawSound(R.raw.tiwi_activity_notification))
             .build()
         NotificationManagerCompat.from(this).notify(item.id.hashCode(), notification)
         preferences.edit().putStringSet("shown_ids", (shown + item.id).toList().takeLast(200).toSet()).apply()
@@ -161,8 +166,7 @@ class TiwiCallListenerService : Service() {
                 setSound(null, null)
             }
         )
-        val ringtone = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
-        val attributes = AudioAttributes.Builder()
+        val ringtoneAttributes = AudioAttributes.Builder()
             .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
             .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
             .build()
@@ -171,23 +175,30 @@ class TiwiCallListenerService : Service() {
                 description = "Audio and video call alerts"
                 enableVibration(true)
                 vibrationPattern = longArrayOf(0, 700, 350, 700)
-                setSound(ringtone, attributes)
+                setSound(rawSound(R.raw.tiwi_incoming_ring), ringtoneAttributes)
                 lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
             }
         )
+        val activityAttributes = AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+            .build()
         manager.createNotificationChannel(
             NotificationChannel(ACTIVITY_CHANNEL, "Tiwi activity", NotificationManager.IMPORTANCE_DEFAULT).apply {
                 description = "Likes, comments, follows, mentions and messages"
                 enableVibration(true)
+                setSound(rawSound(R.raw.tiwi_activity_notification), activityAttributes)
             }
         )
     }
 
+    private fun rawSound(resId: Int): Uri = Uri.parse("android.resource://$packageName/$resId")
+
     companion object {
         private const val SERVICE_CHANNEL = "tiwi_call_connection"
-        private const val CALL_CHANNEL = "tiwi_incoming_calls"
-        private const val ACTIVITY_CHANNEL = "tiwi_social_activity"
+        private const val CALL_CHANNEL = "tiwi_incoming_calls_brand_v2"
+        private const val ACTIVITY_CHANNEL = "tiwi_social_activity_brand_v2"
         private const val SERVICE_NOTIFICATION_ID = 4301
-        private const val INCOMING_NOTIFICATION_ID = 4302
+        const val INCOMING_NOTIFICATION_ID = 4302
     }
 }

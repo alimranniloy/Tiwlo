@@ -8,6 +8,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
+import android.graphics.BitmapFactory
+import android.media.AudioAttributes
 import android.net.Uri
 import android.os.Build
 import android.provider.OpenableColumns
@@ -88,13 +90,14 @@ class PostUploadWorker(context: Context, parameters: WorkerParameters) : Corouti
     }
 
     private fun uploadForeground(notificationId: Int, progress: Int, status: String): ForegroundInfo {
-        ensureChannel(applicationContext)
-        val notification = NotificationCompat.Builder(applicationContext, CHANNEL)
-            .setSmallIcon(R.mipmap.ic_launcher)
+        ensureChannels(applicationContext)
+        val notification = NotificationCompat.Builder(applicationContext, PROGRESS_CHANNEL)
+            .setSmallIcon(R.drawable.ic_tiwi_notification)
             .setContentTitle("Uploading your Tiwi post")
             .setContentText(status)
             .setOnlyAlertOnce(true)
             .setOngoing(true)
+            .setSilent(true)
             .setProgress(100, progress.coerceIn(0, 100), false)
             .build()
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) ForegroundInfo(notificationId, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
@@ -103,21 +106,28 @@ class PostUploadWorker(context: Context, parameters: WorkerParameters) : Corouti
 
     private fun showComplete(notificationId: Int, postId: String) {
         if (!canNotify(applicationContext)) return
+        ensureChannels(applicationContext)
         val intent = Intent(applicationContext, MainActivity::class.java).apply {
             action = Intent.ACTION_VIEW
             data = Uri.parse("https://tiwlo.com/social/post/$postId")
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
         val pending = PendingIntent.getActivity(applicationContext, notificationId, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        NotificationManagerCompat.from(applicationContext).notify(notificationId, NotificationCompat.Builder(applicationContext, CHANNEL)
-            .setSmallIcon(R.mipmap.ic_launcher).setContentTitle("Your post is live").setContentText("Tap to view it in your feed")
+        NotificationManagerCompat.from(applicationContext).notify(notificationId, NotificationCompat.Builder(applicationContext, POST_CHANNEL)
+            .setSmallIcon(R.drawable.ic_tiwi_notification)
+            .setLargeIcon(BitmapFactory.decodeResource(applicationContext.resources, R.drawable.tiwi_app_icon))
+            .setContentTitle("Your post is live").setContentText("Tap to view it in your feed")
+            .setSound(rawSound(applicationContext, R.raw.tiwi_post_published))
             .setAutoCancel(true).setContentIntent(pending).build())
     }
 
     private fun showFailure(notificationId: Int, message: String) {
         if (!canNotify(applicationContext)) return
-        NotificationManagerCompat.from(applicationContext).notify(notificationId, NotificationCompat.Builder(applicationContext, CHANNEL)
-            .setSmallIcon(R.mipmap.ic_launcher).setContentTitle("Post couldn't be published").setContentText(message)
+        ensureChannels(applicationContext)
+        NotificationManagerCompat.from(applicationContext).notify(notificationId, NotificationCompat.Builder(applicationContext, PROGRESS_CHANNEL)
+            .setSmallIcon(R.drawable.ic_tiwi_notification)
+            .setLargeIcon(BitmapFactory.decodeResource(applicationContext.resources, R.drawable.tiwi_app_icon))
+            .setContentTitle("Post couldn't be published").setContentText(message)
             .setStyle(NotificationCompat.BigTextStyle().bigText(message)).setAutoCancel(true).build())
     }
 
@@ -128,7 +138,8 @@ class PostUploadWorker(context: Context, parameters: WorkerParameters) : Corouti
         const val KEY_STATUS = "status"
         const val KEY_POST_ID = "postId"
         const val KEY_ERROR = "error"
-        private const val CHANNEL = "tiwi_post_uploads"
+        private const val PROGRESS_CHANNEL = "tiwi_post_upload_progress_v2"
+        private const val POST_CHANNEL = "tiwi_post_published_brand_v2"
 
         suspend fun enqueue(context: Context, uris: List<Uri>, body: String, visibility: String): UUID = withContext(Dispatchers.IO) {
             val queueId = UUID.randomUUID()
@@ -167,14 +178,28 @@ class PostUploadWorker(context: Context, parameters: WorkerParameters) : Corouti
             }
         }
 
-        private fun ensureChannel(context: Context) {
+        private fun ensureChannels(context: Context) {
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
-            context.getSystemService(NotificationManager::class.java).createNotificationChannel(
-                NotificationChannel(CHANNEL, "Post uploads", NotificationManager.IMPORTANCE_LOW).apply {
-                    description = "Background progress and completion for Tiwi posts"
+            val manager = context.getSystemService(NotificationManager::class.java)
+            manager.createNotificationChannel(
+                NotificationChannel(PROGRESS_CHANNEL, "Post upload progress", NotificationManager.IMPORTANCE_LOW).apply {
+                    description = "Silent background progress for Tiwi posts"
+                    setSound(null, null)
+                }
+            )
+            val attributes = AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                .build()
+            manager.createNotificationChannel(
+                NotificationChannel(POST_CHANNEL, "Published posts", NotificationManager.IMPORTANCE_DEFAULT).apply {
+                    description = "Alerts when your Tiwi post is live"
+                    setSound(rawSound(context, R.raw.tiwi_post_published), attributes)
                 }
             )
         }
+
+        private fun rawSound(context: Context, resId: Int): Uri = Uri.parse("android.resource://${context.packageName}/$resId")
 
         private fun canNotify(context: Context): Boolean = Build.VERSION.SDK_INT < 33 || ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
     }

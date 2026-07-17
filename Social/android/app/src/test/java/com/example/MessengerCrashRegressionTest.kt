@@ -91,6 +91,25 @@ class MessengerCrashRegressionTest {
         assertTrue(shouldOwnVideoPlayer(visibleEnough = true, autoplay = false, startRequested = true))
         assertTrue(!shouldOwnVideoPlayer(visibleEnough = false, autoplay = true, startRequested = true))
         assertTrue(!shouldOwnVideoPlayer(visibleEnough = true, autoplay = false, startRequested = false))
+        assertTrue(!shouldOwnVideoPlayer(visibleEnough = true, autoplay = true, startRequested = true, coordinated = true, isActivePlayer = false))
+        assertTrue(shouldOwnVideoPlayer(visibleEnough = true, autoplay = true, startRequested = false, coordinated = true, isActivePlayer = true))
+    }
+
+    @Test
+    fun brandedIconAndNotificationSoundsArePackaged() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        listOf(
+            R.raw.tiwi_incoming_ring,
+            R.raw.tiwi_outgoing_ring,
+            R.raw.tiwi_activity_notification,
+            R.raw.tiwi_post_published
+        ).forEach { sound ->
+            context.resources.openRawResource(sound).use { stream -> assertTrue(stream.available() > 0) }
+        }
+        BitmapFactory.decodeResource(context.resources, R.drawable.tiwi_app_icon).also {
+            assertTrue(it.width > 0 && it.height > 0)
+            it.recycle()
+        }
     }
 
     @Test
