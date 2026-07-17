@@ -164,6 +164,138 @@ data class SocialPost(
 )
 
 @JsonClass(generateAdapter = true)
+data class SocialStoryInteraction(
+    val id: String = "",
+    val storyId: String = "",
+    val itemId: String = "",
+    val userId: String = "",
+    val user: SocialUser = SocialUser(),
+    val userProfile: SocialProfile? = null,
+    val kind: String = "",
+    val key: String = "",
+    val value: Map<String, Any?> = emptyMap(),
+    val createdAt: String? = null,
+    val updatedAt: String? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class SocialStoryItem(
+    val id: String = "",
+    val storyId: String = "",
+    val type: String = "image",
+    val media: Map<String, Any?> = emptyMap(),
+    val text: String? = null,
+    val background: String? = null,
+    val filter: Map<String, Any?> = emptyMap(),
+    val transform: Map<String, Any?> = emptyMap(),
+    val overlays: List<Map<String, Any?>> = emptyList(),
+    val durationMs: Int = 5_000,
+    val altText: String? = null,
+    val aiGenerated: Boolean = false,
+    val music: Map<String, Any?> = emptyMap(),
+    val status: String = "active",
+    val sortOrder: Int = 0,
+    val reactionCount: Int = 0,
+    val viewerReaction: String? = null,
+    val interactionCount: Int = 0,
+    val viewerInteractions: List<SocialStoryInteraction> = emptyList(),
+    val createdAt: String? = null,
+    val updatedAt: String? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class SocialStory(
+    val id: String = "",
+    val authorId: String = "",
+    val author: SocialUser = SocialUser(),
+    val authorProfile: SocialProfile? = null,
+    val visibility: String = "public",
+    val customAudienceIds: List<String> = emptyList(),
+    val allowReplies: Boolean = true,
+    val status: String = "active",
+    val caption: String? = null,
+    val metadata: Map<String, Any?> = emptyMap(),
+    val items: List<SocialStoryItem> = emptyList(),
+    val viewerCount: Int = 0,
+    val reactionCount: Int = 0,
+    val replyCount: Int = 0,
+    val seen: Boolean = false,
+    val viewerLastItemSortOrder: Int = 0,
+    val expiresAt: String? = null,
+    val archivedAt: String? = null,
+    val createdAt: String? = null,
+    val updatedAt: String? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class SocialStoryGroup(
+    val authorId: String = "",
+    val author: SocialUser = SocialUser(),
+    val authorProfile: SocialProfile? = null,
+    val stories: List<SocialStory> = emptyList(),
+    val unseenCount: Int = 0,
+    val latestAt: String? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class SocialStoryView(
+    val id: String = "",
+    val viewerId: String = "",
+    val viewer: SocialUser = SocialUser(),
+    val viewerProfile: SocialProfile? = null,
+    val lastItemSortOrder: Int = 0,
+    val viewedAt: String? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class SocialStoryReply(
+    val id: String = "",
+    val storyId: String = "",
+    val itemId: String = "",
+    val senderId: String = "",
+    val sender: SocialUser = SocialUser(),
+    val senderProfile: SocialProfile? = null,
+    val body: String = "",
+    val conversationId: String? = null,
+    val messageId: String? = null,
+    val createdAt: String? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class SocialStoryMusicTrack(
+    val id: String = "",
+    val title: String = "",
+    val artist: String = "",
+    val artworkUrl: String? = null,
+    val streamUrl: String = "",
+    val durationSeconds: Int = 0
+)
+
+data class SocialStoryItemDraft(
+    val type: String,
+    val media: SocialMedia? = null,
+    val text: String? = null,
+    val background: String? = null,
+    val filter: Map<String, Any?> = emptyMap(),
+    val transform: Map<String, Any?> = emptyMap(),
+    val overlays: List<Map<String, Any?>> = emptyList(),
+    val durationMs: Int = 5_000,
+    val altText: String? = null,
+    val aiGenerated: Boolean = false,
+    val music: Map<String, Any?> = emptyMap(),
+    val sortOrder: Int = 0
+)
+
+data class SocialStoryDraft(
+    val caption: String? = null,
+    val visibility: String = "public",
+    val customAudienceIds: List<String> = emptyList(),
+    val allowReplies: Boolean = true,
+    val metadata: Map<String, Any?> = emptyMap(),
+    val items: List<SocialStoryItemDraft>
+)
+
+@JsonClass(generateAdapter = true)
 data class SocialFeedModule(
     val id: String = "",
     val kind: String = "people",
@@ -251,6 +383,53 @@ data class SocialCallSession(
     val offer: Map<String, Any?>? = null,
     val answer: Map<String, Any?>? = null,
     val iceCandidates: List<Map<String, Any?>> = emptyList()
+)
+
+@JsonClass(generateAdapter = true)
+data class SocialLiveStream(
+    val id: String = "",
+    val hostId: String = "",
+    val host: SocialUser = SocialUser(),
+    val hostProfile: SocialProfile? = null,
+    val title: String = "",
+    val description: String? = null,
+    val status: String = "live",
+    val visibility: String = "public",
+    val playbackUrl: String? = null,
+    val qualities: List<String> = emptyList(),
+    val viewerCount: Int = 0,
+    val commentsEnabled: Boolean = true,
+    val paused: Boolean = false,
+    val lastHeartbeatAt: String? = null,
+    val startedAt: String? = null,
+    val endedAt: String? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class SocialLiveParticipant(
+    val id: String = "",
+    val streamId: String = "",
+    val viewerId: String = "",
+    val viewer: SocialUser = SocialUser(),
+    val viewerProfile: SocialProfile? = null,
+    val status: String = "joining",
+    val hostOffer: Map<String, Any?>? = null,
+    val viewerAnswer: Map<String, Any?>? = null,
+    val hostIce: List<Map<String, Any?>> = emptyList(),
+    val viewerIce: List<Map<String, Any?>> = emptyList()
+)
+
+@JsonClass(generateAdapter = true)
+data class SocialLiveComment(
+    val id: String = "",
+    val streamId: String = "",
+    val authorId: String = "",
+    val author: SocialUser = SocialUser(),
+    val authorProfile: SocialProfile? = null,
+    val replyToId: String? = null,
+    val body: String = "",
+    val status: String = "active",
+    val createdAt: String? = null
 )
 
 @JsonClass(generateAdapter = true)

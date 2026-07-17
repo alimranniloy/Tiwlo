@@ -2806,6 +2806,107 @@ type SocialPost {
   updatedAt: String
 }
 
+type SocialStoryItem {
+  id: ID!
+  storyId: ID!
+  type: String!
+  media: JSON!
+  text: String
+  background: String
+  filter: JSON!
+  transform: JSON!
+  overlays: JSON!
+  durationMs: Int!
+  altText: String
+  aiGenerated: Boolean!
+  music: JSON!
+  status: String!
+  sortOrder: Int!
+  reactionCount: Int!
+  viewerReaction: String
+  interactionCount: Int!
+  viewerInteractions: [SocialStoryInteraction!]!
+  createdAt: String!
+  updatedAt: String!
+}
+
+type SocialStory {
+  id: ID!
+  authorId: ID!
+  author: SocialPublicUser!
+  authorProfile: SocialProfile
+  visibility: String!
+  customAudienceIds: [ID!]!
+  allowReplies: Boolean!
+  status: String!
+  caption: String
+  metadata: JSON!
+  items: [SocialStoryItem!]!
+  viewerCount: Int!
+  reactionCount: Int!
+  replyCount: Int!
+  seen: Boolean!
+  viewerLastItemSortOrder: Int!
+  expiresAt: String!
+  archivedAt: String
+  createdAt: String!
+  updatedAt: String!
+}
+
+type SocialStoryGroup {
+  authorId: ID!
+  author: SocialPublicUser!
+  authorProfile: SocialProfile
+  stories: [SocialStory!]!
+  unseenCount: Int!
+  latestAt: String!
+}
+
+type SocialStoryView {
+  id: ID!
+  viewerId: ID!
+  viewer: SocialPublicUser!
+  viewerProfile: SocialProfile
+  lastItemSortOrder: Int!
+  viewedAt: String!
+}
+
+type SocialStoryReply {
+  id: ID!
+  storyId: ID!
+  itemId: ID!
+  senderId: ID!
+  sender: SocialPublicUser!
+  senderProfile: SocialProfile
+  body: String!
+  conversationId: ID
+  messageId: ID
+  createdAt: String!
+}
+
+type SocialStoryInteraction {
+  id: ID!
+  storyId: ID!
+  itemId: ID!
+  userId: ID!
+  user: SocialPublicUser!
+  userProfile: SocialProfile
+  kind: String!
+  key: String!
+  value: JSON!
+  createdAt: String!
+  updatedAt: String!
+}
+
+type SocialStoryMusicTrack {
+  id: ID!
+  title: String!
+  artist: String!
+  artworkUrl: String
+  streamUrl: String!
+  durationSeconds: Int!
+}
+
 type SocialFeedModule {
   id: ID!
   kind: String!
@@ -2977,11 +3078,43 @@ type SocialLiveStream {
   playbackUrl: String
   qualities: JSON!
   viewerCount: Int!
+  commentsEnabled: Boolean!
+  paused: Boolean!
+  lastHeartbeatAt: String
   scheduledAt: String
   startedAt: String
   endedAt: String
   createdAt: String
   updatedAt: String
+}
+
+type SocialLiveParticipant {
+  id: ID!
+  streamId: ID!
+  viewerId: ID!
+  viewer: SocialPublicUser!
+  viewerProfile: SocialProfile
+  status: String!
+  hostOffer: JSON
+  viewerAnswer: JSON
+  hostIce: JSON!
+  viewerIce: JSON!
+  joinedAt: String!
+  lastSeenAt: String!
+  leftAt: String
+}
+
+type SocialLiveComment {
+  id: ID!
+  streamId: ID!
+  authorId: ID!
+  author: SocialPublicUser!
+  authorProfile: SocialProfile
+  replyToId: ID
+  body: String!
+  status: String!
+  createdAt: String!
+  updatedAt: String!
 }
 
 type SocialReport {
@@ -3060,6 +3193,38 @@ input SocialPostInput {
   aspectRatio: Float
 }
 
+input SocialStoryItemInput {
+  type: String!
+  media: JSON
+  text: String
+  background: String
+  filter: JSON
+  transform: JSON
+  overlays: JSON
+  durationMs: Int
+  altText: String
+  aiGenerated: Boolean
+  music: JSON
+  sortOrder: Int
+}
+
+input SocialStoryInput {
+  caption: String
+  visibility: String
+  customAudienceIds: [ID!]
+  allowReplies: Boolean
+  metadata: JSON
+  items: [SocialStoryItemInput!]!
+}
+
+input SocialStoryInteractionInput {
+  storyId: ID!
+  itemId: ID!
+  kind: String!
+  key: String!
+  value: JSON
+}
+
 input SocialPostUpdateInput {
   id: ID!
   body: String
@@ -3123,7 +3288,16 @@ input SocialLiveStreamInput {
   title: String!
   description: String
   visibility: String
+  commentsEnabled: Boolean
   scheduledAt: String
+}
+
+input SocialLiveSignalInput {
+  participantId: ID!
+  offer: JSON
+  answer: JSON
+  iceCandidate: JSON
+  status: String
 }
 
 input SocialAdminSettingsInput {
@@ -3242,6 +3416,12 @@ type Query {
   socialFeedModules(feedSize: Int): [SocialFeedModule!]!
   socialLinkPreview(url: String!): SocialLinkPreview!
   socialStories(limit: Int): [SocialPost!]!
+  socialStoryTray(limit: Int): [SocialStoryGroup!]!
+  socialStory(id: ID!): SocialStory
+  socialStoryMemories(limit: Int, before: String): [SocialStory!]!
+  socialStoryViewers(id: ID!, limit: Int): [SocialStoryView!]!
+  socialStoryInteractions(id: ID!, itemId: ID, limit: Int): [SocialStoryInteraction!]!
+  socialStoryMusic(search: String, limit: Int): [SocialStoryMusicTrack!]!
   socialProfileDecorations: [SocialProfileDecoration!]!
   socialProfileEffects: [SocialProfileDecoration!]!
   socialPost(id: ID!): SocialPost
@@ -3257,6 +3437,9 @@ type Query {
   socialCall(id: ID!): SocialCallSession
   socialIncomingCalls: [SocialCallSession!]!
   socialLiveStreams(status: String, limit: Int): [SocialLiveStream!]!
+  socialLiveStream(id: ID!): SocialLiveStream
+  socialLiveParticipants(streamId: ID!): [SocialLiveParticipant!]!
+  socialLiveComments(streamId: ID!, limit: Int): [SocialLiveComment!]!
   socialSettings: JSON!
   adminSocialOverview: SocialAdminOverview!
   adminSocialUsers(search: String, status: String, verified: Boolean): [SocialProfile!]!
@@ -3451,6 +3634,15 @@ type Mutation {
   followSocialUser(userId: ID!): SocialProfile!
   unfollowSocialUser(userId: ID!): SocialProfile!
   createSocialPost(input: SocialPostInput!): SocialPost!
+  createSocialStory(input: SocialStoryInput!): SocialStory!
+  updateSocialStory(id: ID!, visibility: String, customAudienceIds: [ID!], allowReplies: Boolean): SocialStory!
+  viewSocialStory(id: ID!, itemSortOrder: Int!): SocialStory!
+  reactToSocialStory(id: ID!, itemId: ID!, emoji: String!): SocialStory!
+  replyToSocialStory(id: ID!, itemId: ID!, body: String!): SocialStoryReply!
+  interactWithSocialStory(input: SocialStoryInteractionInput!): SocialStoryInteraction!
+  deleteSocialStoryInteraction(id: ID!): Boolean!
+  archiveSocialStory(id: ID!): SocialStory!
+  deleteSocialStory(id: ID!): Boolean!
   updateSocialPost(input: SocialPostUpdateInput!): SocialPost!
   deleteSocialPost(id: ID!): Boolean!
   viewSocialPost(id: ID!): SocialPost!
@@ -3484,6 +3676,12 @@ type Mutation {
   endSocialCall(id: ID!, status: String): SocialCallSession!
   startSocialLiveStream(input: SocialLiveStreamInput!): SocialLiveStream!
   updateSocialLiveStream(id: ID!, status: String!, viewerCount: Int): SocialLiveStream!
+  joinSocialLiveStream(id: ID!): SocialLiveParticipant!
+  signalSocialLiveStream(input: SocialLiveSignalInput!): SocialLiveParticipant!
+  heartbeatSocialLiveStream(id: ID!, paused: Boolean): SocialLiveStream!
+  leaveSocialLiveStream(id: ID!): Boolean!
+  addSocialLiveComment(streamId: ID!, body: String!, replyToId: ID): SocialLiveComment!
+  deleteSocialLiveComment(id: ID!): Boolean!
   reportSocialContent(targetType: String!, targetId: ID!, reason: String!, details: String): SocialReport!
   startSocialVerificationCheckout(packageId: String!, provider: String!, currency: String): CheckoutSession!
   applySocialProfileDecoration(id: ID): SocialProfile!

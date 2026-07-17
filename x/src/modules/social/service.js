@@ -59,6 +59,10 @@ const PROFILE_EFFECT_KIND = 'profile-effect';
 
 const POST_TYPES = new Set(['post', 'news', 'reel', 'video', 'live', 'story']);
 const VISIBILITIES = new Set(['public', 'followers', 'private']);
+const STORY_VISIBILITIES = new Set(['public', 'followers', 'custom', 'only_me']);
+const STORY_ITEM_TYPES = new Set(['image', 'video', 'text', 'music', 'collage']);
+const STORY_INTERACTION_TYPES = new Set(['poll_vote', 'question_answer', 'add_yours', 'emoji_slider', 'link_tap']);
+const STORY_LIFETIME_MS = 86_400_000;
 const COMMENT_PERMISSIONS = new Set(['everyone', 'followers', 'none']);
 const GROUP_PRIVACIES = new Set(['public', 'private']);
 const GROUP_ROLES = new Set(['admin', 'editor', 'member']);
@@ -74,6 +78,7 @@ const SOCIAL_PRESENCE_TOUCH_MS = 60_000;
 const socialPresenceTouches = new Map();
 const linkPreviewCache = new Map();
 const domainAgeCache = new Map();
+const storyMusicCache = new Map();
 
 const stableTextSeed = (value) => {
   let hash = 2166136261;
@@ -1132,6 +1137,651 @@ export const listFeedModules = async (ctx, feedSize) => {
 
 export const listStories = async (ctx, args = {}) => listFeed(ctx, { ...args, type: 'story', limit: boundedLimit(args.limit, 50, 100) });
 
+const storyJson = (value, fallback, maxBytes = 80_000) => {
+  if (value === null || value === undefined) return fallback;
+  let encoded;
+  try { encoded = JSON.stringify(value); } catch { throw new AppError('Story editor data is invalid', 'BAD_USER_INPUT'); }
+  if (encoded.length > maxBytes) throw new AppError('Story editor data is too large', 'BAD_USER_INPUT');
+  return JSON.parse(encoded);
+};
+
+const normalizeStoryVisibility = (value) => {
+  const normalized = String(value || 'public').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  if (normalized === 'private' || normalized === 'onlyme') return 'only_me';
+  if (normalized === 'friends') return 'followers';
+  return normalized;
+};
+
+const storyMediaEntries = (item) => {
+  const entries = [];
+  const visit = (value, fallbackType, depth = 0) => {
+    if (!value || depth > 4) return;
+    if (Array.isArray(value)) {
+      value.forEach((child) => visit(child, fallbackType, depth + 1));
+      return;
+    }
+    if (typeof value !== 'object') return;
+    if (value.url || value.hlsUrl || value.thumbnailUrl) entries.push({ ...value, type: value.type || fallbackType });
+    for (const key of ['items', 'assets', 'media']) if (value[key] !== value) visit(value[key], fallbackType, depth + 1);
+  };
+  visit(item.media, item.type === 'collage' ? 'image' : item.type);
+  return entries;
+};
+
+const storyVisibleText = (value, output = [], key = '', depth = 0) => {
+  if (value === null || value === undefined || depth > 6 || output.length >= 160) return output;
+  if (typeof value === 'string') {
+    const technical = /(^|_)(id|url|href|asset|mime|color|font|type|kind|align|position|provider|source)$/i.test(key);
+    if (!technical && !/^https?:\/\//i.test(value) && !/^\/api\//i.test(value) && /[\p{L}\p{N}]/u.test(value)) output.push(bounded(value, 1000));
+    return output;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((item) => storyVisibleText(item, output, key, depth + 1));
+    return output;
+  }
+  if (typeof value === 'object') for (const [childKey, item] of Object.entries(value)) storyVisibleText(item, output, childKey, depth + 1);
+  return output;
+};
+
+const storyExternalUrls = (value, output = [], depth = 0) => {
+  if (value === null || value === undefined || depth > 6 || output.length >= 25) return output;
+  if (typeof value === 'string') {
+    if (/^https?:\/\//i.test(value)) output.push(value);
+    return output;
+  }
+  if (Array.isArray(value)) value.forEach((item) => storyExternalUrls(item, output, depth + 1));
+  else if (typeof value === 'object') Object.values(value).forEach((item) => storyExternalUrls(item, output, depth + 1));
+  return output;
+};
+
+const validateStoryMusic = (music, required = false) => {
+  if (!music || typeof music !== 'object' || Array.isArray(music)) {
+    if (required) throw new AppError('Choose music for this story', 'BAD_USER_INPUT');
+    return;
+  }
+  const hasMusic = Object.keys(music).length > 0;
+  if (!hasMusic && !required) return;
+  const trackId = bounded(music.id || music.trackId, 160);
+  const streamUrl = bounded(music.streamUrl, 2000);
+  if (!trackId || !streamUrl) throw new AppError('Choose a valid music track', 'BAD_USER_INPUT');
+  let stream;
+  let configured;
+  try {
+    stream = new URL(streamUrl);
+    configured = new URL(String(process.env.AUDIUS_API_BASE || 'https://api.audius.co/v1'));
+  } catch { throw new AppError('Choose a valid music track', 'BAD_USER_INPUT'); }
+  if (stream.protocol !== 'https:' || stream.hostname !== configured.hostname || !stream.pathname.includes(`/tracks/${encodeURIComponent(trackId)}/stream`)) {
+    throw new AppError('Music must come from the Tiwi story music catalog', 'BAD_USER_INPUT');
+  }
+};
+
+const storyInclude = (viewerId) => ({
+  author: { include: {
+    socialProfile: true,
+    _count: { select: { socialFollowers: true, socialFollowing: true, socialPosts: true } },
+    socialFollowers: viewerId ? { where: { followerId: viewerId }, take: 1 } : false
+  } },
+  audiences: true,
+  items: {
+    where: { status: 'active' },
+    include: {
+      _count: { select: { reactions: true, interactions: true } },
+      reactions: viewerId ? { where: { userId: viewerId }, take: 1 } : false,
+      interactions: viewerId ? { where: { userId: viewerId } } : false
+    },
+    orderBy: { sortOrder: 'asc' }
+  },
+  views: viewerId ? { where: { viewerId }, take: 1 } : false,
+  _count: { select: { views: true, reactions: true, replies: true } }
+});
+
+const mapStoryProfile = (story) => story.author?.socialProfile ? ({
+  ...story.author.socialProfile,
+  followerCount: story.author?._count?.socialFollowers || 0,
+  followingCount: story.author?._count?.socialFollowing || 0,
+  postCount: story.author?._count?.socialPosts || 0,
+  isFollowing: Boolean(story.author?.socialFollowers?.length)
+}) : null;
+
+const mapStory = (story, actor) => {
+  const view = story.views?.[0];
+  const seenItemIds = new Set(Array.isArray(view?.seenItemIds) ? view.seenItemIds : []);
+  return {
+    ...story,
+    authorProfile: mapStoryProfile(story),
+    customAudienceIds: actor && (actor.id === story.authorId || isAdmin(actor)) ? story.audiences.map((row) => row.userId) : [],
+    items: story.items.map((item) => ({
+      ...item,
+      reactionCount: item._count?.reactions || 0,
+      viewerReaction: item.reactions?.[0]?.emoji || null,
+      interactionCount: item._count?.interactions || 0,
+      viewerInteractions: item.interactions || []
+    })),
+    viewerCount: story._count?.views || 0,
+    reactionCount: story._count?.reactions || 0,
+    replyCount: story._count?.replies || 0,
+    seen: actor?.id === story.authorId || Boolean(view && story.items.every((item) => seenItemIds.has(item.id))),
+    viewerLastItemSortOrder: view?.lastItemSortOrder || 0
+  };
+};
+
+const migrateLegacyStories = async (ctx, { authorId, includeExpired = false, before } = {}) => {
+  const cutoff = new Date(Date.now() - STORY_LIFETIME_MS);
+  const publishedAt = includeExpired
+    ? (before ? { lt: safeDate(before) } : undefined)
+    : { gt: cutoff };
+  const posts = await ctx.prisma.socialPost.findMany({
+    where: {
+      type: 'story', status: 'published', moderationStatus: 'approved', deletedAt: null,
+      ...(authorId ? { authorId } : {}),
+      ...(publishedAt ? { publishedAt } : {})
+    },
+    select: { id: true, authorId: true, body: true, media: true, metadata: true, visibility: true, durationSeconds: true, publishedAt: true },
+    orderBy: { publishedAt: 'desc' }, take: includeExpired ? 300 : 100
+  });
+  if (!posts.length) return;
+  const existing = new Set((await ctx.prisma.socialStory.findMany({
+    where: { legacyPostId: { in: posts.map((post) => post.id) } }, select: { legacyPostId: true }
+  })).map((story) => story.legacyPostId));
+  for (const post of posts) {
+    if (existing.has(post.id)) continue;
+    const rawMedia = Array.isArray(post.media) ? post.media.slice(0, 20) : [];
+    const items = rawMedia.length ? rawMedia.map((media, sortOrder) => ({
+      type: ['video', 'reel'].includes(String(media?.type || '').toLowerCase()) ? 'video' : 'image',
+      media: media && typeof media === 'object' ? media : {}, text: null, background: null,
+      filter: {}, transform: {}, overlays: [], music: {}, aiGenerated: false,
+      altText: bounded(media?.altText, 1000), durationMs: Math.max(1_000, Math.min(Number(media?.durationMs) || Number(post.durationSeconds) * 1000 || 5_000, 60_000)),
+      sortOrder
+    })) : [{
+      type: 'text', media: {}, text: bounded(post.body, 4000) || 'Story', background: null,
+      filter: {}, transform: {}, overlays: [], music: {}, aiGenerated: false, durationMs: 5_000, sortOrder: 0
+    }];
+    const expiresAt = new Date(new Date(post.publishedAt).getTime() + STORY_LIFETIME_MS);
+    const expired = expiresAt <= new Date();
+    await ctx.prisma.socialStory.create({
+      data: {
+        legacyPostId: post.id, authorId: post.authorId,
+        visibility: post.visibility === 'private' ? 'only_me' : post.visibility === 'followers' ? 'followers' : 'public',
+        allowReplies: true, caption: bounded(post.body, 4000),
+        metadata: { ...(post.metadata && typeof post.metadata === 'object' && !Array.isArray(post.metadata) ? post.metadata : {}), legacyPostId: post.id },
+        expiresAt, status: expired ? 'archived' : 'active', archivedAt: expired ? expiresAt : null,
+        items: { create: items }
+      }
+    }).catch((error) => {
+      if (error?.code !== 'P2002') throw error;
+    });
+  }
+};
+
+const expireStories = async (ctx) => {
+  const now = new Date();
+  await ctx.prisma.socialStory.updateMany({
+    where: { status: 'active', expiresAt: { lte: now } },
+    data: { status: 'archived', archivedAt: now }
+  });
+};
+
+const storyAccessWhere = (actor, followingIds = []) => ({
+  OR: [
+    { authorId: actor.id },
+    { visibility: 'public' },
+    { visibility: 'followers', authorId: { in: followingIds } },
+    { visibility: 'custom', audiences: { some: { userId: actor.id } } }
+  ]
+});
+
+const getStoryRow = async (ctx, actor, id, { activeOnly = false } = {}) => {
+  await expireStories(ctx);
+  const story = await ctx.prisma.socialStory.findUnique({ where: { id }, include: storyInclude(actor.id) });
+  if (!story || story.status === 'deleted' || story.deletedAt) return null;
+  if (activeOnly && (story.status !== 'active' || story.expiresAt <= new Date())) return null;
+  if (story.status !== 'active' && story.authorId !== actor.id && !isAdmin(actor)) return null;
+  if (story.authorId !== actor.id && !isAdmin(actor)) {
+    const blocked = await ctx.prisma.socialBlock.findFirst({ where: { OR: [
+      { userId: actor.id, targetUserId: story.authorId }, { userId: story.authorId, targetUserId: actor.id }
+    ] } });
+    if (blocked) return null;
+    if (!STORY_VISIBILITIES.has(story.visibility)) return null;
+    if (story.visibility === 'only_me') return null;
+    if (story.visibility === 'followers') {
+      const follows = await ctx.prisma.socialFollow.findUnique({
+        where: { followerId_followingId: { followerId: actor.id, followingId: story.authorId } }, select: { id: true }
+      });
+      if (!follows) return null;
+    }
+    if (story.visibility === 'custom' && !story.audiences.some((row) => row.userId === actor.id)) return null;
+  }
+  return story;
+};
+
+const normalizeStoryAudience = async (ctx, actor, visibility, requestedIds) => {
+  if (visibility !== 'custom') return [];
+  const ids = [...new Set((requestedIds || []).map(String).filter((id) => id && id !== actor.id))].slice(0, 250);
+  if (!ids.length) throw new AppError('Choose at least one person for a custom story', 'BAD_USER_INPUT');
+  const [users, blocks] = await Promise.all([
+    ctx.prisma.user.findMany({ where: { id: { in: ids }, status: 'active' }, select: { id: true } }),
+    ctx.prisma.socialBlock.findMany({ where: { OR: [
+      { userId: actor.id, targetUserId: { in: ids } }, { targetUserId: actor.id, userId: { in: ids } }
+    ] }, select: { userId: true, targetUserId: true } })
+  ]);
+  const blockedIds = new Set(blocks.flatMap((row) => [row.userId, row.targetUserId]));
+  const allowed = users.map((user) => user.id).filter((id) => !blockedIds.has(id));
+  if (allowed.length !== ids.length) throw new AppError('One or more selected people cannot view this story', 'BAD_USER_INPUT');
+  return allowed;
+};
+
+const normalizeStoryItems = async (ctx, actor, inputItems) => {
+  if (!Array.isArray(inputItems) || !inputItems.length) throw new AppError('Add something to your story', 'BAD_USER_INPUT');
+  if (inputItems.length > 20) throw new AppError('A story can contain up to 20 parts', 'BAD_USER_INPUT');
+  const ordered = inputItems.map((item, index) => ({ ...item, requestedOrder: Number.isInteger(item.sortOrder) ? item.sortOrder : index }))
+    .sort((left, right) => left.requestedOrder - right.requestedOrder);
+  const normalized = ordered.map((item, index) => {
+    const type = String(item.type || '').toLowerCase();
+    if (!STORY_ITEM_TYPES.has(type)) throw new AppError('Invalid story item type', 'BAD_USER_INPUT');
+    const media = storyJson(item.media, {}, 140_000);
+    if (!Array.isArray(media) && (!media || typeof media !== 'object')) throw new AppError('Story media is invalid', 'BAD_USER_INPUT');
+    const entries = storyMediaEntries({ ...item, type, media });
+    if (['image', 'video'].includes(type) && !entries.length) throw new AppError(`${type === 'video' ? 'Video' : 'Image'} is missing`, 'BAD_USER_INPUT');
+    if (type === 'collage' && entries.length < 2) throw new AppError('Choose at least two photos for a collage', 'BAD_USER_INPUT');
+    validateOwnedMedia(actor.id, entries);
+    const text = bounded(item.text, 4000);
+    if (type === 'text' && !text) throw new AppError('Write something for the text story', 'BAD_USER_INPUT');
+    const filter = storyJson(item.filter, {}, 20_000);
+    const transform = storyJson(item.transform, {}, 20_000);
+    const overlays = storyJson(item.overlays, [], 120_000);
+    const music = storyJson(item.music, {}, 30_000);
+    if (!filter || typeof filter !== 'object' || Array.isArray(filter)) throw new AppError('Story filter is invalid', 'BAD_USER_INPUT');
+    if (!transform || typeof transform !== 'object' || Array.isArray(transform)) throw new AppError('Story transform is invalid', 'BAD_USER_INPUT');
+    if (!Array.isArray(overlays)) throw new AppError('Story overlays are invalid', 'BAD_USER_INPUT');
+    validateStoryMusic(music, type === 'music');
+    return {
+      type,
+      media,
+      text,
+      background: bounded(item.background, 120),
+      filter,
+      transform,
+      overlays,
+      durationMs: Math.max(1_000, Math.min(Number(item.durationMs) || (type === 'video' ? 15_000 : 5_000), 60_000)),
+      altText: bounded(item.altText, 1000),
+      aiGenerated: Boolean(item.aiGenerated),
+      music,
+      sortOrder: index
+    };
+  });
+  await Promise.all(normalized.flatMap((item) => {
+    const visibleText = storyVisibleText({
+      text: item.text, altText: item.altText, background: item.background,
+      overlays: item.overlays, music: item.music
+    }).join(' ').slice(0, 12_000);
+    const links = [...new Set(storyExternalUrls(item.overlays))];
+    return [
+      ...(visibleText ? [enforceTextModeration(ctx, { userId: actor.id, targetType: 'story', text: visibleText })] : []),
+      ...links.map((url) => assertPublicUrl(url))
+    ];
+  }));
+  return normalized;
+};
+
+export const listStoryTray = async (ctx, limit) => {
+  const actor = await requireAuth(ctx);
+  await requireSocialFeature(ctx);
+  await migrateLegacyStories(ctx);
+  await expireStories(ctx);
+  const [following, blocks] = await Promise.all([
+    ctx.prisma.socialFollow.findMany({ where: { followerId: actor.id }, select: { followingId: true } }),
+    ctx.prisma.socialBlock.findMany({ where: { OR: [{ userId: actor.id }, { targetUserId: actor.id }] }, select: { userId: true, targetUserId: true } })
+  ]);
+  const followingIds = following.map((row) => row.followingId);
+  const blockedIds = new Set(blocks.flatMap((row) => [row.userId, row.targetUserId]).filter((id) => id !== actor.id));
+  const rows = await ctx.prisma.socialStory.findMany({
+    where: {
+      status: 'active', deletedAt: null, expiresAt: { gt: new Date() },
+      ...storyAccessWhere(actor, followingIds),
+      ...(blockedIds.size ? { authorId: { notIn: [...blockedIds] } } : {})
+    },
+    include: storyInclude(actor.id), orderBy: { createdAt: 'desc' }, take: Math.min(boundedLimit(limit, 40, 100) * 5, 300)
+  });
+  const groups = new Map();
+  rows.map((row) => mapStory(row, actor)).forEach((story) => {
+    const group = groups.get(story.authorId) || {
+      authorId: story.authorId, author: story.author, authorProfile: story.authorProfile,
+      stories: [], unseenCount: 0, latestAt: story.createdAt
+    };
+    group.stories.push(story);
+    if (!story.seen) group.unseenCount += 1;
+    if (new Date(story.createdAt) > new Date(group.latestAt)) group.latestAt = story.createdAt;
+    groups.set(story.authorId, group);
+  });
+  return [...groups.values()].sort((left, right) => {
+    if (left.authorId === actor.id) return -1;
+    if (right.authorId === actor.id) return 1;
+    if (Boolean(left.unseenCount) !== Boolean(right.unseenCount)) return left.unseenCount ? -1 : 1;
+    return new Date(right.latestAt) - new Date(left.latestAt);
+  }).slice(0, boundedLimit(limit, 40, 100));
+};
+
+export const getStory = async (ctx, id) => {
+  const actor = await requireAuth(ctx);
+  await requireSocialFeature(ctx);
+  const story = await getStoryRow(ctx, actor, id);
+  return story ? mapStory(story, actor) : null;
+};
+
+export const listStoryMemories = async (ctx, { limit, before } = {}) => {
+  const actor = await requireAuth(ctx);
+  await requireSocialFeature(ctx);
+  await migrateLegacyStories(ctx, { authorId: actor.id, includeExpired: true, before });
+  await expireStories(ctx);
+  const rows = await ctx.prisma.socialStory.findMany({
+    where: {
+      authorId: actor.id, status: 'archived', deletedAt: null,
+      ...(before ? { createdAt: { lt: safeDate(before) } } : {})
+    },
+    include: storyInclude(actor.id), orderBy: { createdAt: 'desc' }, take: boundedLimit(limit, 50, 100)
+  });
+  return rows.map((row) => mapStory(row, actor));
+};
+
+export const listStoryViewers = async (ctx, id, limit) => {
+  const actor = await requireAuth(ctx);
+  await requireSocialFeature(ctx);
+  const story = await ctx.prisma.socialStory.findUnique({ where: { id }, select: { authorId: true, status: true, deletedAt: true } });
+  if (!story || story.status === 'deleted' || story.deletedAt) notFound('Story');
+  if (story.authorId !== actor.id && !isAdmin(actor)) forbidden('Only the story owner can see viewers');
+  const rows = await ctx.prisma.socialStoryView.findMany({
+    where: { storyId: id, viewerId: { not: story.authorId } },
+    include: { viewer: { include: { socialProfile: true } } },
+    orderBy: { viewedAt: 'desc' }, take: boundedLimit(limit, 100, 300)
+  });
+  return rows.map((row) => ({ ...row, viewerProfile: row.viewer?.socialProfile || null }));
+};
+
+export const listStoryInteractions = async (ctx, id, itemId, limit) => {
+  const actor = await requireAuth(ctx);
+  await requireSocialFeature(ctx);
+  const story = await ctx.prisma.socialStory.findUnique({ where: { id }, select: { authorId: true, status: true, deletedAt: true } });
+  if (!story || story.status === 'deleted' || story.deletedAt) notFound('Story');
+  if (story.authorId !== actor.id && !isAdmin(actor)) forbidden('Only the story owner can see responses');
+  const rows = await ctx.prisma.socialStoryInteraction.findMany({
+    where: { storyId: id, ...(itemId ? { itemId } : {}) },
+    include: { user: { include: { socialProfile: true } } },
+    orderBy: { createdAt: 'desc' }, take: boundedLimit(limit, 100, 300)
+  });
+  return rows.map((row) => ({ ...row, userProfile: row.user?.socialProfile || null }));
+};
+
+export const createStory = async (ctx, input) => {
+  const actor = await requireAuth(ctx);
+  await requireSocialFeature(ctx, 'postingEnabled');
+  await ensureProfile(ctx, actor);
+  const visibility = normalizeStoryVisibility(input.visibility);
+  if (!STORY_VISIBILITIES.has(visibility)) throw new AppError('Invalid story visibility', 'BAD_USER_INPUT');
+  const caption = bounded(input.caption, 4000);
+  const metadata = storyJson(input.metadata, {}, 60_000);
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) throw new AppError('Story metadata is invalid', 'BAD_USER_INPUT');
+  const storyText = [caption, ...storyVisibleText(metadata)].filter(Boolean).join(' ').slice(0, 12_000);
+  const [items, audienceIds] = await Promise.all([
+    normalizeStoryItems(ctx, actor, input.items),
+    normalizeStoryAudience(ctx, actor, visibility, input.customAudienceIds),
+    ...(storyText ? [enforceTextModeration(ctx, { userId: actor.id, targetType: 'story', text: storyText })] : []),
+    ...[...new Set(storyExternalUrls(metadata))].map((url) => assertPublicUrl(url))
+  ]);
+  const story = await ctx.prisma.socialStory.create({
+    data: {
+      authorId: actor.id, visibility, allowReplies: input.allowReplies !== false, caption,
+      metadata, expiresAt: new Date(Date.now() + STORY_LIFETIME_MS),
+      items: { create: items },
+      ...(audienceIds.length ? { audiences: { create: audienceIds.map((userId) => ({ userId })) } } : {})
+    },
+    include: storyInclude(actor.id)
+  });
+  return mapStory(story, actor);
+};
+
+export const updateStory = async (ctx, id, { visibility, customAudienceIds, allowReplies }) => {
+  const actor = await requireAuth(ctx);
+  const existing = await ctx.prisma.socialStory.findUnique({ where: { id }, include: { audiences: true } });
+  if (!existing || existing.status === 'deleted') notFound('Story');
+  if (existing.authorId !== actor.id && !isAdmin(actor)) forbidden();
+  const nextVisibility = visibility === undefined ? existing.visibility : normalizeStoryVisibility(visibility);
+  if (!STORY_VISIBILITIES.has(nextVisibility)) throw new AppError('Invalid story visibility', 'BAD_USER_INPUT');
+  const audienceIds = nextVisibility === 'custom' && customAudienceIds === undefined && existing.visibility === 'custom'
+    ? existing.audiences.map((row) => row.userId)
+    : await normalizeStoryAudience(ctx, { ...actor, id: existing.authorId }, nextVisibility, customAudienceIds);
+  await ctx.prisma.$transaction(async (tx) => {
+    await tx.socialStoryAudience.deleteMany({ where: { storyId: id } });
+    if (audienceIds.length) await tx.socialStoryAudience.createMany({ data: audienceIds.map((userId) => ({ storyId: id, userId })), skipDuplicates: true });
+    await tx.socialStory.update({
+      where: { id }, data: removeUndefined({ visibility: nextVisibility, allowReplies: typeof allowReplies === 'boolean' ? allowReplies : undefined })
+    });
+    if (existing.legacyPostId) await tx.socialPost.updateMany({
+      where: { id: existing.legacyPostId, status: 'published' },
+      data: { visibility: ['only_me', 'custom'].includes(nextVisibility) ? 'private' : nextVisibility }
+    });
+  });
+  const updated = await ctx.prisma.socialStory.findUnique({ where: { id }, include: storyInclude(actor.id) });
+  return mapStory(updated, actor);
+};
+
+export const viewStory = async (ctx, id, itemSortOrder) => {
+  const actor = await requireAuth(ctx);
+  await requireSocialFeature(ctx);
+  const story = await getStoryRow(ctx, actor, id, { activeOnly: true });
+  if (!story) notFound('Story');
+  const sortOrder = Math.max(0, Number(itemSortOrder) || 0);
+  const item = story.items.find((candidate) => candidate.sortOrder === sortOrder);
+  if (!item) throw new AppError('Story part was not found', 'BAD_USER_INPUT');
+  if (story.authorId !== actor.id) {
+    const existing = await ctx.prisma.socialStoryView.findUnique({ where: { storyId_viewerId: { storyId: id, viewerId: actor.id } } });
+    const seenItemIds = [...new Set([...(Array.isArray(existing?.seenItemIds) ? existing.seenItemIds : []), item.id])];
+    await ctx.prisma.socialStoryView.upsert({
+      where: { storyId_viewerId: { storyId: id, viewerId: actor.id } },
+      create: { storyId: id, viewerId: actor.id, lastItemSortOrder: sortOrder, seenItemIds },
+      update: { lastItemSortOrder: Math.max(existing?.lastItemSortOrder || 0, sortOrder), seenItemIds, viewedAt: new Date() }
+    });
+  }
+  const updated = await getStoryRow(ctx, actor, id, { activeOnly: true });
+  return mapStory(updated, actor);
+};
+
+export const reactToStory = async (ctx, id, itemId, emoji) => {
+  const actor = await requireAuth(ctx);
+  await requireSocialFeature(ctx);
+  const story = await getStoryRow(ctx, actor, id, { activeOnly: true });
+  if (!story) notFound('Story');
+  const item = story.items.find((candidate) => candidate.id === itemId);
+  if (!item) throw new AppError('Story part was not found', 'BAD_USER_INPUT');
+  const value = bounded(emoji, 16);
+  if (!value) throw new AppError('Choose a reaction', 'BAD_USER_INPUT');
+  const existing = await ctx.prisma.socialStoryReaction.findUnique({ where: { itemId_userId: { itemId, userId: actor.id } } });
+  const removing = existing?.emoji === value;
+  if (removing) await ctx.prisma.socialStoryReaction.delete({ where: { id: existing.id } });
+  else await ctx.prisma.socialStoryReaction.upsert({
+    where: { itemId_userId: { itemId, userId: actor.id } },
+    create: { storyId: id, itemId, userId: actor.id, emoji: value }, update: { emoji: value }
+  });
+  if (!removing && story.authorId !== actor.id) await createSocialNotification(ctx, {
+    ownerId: story.authorId, scopeId: id, type: 'story_reaction', title: actor.name,
+    message: `${value} reacted to your story`,
+    metadata: { storyId: id, itemId, actorId: actor.id, actorName: actor.name, actorAvatar: actor.avatar || null }
+  });
+  const updated = await getStoryRow(ctx, actor, id, { activeOnly: true });
+  return mapStory(updated, actor);
+};
+
+export const replyToStory = async (ctx, id, itemId, body) => {
+  const actor = await requireAuth(ctx);
+  await requireSocialFeature(ctx, 'messagingEnabled');
+  const story = await getStoryRow(ctx, actor, id, { activeOnly: true });
+  if (!story) notFound('Story');
+  if (story.authorId === actor.id) throw new AppError('You cannot reply to your own story', 'BAD_USER_INPUT');
+  if (!story.allowReplies) forbidden('Replies are turned off for this story');
+  const item = story.items.find((candidate) => candidate.id === itemId);
+  if (!item) throw new AppError('Story part was not found', 'BAD_USER_INPUT');
+  const text = bounded(body, 2000);
+  if (!text) throw new AppError('Write a reply first', 'BAD_USER_INPUT');
+  await enforceTextModeration(ctx, { userId: actor.id, targetType: 'story_reply', targetId: id, text });
+  const conversation = await createConversation(ctx, { memberIds: [story.authorId], type: 'direct' });
+  const message = await sendMessage(ctx, {
+    conversationId: conversation.id, type: 'text', body: text,
+    media: [{
+      type: 'story_reference', storyId: id, itemId, authorId: story.authorId
+    }]
+  });
+  const reply = await ctx.prisma.socialStoryReply.create({
+    data: { storyId: id, itemId, senderId: actor.id, body: text, conversationId: conversation.id, messageId: message.id },
+    include: { sender: { include: { socialProfile: true } } }
+  });
+  return { ...reply, senderProfile: reply.sender?.socialProfile || null };
+};
+
+export const interactWithStory = async (ctx, input) => {
+  const actor = await requireAuth(ctx);
+  await requireSocialFeature(ctx);
+  const story = await getStoryRow(ctx, actor, input.storyId, { activeOnly: true });
+  if (!story) notFound('Story');
+  const item = story.items.find((candidate) => candidate.id === input.itemId);
+  if (!item) throw new AppError('Story part was not found', 'BAD_USER_INPUT');
+  const kind = String(input.kind || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  if (!STORY_INTERACTION_TYPES.has(kind)) throw new AppError('Invalid story interaction', 'BAD_USER_INPUT');
+  const key = bounded(input.key, 120);
+  if (!key) throw new AppError('Story sticker key is missing', 'BAD_USER_INPUT');
+  const overlays = Array.isArray(item.overlays) ? item.overlays : [];
+  const overlay = overlays.find((candidate) => candidate && String(candidate.id || candidate.key || '') === key);
+  if (!overlay) throw new AppError('This interactive sticker is no longer available', 'BAD_USER_INPUT');
+  const overlayType = String(overlay.type || overlay.kind || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  const expectedTypes = {
+    poll_vote: new Set(['poll', 'poll_vote']), question_answer: new Set(['question', 'question_answer']),
+    add_yours: new Set(['add_yours']), emoji_slider: new Set(['emoji_slider']), link_tap: new Set(['link'])
+  };
+  if (!expectedTypes[kind].has(overlayType)) throw new AppError('This sticker does not support that interaction', 'BAD_USER_INPUT');
+  let value = storyJson(input.value, {}, 20_000);
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new AppError('Story response is invalid', 'BAD_USER_INPUT');
+  if (kind === 'poll_vote') {
+    const options = Array.isArray(overlay.options) ? overlay.options : [];
+    const choice = value.optionId ?? value.choice ?? value.index;
+    const valid = options.some((option, index) => String(option?.id ?? option?.value ?? index) === String(choice));
+    if (!valid) throw new AppError('Choose one of the poll options', 'BAD_USER_INPUT');
+    value = { optionId: String(choice) };
+  }
+  if (kind === 'question_answer') {
+    const answer = bounded(value.text || value.answer, 1000);
+    if (!answer) throw new AppError('Write an answer first', 'BAD_USER_INPUT');
+    value = { text: answer };
+    await enforceTextModeration(ctx, { userId: actor.id, targetType: 'story_answer', targetId: input.storyId, text: answer });
+  }
+  if (kind === 'add_yours') {
+    const responseStoryId = bounded(value.storyId, 120);
+    const responseStory = responseStoryId ? await ctx.prisma.socialStory.findFirst({
+      where: { id: responseStoryId, authorId: actor.id, status: 'active', deletedAt: null, expiresAt: { gt: new Date() } }, select: { id: true }
+    }) : null;
+    if (!responseStory) throw new AppError('Create your story before adding it here', 'BAD_USER_INPUT');
+    value = { storyId: responseStory.id };
+  }
+  if (kind === 'emoji_slider') {
+    const amount = Number(value.amount);
+    if (!Number.isFinite(amount)) throw new AppError('Choose a slider position', 'BAD_USER_INPUT');
+    value = { amount: Math.max(0, Math.min(amount, 1)) };
+  }
+  if (kind === 'link_tap') value = {};
+  const interaction = await ctx.prisma.socialStoryInteraction.upsert({
+    where: { itemId_userId_key: { itemId: item.id, userId: actor.id, key } },
+    create: { storyId: story.id, itemId: item.id, userId: actor.id, kind, key, value },
+    update: { kind, value }, include: { user: { include: { socialProfile: true } } }
+  });
+  if (story.authorId !== actor.id && kind !== 'link_tap') await createSocialNotification(ctx, {
+    ownerId: story.authorId, scopeId: story.id, type: 'story_interaction', title: actor.name,
+    message: kind === 'question_answer' ? 'Answered your story question' : kind === 'add_yours' ? 'Added to your story prompt' : 'Responded to your story',
+    metadata: { storyId: story.id, itemId: item.id, interactionId: interaction.id, actorId: actor.id, actorName: actor.name, actorAvatar: actor.avatar || null }
+  });
+  return { ...interaction, userProfile: interaction.user?.socialProfile || null };
+};
+
+export const deleteStoryInteraction = async (ctx, id) => {
+  const actor = await requireAuth(ctx);
+  await requireSocialFeature(ctx);
+  const interaction = await ctx.prisma.socialStoryInteraction.findUnique({ where: { id }, include: { story: { select: { authorId: true } } } });
+  if (!interaction) return true;
+  if (interaction.userId !== actor.id && interaction.story.authorId !== actor.id && !isAdmin(actor)) forbidden();
+  await ctx.prisma.socialStoryInteraction.delete({ where: { id } });
+  return true;
+};
+
+export const archiveStory = async (ctx, id) => {
+  const actor = await requireAuth(ctx);
+  const story = await ctx.prisma.socialStory.findUnique({ where: { id } });
+  if (!story || story.status === 'deleted') notFound('Story');
+  if (story.authorId !== actor.id && !isAdmin(actor)) forbidden();
+  const now = new Date();
+  await ctx.prisma.$transaction([
+    ctx.prisma.socialStory.update({ where: { id }, data: { status: 'archived', archivedAt: now, expiresAt: now } }),
+    ...(story.legacyPostId ? [ctx.prisma.socialPost.updateMany({
+      where: { id: story.legacyPostId, status: 'published' }, data: { status: 'archived' }
+    })] : [])
+  ]);
+  const updated = await ctx.prisma.socialStory.findUnique({ where: { id }, include: storyInclude(actor.id) });
+  return mapStory(updated, actor);
+};
+
+export const deleteStory = async (ctx, id) => {
+  const actor = await requireAuth(ctx);
+  const story = await ctx.prisma.socialStory.findUnique({ where: { id } });
+  if (!story) return true;
+  if (story.authorId !== actor.id && !isAdmin(actor)) forbidden();
+  const now = new Date();
+  await ctx.prisma.$transaction([
+    ctx.prisma.socialStory.update({ where: { id }, data: { status: 'deleted', deletedAt: now } }),
+    ctx.prisma.socialStoryItem.updateMany({ where: { storyId: id }, data: { status: 'deleted' } }),
+    ...(story.legacyPostId ? [ctx.prisma.socialPost.updateMany({
+      where: { id: story.legacyPostId }, data: { status: 'deleted', deletedAt: now }
+    })] : [])
+  ]);
+  await writeAudit(ctx, 'delete_social_story', 'socialStory', id, { authorId: story.authorId });
+  return true;
+};
+
+export const searchStoryMusic = async (ctx, search, limit) => {
+  await requireAuth(ctx);
+  await requireSocialFeature(ctx);
+  const take = boundedLimit(limit, 24, 50);
+  const query = bounded(search, 120) || '';
+  const cacheKey = `${query.toLowerCase()}:${take}`;
+  const cached = storyMusicCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+  const base = String(process.env.AUDIUS_API_BASE || 'https://api.audius.co/v1').replace(/\/$/, '');
+  const appName = bounded(process.env.AUDIUS_APP_NAME || 'tiwi', 80);
+  const target = new URL(`${base}/tracks/${query ? 'search' : 'trending'}`);
+  target.searchParams.set('app_name', appName);
+  target.searchParams.set('limit', String(take));
+  if (query) target.searchParams.set('query', query);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 6_000);
+  let value = [];
+  try {
+    const response = await fetch(target, { signal: controller.signal, headers: { accept: 'application/json' } });
+    if (!response.ok) return [];
+    const payload = await response.json();
+    const tracks = Array.isArray(payload?.data) ? payload.data : [];
+    value = tracks.slice(0, take).flatMap((track) => {
+      const id = bounded(track?.id, 160);
+      const title = bounded(track?.title, 240);
+      if (!id || !title) return [];
+      const stream = new URL(`${base}/tracks/${encodeURIComponent(id)}/stream`);
+      stream.searchParams.set('app_name', appName);
+      return [{
+        id, title, artist: bounded(track?.user?.name || track?.user?.handle || 'Audius artist', 200),
+        artworkUrl: bounded(track?.artwork?.['480x480'] || track?.artwork?.['150x150'], 2000) || null,
+        streamUrl: stream.toString(), durationSeconds: Math.max(0, Number(track?.duration) || 0)
+      }];
+    });
+  } catch { value = []; }
+  finally { clearTimeout(timeout); }
+  storyMusicCache.set(cacheKey, { value, expiresAt: Date.now() + 300_000 });
+  if (storyMusicCache.size > 200) storyMusicCache.delete(storyMusicCache.keys().next().value);
+  return value;
+};
+
 export const getPost = async (ctx, id) => {
   const actor = await requireAuth(ctx);
   await requireSocialFeature(ctx);
@@ -1144,7 +1794,14 @@ export const getPost = async (ctx, id) => {
     ] } });
     if (blocked) forbidden('This post is unavailable');
   }
+  if (post.type === 'story' && new Date(post.publishedAt).getTime() + STORY_LIFETIME_MS <= Date.now() && post.authorId !== actor.id && !isAdmin(actor)) return null;
   if (post.visibility === 'private' && post.authorId !== actor.id && !isAdmin(actor)) forbidden();
+  if (post.visibility === 'followers' && post.authorId !== actor.id && !isAdmin(actor)) {
+    const follows = await ctx.prisma.socialFollow.findUnique({
+      where: { followerId_followingId: { followerId: actor.id, followingId: post.authorId } }, select: { id: true }
+    });
+    if (!follows) forbidden('Follow this person to view this post');
+  }
   const [hydrated] = await hydrateSharedPostMedia(ctx, post, actor.id);
   return mapPost(hydrated);
 };
@@ -2235,6 +2892,8 @@ export const signalCall = async (ctx, input) => {
 export const endCall = async (ctx, id, status = 'ended') => signalCall(ctx, { id, status: status || 'ended' });
 
 const streamInclude = { host: { include: { socialProfile: true } } };
+const liveParticipantInclude = { viewer: { include: { socialProfile: true } } };
+const liveCommentInclude = { author: { include: { socialProfile: true } } };
 const mapStream = (stream, actor) => ({
   ...stream,
   hostProfile: stream.host?.socialProfile || null,
@@ -2242,16 +2901,71 @@ const mapStream = (stream, actor) => ({
   ingestUrl: actor && (actor.id === stream.hostId || isAdmin(actor)) ? stream.ingestUrl : null
 });
 
+const mapLiveParticipant = (participant) => ({
+  ...participant,
+  viewerProfile: participant.viewer?.socialProfile || null
+});
+
+const mapLiveComment = (comment) => ({
+  ...comment,
+  authorProfile: comment.author?.socialProfile || null
+});
+
+const expireStaleLiveStreams = async (ctx) => {
+  const cutoff = new Date(Date.now() - 45_000);
+  await ctx.prisma.socialLiveStream.updateMany({
+    where: { status: 'live', lastHeartbeatAt: { lt: cutoff } },
+    data: { status: 'ended', endedAt: new Date(), paused: false }
+  });
+  await ctx.prisma.socialLiveParticipant.updateMany({
+    where: { status: { in: ['joining', 'connected'] }, lastSeenAt: { lt: cutoff } },
+    data: { status: 'left', leftAt: new Date() }
+  });
+};
+
+const requireLiveViewerAccess = async (ctx, actor, stream) => {
+  if (!stream) notFound('Live stream');
+  if (stream.hostId === actor.id || isAdmin(actor) || stream.visibility === 'public') return;
+  if (stream.visibility === 'private') forbidden('This live is private');
+  const following = await ctx.prisma.socialFollow.findUnique({
+    where: { followerId_followingId: { followerId: actor.id, followingId: stream.hostId } }
+  });
+  if (!following) forbidden('Follow this person to watch the live');
+};
+
+const refreshLiveViewerCount = async (ctx, streamId) => {
+  const cutoff = new Date(Date.now() - 45_000);
+  const viewerCount = await ctx.prisma.socialLiveParticipant.count({
+    where: { streamId, status: { in: ['joining', 'connected'] }, lastSeenAt: { gte: cutoff } }
+  });
+  await ctx.prisma.socialLiveStream.update({ where: { id: streamId }, data: { viewerCount } });
+  return viewerCount;
+};
+
 export const listLiveStreams = async (ctx, args = {}) => {
   const actor = await requireAuth(ctx);
   await requireSocialFeature(ctx, 'liveEnabled');
+  await expireStaleLiveStreams(ctx);
   const rows = await ctx.prisma.socialLiveStream.findMany({
     where: args.status ? { status: args.status } : { status: { in: ['scheduled', 'live'] } },
     include: streamInclude,
     orderBy: { createdAt: 'desc' },
     take: boundedLimit(args.limit, 30, 100)
   });
-  return rows.map((row) => mapStream(row, actor));
+  const followerOnlyHosts = rows.filter((row) => row.visibility === 'followers').map((row) => row.hostId);
+  const followed = followerOnlyHosts.length ? new Set((await ctx.prisma.socialFollow.findMany({
+    where: { followerId: actor.id, followingId: { in: followerOnlyHosts } }, select: { followingId: true }
+  })).map((row) => row.followingId)) : new Set();
+  return rows.filter((row) => row.visibility === 'public' || row.hostId === actor.id || isAdmin(actor) || (row.visibility === 'followers' && followed.has(row.hostId))).map((row) => mapStream(row, actor));
+};
+
+export const getLiveStream = async (ctx, id) => {
+  const actor = await requireAuth(ctx);
+  await requireSocialFeature(ctx, 'liveEnabled');
+  await expireStaleLiveStreams(ctx);
+  const stream = await ctx.prisma.socialLiveStream.findUnique({ where: { id }, include: streamInclude });
+  await requireLiveViewerAccess(ctx, actor, stream);
+  return mapStream(stream, actor);
 };
 
 export const startLiveStream = async (ctx, input) => {
@@ -2261,20 +2975,41 @@ export const startLiveStream = async (ctx, input) => {
   const streamKey = randomBytes(24).toString('hex');
   const ingestBase = String(process.env.SOCIAL_RTMP_URL || 'rtmp://localhost:1935/live').replace(/\/$/, '');
   const playbackBase = String(process.env.SOCIAL_LIVE_PLAYBACK_URL || '/live').replace(/\/$/, '');
+  const scheduledAt = safeDate(input.scheduledAt);
+  const startsNow = !scheduledAt || scheduledAt.getTime() <= Date.now() + 5_000;
+  await ctx.prisma.socialLiveStream.updateMany({
+    where: { hostId: actor.id, status: 'live' },
+    data: { status: 'ended', endedAt: new Date(), paused: false }
+  });
   const stream = await ctx.prisma.socialLiveStream.create({
     data: {
       hostId: actor.id,
       title: bounded(input.title, 160),
       description: bounded(input.description, 3000),
       visibility: VISIBILITIES.has(input.visibility) ? input.visibility : 'public',
+      commentsEnabled: input.commentsEnabled !== false,
       streamKey,
       ingestUrl: `${ingestBase}/${streamKey}`,
       playbackUrl: `${playbackBase}/${streamKey}/master.m3u8`,
       qualities: ['auto', '720p', '480p', '360p'],
-      scheduledAt: safeDate(input.scheduledAt)
+      scheduledAt,
+      status: startsNow ? 'live' : 'scheduled',
+      startedAt: startsNow ? new Date() : undefined,
+      lastHeartbeatAt: startsNow ? new Date() : undefined
     },
     include: streamInclude
   });
+  if (startsNow) {
+    const followers = await ctx.prisma.socialFollow.findMany({ where: { followingId: actor.id }, select: { followerId: true }, take: 5000 });
+    await Promise.all(followers.map(({ followerId }) => createSocialNotification(ctx, {
+      ownerId: followerId,
+      scopeId: stream.id,
+      type: 'live_started',
+      title: `${actor.name} is live`,
+      message: bounded(input.title, 160) || 'Watch the live now',
+      metadata: { liveStreamId: stream.id, hostId: actor.id, actorId: actor.id, actorName: actor.name, actorAvatar: actor.avatar || null }
+    })));
+  }
   return mapStream(stream, actor);
 };
 
@@ -2289,12 +3024,135 @@ export const updateLiveStream = async (ctx, id, status, viewerCount) => {
     data: removeUndefined({
       status: normalized,
       viewerCount: viewerCount === undefined ? undefined : Math.max(0, viewerCount),
+      lastHeartbeatAt: normalized === 'live' ? new Date() : undefined,
+      paused: normalized === 'paused' ? true : normalized === 'live' ? false : undefined,
       startedAt: normalized === 'live' && !stream.startedAt ? new Date() : undefined,
       endedAt: normalized === 'ended' ? new Date() : undefined
     }),
     include: streamInclude
   });
   return mapStream(updated, actor);
+};
+
+export const listLiveParticipants = async (ctx, streamId) => {
+  const actor = await requireAuth(ctx);
+  const stream = await ctx.prisma.socialLiveStream.findUnique({ where: { id: streamId } });
+  if (!stream) notFound('Live stream');
+  if (stream.hostId !== actor.id && !isAdmin(actor)) forbidden();
+  const cutoff = new Date(Date.now() - 45_000);
+  const rows = await ctx.prisma.socialLiveParticipant.findMany({
+    where: { streamId, status: { in: ['joining', 'connected'] }, lastSeenAt: { gte: cutoff } },
+    include: liveParticipantInclude,
+    orderBy: { joinedAt: 'asc' },
+    take: 12
+  });
+  await refreshLiveViewerCount(ctx, streamId);
+  return rows.map(mapLiveParticipant);
+};
+
+export const joinLiveStream = async (ctx, id) => {
+  const actor = await requireAuth(ctx);
+  await expireStaleLiveStreams(ctx);
+  const stream = await ctx.prisma.socialLiveStream.findUnique({ where: { id } });
+  await requireLiveViewerAccess(ctx, actor, stream);
+  if (stream.hostId === actor.id) forbidden('The host cannot join as a viewer');
+  if (stream.status !== 'live') throw new AppError('This live has ended', 'LIVE_ENDED');
+  const activeCount = await ctx.prisma.socialLiveParticipant.count({ where: { streamId: id, status: { in: ['joining', 'connected'] }, lastSeenAt: { gte: new Date(Date.now() - 45_000) } } });
+  if (activeCount >= 12) throw new AppError('This live is currently full', 'LIVE_FULL');
+  const participant = await ctx.prisma.socialLiveParticipant.upsert({
+    where: { streamId_viewerId: { streamId: id, viewerId: actor.id } },
+    create: { streamId: id, viewerId: actor.id, status: 'joining' },
+    update: { status: 'joining', lastSeenAt: new Date(), leftAt: null, hostOffer: null, viewerAnswer: null, hostIce: [], viewerIce: [] },
+    include: liveParticipantInclude
+  });
+  await refreshLiveViewerCount(ctx, id);
+  return mapLiveParticipant(participant);
+};
+
+export const signalLiveStream = async (ctx, input) => {
+  const actor = await requireAuth(ctx);
+  const participant = await ctx.prisma.socialLiveParticipant.findUnique({
+    where: { id: input.participantId }, include: { stream: true, ...liveParticipantInclude }
+  });
+  if (!participant) notFound('Live viewer');
+  const host = participant.stream.hostId === actor.id || isAdmin(actor);
+  const viewer = participant.viewerId === actor.id;
+  if (!host && !viewer) forbidden();
+  const data = { lastSeenAt: new Date() };
+  if (host && input.offer !== undefined) data.hostOffer = input.offer;
+  if (viewer && input.answer !== undefined) data.viewerAnswer = input.answer;
+  if (input.status) data.status = bounded(input.status, 30).toLowerCase();
+  if (input.iceCandidate) {
+    if (host) data.hostIce = [...(Array.isArray(participant.hostIce) ? participant.hostIce : []), input.iceCandidate].slice(-100);
+    else data.viewerIce = [...(Array.isArray(participant.viewerIce) ? participant.viewerIce : []), input.iceCandidate].slice(-100);
+  }
+  const updated = await ctx.prisma.socialLiveParticipant.update({ where: { id: participant.id }, data, include: liveParticipantInclude });
+  return mapLiveParticipant(updated);
+};
+
+export const heartbeatLiveStream = async (ctx, id, paused = false) => {
+  const actor = await requireAuth(ctx);
+  const stream = await ctx.prisma.socialLiveStream.findUnique({ where: { id } });
+  if (!stream) notFound('Live stream');
+  if (stream.hostId !== actor.id && !isAdmin(actor)) forbidden();
+  if (!['live', 'paused'].includes(stream.status)) throw new AppError('This live has ended', 'LIVE_ENDED');
+  const updated = await ctx.prisma.socialLiveStream.update({
+    where: { id }, data: { status: 'live', paused: Boolean(paused), lastHeartbeatAt: new Date() }, include: streamInclude
+  });
+  return mapStream(updated, actor);
+};
+
+export const leaveLiveStream = async (ctx, id) => {
+  const actor = await requireAuth(ctx);
+  const stream = await ctx.prisma.socialLiveStream.findUnique({ where: { id } });
+  if (!stream) return true;
+  if (stream.hostId === actor.id || isAdmin(actor)) {
+    await ctx.prisma.$transaction([
+      ctx.prisma.socialLiveStream.update({ where: { id }, data: { status: 'ended', endedAt: new Date(), paused: false, viewerCount: 0 } }),
+      ctx.prisma.socialLiveParticipant.updateMany({ where: { streamId: id, status: { in: ['joining', 'connected'] } }, data: { status: 'left', leftAt: new Date() } })
+    ]);
+    return true;
+  }
+  await ctx.prisma.socialLiveParticipant.updateMany({
+    where: { streamId: id, viewerId: actor.id }, data: { status: 'left', leftAt: new Date(), lastSeenAt: new Date() }
+  });
+  await refreshLiveViewerCount(ctx, id);
+  return true;
+};
+
+export const listLiveComments = async (ctx, streamId, limit = 100) => {
+  const actor = await requireAuth(ctx);
+  const stream = await ctx.prisma.socialLiveStream.findUnique({ where: { id: streamId } });
+  await requireLiveViewerAccess(ctx, actor, stream);
+  const rows = await ctx.prisma.socialLiveComment.findMany({
+    where: { streamId, status: 'active' }, include: liveCommentInclude,
+    orderBy: { createdAt: 'asc' }, take: boundedLimit(limit, 100, 300)
+  });
+  return rows.map(mapLiveComment);
+};
+
+export const addLiveComment = async (ctx, streamId, body, replyToId) => {
+  const actor = await requireAuth(ctx);
+  const stream = await ctx.prisma.socialLiveStream.findUnique({ where: { id: streamId } });
+  await requireLiveViewerAccess(ctx, actor, stream);
+  if (stream.status !== 'live') throw new AppError('This live has ended', 'LIVE_ENDED');
+  if (!stream.commentsEnabled && stream.hostId !== actor.id && !isAdmin(actor)) throw new AppError('Comments are turned off for this live', 'FORBIDDEN');
+  const text = bounded(body, 1000);
+  if (!text) throw new AppError('Write a comment first', 'BAD_USER_INPUT');
+  const reply = replyToId ? await ctx.prisma.socialLiveComment.findFirst({ where: { id: replyToId, streamId, status: 'active' } }) : null;
+  const comment = await ctx.prisma.socialLiveComment.create({
+    data: { streamId, authorId: actor.id, body: text, replyToId: reply?.id }, include: liveCommentInclude
+  });
+  return mapLiveComment(comment);
+};
+
+export const deleteLiveComment = async (ctx, id) => {
+  const actor = await requireAuth(ctx);
+  const comment = await ctx.prisma.socialLiveComment.findUnique({ where: { id }, include: { stream: true } });
+  if (!comment) return true;
+  if (comment.authorId !== actor.id && comment.stream.hostId !== actor.id && !isAdmin(actor)) forbidden();
+  await ctx.prisma.socialLiveComment.update({ where: { id }, data: { status: 'deleted', body: '' } });
+  return true;
 };
 
 export const reportContent = async (ctx, targetType, targetId, reason, details) => {

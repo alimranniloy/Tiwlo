@@ -101,6 +101,7 @@ dependencies {
   implementation(libs.androidx.room.ktx)
   implementation(libs.androidx.room.runtime)
   implementation(libs.coil.compose)
+  implementation("io.coil-kt:coil-gif:2.7.0")
   implementation("androidx.vectordrawable:vectordrawable-animated:1.2.0")
   implementation("com.github.penfeizhou.android.animation:apng:3.0.5")
   implementation(libs.converter.moshi)

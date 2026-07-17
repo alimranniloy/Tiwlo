@@ -38,6 +38,26 @@ export const socialResolvers = {
     authorProfile: (parent, _, ctx) => parent.authorProfile || parent.author?.socialProfile || ctx.prisma.socialProfile.findUnique({ where: { userId: parent.authorId } }),
     saveCount: (parent) => Number(parent.saveCount ?? parent._count?.savedBy ?? 0)
   },
+  SocialStory: {
+    author: (parent, _, ctx) => parent.author || ctx.prisma.user.findUnique({ where: { id: parent.authorId } }),
+    authorProfile: (parent, _, ctx) => parent.authorProfile || parent.author?.socialProfile || ctx.prisma.socialProfile.findUnique({ where: { userId: parent.authorId } })
+  },
+  SocialStoryGroup: {
+    author: (parent, _, ctx) => parent.author || ctx.prisma.user.findUnique({ where: { id: parent.authorId } }),
+    authorProfile: (parent, _, ctx) => parent.authorProfile || parent.author?.socialProfile || ctx.prisma.socialProfile.findUnique({ where: { userId: parent.authorId } })
+  },
+  SocialStoryView: {
+    viewer: (parent, _, ctx) => parent.viewer || ctx.prisma.user.findUnique({ where: { id: parent.viewerId } }),
+    viewerProfile: (parent, _, ctx) => parent.viewerProfile || parent.viewer?.socialProfile || ctx.prisma.socialProfile.findUnique({ where: { userId: parent.viewerId } })
+  },
+  SocialStoryReply: {
+    sender: (parent, _, ctx) => parent.sender || ctx.prisma.user.findUnique({ where: { id: parent.senderId } }),
+    senderProfile: (parent, _, ctx) => parent.senderProfile || parent.sender?.socialProfile || ctx.prisma.socialProfile.findUnique({ where: { userId: parent.senderId } })
+  },
+  SocialStoryInteraction: {
+    user: (parent, _, ctx) => parent.user || ctx.prisma.user.findUnique({ where: { id: parent.userId } }),
+    userProfile: (parent, _, ctx) => parent.userProfile || parent.user?.socialProfile || ctx.prisma.socialProfile.findUnique({ where: { userId: parent.userId } })
+  },
   SocialComment: {
     author: (parent, _, ctx) => parent.author || ctx.prisma.user.findUnique({ where: { id: parent.authorId } }),
     authorProfile: (parent, _, ctx) => parent.authorProfile || parent.author?.socialProfile || ctx.prisma.socialProfile.findUnique({ where: { userId: parent.authorId } })
@@ -66,6 +86,14 @@ export const socialResolvers = {
     host: (parent, _, ctx) => parent.host || ctx.prisma.user.findUnique({ where: { id: parent.hostId } }),
     hostProfile: (parent, _, ctx) => parent.hostProfile || parent.host?.socialProfile || ctx.prisma.socialProfile.findUnique({ where: { userId: parent.hostId } })
   },
+  SocialLiveParticipant: {
+    viewer: (parent, _, ctx) => parent.viewer || ctx.prisma.user.findUnique({ where: { id: parent.viewerId } }),
+    viewerProfile: (parent, _, ctx) => parent.viewerProfile || parent.viewer?.socialProfile || ctx.prisma.socialProfile.findUnique({ where: { userId: parent.viewerId } })
+  },
+  SocialLiveComment: {
+    author: (parent, _, ctx) => parent.author || ctx.prisma.user.findUnique({ where: { id: parent.authorId } }),
+    authorProfile: (parent, _, ctx) => parent.authorProfile || parent.author?.socialProfile || ctx.prisma.socialProfile.findUnique({ where: { userId: parent.authorId } })
+  },
   Query: {
     socialProfile: (_, args, ctx) => api(service.getProfile(ctx, args)),
     socialSearch: (_, { query, limit }, ctx) => api(service.searchProfiles(ctx, query, limit)),
@@ -77,6 +105,12 @@ export const socialResolvers = {
     socialFeedModules: (_, { feedSize }, ctx) => api(service.listFeedModules(ctx, feedSize)),
     socialLinkPreview: (_, { url }, ctx) => api(service.getLinkPreview(ctx, url)),
     socialStories: (_, args, ctx) => api(service.listStories(ctx, args)),
+    socialStoryTray: (_, { limit }, ctx) => api(service.listStoryTray(ctx, limit)),
+    socialStory: (_, { id }, ctx) => api(service.getStory(ctx, id)),
+    socialStoryMemories: (_, args, ctx) => api(service.listStoryMemories(ctx, args)),
+    socialStoryViewers: (_, { id, limit }, ctx) => api(service.listStoryViewers(ctx, id, limit)),
+    socialStoryInteractions: (_, { id, itemId, limit }, ctx) => api(service.listStoryInteractions(ctx, id, itemId, limit)),
+    socialStoryMusic: (_, { search, limit }, ctx) => api(service.searchStoryMusic(ctx, search, limit)),
     socialProfileDecorations: (_, __, ctx) => api(service.listProfileDecorations(ctx)),
     socialProfileEffects: (_, __, ctx) => api(service.listProfileEffects(ctx)),
     socialPost: (_, { id }, ctx) => api(service.getPost(ctx, id)),
@@ -92,6 +126,9 @@ export const socialResolvers = {
     socialCall: (_, { id }, ctx) => api(service.getCall(ctx, id)),
     socialIncomingCalls: (_, __, ctx) => api(service.incomingCalls(ctx)),
     socialLiveStreams: (_, args, ctx) => api(service.listLiveStreams(ctx, args)),
+    socialLiveStream: (_, { id }, ctx) => api(service.getLiveStream(ctx, id)),
+    socialLiveParticipants: (_, { streamId }, ctx) => api(service.listLiveParticipants(ctx, streamId)),
+    socialLiveComments: (_, { streamId, limit }, ctx) => api(service.listLiveComments(ctx, streamId, limit)),
     socialSettings: async (_, __, ctx) => {
       await requireAuth(ctx);
       return service.getSettings(ctx);
@@ -110,6 +147,15 @@ export const socialResolvers = {
     unfollowSocialUser: (_, { userId }, ctx) => api(service.followUser(ctx, userId, false)),
     blockSocialUser: (_, { userId, block, reason }, ctx) => service.blockUser(ctx, userId, block, reason),
     createSocialPost: (_, { input }, ctx) => api(service.createPost(ctx, input)),
+    createSocialStory: (_, { input }, ctx) => api(service.createStory(ctx, input)),
+    updateSocialStory: (_, { id, ...input }, ctx) => api(service.updateStory(ctx, id, input)),
+    viewSocialStory: (_, { id, itemSortOrder }, ctx) => api(service.viewStory(ctx, id, itemSortOrder)),
+    reactToSocialStory: (_, { id, itemId, emoji }, ctx) => api(service.reactToStory(ctx, id, itemId, emoji)),
+    replyToSocialStory: (_, { id, itemId, body }, ctx) => api(service.replyToStory(ctx, id, itemId, body)),
+    interactWithSocialStory: (_, { input }, ctx) => api(service.interactWithStory(ctx, input)),
+    deleteSocialStoryInteraction: (_, { id }, ctx) => service.deleteStoryInteraction(ctx, id),
+    archiveSocialStory: (_, { id }, ctx) => api(service.archiveStory(ctx, id)),
+    deleteSocialStory: (_, { id }, ctx) => service.deleteStory(ctx, id),
     updateSocialPost: (_, { input }, ctx) => api(service.updatePost(ctx, input)),
     deleteSocialPost: (_, { id }, ctx) => service.deletePost(ctx, id),
     viewSocialPost: (_, { id }, ctx) => api(service.viewPost(ctx, id)),
@@ -142,6 +188,12 @@ export const socialResolvers = {
     endSocialCall: (_, { id, status }, ctx) => api(service.endCall(ctx, id, status)),
     startSocialLiveStream: (_, { input }, ctx) => api(service.startLiveStream(ctx, input)),
     updateSocialLiveStream: (_, { id, status, viewerCount }, ctx) => api(service.updateLiveStream(ctx, id, status, viewerCount)),
+    joinSocialLiveStream: (_, { id }, ctx) => api(service.joinLiveStream(ctx, id)),
+    signalSocialLiveStream: (_, { input }, ctx) => api(service.signalLiveStream(ctx, input)),
+    heartbeatSocialLiveStream: (_, { id, paused }, ctx) => api(service.heartbeatLiveStream(ctx, id, paused)),
+    leaveSocialLiveStream: (_, { id }, ctx) => service.leaveLiveStream(ctx, id),
+    addSocialLiveComment: (_, { streamId, body, replyToId }, ctx) => api(service.addLiveComment(ctx, streamId, body, replyToId)),
+    deleteSocialLiveComment: (_, { id }, ctx) => service.deleteLiveComment(ctx, id),
     reportSocialContent: (_, { targetType, targetId, reason, details }, ctx) => api(service.reportContent(ctx, targetType, targetId, reason, details)),
     startSocialVerificationCheckout: (_, { packageId, provider, currency }, ctx) => api(service.startVerificationCheckout(ctx, packageId, provider, currency)),
     applySocialProfileDecoration: (_, { id }, ctx) => api(service.applyProfileDecoration(ctx, id)),

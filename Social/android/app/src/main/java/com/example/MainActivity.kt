@@ -155,6 +155,8 @@ import com.example.social.SocialGroup
 import com.example.social.SocialGroupMember
 import com.example.social.SocialMedia
 import com.example.social.SocialLinkPreview
+import com.example.social.SocialLiveComment
+import com.example.social.SocialLiveStream
 import com.example.social.SocialMessage
 import com.example.social.SocialNotification
 import com.example.social.SocialPost
@@ -162,12 +164,15 @@ import com.example.social.SocialProfile
 import com.example.social.SocialProfileDecoration
 import com.example.social.SocialProfileEffectPlayback
 import com.example.social.SocialRepository
+import com.example.social.SocialStory
+import com.example.social.SocialStoryGroup
 import com.example.social.SocialUser
 import com.example.social.SocialVerificationOptions
 import com.example.social.SocialVerificationPackage
 import com.example.social.PasswordResetChallenge
 import com.example.social.PostUploadWorker
 import com.example.social.WebRtcCallManager
+import com.example.social.WebRtcLiveManager
 import com.example.social.TiwiCallListenerService
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.CoroutineExceptionHandler
@@ -1452,6 +1457,11 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
     var initialReelId by remember { mutableStateOf<String?>(null) }
     var selectedEditPostId by remember { mutableStateOf<String?>(null) }
     var callRequest by remember { mutableStateOf<TiwiCallRequest?>(null) }
+    var showLiveSetup by remember { mutableStateOf(false) }
+    var selectedLiveStream by remember { mutableStateOf<SocialLiveStream?>(null) }
+    var hostingLive by remember { mutableStateOf(false) }
+    var showStoryCreate by remember { mutableStateOf(false) }
+    var selectedStoryAuthorId by remember { mutableStateOf<String?>(null) }
     var menuDestination by remember { mutableStateOf<String?>(null) }
     var pendingConversationId by remember { mutableStateOf<String?>(null) }
     
@@ -1461,6 +1471,7 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
     val incomingCalls by repository.incomingCalls.collectAsState()
     val conversations by repository.conversations.collectAsState()
     val notifications by repository.notifications.collectAsState()
+    val storyGroups by repository.storyTray.collectAsState()
     val unreadMessages = remember(conversations) { conversations.sumOf { it.unreadCount } }
     val unreadActivity = remember(notifications) { notifications.count { it.status == "unread" && it.type !in listOf("message", "message_request") } }
     val posts = remember(apiPosts) { apiPosts.map(::toUiPost) }
@@ -1492,7 +1503,7 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
         permissionPreferences.edit().putBoolean("notification_permission_v3", true).apply()
         if (!granted) Toast.makeText(appContext, "Enable Tiwi notifications in Android settings to hear calls and alerts", Toast.LENGTH_LONG).show()
     }
-    val hasOverlay = showProfile || showCreatePost || showMessages || showConnect || selectedProfileUserId != null || selectedChat != null || selectedPostId != null || selectedEditPostId != null
+    val hasOverlay = showProfile || showCreatePost || showStoryCreate || selectedStoryAuthorId != null || showLiveSetup || selectedLiveStream != null || showMessages || showConnect || selectedProfileUserId != null || selectedChat != null || selectedPostId != null || selectedEditPostId != null
     val darkChrome = selectedTab == 2 && !hasOverlay
 
     if (showPermissionIntro) AlertDialog(
@@ -1522,10 +1533,14 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
     BackHandler(enabled = sharedPost != null || hasOverlay || selectedTab != 0) {
         when {
             sharedPost != null -> sharedPost = null
+            selectedStoryAuthorId != null -> selectedStoryAuthorId = null
+            showStoryCreate -> showStoryCreate = false
             selectedEditPostId != null -> selectedEditPostId = null
             selectedPostId != null -> { selectedPostId = null; selectedPostMediaIndex = null }
             selectedProfileUserId != null -> selectedProfileUserId = null
             selectedChat != null -> { selectedChat = null; isRandomChat = false }
+            selectedLiveStream != null -> { selectedLiveStream = null; hostingLive = false }
+            showLiveSetup -> showLiveSetup = false
             showConnect -> showConnect = false
             showMessages -> showMessages = false
             showCreatePost -> showCreatePost = false
@@ -1673,13 +1688,48 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
         return
     }
 
+    if (showLiveSetup) {
+        LiveSetupPage(
+            repository = repository,
+            onBack = { showLiveSetup = false },
+            onStarted = { live -> showLiveSetup = false; hostingLive = true; selectedLiveStream = live }
+        )
+        return
+    }
+
+    selectedLiveStream?.let { live ->
+        LiveBroadcastScreen(repository, live, hostingLive, onEnd = {
+            selectedLiveStream = null
+            hostingLive = false
+            scope.launch { runCatching { repository.refreshLiveStreams() } }
+        })
+        return
+    }
+
+    if (showStoryCreate) {
+        TiwiStoryCreatePage(
+            repository = repository,
+            onBack = { showStoryCreate = false },
+            onPublished = { story ->
+                showStoryCreate = false
+                selectedStoryAuthorId = story.authorId
+            }
+        )
+        return
+    }
+
+    selectedStoryAuthorId?.let { authorId ->
+        TiwiStoryViewerPage(repository, storyGroups, authorId, onClose = { selectedStoryAuthorId = null })
+        return
+    }
+
     sharedPost?.let { post ->
         TiwiShareSheet(repository, post, onDismiss = { sharedPost = null })
     }
 
     Scaffold(
         topBar = { 
-            if (selectedTab != 2 && selectedTab != 4 && !showProfile && !showCreatePost && !showMessages && !showConnect && selectedProfileUserId == null && selectedChat == null && selectedPostId == null && selectedEditPostId == null) {
+            if (selectedTab != 2 && selectedTab != 4 && !showProfile && !showCreatePost && !showStoryCreate && selectedStoryAuthorId == null && !showMessages && !showConnect && selectedProfileUserId == null && selectedChat == null && selectedPostId == null && selectedEditPostId == null) {
                 TiwiTopBar(
                     avatarUrl = currentUser?.avatar,
                     avatarDecoration = currentProfile?.avatarDecoration,
@@ -1692,7 +1742,7 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
             }
         },
         bottomBar = { 
-            if (!showProfile && !showCreatePost && !showMessages && !showConnect && selectedProfileUserId == null && selectedChat == null && selectedPostId == null && selectedEditPostId == null) {
+            if (!showProfile && !showCreatePost && !showStoryCreate && selectedStoryAuthorId == null && !showMessages && !showConnect && selectedProfileUserId == null && selectedChat == null && selectedPostId == null && selectedEditPostId == null) {
                 TiwiBottomBar(selectedTab, dark = selectedTab == 2, avatarUrl = currentUser?.avatar, avatarDecoration = currentProfile?.avatarDecoration, unreadActivity = unreadActivity) {
                     initialReelId = null
                     selectedTab = it
@@ -1721,7 +1771,8 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
                     onPostClick = { selectedPostMediaIndex = null; selectedPostId = it },
                     onMediaClick = { id, index -> selectedPostMediaIndex = index; selectedPostId = id },
                     onShare = { sharedPost = it }, onMessage = { id -> scope.launch { selectedChat = repository.createConversation(id); selectedProfileUserId = null } }, onEditPost = { selectedEditPostId = it },
-                    onConnectionClick = { selectedProfileUserId = it }
+                    onConnectionClick = { selectedProfileUserId = it },
+                    onLive = { live -> selectedProfileUserId = null; hostingLive = false; selectedLiveStream = live }
                 )
                 showConnect -> RandomConnectScreen(
                     repository = repository,
@@ -1758,9 +1809,16 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
                     onBack = { showMessages = false },
                     onChatClick = { selectedChat = it },
                     onProfileClick = { showMessages = false; showProfile = true },
-                    onSupportCenter = { showMessages = false; menuDestination = "Support Center"; selectedTab = 4 }
+                    onSupportCenter = { showMessages = false; menuDestination = "Support Center"; selectedTab = 4 },
+                    storyGroups = storyGroups,
+                    onCreateStory = { showMessages = false; showStoryCreate = true },
+                    onOpenStory = { showMessages = false; selectedStoryAuthorId = it }
                 )
-                showCreatePost -> CreatePostScreen(repository, onBack = { showCreatePost = false })
+                showCreatePost -> CreatePostScreen(
+                    repository,
+                    onBack = { showCreatePost = false },
+                    onLive = { showCreatePost = false; showLiveSetup = true }
+                )
                 showProfile -> ProfileScreen(
                     repository,
                     posts.filter { it.authorId == repository.currentUserId() },
@@ -1771,18 +1829,20 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
                     onShare = { sharedPost = it },
                     onEditPost = { selectedEditPostId = it },
                     onCreate = { showCreatePost = true },
-                    onConnectionClick = { selectedProfileUserId = it }
+                    onConnectionClick = { selectedProfileUserId = it },
+                    onLive = { live -> showProfile = false; hostingLive = live.hostId == repository.currentUserId(); selectedLiveStream = live }
                 )
                 else -> {
                     when (selectedTab) {
-                        0 -> HomeFeed(reels, posts, repository, onShareClick = { sharedPost = it }, onAuthorClick = { selectedProfileUserId = it }, onPostClick = { selectedPostMediaIndex = null; selectedPostId = it }, onMediaClick = { id, index -> selectedPostMediaIndex = index; selectedPostId = id }, onReelClick = { initialReelId = it; selectedTab = 2 }, onEditPost = { selectedEditPostId = it })
+                        0 -> HomeFeed(reels, posts, repository, storyGroups = storyGroups, onCreateStory = { showStoryCreate = true }, onOpenStory = { selectedStoryAuthorId = it }, onShareClick = { sharedPost = it }, onAuthorClick = { selectedProfileUserId = it }, onPostClick = { selectedPostMediaIndex = null; selectedPostId = it }, onMediaClick = { id, index -> selectedPostMediaIndex = index; selectedPostId = id }, onReelClick = { initialReelId = it; selectedTab = 2 }, onEditPost = { selectedEditPostId = it }, onLive = { live -> hostingLive = live.hostId == repository.currentUserId(); selectedLiveStream = live })
                         1 -> SearchScreen(repository, onProfileClick = { selectedProfileUserId = it }, onPostClick = { selectedPostMediaIndex = null; selectedPostId = it })
                         2 -> ReelsScreen(reels, repository, initialReelId = initialReelId, onOpen = { selectedPostMediaIndex = null; selectedPostId = it }, onShare = { reel -> sharedPost = posts.firstOrNull { it.id == reel.id } }, onAuthor = { selectedProfileUserId = it })
                         3 -> NotificationsScreen(
                             repository,
                             onProfileClick = { selectedProfileUserId = it },
                             onPostClick = { selectedPostMediaIndex = null; selectedPostId = it },
-                            onSupportCenter = { menuDestination = "Support Center"; selectedTab = 4 }
+                            onSupportCenter = { menuDestination = "Support Center"; selectedTab = 4 },
+                            onLive = { live -> hostingLive = live.hostId == repository.currentUserId(); selectedLiveStream = live }
                         )
                         4 -> MenuScreen(
                             repository,
@@ -1848,16 +1908,23 @@ fun HomeFeed(
     reels: List<Reel>,
     posts: List<Post>,
     repository: SocialRepository,
+    storyGroups: List<SocialStoryGroup> = emptyList(),
+    onCreateStory: () -> Unit = {},
+    onOpenStory: (String) -> Unit = {},
     onShareClick: (Post) -> Unit,
     onAuthorClick: (String) -> Unit,
     onPostClick: (String) -> Unit,
     onMediaClick: (String, Int) -> Unit,
     onReelClick: (String) -> Unit,
-    onEditPost: (String) -> Unit = {}
+    onEditPost: (String) -> Unit = {},
+    onLive: (SocialLiveStream) -> Unit = {}
 ) {
     val scope = rememberTiwiCoroutineScope()
     val syncing by repository.syncing.collectAsState()
     val feedModules by repository.feedModules.collectAsState()
+    val liveStreams by repository.liveStreams.collectAsState()
+    val currentUser by repository.currentUser.collectAsState()
+    val currentProfile by repository.profile.collectAsState()
     val online by rememberNetworkAvailable()
     val pendingUpload by rememberPendingUploadSnapshot()
     var observedUpload by remember { mutableStateOf(false) }
@@ -1866,6 +1933,12 @@ fun HomeFeed(
         else if (observedUpload) {
             observedUpload = false
             runCatching { repository.refreshAll(force = true) }
+        }
+    }
+    LaunchedEffect(Unit) {
+        while (true) {
+            runCatching { repository.refreshLiveStreams() }
+            delay(15_000)
         }
     }
     PullToRefreshBox(
@@ -1905,7 +1978,19 @@ fun HomeFeed(
                     LinearProgressIndicator(progress = { animatedProgress }, modifier = Modifier.fillMaxWidth().padding(top = 7.dp).height(3.dp).clip(CircleShape), color = TiwiBlue, trackColor = Color.White)
                 }
             }
+            item {
+                TiwiStoryTray(
+                    groups = storyGroups,
+                    currentUser = currentUser,
+                    currentProfile = currentProfile,
+                    compact = true,
+                    onCreate = onCreateStory,
+                    onOpen = onOpenStory
+                )
+                HorizontalDivider(thickness = .5.dp, color = Color(0xFFE5E7EB))
+            }
             item { ReelsSection(reels, onReelClick) }
+            if (liveStreams.isNotEmpty()) item { LiveNowSection(liveStreams, onLive) }
             itemsIndexed(posts, key = { _, post -> post.id }) { index, post ->
                 Column {
                     post.recommendationLabel?.takeIf { it.isNotBlank() }?.let { label ->
@@ -2009,6 +2094,31 @@ private fun SuggestedReelsSection(module: SocialFeedModule, onReelClick: (String
         LazyRow(contentPadding = PaddingValues(horizontal = 10.dp), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
             itemsIndexed(reels, key = { _, reel -> "${module.id}-${reel.id}" }) { index, reel ->
                 ReelItem(reel, autoplayPreview = index == 0, width = 112.dp, height = 198.dp) { onReelClick(reel.id) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LiveNowSection(streams: List<SocialLiveStream>, onOpen: (SocialLiveStream) -> Unit) {
+    Column(Modifier.fillMaxWidth().padding(vertical = 5.dp)) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(7.dp).background(Color(0xFFE11D48), CircleShape))
+            Text("Live now", fontWeight = FontWeight.Black, fontSize = 13.sp, modifier = Modifier.padding(start = 6.dp))
+            Text("People you follow and popular lives", color = Color(0xFF667085), fontSize = 9.sp, modifier = Modifier.padding(start = 7.dp))
+        }
+        LazyRow(contentPadding = PaddingValues(horizontal = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            items(streams, key = { "live-now-${it.id}" }) { live ->
+                Column(Modifier.width(78.dp).clickable { onOpen(live) }, horizontalAlignment = Alignment.CenterHorizontally) {
+                    Box(Modifier.size(60.dp).border(2.5.dp, Color(0xFFE11D48), CircleShape).padding(3.dp), contentAlignment = Alignment.Center) {
+                        TiwiAvatar(live.host.avatar, R.drawable.img_tiwi_avatar_1, Modifier.fillMaxSize().clip(CircleShape))
+                        Surface(Modifier.align(Alignment.BottomCenter).offset(y = 5.dp), color = Color(0xFFE11D48), shape = RoundedCornerShape(4.dp), tonalElevation = 0.dp) {
+                            Text("LIVE", color = Color.White, fontSize = 7.sp, fontWeight = FontWeight.Black, modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp))
+                        }
+                    }
+                    Text(live.host.name, fontWeight = FontWeight.Bold, fontSize = 9.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 7.dp))
+                    Text("${formatCount(live.viewerCount)} watching", color = Color(0xFF667085), fontSize = 8.sp, maxLines = 1)
+                }
             }
         }
     }
@@ -2445,12 +2555,20 @@ private fun PostMediaGrid(
     }
     val visible = media.take(4)
     val cell: @Composable (SocialMedia, Modifier, Int) -> Unit = { item, modifier, index ->
-        Box(modifier.clickable { onOpen(index) }.background(Color.Black)) {
-            if (item.type == "video") TiwiVideo(item.hlsUrl?.takeIf { item.processingStatus == "ready" } ?: item.url, Modifier.fillMaxSize(), autoplay = media.size == 1, fallbackUrl = item.url, posterUrl = item.thumbnailUrl)
+        Box(modifier.background(Color.Black)) {
+            if (item.type == "video") TiwiVideo(
+                item.hlsUrl?.takeIf { item.processingStatus == "ready" } ?: item.url,
+                Modifier.fillMaxSize(),
+                autoplay = media.size == 1,
+                fallbackUrl = item.url,
+                posterUrl = item.thumbnailUrl,
+                interactive = false
+            )
             else AsyncImage(model = item.url, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
             if (index == 3 && media.size > 4) Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = .55f)), contentAlignment = Alignment.Center) {
                 Text("+${media.size - 4}", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold)
             }
+            Box(Modifier.matchParentSize().clickable { onOpen(index) })
         }
     }
     when (visible.size) {
@@ -2496,9 +2614,11 @@ private fun SharedPostCard(media: SocialMedia, onOpenPost: () -> Unit, onOpenPro
                             autoplay = true,
                             fallbackUrl = media.url,
                             posterUrl = media.thumbnailUrl,
-                            muted = true,
-                            coordinated = true
+                            muted = false,
+                            coordinated = true,
+                            interactive = false
                         )
+                        Box(Modifier.matchParentSize().clickable(onClick = onOpenPost))
                     } else {
                         AsyncImage(model = media.url, contentDescription = "Shared post media", modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                     }
@@ -3396,15 +3516,12 @@ private fun shareDeepLink(context: Context, title: String, text: String, url: St
 }
 
 @Composable
-fun CreatePostScreen(repository: SocialRepository, onBack: () -> Unit) {
+fun CreatePostScreen(repository: SocialRepository, onBack: () -> Unit, onLive: () -> Unit = {}) {
     var text by remember { mutableStateOf("") }
     var selectedUris by remember { mutableStateOf<List<Uri>>(emptyList()) }
     var visibility by remember { mutableStateOf("public") }
     var busy by remember { mutableStateOf(false) }
-    var showPrivacyMenu by remember { mutableStateOf(false) }
-    var showMentionPicker by remember { mutableStateOf(false) }
-    var showTagMode by remember { mutableStateOf(false) }
-    var collaboratorMode by remember { mutableStateOf(false) }
+    var composerPage by remember { mutableStateOf<String?>(null) }
     var taggedPeople by remember { mutableStateOf<List<SocialProfile>>(emptyList()) }
     var collaborators by remember { mutableStateOf<List<SocialProfile>>(emptyList()) }
     var music by remember { mutableStateOf<String?>(null) }
@@ -3412,11 +3529,7 @@ fun CreatePostScreen(repository: SocialRepository, onBack: () -> Unit) {
     var feeling by remember { mutableStateOf<String?>(null) }
     var background by remember { mutableStateOf<String?>(null) }
     var crossPost by remember { mutableStateOf(false) }
-    var showMusic by remember { mutableStateOf(false) }
-    var showLocation by remember { mutableStateOf(false) }
     var locationDraft by remember { mutableStateOf("") }
-    var showFeeling by remember { mutableStateOf(false) }
-    var showBackground by remember { mutableStateOf(false) }
     var linkPreview by remember { mutableStateOf<SocialLinkPreview?>(null) }
     var previewLoading by remember { mutableStateOf(false) }
     var dismissedPreviewUrl by remember { mutableStateOf<String?>(null) }
@@ -3442,6 +3555,84 @@ fun CreatePostScreen(repository: SocialRepository, onBack: () -> Unit) {
         previewLoading = false
     }
     BackHandler(enabled = busy) { }
+
+    when (composerPage) {
+        "music" -> {
+            ComposerChoicePage(
+                title = "Add music", queryHint = "Search music",
+                options = listOf(
+                    Triple("Original audio", "Original audio", "Keep the sound from your video"),
+                    Triple("Trending", "Trending", "Popular now on Tiwi"),
+                    Triple("Chill", "Chill", "Relaxed and calm"),
+                    Triple("Pop", "Pop", "Popular music"),
+                    Triple("Acoustic", "Acoustic", "Warm unplugged sound")
+                ),
+                selected = music, icon = Icons.Default.MusicNote,
+                onBack = { composerPage = null }, onSelect = { music = it; composerPage = null }
+            )
+            return
+        }
+        "feeling" -> {
+            ComposerChoicePage(
+                title = "Feeling / activity", queryHint = "Search feelings or activities",
+                options = listOf(
+                    Triple("Happy", "Happy", "Feeling good"), Triple("Excited", "Excited", "Looking forward to something"),
+                    Triple("Loved", "Loved", "Feeling loved"), Triple("Celebrating", "Celebrating", "A special moment"),
+                    Triple("Traveling", "Traveling", "On a journey"), Triple("Watching", "Watching", "A movie, show or live event"),
+                    Triple("Listening", "Listening", "Music, a podcast or audio"), Triple("Playing", "Playing", "A game or sport")
+                ),
+                selected = feeling, icon = Icons.Outlined.EmojiEmotions,
+                onBack = { composerPage = null }, onSelect = { feeling = it; composerPage = null }
+            )
+            return
+        }
+        "location" -> {
+            ComposerLocationPage(
+                initialValue = locationDraft, onBack = { composerPage = null },
+                onSave = { location = it; locationDraft = it.orEmpty(); composerPage = null }
+            )
+            return
+        }
+        "people" -> {
+            ComposerPeoplePage(
+                repository = repository, tagged = taggedPeople, collaborators = collaborators,
+                onBack = { composerPage = null },
+                onDone = { newTagged, newCollaborators ->
+                    taggedPeople = newTagged
+                    collaborators = newCollaborators
+                    val mentions = newTagged.map { "@${it.username}" }.filterNot { text.contains(it, ignoreCase = true) }
+                    if (mentions.isNotEmpty()) text = listOf(text.trimEnd(), mentions.joinToString(" ")).filter { it.isNotBlank() }.joinToString(" ") + " "
+                    composerPage = null
+                }
+            )
+            return
+        }
+        "gallery" -> {
+            ComposerGalleryPage(
+                title = "Photos and videos", selected = selectedUris, gifOnly = false,
+                onBack = { composerPage = null }, onDone = { selectedUris = it.take(20); composerPage = null },
+                onSystemPicker = { mediaPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) }
+            )
+            return
+        }
+        "gif" -> {
+            ComposerGalleryPage(
+                title = "GIF", selected = selectedUris.filter { context.contentResolver.getType(it) == "image/gif" }, gifOnly = true,
+                onBack = { composerPage = null },
+                onDone = { gifs -> selectedUris = (selectedUris.filterNot { context.contentResolver.getType(it) == "image/gif" } + gifs).distinct().take(20); composerPage = null },
+                onSystemPicker = { gifPicker.launch("image/gif") }
+            )
+            return
+        }
+        "background" -> {
+            ComposerBackgroundPage(background, onBack = { composerPage = null }) { background = it; composerPage = null }
+            return
+        }
+        "audience" -> {
+            ComposerAudiencePage(visibility, onBack = { composerPage = null }) { visibility = it; composerPage = null }
+            return
+        }
+    }
 
     val publish = {
         if (!busy && (text.isNotBlank() || selectedUris.isNotEmpty() || linkPreview != null)) {
@@ -3499,24 +3690,37 @@ fun CreatePostScreen(repository: SocialRepository, onBack: () -> Unit) {
             contentPadding = PaddingValues(horizontal = 14.dp),
             horizontalArrangement = Arrangement.spacedBy(7.dp)
         ) {
-            item { ComposerChip(Icons.Default.MusicNote, music ?: "Music") { showMusic = true } }
-            item { ComposerChip(Icons.Default.PersonAdd, if (taggedPeople.isEmpty() && collaborators.isEmpty()) "Tag/collaborate" else "${taggedPeople.size + collaborators.size} people") { showTagMode = true } }
-            item { ComposerChip(Icons.Default.LocationOn, location ?: "Location") { locationDraft = location.orEmpty(); showLocation = true } }
-            item { ComposerChip(Icons.Outlined.EmojiEmotions, feeling ?: "Feeling/activity") { showFeeling = true } }
+            item { ComposerChip(Icons.Default.MusicNote, music ?: "Music") { composerPage = "music" } }
+            item { ComposerChip(Icons.Default.PersonAdd, if (taggedPeople.isEmpty() && collaborators.isEmpty()) "Tag/collaborate" else "${taggedPeople.size + collaborators.size} people") { composerPage = "people" } }
+            item { ComposerChip(Icons.Default.LocationOn, location ?: "Location") { locationDraft = location.orEmpty(); composerPage = "location" } }
+            item { ComposerChip(Icons.Outlined.EmojiEmotions, feeling ?: "Feeling/activity") { composerPage = "feeling" } }
         }
 
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
             Box(
                 Modifier.fillMaxWidth().heightIn(min = if (selectedUris.isEmpty() && linkPreview == null) 260.dp else 110.dp)
                     .then(background?.let { Modifier.background(Color(android.graphics.Color.parseColor(it))) } ?: Modifier)
-                    .padding(horizontal = 16.dp, vertical = 14.dp)
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                contentAlignment = if (background != null) Alignment.Center else Alignment.TopStart
             ) {
-                if (text.isBlank()) Text("What's on your mind?", color = Color(0xFF74777D), fontSize = 20.sp)
+                if (text.isBlank()) Text(
+                    "What's on your mind?",
+                    color = if (background == "#111827") Color.White.copy(alpha = .72f) else Color(0xFF74777D),
+                    fontSize = 20.sp,
+                    textAlign = if (background != null) TextAlign.Center else TextAlign.Start,
+                    modifier = Modifier.fillMaxWidth()
+                )
                 BasicTextField(
                     value = text,
                     onValueChange = { text = it.take(10_000) },
                     modifier = Modifier.fillMaxWidth(),
-                    textStyle = MaterialTheme.typography.bodyLarge.copy(color = Color.Black, fontSize = 18.sp, lineHeight = 24.sp),
+                    textStyle = MaterialTheme.typography.bodyLarge.copy(
+                        color = if (background == "#111827") Color.White else Color.Black,
+                        fontSize = if (background != null) 23.sp else 18.sp,
+                        lineHeight = if (background != null) 29.sp else 24.sp,
+                        fontWeight = if (background != null) FontWeight.Bold else FontWeight.Normal,
+                        textAlign = if (background != null) TextAlign.Center else TextAlign.Start
+                    ),
                     cursorBrush = SolidColor(TiwiBlue)
                 )
             }
@@ -3556,38 +3760,21 @@ fun CreatePostScreen(repository: SocialRepository, onBack: () -> Unit) {
             }
         }
 
-        if (showBackground) LazyRow(
-            Modifier.fillMaxWidth().padding(vertical = 4.dp),
-            contentPadding = PaddingValues(horizontal = 14.dp),
-            horizontalArrangement = Arrangement.spacedBy(9.dp)
-        ) {
-            item { Box(Modifier.size(30.dp).border(1.dp, Color.LightGray, CircleShape).clip(CircleShape).background(Color.White).clickable { background = null; showBackground = false }, contentAlignment = Alignment.Center) { Icon(Icons.Default.Close, null, Modifier.size(15.dp)) } }
-            items(listOf("#E7F3FF", "#FFF2CC", "#FDE7F3", "#E7F7ED", "#EFE7FD", "#111827")) { color ->
-                Box(Modifier.size(30.dp).clip(CircleShape).background(Color(android.graphics.Color.parseColor(color))).clickable { background = color; showBackground = false })
-            }
-        }
         LazyRow(
             Modifier.fillMaxWidth().padding(top = 4.dp),
             contentPadding = PaddingValues(horizontal = 12.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            item { ComposerTool(Icons.Outlined.PhotoLibrary, "Gallery") { mediaPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) } }
-            item { ComposerTool(Icons.Default.GifBox, "GIF") { gifPicker.launch("image/gif") } }
-            item { ComposerTool(Icons.Outlined.Videocam, "Live") { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://tiwlo.com/social/live/create"))) } }
-            item { ComposerTool(Icons.Outlined.Palette, "Background") { showBackground = !showBackground } }
+            item { ComposerTool(Icons.Outlined.PhotoLibrary, "Gallery") { composerPage = "gallery" } }
+            item { ComposerTool(Icons.Default.GifBox, "GIF") { composerPage = "gif" } }
+            item { ComposerTool(Icons.Outlined.Videocam, "Live") { onLive() } }
+            item { ComposerTool(Icons.Outlined.Palette, "Background") { composerPage = "background" } }
         }
         Row(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box {
-                ComposerChip(
-                    when (visibility) { "private" -> Icons.Default.Lock; "followers" -> Icons.Default.Group; else -> Icons.Default.Public },
-                    when (visibility) { "private" -> "Only me"; "followers" -> "Followers"; else -> "Public" }
-                ) { showPrivacyMenu = true }
-                DropdownMenu(expanded = showPrivacyMenu, onDismissRequest = { showPrivacyMenu = false }) {
-                    listOf(Triple("public", Icons.Default.Public, "Public"), Triple("followers", Icons.Default.Group, "Followers"), Triple("private", Icons.Default.Lock, "Only me")).forEach { option ->
-                        DropdownMenuItem(text = { Text(option.third) }, leadingIcon = { Icon(option.second, null) }, onClick = { visibility = option.first; showPrivacyMenu = false })
-                    }
-                }
-            }
+            ComposerChip(
+                when (visibility) { "private" -> Icons.Default.Lock; "followers" -> Icons.Default.Group; else -> Icons.Default.Public },
+                when (visibility) { "private" -> "Only me"; "followers" -> "Followers"; else -> "Public" }
+            ) { composerPage = "audience" }
             Spacer(Modifier.width(8.dp))
             Surface(shape = RoundedCornerShape(18.dp), color = Color(0xFFF0F2F5), tonalElevation = 0.dp, modifier = Modifier.height(32.dp).clickable { crossPost = !crossPost }) {
                 Row(Modifier.padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -3598,33 +3785,266 @@ fun CreatePostScreen(repository: SocialRepository, onBack: () -> Unit) {
         }
     }
 
-    if (showTagMode) AlertDialog(
-        onDismissRequest = { showTagMode = false }, containerColor = Color.White, tonalElevation = 0.dp,
-        title = { Text("Tag or collaborate", fontSize = 17.sp) },
-        text = { Column {
-            ComposerDialogRow(Icons.Default.PersonAdd, "Tag people", "Mention friends in this post") { collaboratorMode = false; showTagMode = false; showMentionPicker = true }
-            ComposerDialogRow(Icons.Default.GroupAdd, "Invite collaborator", "The post can appear on both profiles") { collaboratorMode = true; showTagMode = false; showMentionPicker = true }
-        } },
-        confirmButton = {}
+}
+
+private data class ComposerDeviceMedia(val uri: Uri, val mime: String, val video: Boolean)
+
+private suspend fun loadComposerDeviceMedia(context: Context, gifOnly: Boolean): List<ComposerDeviceMedia> = withContext(Dispatchers.IO) {
+    val collection = MediaStore.Files.getContentUri("external")
+    val projection = arrayOf(
+        MediaStore.Files.FileColumns._ID,
+        MediaStore.Files.FileColumns.MIME_TYPE,
+        MediaStore.Files.FileColumns.MEDIA_TYPE
     )
-    if (showMentionPicker) ProfileMentionSheet(repository, { showMentionPicker = false }) { profile ->
-        if (collaboratorMode) collaborators = (collaborators + profile).distinctBy { it.userId }
-        else {
-            taggedPeople = (taggedPeople + profile).distinctBy { it.userId }
-            val mention = "@${profile.username}"
-            if (!text.contains(mention, true)) text = listOf(text.trimEnd(), mention).filter { it.isNotBlank() }.joinToString(" ") + " "
-        }
-        showMentionPicker = false
+    val selection = if (gifOnly) {
+        "${MediaStore.Files.FileColumns.MIME_TYPE} = ?"
+    } else {
+        "${MediaStore.Files.FileColumns.MEDIA_TYPE} = ? OR ${MediaStore.Files.FileColumns.MEDIA_TYPE} = ?"
     }
-    if (showMusic) ChoiceDialog("Add music", listOf("Original audio" to "Original audio", "Chill" to "Chill", "Pop" to "Pop", "Acoustic" to "Acoustic", "Trending" to "Trending"), music.orEmpty(), { showMusic = false }) { music = it; showMusic = false }
-    if (showFeeling) ChoiceDialog("Feeling / activity", listOf("Happy" to "😊 Happy", "Excited" to "🤩 Excited", "Loved" to "🥰 Loved", "Celebrating" to "🎉 Celebrating", "Traveling" to "✈️ Traveling"), feeling.orEmpty(), { showFeeling = false }) { feeling = it; showFeeling = false }
-    if (showLocation) AlertDialog(
-        onDismissRequest = { showLocation = false }, containerColor = Color.White, tonalElevation = 0.dp,
-        title = { Text("Add location", fontSize = 17.sp) },
-        text = { OutlinedTextField(locationDraft, { locationDraft = it.take(160) }, singleLine = true, placeholder = { Text("City or place") }, modifier = Modifier.fillMaxWidth()) },
-        confirmButton = { TextButton(onClick = { location = locationDraft.trim().takeIf { it.isNotBlank() }; showLocation = false }) { Text("Add") } },
-        dismissButton = { TextButton(onClick = { location = null; showLocation = false }) { Text("Remove") } }
+    val args = if (gifOnly) arrayOf("image/gif") else arrayOf(
+        MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE.toString(),
+        MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO.toString()
     )
+    runCatching {
+        context.contentResolver.query(
+            collection, projection, selection, args,
+            "${MediaStore.Files.FileColumns.DATE_ADDED} DESC"
+        )?.use { cursor ->
+            val idIndex = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns._ID)
+            val mimeIndex = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.MIME_TYPE)
+            val typeIndex = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.MEDIA_TYPE)
+            buildList {
+                while (cursor.moveToNext() && size < 400) {
+                    val id = cursor.getLong(idIndex)
+                    val mime = cursor.getString(mimeIndex).orEmpty()
+                    val mediaType = cursor.getInt(typeIndex)
+                    add(ComposerDeviceMedia(android.content.ContentUris.withAppendedId(collection, id), mime, mediaType == MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO))
+                }
+            }
+        }.orEmpty()
+    }.getOrDefault(emptyList())
+}
+
+@Composable
+private fun ComposerPageHeader(title: String, onBack: () -> Unit, action: String? = null, actionEnabled: Boolean = true, onAction: () -> Unit = {}) {
+    Row(
+        Modifier.fillMaxWidth().statusBarsPadding().height(50.dp).padding(horizontal = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", Modifier.size(22.dp)) }
+        Text(title, Modifier.weight(1f), fontSize = 17.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        if (action != null) TextButton(onClick = onAction, enabled = actionEnabled) { Text(action, fontWeight = FontWeight.Bold, fontSize = 12.sp) }
+    }
+    HorizontalDivider(thickness = .6.dp, color = Color(0xFFE5E7EB))
+}
+
+@Composable
+private fun ComposerChoicePage(
+    title: String,
+    queryHint: String,
+    options: List<Triple<String, String, String>>,
+    selected: String?,
+    icon: ImageVector,
+    onBack: () -> Unit,
+    onSelect: (String?) -> Unit
+) {
+    var query by remember { mutableStateOf("") }
+    val filtered = remember(query, options) {
+        if (query.isBlank()) options else options.filter { it.second.contains(query, true) || it.third.contains(query, true) }
+    }
+    Column(Modifier.fillMaxSize().background(Color.White)) {
+        ComposerPageHeader(title, onBack)
+        Surface(
+            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp).height(38.dp),
+            shape = RoundedCornerShape(19.dp), color = Color(0xFFF0F2F5), tonalElevation = 0.dp
+        ) {
+            Row(Modifier.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Search, null, Modifier.size(18.dp), Color(0xFF667085))
+                BasicTextField(
+                    query, { query = it.take(80) }, singleLine = true, modifier = Modifier.weight(1f).padding(start = 8.dp),
+                    textStyle = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp, color = Color.Black),
+                    decorationBox = { inner -> if (query.isBlank()) Text(queryHint, color = Color(0xFF667085), fontSize = 13.sp); inner() }
+                )
+            }
+        }
+        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 12.dp)) {
+            item {
+                ComposerSelectionRow(Icons.Default.Close, "None", "Remove this from your post", selected == null) { onSelect(null) }
+            }
+            items(filtered, key = { it.first }) { option ->
+                ComposerSelectionRow(icon, option.second, option.third, selected == option.first) { onSelect(option.first) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ComposerSelectionRow(icon: ImageVector, title: String, subtitle: String, selected: Boolean, onClick: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 14.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(Modifier.size(38.dp).background(Color(0xFFF0F2F5), CircleShape), contentAlignment = Alignment.Center) { Icon(icon, null, Modifier.size(20.dp)) }
+        Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
+            Text(title, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+            Text(subtitle, color = Color(0xFF667085), fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        if (selected) Icon(Icons.Default.CheckCircle, "Selected", tint = TiwiBlue, modifier = Modifier.size(21.dp))
+    }
+}
+
+@Composable
+private fun ComposerLocationPage(initialValue: String, onBack: () -> Unit, onSave: (String?) -> Unit) {
+    var value by remember { mutableStateOf(initialValue) }
+    Column(Modifier.fillMaxSize().background(Color.White)) {
+        ComposerPageHeader("Add location", onBack, "Save", value.isNotBlank()) { onSave(value.trim().takeIf(String::isNotBlank)) }
+        OutlinedTextField(
+            value, { value = it.take(160) }, modifier = Modifier.fillMaxWidth().padding(12.dp), singleLine = true,
+            leadingIcon = { Icon(Icons.Default.LocationOn, null, tint = TiwiBlue) },
+            placeholder = { Text("Search a city, place or business") }, shape = RoundedCornerShape(12.dp)
+        )
+        if (initialValue.isNotBlank()) ComposerSelectionRow(Icons.Outlined.Delete, "Remove location", "Do not show a place on this post", false) { onSave(null) }
+        Text("Your precise device location is never posted. Only the place you choose is saved.", color = Color(0xFF667085), fontSize = 10.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 5.dp))
+    }
+}
+
+@Composable
+private fun ComposerAudiencePage(selected: String, onBack: () -> Unit, onSelect: (String) -> Unit) {
+    Column(Modifier.fillMaxSize().background(Color.White)) {
+        ComposerPageHeader("Post audience", onBack)
+        Text("Who can see your post?", fontWeight = FontWeight.Black, fontSize = 17.sp, modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp))
+        listOf(
+            Triple("public", Icons.Default.Public, "Public") to "Anyone on or off Tiwi",
+            Triple("followers", Icons.Default.Group, "Followers") to "People who follow you",
+            Triple("private", Icons.Default.Lock, "Only me") to "Only you"
+        ).forEach { item -> ComposerSelectionRow(item.first.second, item.first.third, item.second, selected == item.first.first) { onSelect(item.first.first) } }
+    }
+}
+
+@Composable
+private fun ComposerBackgroundPage(selected: String?, onBack: () -> Unit, onSelect: (String?) -> Unit) {
+    val colors = listOf<String?>(null, "#E7F3FF", "#FFF2CC", "#FDE7F3", "#E7F7ED", "#EFE7FD", "#111827", "#1877F2", "#C026D3", "#EA580C")
+    Column(Modifier.fillMaxSize().background(Color.White)) {
+        ComposerPageHeader("Background", onBack)
+        Text("Choose a background", fontWeight = FontWeight.Black, fontSize = 16.sp, modifier = Modifier.padding(14.dp))
+        LazyVerticalGrid(GridCells.Fixed(3), contentPadding = PaddingValues(10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            gridItems(colors, key = { it ?: "none" }) { raw ->
+                Box(
+                    Modifier.aspectRatio(1f).clip(RoundedCornerShape(12.dp))
+                        .background(raw?.let { Color(android.graphics.Color.parseColor(it)) } ?: Color.White)
+                        .border(if (selected == raw) 2.dp else .7.dp, if (selected == raw) TiwiBlue else Color(0xFFD0D5DD), RoundedCornerShape(12.dp))
+                        .clickable { onSelect(raw) },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(if (raw == null) "No background" else "Aa", color = if (raw == "#111827" || raw == "#1877F2" || raw == "#C026D3" || raw == "#EA580C") Color.White else Color.Black, fontWeight = FontWeight.Black, textAlign = TextAlign.Center)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ComposerPeoplePage(
+    repository: SocialRepository,
+    tagged: List<SocialProfile>,
+    collaborators: List<SocialProfile>,
+    onBack: () -> Unit,
+    onDone: (List<SocialProfile>, List<SocialProfile>) -> Unit
+) {
+    var query by remember { mutableStateOf("") }
+    var mode by remember { mutableIntStateOf(0) }
+    var people by remember { mutableStateOf<List<SocialProfile>>(emptyList()) }
+    var selectedTags by remember { mutableStateOf(tagged) }
+    var selectedCollaborators by remember { mutableStateOf(collaborators) }
+    var loading by remember { mutableStateOf(false) }
+    LaunchedEffect(query) {
+        delay(220)
+        loading = true
+        people = runCatching { repository.searchProfiles(query) }.getOrDefault(emptyList()).take(60)
+        loading = false
+    }
+    Column(Modifier.fillMaxSize().background(Color.White)) {
+        ComposerPageHeader("Tag or collaborate", onBack, "Done") { onDone(selectedTags, selectedCollaborators) }
+        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
+            listOf("Tag people", "Collaborators").forEachIndexed { index, label ->
+                SegmentedButton(selected = mode == index, onClick = { mode = index }, shape = SegmentedButtonDefaults.itemShape(index, 2), label = { Text(label, fontSize = 11.sp) })
+            }
+        }
+        Surface(Modifier.fillMaxWidth().padding(horizontal = 12.dp).height(38.dp), shape = RoundedCornerShape(19.dp), color = Color(0xFFF0F2F5), tonalElevation = 0.dp) {
+            Row(Modifier.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Search, null, Modifier.size(18.dp), Color.Gray)
+                BasicTextField(query, { query = it.take(80) }, Modifier.weight(1f).padding(start = 8.dp), singleLine = true, decorationBox = { inner -> if (query.isBlank()) Text("Search name or username", color = Color.Gray, fontSize = 12.sp); inner() })
+            }
+        }
+        if (mode == 1) Text("Collaborators can accept the invitation and show this post on their profile. You can invite up to 5 people.", color = Color(0xFF667085), fontSize = 10.sp, modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp))
+        if (loading) Box(Modifier.fillMaxWidth().height(90.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp) }
+        else LazyColumn(Modifier.fillMaxSize()) {
+            items(people, key = { "composer-person-${it.userId}" }) { person ->
+                val selected = if (mode == 0) selectedTags.any { it.userId == person.userId } else selectedCollaborators.any { it.userId == person.userId }
+                Row(Modifier.fillMaxWidth().clickable {
+                    if (mode == 0) selectedTags = if (selected) selectedTags.filterNot { it.userId == person.userId } else selectedTags + person
+                    else selectedCollaborators = if (selected) selectedCollaborators.filterNot { it.userId == person.userId } else (selectedCollaborators + person).distinctBy { it.userId }.take(5)
+                }.padding(horizontal = 13.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
+                    DecoratedAvatar(person.user.avatar, R.drawable.img_tiwi_avatar_1, person.avatarDecoration, Modifier.size(40.dp), animateDecoration = false)
+                    Column(Modifier.weight(1f).padding(start = 9.dp)) {
+                        Text(person.user.name.ifBlank { person.username }, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        Text("@${person.username}", color = Color(0xFF667085), fontSize = 10.sp)
+                    }
+                    Checkbox(selected, onCheckedChange = null)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ComposerGalleryPage(
+    title: String,
+    selected: List<Uri>,
+    gifOnly: Boolean,
+    onBack: () -> Unit,
+    onDone: (List<Uri>) -> Unit,
+    onSystemPicker: () -> Unit
+) {
+    val context = LocalContext.current
+    var media by remember { mutableStateOf<List<ComposerDeviceMedia>>(emptyList()) }
+    var chosen by remember { mutableStateOf(selected) }
+    var filter by remember { mutableIntStateOf(0) }
+    var loading by remember { mutableStateOf(true) }
+    LaunchedEffect(selected) { chosen = selected }
+    LaunchedEffect(gifOnly) {
+        loading = true
+        media = loadComposerDeviceMedia(context, gifOnly)
+        loading = false
+    }
+    val filtered = remember(media, filter, gifOnly) {
+        if (gifOnly || filter == 0) media else media.filter { if (filter == 2) it.video else !it.video }
+    }
+    Column(Modifier.fillMaxSize().background(Color.White)) {
+        ComposerPageHeader(title, onBack, "Done (${chosen.size})", true) { onDone(chosen) }
+        if (!gifOnly) SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 7.dp)) {
+            listOf("All", "Photos", "Videos").forEachIndexed { index, label ->
+                SegmentedButton(selected = filter == index, onClick = { filter = index }, shape = SegmentedButtonDefaults.itemShape(index, 3), label = { Text(label, fontSize = 10.sp) })
+            }
+        }
+        if (loading) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp) }
+        else if (filtered.isEmpty()) Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+            Icon(if (gifOnly) Icons.Default.GifBox else Icons.Outlined.PhotoLibrary, null, Modifier.size(38.dp), Color(0xFF667085))
+            Text(if (gifOnly) "No GIFs found on this device" else "Allow photo and video access to browse here", fontWeight = FontWeight.Bold, fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp))
+            TextButton(onClick = onSystemPicker) { Text(if (gifOnly) "Choose a GIF" else "Choose photos and videos") }
+        } else LazyVerticalGrid(GridCells.Fixed(3), Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(1.dp), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+            gridItems(filtered, key = { it.uri.toString() }) { item ->
+                val index = chosen.indexOf(item.uri)
+                Box(Modifier.aspectRatio(1f).background(Color.Black).clickable {
+                    chosen = if (index >= 0) chosen.filterNot { it == item.uri } else (chosen + item.uri).distinct().take(20)
+                }) {
+                    AsyncImage(item.uri, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                    if (item.video) Icon(Icons.Default.PlayCircle, "Video", Modifier.align(Alignment.Center).size(30.dp), Color.White)
+                    if (index >= 0) Box(Modifier.align(Alignment.TopEnd).padding(5.dp).size(22.dp).background(TiwiBlue, CircleShape), contentAlignment = Alignment.Center) { Text("${index + 1}", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold) }
+                }
+            }
+        }
+    }
 }
 
 @Composable
@@ -4046,6 +4466,188 @@ private fun ReelAudioPage(current: Reel, reels: List<Reel>, onBack: () -> Unit, 
 }
 
 @Composable
+private fun LiveSetupPage(repository: SocialRepository, onBack: () -> Unit, onStarted: (SocialLiveStream) -> Unit) {
+    val context = LocalContext.current
+    val scope = rememberTiwiCoroutineScope()
+    val user by repository.currentUser.collectAsState()
+    var title by remember { mutableStateOf("") }
+    var description by remember { mutableStateOf("") }
+    var visibility by remember { mutableStateOf("public") }
+    var commentsEnabled by remember { mutableStateOf(true) }
+    var busy by remember { mutableStateOf(false) }
+
+    val start: () -> Unit = {
+        if (!busy && title.isNotBlank()) {
+            busy = true
+            scope.launch {
+                runCatching { repository.startLiveStream(title, description.takeIf(String::isNotBlank), visibility, commentsEnabled) }
+                    .onSuccess(onStarted)
+                    .onFailure { Toast.makeText(context, it.message ?: "Live could not start", Toast.LENGTH_LONG).show() }
+                busy = false
+            }
+        }
+    }
+    val permissions = arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)
+    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
+        if (permissions.all { result[it] == true || ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED }) start()
+        else Toast.makeText(context, "Camera and microphone permission are required", Toast.LENGTH_LONG).show()
+    }
+    val requestAndStart = {
+        if (permissions.all { ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED }) start()
+        else permissionLauncher.launch(permissions)
+    }
+
+    Column(Modifier.fillMaxSize().background(Color.White).imePadding()) {
+        ComposerPageHeader("Go live", onBack)
+        Box(Modifier.fillMaxWidth().height(220.dp).background(Color(0xFF101828)), contentAlignment = Alignment.Center) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                TiwiAvatar(user?.avatar, R.drawable.img_tiwi_avatar_1, Modifier.size(76.dp).clip(CircleShape))
+                Text("Camera preview starts securely when you go live", color = Color.White, fontSize = 11.sp, modifier = Modifier.padding(top = 10.dp))
+            }
+            Surface(Modifier.align(Alignment.TopStart).padding(10.dp), color = Color(0xFFE11D48), shape = RoundedCornerShape(5.dp), tonalElevation = 0.dp) {
+                Text("LIVE", color = Color.White, fontWeight = FontWeight.Black, fontSize = 10.sp, modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp))
+            }
+        }
+        OutlinedTextField(title, { title = it.take(160) }, Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), singleLine = true, label = { Text("Live title") }, shape = RoundedCornerShape(11.dp))
+        OutlinedTextField(description, { description = it.take(1000) }, Modifier.fillMaxWidth().padding(horizontal = 12.dp), minLines = 2, maxLines = 4, label = { Text("Say something about your live") }, shape = RoundedCornerShape(11.dp))
+        Text("Audience", fontWeight = FontWeight.Black, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp))
+        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
+            listOf("public" to "Public", "followers" to "Followers", "private" to "Only me").forEachIndexed { index, option ->
+                SegmentedButton(selected = visibility == option.first, onClick = { visibility = option.first }, shape = SegmentedButtonDefaults.itemShape(index, 3), label = { Text(option.second, fontSize = 10.sp) })
+            }
+        }
+        Row(Modifier.fillMaxWidth().clickable { commentsEnabled = !commentsEnabled }.padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Outlined.ChatBubbleOutline, null, Modifier.size(21.dp))
+            Column(Modifier.weight(1f).padding(start = 10.dp)) { Text("Live comments", fontWeight = FontWeight.Bold, fontSize = 13.sp); Text("Viewers can comment and reply", color = Color.Gray, fontSize = 10.sp) }
+            Switch(commentsEnabled, { commentsEnabled = it })
+        }
+        Text("Video quality changes automatically between 360p, 480p and 720p based on your connection. If the host stays offline for 30 seconds, the live ends safely.", color = Color(0xFF667085), fontSize = 10.sp, lineHeight = 14.sp, modifier = Modifier.padding(horizontal = 14.dp))
+        Spacer(Modifier.weight(1f))
+        Button(
+            onClick = requestAndStart, enabled = title.isNotBlank() && !busy,
+            modifier = Modifier.fillMaxWidth().navigationBarsPadding().padding(12.dp).height(44.dp),
+            shape = RoundedCornerShape(10.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE11D48))
+        ) {
+            if (busy) CircularProgressIndicator(Modifier.size(18.dp), color = Color.White, strokeWidth = 2.dp)
+            else { Icon(Icons.Default.Videocam, null, Modifier.size(19.dp)); Text("Go live", Modifier.padding(start = 7.dp), fontWeight = FontWeight.Black) }
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun LiveBroadcastScreen(repository: SocialRepository, stream: SocialLiveStream, host: Boolean, onEnd: () -> Unit) {
+    val context = LocalContext.current
+    val scope = rememberTiwiCoroutineScope()
+    val manager = remember(stream.id, host) { WebRtcLiveManager(context, repository) }
+    val state by manager.state.collectAsState()
+    val localVideo by manager.localVideo.collectAsState()
+    val remoteVideo by manager.remoteVideo.collectAsState()
+    val viewerCount by manager.viewerCount.collectAsState()
+    val paused by manager.paused.collectAsState()
+    val microphoneEnabled by manager.microphoneEnabled.collectAsState()
+    var comments by remember { mutableStateOf<List<SocialLiveComment>>(emptyList()) }
+    var commentText by remember { mutableStateOf("") }
+    var replyTo by remember { mutableStateOf<SocialLiveComment?>(null) }
+    var started by remember { mutableStateOf(false) }
+    val ownId = repository.currentUserId()
+
+    LaunchedEffect(stream.id, host) {
+        if (!started) {
+            started = true
+            runCatching { if (host) manager.startHost(stream) else manager.join(stream) }
+                .onFailure { Toast.makeText(context, it.message ?: "Could not open live", Toast.LENGTH_LONG).show(); onEnd() }
+        }
+    }
+    LaunchedEffect(stream.id) {
+        while (true) {
+            comments = runCatching { repository.liveComments(stream.id) }.getOrDefault(comments)
+            delay(1_500)
+        }
+    }
+    LaunchedEffect(state) {
+        if (state.startsWith("Live ended")) { delay(1_200); onEnd() }
+    }
+    BackHandler {
+        if (host) manager.end() else scope.launch { runCatching { repository.leaveLiveStream(stream.id) } }
+        onEnd()
+    }
+    DisposableEffect(manager) { onDispose { manager.dispose(sendEnd = false) } }
+
+    Box(Modifier.fillMaxSize().background(Color.Black)) {
+        val track = if (host) localVideo else remoteVideo
+        if (track != null) WebRtcVideoSurface(track, manager.eglContext, Modifier.fillMaxSize(), mirror = host)
+        else Box(Modifier.fillMaxSize().background(Color(0xFF101828)), contentAlignment = Alignment.Center) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                CircularProgressIndicator(Modifier.size(28.dp), color = Color.White, strokeWidth = 2.dp)
+                Text(state, color = Color.White, fontSize = 12.sp, modifier = Modifier.padding(top = 10.dp))
+            }
+        }
+        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = .45f), Color.Transparent, Color.Black.copy(alpha = .8f)))))
+        Row(Modifier.align(Alignment.TopStart).statusBarsPadding().padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Surface(color = Color(0xFFE11D48), shape = RoundedCornerShape(5.dp), tonalElevation = 0.dp) { Text("LIVE", color = Color.White, fontWeight = FontWeight.Black, fontSize = 10.sp, modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)) }
+            Surface(Modifier.padding(start = 6.dp), color = Color.Black.copy(alpha = .45f), shape = RoundedCornerShape(5.dp), tonalElevation = 0.dp) {
+                Row(Modifier.padding(horizontal = 7.dp, vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.Visibility, null, Modifier.size(13.dp), Color.White); Text(formatCount(viewerCount.coerceAtLeast(stream.viewerCount)), color = Color.White, fontSize = 10.sp, modifier = Modifier.padding(start = 4.dp)) }
+            }
+        }
+        IconButton(onClick = {
+            if (host) manager.end() else scope.launch { runCatching { repository.leaveLiveStream(stream.id) } }
+            onEnd()
+        }, modifier = Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(6.dp).background(Color.Black.copy(alpha = .38f), CircleShape)) { Icon(Icons.Default.Close, "Close live", tint = Color.White) }
+
+        Column(Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(bottom = 82.dp)) {
+            if (paused) Surface(color = Color.Black.copy(alpha = .62f), tonalElevation = 0.dp, modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp), shape = RoundedCornerShape(7.dp)) { Text("Live video is paused", color = Color.White, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp)) }
+            LazyColumn(Modifier.fillMaxWidth().heightIn(max = 205.dp), contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                items(comments.takeLast(40), key = { it.id }) { comment ->
+                    Row(
+                        Modifier.fillMaxWidth().combinedClickable(onClick = { replyTo = comment }, onLongClick = {
+                            if (comment.authorId == ownId || host) scope.launch { runCatching { repository.deleteLiveComment(comment.id) }; comments = comments.filterNot { it.id == comment.id } }
+                        }), verticalAlignment = Alignment.Top
+                    ) {
+                        TiwiAvatar(comment.author.avatar, R.drawable.img_tiwi_avatar_1, Modifier.size(28.dp).clip(CircleShape))
+                        Surface(Modifier.padding(start = 6.dp).widthIn(max = 270.dp), color = Color.Black.copy(alpha = .52f), shape = RoundedCornerShape(10.dp), tonalElevation = 0.dp) {
+                            Column(Modifier.padding(horizontal = 8.dp, vertical = 5.dp)) {
+                                Text(comment.author.name.ifBlank { "Tiwi viewer" }, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 10.sp)
+                                Text(comment.body, color = Color.White, fontSize = 11.sp, lineHeight = 14.sp)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().background(Color.Black.copy(alpha = .56f)).navigationBarsPadding()) {
+            replyTo?.let { reply -> Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) { Text("Replying to ${reply.author.name}", color = Color.White.copy(alpha = .8f), fontSize = 9.sp, modifier = Modifier.weight(1f)); IconButton(onClick = { replyTo = null }, Modifier.size(24.dp)) { Icon(Icons.Default.Close, null, tint = Color.White, modifier = Modifier.size(14.dp)) } } }
+            Row(Modifier.fillMaxWidth().height(52.dp).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (host) {
+                    IconButton(onClick = manager::togglePause) { Icon(if (paused) Icons.Default.PlayArrow else Icons.Default.Pause, "Pause live", tint = Color.White) }
+                    IconButton(onClick = manager::switchCamera) { Icon(Icons.Default.Cameraswitch, "Switch camera", tint = Color.White) }
+                    IconButton(onClick = manager::toggleMicrophone) { Icon(if (microphoneEnabled) Icons.Default.Mic else Icons.Default.MicOff, "Microphone", tint = Color.White) }
+                }
+                Surface(Modifier.weight(1f).height(36.dp), shape = RoundedCornerShape(18.dp), color = Color.White.copy(alpha = .16f), tonalElevation = 0.dp) {
+                    BasicTextField(
+                        commentText, { commentText = it.take(1000) }, Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 8.dp),
+                        enabled = stream.commentsEnabled || host,
+                        textStyle = MaterialTheme.typography.bodyMedium.copy(color = Color.White, fontSize = 12.sp),
+                        decorationBox = { inner -> if (commentText.isBlank()) Text(if (stream.commentsEnabled || host) "Comment on this live" else "Comments are off", color = Color.White.copy(alpha = .66f), fontSize = 11.sp); inner() }
+                    )
+                }
+                IconButton(onClick = {
+                    val body = commentText.trim()
+                    if (body.isNotBlank() && (stream.commentsEnabled || host)) {
+                        commentText = ""
+                        val replyId = replyTo?.id
+                        replyTo = null
+                        scope.launch { runCatching { repository.addLiveComment(stream.id, body, replyId) }.onSuccess { comments = comments + it } }
+                    }
+                }) { Icon(Icons.AutoMirrored.Outlined.Send, "Send comment", tint = if (commentText.isBlank()) Color.Gray else TiwiBlue) }
+                if (host) IconButton(onClick = { manager.end(); onEnd() }) { Icon(Icons.Default.StopCircle, "End live", tint = Color(0xFFFF4D67), modifier = Modifier.size(28.dp)) }
+            }
+        }
+    }
+}
+
+@Composable
 private fun SocialCallScreen(repository: SocialRepository, request: TiwiCallRequest, onEnd: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberTiwiCoroutineScope()
@@ -4272,7 +4874,8 @@ fun NotificationsScreen(
     repository: SocialRepository,
     onProfileClick: (String) -> Unit = {},
     onPostClick: (String) -> Unit = {},
-    onSupportCenter: () -> Unit = {}
+    onSupportCenter: () -> Unit = {},
+    onLive: (SocialLiveStream) -> Unit = {}
 ) {
     val notifications by repository.notifications.collectAsState()
     val syncing by repository.syncing.collectAsState()
@@ -4304,8 +4907,10 @@ fun NotificationsScreen(
                             if (notification.status == "unread") runCatching { repository.markNotificationRead(notification.id) }
                             val actorId = notification.metadata["actorId"]?.toString()
                             val postId = notification.metadata["postId"]?.toString()
+                            val liveId = notification.metadata["liveStreamId"]?.toString()
                             when {
                                 notification.metadata["destination"]?.toString() == "support_center" -> onSupportCenter()
+                                !liveId.isNullOrBlank() -> repository.getLiveStream(liveId)?.let(onLive)
                                 !postId.isNullOrBlank() -> onPostClick(postId)
                                 !actorId.isNullOrBlank() -> onProfileClick(actorId)
                             }
@@ -4340,6 +4945,7 @@ private fun ActivityNotificationRow(repository: SocialRepository, notification: 
                 "post_like", "comment_like" -> Icons.Filled.Favorite
                 "post_comment", "comment_reply" -> Icons.Outlined.ChatBubbleOutline
                 "mention" -> Icons.Outlined.AlternateEmail
+                "live_started" -> Icons.Outlined.LiveTv
                 "report_received", "report_reviewed" -> Icons.Outlined.Flag
                 "verification_received", "verification_reviewed", "verification_approved", "verification_updated" -> Icons.Outlined.Verified
                 else -> Icons.Outlined.Notifications
@@ -4637,6 +5243,22 @@ private fun SupportCenterPage(repository: SocialRepository, onBack: () -> Unit) 
 private fun ShortcutScreen(repository: SocialRepository, shortcut: String, onBack: () -> Unit) {
     if (shortcut == "Groups") {
         GroupShortcutContent(repository, onBack)
+        return
+    }
+    if (shortcut == "Memories") {
+        var selectedMemory by remember { mutableStateOf<SocialStory?>(null) }
+        val user by repository.currentUser.collectAsState()
+        val profile by repository.profile.collectAsState()
+        selectedMemory?.let { story ->
+            TiwiStoryViewerPage(
+                repository,
+                listOf(SocialStoryGroup(story.authorId, story.author, story.authorProfile, listOf(story), unseenCount = 0, latestAt = story.createdAt)),
+                story.authorId,
+                onClose = { selectedMemory = null }
+            )
+            return
+        }
+        TiwiStoryMemoriesPage(repository, onBack = onBack, onOpen = { selectedMemory = it })
         return
     }
     val scope = rememberTiwiCoroutineScope()
@@ -5581,7 +6203,8 @@ fun ProfileScreen(
     onMessage: (String) -> Unit = {},
     onEditPost: (String) -> Unit = {},
     onCreate: () -> Unit = {},
-    onConnectionClick: (String) -> Unit = {}
+    onConnectionClick: (String) -> Unit = {},
+    onLive: (SocialLiveStream) -> Unit = {}
 ) {
     var selectedTab by remember(userId) { mutableIntStateOf(0) }
     var isFollowing by remember { mutableStateOf(false) }
@@ -5599,6 +6222,7 @@ fun ProfileScreen(
     val ownProfile by repository.profile.collectAsState()
     val ownUser by repository.currentUser.collectAsState()
     val syncing by repository.syncing.collectAsState()
+    val liveStreams by repository.liveStreams.collectAsState()
     var remoteProfile by remember(userId) { mutableStateOf<SocialProfile?>(null) }
     var loadingProfile by remember(userId) { mutableStateOf(true) }
     val isOwn = userId.isNullOrBlank() || userId == repository.currentUserId()
@@ -5730,6 +6354,7 @@ fun ProfileScreen(
         return
     }
     val selectedProfileTab = profileTabs.getOrNull(selectedTab)?.first ?: "Posts"
+    val activeLive = liveStreams.firstOrNull { it.hostId == profile.userId && it.status == "live" }
 
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         PullToRefreshBox(
@@ -5774,20 +6399,21 @@ fun ProfileScreen(
                         }
                     }
                 }
-                Row(Modifier.fillMaxWidth().height(76.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.Top) {
+                Row(Modifier.fillMaxWidth().height(82.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.Top) {
                     DecoratedAvatar(
                         profile.user.avatar?.takeIf { it.isNotBlank() } ?: if (isOwn) ownUser?.avatar else null,
                         R.drawable.img_tiwi_avatar_1,
                         profile.avatarDecoration,
-                        Modifier.requiredSize(98.dp).offset(y = (-26).dp),
+                        Modifier.requiredSize(98.dp).offset(y = (-26).dp)
+                            .then(if (activeLive != null) Modifier.border(3.dp, Color(0xFFE11D48), CircleShape).padding(2.dp).clickable { onLive(activeLive) } else Modifier),
                         animateDecoration = true
                     )
-                    Column(Modifier.weight(1f).padding(start = 9.dp, top = 8.dp, end = 2.dp)) {
-                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
-                            Text(name, fontWeight = FontWeight.Black, fontSize = 14.sp, lineHeight = 16.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-                            if (profile.verified) VerifiedBadge(profile.badgeType, 14.dp, Modifier.padding(start = 2.dp, top = 1.dp), onClick = { showVerified = true })
+                    Row(Modifier.weight(1f).padding(start = 8.dp, top = 9.dp, end = 1.dp), verticalAlignment = Alignment.Top) {
+                        Row(Modifier.weight(1f).padding(top = 3.dp, end = 4.dp), verticalAlignment = Alignment.Top) {
+                            Text(name, fontWeight = FontWeight.Black, fontSize = 13.sp, lineHeight = 15.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                            if (profile.verified) VerifiedBadge(profile.badgeType, 14.dp, Modifier.padding(start = 2.dp), onClick = { showVerified = true })
                         }
-                        Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Row(Modifier.width(142.dp), horizontalArrangement = Arrangement.spacedBy(0.dp)) {
                             ProfileStatItem("Posts", formatCount(profile.postCount.takeIf { it > 0 } ?: posts.size), Modifier.weight(1f))
                             ProfileStatItem("Followers", formatCount(profile.followerCount), Modifier.weight(1f)) { showPeople = "Followers" }
                             ProfileStatItem("Following", formatCount(profile.followingCount), Modifier.weight(1f)) { showPeople = "Following" }
@@ -8058,7 +8684,16 @@ private fun EditProfileDialog(repository: SocialRepository, profile: SocialProfi
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
-fun MessagesScreen(repository: SocialRepository, onBack: () -> Unit, onChatClick: (SocialConversation) -> Unit, onProfileClick: () -> Unit = {}, onSupportCenter: () -> Unit = {}) {
+fun MessagesScreen(
+    repository: SocialRepository,
+    onBack: () -> Unit,
+    onChatClick: (SocialConversation) -> Unit,
+    onProfileClick: () -> Unit = {},
+    onSupportCenter: () -> Unit = {},
+    storyGroups: List<SocialStoryGroup> = emptyList(),
+    onCreateStory: () -> Unit = {},
+    onOpenStory: (String) -> Unit = {}
+) {
     val chats by repository.conversations.collectAsState()
     val notifications by repository.notifications.collectAsState()
     val currentUser by repository.currentUser.collectAsState()
@@ -8070,28 +8705,12 @@ fun MessagesScreen(repository: SocialRepository, onBack: () -> Unit, onChatClick
     var tab by remember { mutableIntStateOf(0) }
     var query by remember { mutableStateOf("") }
     var composerMode by remember { mutableStateOf<String?>(null) }
-    var stories by remember { mutableStateOf<List<SocialPost>>(emptyList()) }
-    var selectedStory by remember { mutableStateOf<SocialPost?>(null) }
     var selectedConversation by remember { mutableStateOf<SocialConversation?>(null) }
     var addMembersTo by remember { mutableStateOf<SocialConversation?>(null) }
-    var storyUploading by remember { mutableStateOf(false) }
     var refreshing by remember { mutableStateOf(false) }
     var pinnedIds by remember { mutableStateOf(preferences.getStringSet("pinned_conversations", emptySet()).orEmpty()) }
     val currentUserId = repository.currentUserId()
 
-    val storyPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-        if (uri != null) scope.launch {
-            storyUploading = true
-            runCatching {
-                val media = repository.uploadMedia(context.contentResolver, uri, "story")
-                repository.createPost("", type = "story", media = listOf(media), visibility = "public")
-            }.onSuccess {
-                stories = repository.stories()
-                selectedStory = it
-            }.onFailure { Toast.makeText(context, it.message ?: "Story upload failed", Toast.LENGTH_LONG).show() }
-            storyUploading = false
-        }
-    }
     val filteredChats = remember(chats, query, currentUserId, pinnedIds) {
         chats.filter { it.requestStatus == "accepted" || it.requestedById == currentUserId }
             .filter { chat ->
@@ -8102,7 +8721,7 @@ fun MessagesScreen(repository: SocialRepository, onBack: () -> Unit, onChatClick
     }
 
     LaunchedEffect(Unit) {
-        stories = runCatching { repository.stories() }.getOrDefault(emptyList())
+        runCatching { repository.refreshStories() }
         var refreshCycle = 0
         while (true) {
             runCatching { repository.refreshConversations(force = true) }
@@ -8110,11 +8729,6 @@ fun MessagesScreen(repository: SocialRepository, onBack: () -> Unit, onChatClick
             refreshCycle++
             delay(5000)
         }
-    }
-    selectedStory?.let {
-        BackHandler { selectedStory = null }
-        MessengerStoryViewer(it, repository) { selectedStory = null }
-        return
     }
     composerMode?.let { mode ->
         NewConversationPage(
@@ -8151,24 +8765,24 @@ fun MessagesScreen(repository: SocialRepository, onBack: () -> Unit, onChatClick
         when (tab) {
             0 -> ExactMessengerChatsPage(
                 chats = filteredChats,
-                stories = stories,
+                storyGroups = storyGroups,
                 currentUser = currentUser,
                 currentProfile = currentProfile,
                 currentUserId = currentUserId,
                 query = query,
-                uploading = storyUploading,
+                uploading = false,
                 refreshing = refreshing,
                 contentPadding = padding,
                 onQuery = { query = it },
                 onNewMessage = { composerMode = "direct" },
                 onNewGroup = { composerMode = "group" },
-                onAddStory = { storyPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) },
-                onStory = { selectedStory = it },
+                onAddStory = onCreateStory,
+                onStory = onOpenStory,
                 onRefresh = {
                     scope.launch {
                         refreshing = true
                         runCatching { repository.refreshConversations(force = true) }
-                        stories = runCatching { repository.stories() }.getOrDefault(stories)
+                        runCatching { repository.refreshStories() }
                         refreshing = false
                     }
                 },
@@ -8178,10 +8792,13 @@ fun MessagesScreen(repository: SocialRepository, onBack: () -> Unit, onChatClick
                     selectedConversation = it
                 }
             )
-            1 -> ExactMessengerStoriesPage(
-                repository, stories, currentUser, storyUploading, padding,
-                onAdd = { storyPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) },
-                onOpen = { selectedStory = it }
+            1 -> ExactMessengerStoryGroupsPage(
+                groups = storyGroups,
+                currentUser = currentUser,
+                currentProfile = currentProfile,
+                contentPadding = padding,
+                onAdd = onCreateStory,
+                onOpen = onOpenStory
             )
             2 -> ExactMessengerNotificationsPage(repository, notifications, chats, padding, onChatClick, onSupportCenter)
             else -> ExactMessengerMenuPage(
@@ -8223,7 +8840,7 @@ fun MessagesScreen(repository: SocialRepository, onBack: () -> Unit, onChatClick
 @Composable
 private fun ExactMessengerChatsPage(
     chats: List<SocialConversation>,
-    stories: List<SocialPost>,
+    storyGroups: List<SocialStoryGroup>,
     currentUser: SocialUser?,
     currentProfile: SocialProfile?,
     currentUserId: String?,
@@ -8235,13 +8852,11 @@ private fun ExactMessengerChatsPage(
     onNewMessage: () -> Unit,
     onNewGroup: () -> Unit,
     onAddStory: () -> Unit,
-    onStory: (SocialPost) -> Unit,
+    onStory: (String) -> Unit,
     onRefresh: () -> Unit,
     onChat: (SocialConversation) -> Unit,
     onLongPress: (SocialConversation) -> Unit
 ) {
-    val storyCards = remember(stories, currentUserId) { stories.filter { it.authorId != currentUserId }.distinctBy { it.authorId }.take(16) }
-    val myStory = remember(stories, currentUserId) { stories.firstOrNull { it.authorId == currentUserId } }
     var inboxFilter by remember { mutableStateOf("all") }
     val unreadTotal = remember(chats) { chats.sumOf { it.unreadCount } }
     val visibleChats = remember(chats, inboxFilter) {
@@ -8292,36 +8907,14 @@ private fun ExactMessengerChatsPage(
                     }
                 }
                 item {
-                    LazyRow(
-                        Modifier.fillMaxWidth().height(148.dp),
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 9.dp),
-                        horizontalArrangement = Arrangement.spacedBy(5.dp)
-                    ) {
-                        item {
-                            ExactMessengerStoryBubble(
-                                name = "Create story",
-                                avatar = currentUser?.avatar,
-                                decoration = currentProfile?.avatarDecoration,
-                                note = "What's new?",
-                                active = false,
-                                create = true,
-                                uploading = uploading,
-                                onClick = { if (myStory != null) onStory(myStory) else onAddStory() }
-                            )
-                        }
-                        items(storyCards, key = { "home-story-${it.authorId}" }) { story ->
-                            ExactMessengerStoryBubble(
-                                name = story.author.name.substringBefore(' ').take(12),
-                                avatar = story.author.avatar,
-                                decoration = story.authorProfile?.avatarDecoration,
-                                note = story.body.take(32).ifBlank { "Shared a story" },
-                                active = isSociallyActive(story.author.socialLastActiveAt),
-                                create = false,
-                                uploading = false,
-                                onClick = { onStory(story) }
-                            )
-                        }
-                    }
+                    TiwiStoryTray(
+                        groups = storyGroups,
+                        currentUser = currentUser,
+                        currentProfile = currentProfile,
+                        compact = true,
+                        onCreate = onAddStory,
+                        onOpen = onStory
+                    )
                 }
                 item {
                     LazyRow(
@@ -8529,6 +9122,59 @@ internal fun ExactMessengerFloatingButton(modifier: Modifier = Modifier) {
     ) {
         Box(contentAlignment = Alignment.Center) {
             Image(painterResource(R.drawable.img_tiwi_avatar_1), null, modifier = Modifier.size(36.dp).clip(CircleShape), contentScale = ContentScale.Crop)
+        }
+    }
+}
+
+private fun storyItemThumbnail(item: com.example.social.SocialStoryItem?): String? {
+    if (item == null) return null
+    val direct = item.media["thumbnailUrl"]?.toString() ?: item.media["url"]?.toString()
+    if (!direct.isNullOrBlank()) return direct
+    val first = (item.media["items"] as? List<*>)?.firstOrNull() as? Map<*, *>
+    return first?.get("thumbnailUrl")?.toString() ?: first?.get("url")?.toString()
+}
+
+@Composable
+private fun ExactMessengerStoryGroupsPage(
+    groups: List<SocialStoryGroup>,
+    currentUser: SocialUser?,
+    currentProfile: SocialProfile?,
+    contentPadding: PaddingValues,
+    onAdd: () -> Unit,
+    onOpen: (String) -> Unit
+) {
+    val currentId = currentUser?.id
+    val mine = groups.firstOrNull { it.authorId == currentId }
+    val others = groups.filterNot { it.authorId == currentId }
+    Column(Modifier.fillMaxSize().padding(contentPadding).background(Color.White).statusBarsPadding()) {
+        Text("Stories", fontSize = 25.sp, fontWeight = FontWeight.Black, letterSpacing = (-.5).sp, modifier = Modifier.padding(start = 15.dp, top = 8.dp, bottom = 5.dp))
+        TiwiStoryTray(groups, currentUser, currentProfile, compact = true, onCreate = onAdd, onOpen = onOpen)
+        HorizontalDivider(thickness = .5.dp, color = Color(0xFFE4E7EC))
+        Text("Latest stories", fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp))
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(2),
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+            horizontalArrangement = Arrangement.spacedBy(7.dp),
+            verticalArrangement = Arrangement.spacedBy(7.dp)
+        ) {
+            item(key = "messenger-add-story") {
+                Box(Modifier.aspectRatio(.72f).clip(RoundedCornerShape(13.dp)).background(Color(0xFFE9ECF1)).clickable(onClick = onAdd), contentAlignment = Alignment.Center) {
+                    AsyncImage(currentUser?.avatar, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                    Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = .58f)))))
+                    Box(Modifier.align(Alignment.TopStart).padding(10.dp).size(38.dp).background(Color.White, CircleShape), contentAlignment = Alignment.Center) { Icon(Icons.Default.Add, null, tint = TiwiBlue) }
+                    Text("Add to story", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.align(Alignment.BottomStart).padding(11.dp))
+                }
+            }
+            gridItems(others, key = { "messenger-story-group-${it.authorId}" }) { group ->
+                val item = group.stories.lastOrNull()?.items?.firstOrNull()
+                Box(Modifier.aspectRatio(.72f).clip(RoundedCornerShape(13.dp)).background(Color.Black).clickable { onOpen(group.authorId) }) {
+                    AsyncImage(storyItemThumbnail(item) ?: group.author.avatar, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                    Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = .66f)))))
+                    TiwiAvatar(group.author.avatar, R.drawable.img_tiwi_avatar_1, Modifier.align(Alignment.TopStart).padding(9.dp).size(38.dp).clip(CircleShape).border(if (group.unseenCount > 0) 2.dp else 1.dp, if (group.unseenCount > 0) Color(0xFFE1306C) else Color.White.copy(alpha = .7f), CircleShape).padding(2.dp))
+                    Text(group.author.name, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp, maxLines = 2, modifier = Modifier.align(Alignment.BottomStart).padding(11.dp))
+                }
+            }
         }
     }
 }

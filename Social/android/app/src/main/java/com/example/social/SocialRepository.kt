@@ -36,8 +36,14 @@ class SocialRepository(context: Context) {
     val syncing: StateFlow<Boolean> = _syncing.asStateFlow()
     private val _incomingCalls = MutableStateFlow<List<SocialCallSession>>(emptyList())
     val incomingCalls: StateFlow<List<SocialCallSession>> = _incomingCalls.asStateFlow()
+    private val _liveStreams = MutableStateFlow<List<SocialLiveStream>>(emptyList())
+    val liveStreams: StateFlow<List<SocialLiveStream>> = _liveStreams.asStateFlow()
     private val _notifications = MutableStateFlow<List<SocialNotification>>(emptyList())
     val notifications: StateFlow<List<SocialNotification>> = _notifications.asStateFlow()
+    private val _storyTray = MutableStateFlow<List<SocialStoryGroup>>(emptyList())
+    val storyTray: StateFlow<List<SocialStoryGroup>> = _storyTray.asStateFlow()
+    private val _storyMemories = MutableStateFlow<List<SocialStory>>(emptyList())
+    val storyMemories: StateFlow<List<SocialStory>> = _storyMemories.asStateFlow()
 
     fun hasSavedSession(): Boolean = !token.isNullOrBlank() && _currentUser.value != null
     fun currentUserId(): String? = _currentUser.value?.id
@@ -100,7 +106,9 @@ class SocialRepository(context: Context) {
                 val feedModulesJob = async { runCatching { refreshFeedModules() } }
                 val chatJob = async { runCatching { refreshConversations(force) } }
                 val notificationJob = async { runCatching { refreshNotifications() } }
-                profileJob.await(); feedJob.await(); feedModulesJob.await(); chatJob.await(); notificationJob.await()
+                val liveJob = async { runCatching { refreshLiveStreams() } }
+                val storyJob = async { runCatching { refreshStoryTray() } }
+                profileJob.await(); feedJob.await(); feedModulesJob.await(); chatJob.await(); notificationJob.await(); liveJob.await(); storyJob.await()
             }
         } finally { _syncing.value = false }
     }
@@ -123,6 +131,225 @@ class SocialRepository(context: Context) {
         }
     }
 
+    suspend fun refreshStoryTray(limit: Int = 100): List<SocialStoryGroup> {
+        val data = client.execute(
+            """query TiwiStoryTray(${D}limit: Int) { socialStoryTray(limit: ${D}limit) { $STORY_GROUP_FIELDS } }""",
+            mapOf("limit" to limit.coerceIn(1, 100))
+        )
+        return data.list("socialStoryTray").mapNotNull { it.objectMap()?.let(::mapStoryGroup) }.also {
+            _storyTray.value = it
+        }
+    }
+
+    suspend fun refreshStories(limit: Int = 60): List<SocialStoryGroup> = refreshStoryTray(limit)
+
+    suspend fun story(id: String): SocialStory? {
+        val data = client.execute(
+            """query TiwiStory(${D}id: ID!) { socialStory(id: ${D}id) { $STORY_FIELDS } }""",
+            mapOf("id" to id)
+        )
+        return data.objectValue("socialStory")?.let(::mapStory)?.also(::upsertStory)
+    }
+
+    suspend fun storyMemories(limit: Int = 60, before: String? = null): List<SocialStory> {
+        val data = client.execute(
+            """query TiwiStoryMemories(${D}limit: Int, ${D}before: String) { socialStoryMemories(limit: ${D}limit, before: ${D}before) { $STORY_FIELDS } }""",
+            mapOf("limit" to limit.coerceIn(1, 100), "before" to before)
+        )
+        return data.list("socialStoryMemories").mapNotNull { it.objectMap()?.let(::mapStory) }.also { rows ->
+            _storyMemories.value = if (before.isNullOrBlank()) rows else (_storyMemories.value + rows).distinctBy { it.id }
+        }
+    }
+
+    suspend fun storyViewers(id: String, limit: Int = 100): List<SocialStoryView> {
+        val data = client.execute(
+            """query TiwiStoryViewers(${D}id: ID!, ${D}limit: Int) { socialStoryViewers(id: ${D}id, limit: ${D}limit) { $STORY_VIEW_FIELDS } }""",
+            mapOf("id" to id, "limit" to limit.coerceIn(1, 200))
+        )
+        return data.list("socialStoryViewers").mapNotNull { it.objectMap()?.let(::mapStoryView) }
+    }
+
+    suspend fun storyInteractions(id: String, itemId: String? = null, limit: Int = 100): List<SocialStoryInteraction> {
+        val data = client.execute(
+            """query TiwiStoryInteractions(${D}id: ID!, ${D}itemId: ID, ${D}limit: Int) {
+                socialStoryInteractions(id: ${D}id, itemId: ${D}itemId, limit: ${D}limit) { $STORY_INTERACTION_FIELDS }
+            }""".trimIndent(),
+            mapOf("id" to id, "itemId" to itemId, "limit" to limit.coerceIn(1, 300))
+        )
+        return data.list("socialStoryInteractions").mapNotNull { it.objectMap()?.let(::mapStoryInteraction) }
+    }
+
+    suspend fun socialStoryInteractions(id: String, itemId: String? = null, limit: Int = 100): List<SocialStoryInteraction> =
+        storyInteractions(id, itemId, limit)
+
+    suspend fun storyMusic(search: String = "", limit: Int = 50): List<SocialStoryMusicTrack> {
+        val data = client.execute(
+            """query TiwiStoryMusic(${D}search: String, ${D}limit: Int) { socialStoryMusic(search: ${D}search, limit: ${D}limit) { $STORY_MUSIC_FIELDS } }""",
+            mapOf("search" to search.trim(), "limit" to limit.coerceIn(1, 100))
+        )
+        return data.list("socialStoryMusic").mapNotNull { it.objectMap()?.let(::mapStoryMusic) }
+    }
+
+    suspend fun createStory(
+        caption: String? = null,
+        visibility: String = "public",
+        customAudienceIds: List<String> = emptyList(),
+        allowReplies: Boolean = true,
+        metadata: Map<String, Any?> = emptyMap(),
+        items: List<Map<String, Any?>>
+    ): SocialStory = createStoryInput(mapOf(
+        "caption" to caption?.trim()?.takeIf { it.isNotBlank() },
+        "visibility" to visibility,
+        "customAudienceIds" to customAudienceIds.distinct(),
+        "allowReplies" to allowReplies,
+        "metadata" to metadata,
+        "items" to items.mapIndexed { index, item -> storyItemInput(item, index) }
+    ).filterValues { it != null })
+
+    suspend fun createStory(draft: SocialStoryDraft): SocialStory = createStoryInput(storyInput(draft))
+
+    private suspend fun createStoryInput(input: Map<String, Any?>): SocialStory {
+        val data = client.execute(
+            """mutation CreateTiwiStory(${D}input: SocialStoryInput!) { createSocialStory(input: ${D}input) { $STORY_FIELDS } }""",
+            mapOf("input" to input)
+        )
+        return mapStory(data.objectValue("createSocialStory") ?: throw SocialApiException("Story was not created")).also(::upsertStory)
+    }
+
+    suspend fun updateStory(
+        id: String,
+        visibility: String? = null,
+        customAudienceIds: List<String>? = null,
+        allowReplies: Boolean? = null
+    ): SocialStory {
+        val data = client.execute(
+            """mutation UpdateTiwiStory(${D}id: ID!, ${D}visibility: String, ${D}audience: [ID!], ${D}allowReplies: Boolean) {
+                updateSocialStory(id: ${D}id, visibility: ${D}visibility, customAudienceIds: ${D}audience, allowReplies: ${D}allowReplies) { $STORY_FIELDS }
+            }""".trimIndent(),
+            mapOf("id" to id, "visibility" to visibility, "audience" to customAudienceIds, "allowReplies" to allowReplies)
+        )
+        return mapStory(data.objectValue("updateSocialStory") ?: throw SocialApiException("Story settings were not updated")).also(::upsertStory)
+    }
+
+    suspend fun viewStory(id: String, itemSortOrder: Int): SocialStory {
+        val data = client.execute(
+            """mutation ViewTiwiStory(${D}id: ID!, ${D}itemSortOrder: Int!) { viewSocialStory(id: ${D}id, itemSortOrder: ${D}itemSortOrder) { $STORY_FIELDS } }""",
+            mapOf("id" to id, "itemSortOrder" to itemSortOrder.coerceAtLeast(0))
+        )
+        return mapStory(data.objectValue("viewSocialStory") ?: throw SocialApiException("Story was not found")).also(::upsertStory)
+    }
+
+    suspend fun reactToStory(id: String, itemId: String, emoji: String): SocialStory {
+        val data = client.execute(
+            """mutation ReactTiwiStory(${D}id: ID!, ${D}itemId: ID!, ${D}emoji: String!) {
+                reactToSocialStory(id: ${D}id, itemId: ${D}itemId, emoji: ${D}emoji) { $STORY_FIELDS }
+            }""".trimIndent(),
+            mapOf("id" to id, "itemId" to itemId, "emoji" to (emoji.trim().takeIf { it.isNotBlank() } ?: "\u2764"))
+        )
+        return mapStory(data.objectValue("reactToSocialStory") ?: throw SocialApiException("Story reaction failed")).also(::upsertStory)
+    }
+
+    suspend fun replyToStory(id: String, itemId: String, body: String): SocialStoryReply {
+        val text = body.trim()
+        if (text.isBlank()) throw SocialApiException("Write a reply first")
+        val data = client.execute(
+            """mutation ReplyTiwiStory(${D}id: ID!, ${D}itemId: ID!, ${D}body: String!) {
+                replyToSocialStory(id: ${D}id, itemId: ${D}itemId, body: ${D}body) { $STORY_REPLY_FIELDS }
+            }""".trimIndent(),
+            mapOf("id" to id, "itemId" to itemId, "body" to text.take(2_000))
+        )
+        mutateStory(id) { it.copy(replyCount = it.replyCount + 1) }
+        return mapStoryReply(data.objectValue("replyToSocialStory") ?: throw SocialApiException("Story reply was not sent"))
+    }
+
+    suspend fun interactWithStory(
+        storyId: String,
+        itemId: String,
+        kind: String,
+        key: String,
+        value: Map<String, Any?> = emptyMap()
+    ): SocialStoryInteraction {
+        val normalizedKind = kind.trim().lowercase().replace(Regex("[\\s-]+"), "_")
+        val normalizedKey = key.trim()
+        if (normalizedKind.isBlank() || normalizedKey.isBlank()) {
+            throw SocialApiException("Story interaction is incomplete")
+        }
+        val data = client.execute(
+            """mutation InteractWithTiwiStory(${D}input: SocialStoryInteractionInput!) {
+                interactWithSocialStory(input: ${D}input) { $STORY_INTERACTION_FIELDS }
+            }""".trimIndent(),
+            mapOf("input" to mapOf(
+                "storyId" to storyId,
+                "itemId" to itemId,
+                "kind" to normalizedKind,
+                "key" to normalizedKey,
+                "value" to value
+            ))
+        )
+        val interaction = mapStoryInteraction(
+            data.objectValue("interactWithSocialStory") ?: throw SocialApiException("Story response was not saved")
+        )
+        mutateStory(storyId) { story ->
+            story.copy(items = story.items.map { item ->
+                if (item.id != itemId) item else {
+                    val previous = item.viewerInteractions.firstOrNull { it.key == interaction.key }
+                    item.copy(
+                        interactionCount = item.interactionCount + if (previous == null) 1 else 0,
+                        viewerInteractions = (item.viewerInteractions.filterNot {
+                            it.id == interaction.id || it.key == interaction.key
+                        } + interaction).sortedBy { it.createdAt }
+                    )
+                }
+            })
+        }
+        return interaction
+    }
+
+    suspend fun interactWithSocialStory(
+        storyId: String,
+        itemId: String,
+        kind: String,
+        key: String,
+        value: Map<String, Any?> = emptyMap()
+    ): SocialStoryInteraction = interactWithStory(storyId, itemId, kind, key, value)
+
+    suspend fun deleteStoryInteraction(id: String): Boolean {
+        val data = client.execute(
+            """mutation DeleteTiwiStoryInteraction(${D}id: ID!) { deleteSocialStoryInteraction(id: ${D}id) }""",
+            mapOf("id" to id)
+        )
+        val deleted = data.boolean("deleteSocialStoryInteraction")
+        if (deleted) removeStoryInteractionFromCache(id)
+        return deleted
+    }
+
+    suspend fun deleteSocialStoryInteraction(id: String): Boolean = deleteStoryInteraction(id)
+
+    suspend fun archiveStory(id: String): SocialStory {
+        val data = client.execute(
+            """mutation ArchiveTiwiStory(${D}id: ID!) { archiveSocialStory(id: ${D}id) { $STORY_FIELDS } }""",
+            mapOf("id" to id)
+        )
+        val archived = mapStory(data.objectValue("archiveSocialStory") ?: throw SocialApiException("Story was not archived"))
+        removeStoryFromTray(id)
+        _storyMemories.value = (listOf(archived) + _storyMemories.value).distinctBy { it.id }
+        return archived
+    }
+
+    suspend fun deleteStory(id: String): Boolean {
+        val data = client.execute(
+            """mutation DeleteTiwiStory(${D}id: ID!) { deleteSocialStory(id: ${D}id) }""",
+            mapOf("id" to id)
+        )
+        val deleted = data.boolean("deleteSocialStory")
+        if (deleted) {
+            removeStoryFromTray(id)
+            _storyMemories.value = _storyMemories.value.filterNot { it.id == id }
+        }
+        return deleted
+    }
+
+    /** Legacy post-backed stories, kept while older screens migrate to [storyTray]. */
     suspend fun stories(): List<SocialPost> {
         val data = client.execute("query TiwiStories { socialStories(limit: 80) { $POST_FIELDS } }")
         return data.list("socialStories").mapNotNull { it.objectMap()?.let(::mapPost) }
@@ -708,6 +935,93 @@ class SocialRepository(context: Context) {
         return data.list("socialIncomingCalls").mapNotNull { it.objectMap()?.let(::mapCall) }.also { _incomingCalls.value = it }
     }
 
+    suspend fun refreshLiveStreams(): List<SocialLiveStream> {
+        val data = client.execute("query TiwiLiveStreams { socialLiveStreams(status: \"live\", limit: 40) { $LIVE_STREAM_FIELDS } }")
+        return data.list("socialLiveStreams").mapNotNull { it.objectMap()?.let(::mapLiveStream) }.also { _liveStreams.value = it }
+    }
+
+    suspend fun getLiveStream(id: String): SocialLiveStream? {
+        val data = client.execute(
+            """query TiwiLive(${D}id: ID!) { socialLiveStream(id: ${D}id) { $LIVE_STREAM_FIELDS } }""",
+            mapOf("id" to id)
+        )
+        return data.objectValue("socialLiveStream")?.let(::mapLiveStream)
+    }
+
+    suspend fun startLiveStream(title: String, description: String?, visibility: String, commentsEnabled: Boolean = true): SocialLiveStream {
+        val data = client.execute(
+            """mutation StartTiwiLive(${D}input: SocialLiveStreamInput!) { startSocialLiveStream(input: ${D}input) { $LIVE_STREAM_FIELDS } }""",
+            mapOf("input" to mapOf("title" to title.trim(), "description" to description?.trim(), "visibility" to visibility, "commentsEnabled" to commentsEnabled))
+        )
+        return mapLiveStream(data.objectValue("startSocialLiveStream") ?: throw SocialApiException("Live could not start")).also { live ->
+            _liveStreams.value = listOf(live) + _liveStreams.value.filterNot { it.id == live.id }
+        }
+    }
+
+    suspend fun liveParticipants(streamId: String): List<SocialLiveParticipant> {
+        val data = client.execute(
+            """query TiwiLiveViewers(${D}id: ID!) { socialLiveParticipants(streamId: ${D}id) { $LIVE_PARTICIPANT_FIELDS } }""",
+            mapOf("id" to streamId)
+        )
+        return data.list("socialLiveParticipants").mapNotNull { it.objectMap()?.let(::mapLiveParticipant) }
+    }
+
+    suspend fun joinLiveStream(id: String): SocialLiveParticipant {
+        val data = client.execute(
+            """mutation JoinTiwiLive(${D}id: ID!) { joinSocialLiveStream(id: ${D}id) { $LIVE_PARTICIPANT_FIELDS } }""",
+            mapOf("id" to id)
+        )
+        return mapLiveParticipant(data.objectValue("joinSocialLiveStream") ?: throw SocialApiException("Could not join this live"))
+    }
+
+    suspend fun signalLiveStream(
+        participantId: String,
+        offer: Map<String, Any?>? = null,
+        answer: Map<String, Any?>? = null,
+        candidate: Map<String, Any?>? = null,
+        status: String? = null
+    ): SocialLiveParticipant {
+        val input = mapOf("participantId" to participantId, "offer" to offer, "answer" to answer, "iceCandidate" to candidate, "status" to status).filterValues { it != null }
+        val data = client.execute(
+            """mutation SignalTiwiLive(${D}input: SocialLiveSignalInput!) { signalSocialLiveStream(input: ${D}input) { $LIVE_PARTICIPANT_FIELDS } }""",
+            mapOf("input" to input)
+        )
+        return mapLiveParticipant(data.objectValue("signalSocialLiveStream") ?: throw SocialApiException("Live signal failed"))
+    }
+
+    suspend fun heartbeatLiveStream(id: String, paused: Boolean): SocialLiveStream {
+        val data = client.execute(
+            """mutation HeartbeatTiwiLive(${D}id: ID!, ${D}paused: Boolean) { heartbeatSocialLiveStream(id: ${D}id, paused: ${D}paused) { $LIVE_STREAM_FIELDS } }""",
+            mapOf("id" to id, "paused" to paused)
+        )
+        return mapLiveStream(data.objectValue("heartbeatSocialLiveStream") ?: throw SocialApiException("Live heartbeat failed"))
+    }
+
+    suspend fun leaveLiveStream(id: String) {
+        client.execute("""mutation LeaveTiwiLive(${D}id: ID!) { leaveSocialLiveStream(id: ${D}id) }""", mapOf("id" to id))
+        _liveStreams.value = _liveStreams.value.filterNot { it.id == id }
+    }
+
+    suspend fun liveComments(streamId: String): List<SocialLiveComment> {
+        val data = client.execute(
+            """query TiwiLiveComments(${D}id: ID!) { socialLiveComments(streamId: ${D}id, limit: 200) { $LIVE_COMMENT_FIELDS } }""",
+            mapOf("id" to streamId)
+        )
+        return data.list("socialLiveComments").mapNotNull { it.objectMap()?.let(::mapLiveComment) }
+    }
+
+    suspend fun addLiveComment(streamId: String, body: String, replyToId: String? = null): SocialLiveComment {
+        val data = client.execute(
+            """mutation CommentTiwiLive(${D}id: ID!, ${D}body: String!, ${D}reply: ID) { addSocialLiveComment(streamId: ${D}id, body: ${D}body, replyToId: ${D}reply) { $LIVE_COMMENT_FIELDS } }""",
+            mapOf("id" to streamId, "body" to body.trim(), "reply" to replyToId)
+        )
+        return mapLiveComment(data.objectValue("addSocialLiveComment") ?: throw SocialApiException("Comment was not sent"))
+    }
+
+    suspend fun deleteLiveComment(id: String) {
+        client.execute("""mutation DeleteTiwiLiveComment(${D}id: ID!) { deleteSocialLiveComment(id: ${D}id) }""", mapOf("id" to id))
+    }
+
     suspend fun socialSettings(): Map<String, Any?> {
         val data = client.execute("query TiwiSocialSettings { socialSettings }")
         return data.objectValue("socialSettings") ?: emptyMap()
@@ -908,6 +1222,8 @@ class SocialRepository(context: Context) {
         _conversations.value = emptyList()
         _messages.value = emptyMap()
         _comments.value = emptyMap()
+        _storyTray.value = emptyList()
+        _storyMemories.value = emptyList()
     }
 
     private fun saveSession(value: String, user: SocialUser) {
@@ -1002,6 +1318,137 @@ class SocialRepository(context: Context) {
         )
     }
 
+    private fun mapStoryItem(value: Map<String, Any?>): SocialStoryItem = SocialStoryItem(
+        id = value.string("id").orEmpty(),
+        storyId = value.string("storyId").orEmpty(),
+        type = value.string("type") ?: "image",
+        media = normalizeStoryMap(value.objectValue("media") ?: emptyMap()),
+        text = value.string("text"),
+        background = value.string("background"),
+        filter = value.objectValue("filter") ?: emptyMap(),
+        transform = value.objectValue("transform") ?: emptyMap(),
+        overlays = value.list("overlays").mapNotNull { it.objectMap()?.let(::normalizeStoryMap) },
+        durationMs = value.number("durationMs")?.toInt() ?: 5_000,
+        altText = value.string("altText"),
+        aiGenerated = value.boolean("aiGenerated"),
+        music = normalizeStoryMap(value.objectValue("music") ?: emptyMap()),
+        status = value.string("status") ?: "active",
+        sortOrder = value.number("sortOrder")?.toInt() ?: 0,
+        reactionCount = value.number("reactionCount")?.toInt() ?: 0,
+        viewerReaction = value.string("viewerReaction"),
+        interactionCount = value.number("interactionCount")?.toInt() ?: 0,
+        viewerInteractions = value.list("viewerInteractions").mapNotNull { it.objectMap()?.let(::mapStoryInteraction) },
+        createdAt = value.string("createdAt"),
+        updatedAt = value.string("updatedAt")
+    )
+
+    private fun normalizeStoryMap(value: Map<String, Any?>): Map<String, Any?> = value.mapValues { (key, raw) ->
+        when {
+            raw is String && (key.equals("url", true) || key.endsWith("Url", true)) -> absoluteUrl(raw)
+            raw is Map<*, *> -> normalizeStoryMap(raw.entries.mapNotNull { (childKey, childValue) ->
+                (childKey as? String)?.let { it to childValue }
+            }.toMap())
+            raw is List<*> -> raw.map { child ->
+                if (child is Map<*, *>) normalizeStoryMap(child.entries.mapNotNull { (childKey, childValue) ->
+                    (childKey as? String)?.let { it to childValue }
+                }.toMap()) else child
+            }
+            else -> raw
+        }
+    }
+
+    private fun mapStory(value: Map<String, Any?>): SocialStory {
+        val author = mapUser(value.objectValue("author") ?: emptyMap())
+        return SocialStory(
+            id = value.string("id").orEmpty(),
+            authorId = value.string("authorId") ?: author.id,
+            author = author,
+            authorProfile = value.objectValue("authorProfile")?.let { mapProfile(it, author) },
+            visibility = value.string("visibility") ?: "public",
+            customAudienceIds = value.list("customAudienceIds").mapNotNull { it as? String },
+            allowReplies = value["allowReplies"] as? Boolean ?: true,
+            status = value.string("status") ?: "active",
+            caption = value.string("caption"),
+            metadata = value.objectValue("metadata") ?: emptyMap(),
+            items = value.list("items").mapNotNull { it.objectMap()?.let(::mapStoryItem) }.sortedBy { it.sortOrder },
+            viewerCount = value.number("viewerCount")?.toInt() ?: 0,
+            reactionCount = value.number("reactionCount")?.toInt() ?: 0,
+            replyCount = value.number("replyCount")?.toInt() ?: 0,
+            seen = value.boolean("seen"),
+            viewerLastItemSortOrder = value.number("viewerLastItemSortOrder")?.toInt() ?: 0,
+            expiresAt = value.string("expiresAt"),
+            archivedAt = value.string("archivedAt"),
+            createdAt = value.string("createdAt"),
+            updatedAt = value.string("updatedAt")
+        )
+    }
+
+    private fun mapStoryGroup(value: Map<String, Any?>): SocialStoryGroup {
+        val author = mapUser(value.objectValue("author") ?: emptyMap())
+        return SocialStoryGroup(
+            authorId = value.string("authorId") ?: author.id,
+            author = author,
+            authorProfile = value.objectValue("authorProfile")?.let { mapProfile(it, author) },
+            stories = value.list("stories").mapNotNull { it.objectMap()?.let(::mapStory) },
+            unseenCount = value.number("unseenCount")?.toInt() ?: 0,
+            latestAt = value.string("latestAt")
+        )
+    }
+
+    private fun mapStoryView(value: Map<String, Any?>): SocialStoryView {
+        val viewer = mapUser(value.objectValue("viewer") ?: emptyMap())
+        return SocialStoryView(
+            id = value.string("id").orEmpty(),
+            viewerId = value.string("viewerId") ?: viewer.id,
+            viewer = viewer,
+            viewerProfile = value.objectValue("viewerProfile")?.let { mapProfile(it, viewer) },
+            lastItemSortOrder = value.number("lastItemSortOrder")?.toInt() ?: 0,
+            viewedAt = value.string("viewedAt")
+        )
+    }
+
+    private fun mapStoryReply(value: Map<String, Any?>): SocialStoryReply {
+        val sender = mapUser(value.objectValue("sender") ?: emptyMap())
+        return SocialStoryReply(
+            id = value.string("id").orEmpty(),
+            storyId = value.string("storyId").orEmpty(),
+            itemId = value.string("itemId").orEmpty(),
+            senderId = value.string("senderId") ?: sender.id,
+            sender = sender,
+            senderProfile = value.objectValue("senderProfile")?.let { mapProfile(it, sender) },
+            body = value.string("body").orEmpty(),
+            conversationId = value.string("conversationId"),
+            messageId = value.string("messageId"),
+            createdAt = value.string("createdAt")
+        )
+    }
+
+    private fun mapStoryInteraction(value: Map<String, Any?>): SocialStoryInteraction {
+        val user = mapUser(value.objectValue("user") ?: emptyMap())
+        return SocialStoryInteraction(
+            id = value.string("id").orEmpty(),
+            storyId = value.string("storyId").orEmpty(),
+            itemId = value.string("itemId").orEmpty(),
+            userId = value.string("userId") ?: user.id,
+            user = user,
+            userProfile = value.objectValue("userProfile")?.let { mapProfile(it, user) },
+            kind = value.string("kind").orEmpty(),
+            key = value.string("key").orEmpty(),
+            value = value.objectValue("value") ?: emptyMap(),
+            createdAt = value.string("createdAt"),
+            updatedAt = value.string("updatedAt")
+        )
+    }
+
+    private fun mapStoryMusic(value: Map<String, Any?>): SocialStoryMusicTrack = SocialStoryMusicTrack(
+        id = value.string("id").orEmpty(),
+        title = value.string("title").orEmpty(),
+        artist = value.string("artist").orEmpty(),
+        artworkUrl = absoluteUrl(value.string("artworkUrl")),
+        streamUrl = absoluteUrl(value.string("streamUrl")).orEmpty(),
+        durationSeconds = value.number("durationSeconds")?.toInt() ?: 0
+    )
+
     private fun mapFeedModule(value: Map<String, Any?>) = SocialFeedModule(
         id = value.string("id").orEmpty(),
         kind = value.string("kind") ?: "people",
@@ -1048,6 +1495,30 @@ class SocialRepository(context: Context) {
         offer = value.objectValue("offer"), answer = value.objectValue("answer"), iceCandidates = value.list("iceCandidates").mapNotNull { it.objectMap() }
     )
 
+    private fun mapLiveStream(value: Map<String, Any?>) = SocialLiveStream(
+        id = value.string("id").orEmpty(), hostId = value.string("hostId").orEmpty(),
+        host = mapUser(value.objectValue("host") ?: emptyMap()),
+        hostProfile = value.objectValue("hostProfile")?.let(::mapProfile),
+        title = value.string("title").orEmpty(), description = value.string("description"),
+        status = value.string("status") ?: "live", visibility = value.string("visibility") ?: "public",
+        playbackUrl = absoluteUrl(value.string("playbackUrl")), qualities = value.list("qualities").mapNotNull { it?.toString() },
+        viewerCount = value.number("viewerCount")?.toInt() ?: 0, commentsEnabled = value.boolean("commentsEnabled"), paused = value.boolean("paused"),
+        lastHeartbeatAt = value.string("lastHeartbeatAt"), startedAt = value.string("startedAt"), endedAt = value.string("endedAt")
+    )
+
+    private fun mapLiveParticipant(value: Map<String, Any?>) = SocialLiveParticipant(
+        id = value.string("id").orEmpty(), streamId = value.string("streamId").orEmpty(), viewerId = value.string("viewerId").orEmpty(),
+        viewer = mapUser(value.objectValue("viewer") ?: emptyMap()), viewerProfile = value.objectValue("viewerProfile")?.let(::mapProfile),
+        status = value.string("status") ?: "joining", hostOffer = value.objectValue("hostOffer"), viewerAnswer = value.objectValue("viewerAnswer"),
+        hostIce = value.list("hostIce").mapNotNull { it.objectMap() }, viewerIce = value.list("viewerIce").mapNotNull { it.objectMap() }
+    )
+
+    private fun mapLiveComment(value: Map<String, Any?>) = SocialLiveComment(
+        id = value.string("id").orEmpty(), streamId = value.string("streamId").orEmpty(), authorId = value.string("authorId").orEmpty(),
+        author = mapUser(value.objectValue("author") ?: emptyMap()), authorProfile = value.objectValue("authorProfile")?.let(::mapProfile),
+        replyToId = value.string("replyToId"), body = value.string("body").orEmpty(), status = value.string("status") ?: "active", createdAt = value.string("createdAt")
+    )
+
     private fun mapNotification(value: Map<String, Any?>) = SocialNotification(
         id = value.string("id").orEmpty(),
         scope = value.string("scope") ?: "social",
@@ -1087,10 +1558,127 @@ class SocialRepository(context: Context) {
         )
     }
 
+    private fun upsertStory(updated: SocialStory) {
+        val current = _storyTray.value
+        val existing = current.firstOrNull { it.authorId == updated.authorId }
+        val stories = (listOf(updated) + existing?.stories.orEmpty().filterNot { it.id == updated.id })
+            .sortedByDescending { it.createdAt.orEmpty() }
+        val group = SocialStoryGroup(
+            authorId = updated.authorId,
+            author = updated.author,
+            authorProfile = updated.authorProfile,
+            stories = stories,
+            unseenCount = if (updated.authorId == currentUserId()) 0 else stories.count { !it.seen },
+            latestAt = stories.maxOfOrNull { it.createdAt.orEmpty() }.takeUnless { it.isNullOrBlank() }
+        )
+        _storyTray.value = sortStoryGroups(listOf(group) + current.filterNot { it.authorId == updated.authorId })
+    }
+
+    private fun mutateStory(id: String, transform: (SocialStory) -> SocialStory) {
+        _storyTray.value = _storyTray.value.map { group ->
+            if (group.stories.none { it.id == id }) group else {
+                val stories = group.stories.map { if (it.id == id) transform(it) else it }
+                group.copy(
+                    stories = stories,
+                    unseenCount = if (group.authorId == currentUserId()) 0 else stories.count { !it.seen }
+                )
+            }
+        }
+        _storyMemories.value = _storyMemories.value.map { if (it.id == id) transform(it) else it }
+    }
+
+    private fun removeStoryFromTray(id: String) {
+        _storyTray.value = _storyTray.value.mapNotNull { group ->
+            val stories = group.stories.filterNot { it.id == id }
+            if (stories.isEmpty()) null else group.copy(
+                stories = stories,
+                unseenCount = if (group.authorId == currentUserId()) 0 else stories.count { !it.seen },
+                latestAt = stories.maxOfOrNull { it.createdAt.orEmpty() }.takeUnless { it.isNullOrBlank() }
+            )
+        }
+    }
+
+    private fun sortStoryGroups(groups: List<SocialStoryGroup>): List<SocialStoryGroup> {
+        val viewerId = currentUserId()
+        return groups.sortedWith(
+            compareByDescending<SocialStoryGroup> { it.authorId == viewerId }
+                .thenByDescending { it.unseenCount > 0 }
+                .thenByDescending { it.latestAt.orEmpty() }
+        )
+    }
+
+    private fun storyInput(draft: SocialStoryDraft): Map<String, Any?> = mapOf(
+        "caption" to draft.caption?.trim()?.takeIf { it.isNotBlank() },
+        "visibility" to draft.visibility,
+        "customAudienceIds" to draft.customAudienceIds.distinct(),
+        "allowReplies" to draft.allowReplies,
+        "metadata" to draft.metadata,
+        "items" to draft.items.sortedBy { it.sortOrder }.mapIndexed { index, item ->
+            storyItemInput(mapOf(
+                "type" to item.type,
+                "media" to item.media,
+                "text" to item.text,
+                "background" to item.background,
+                "filter" to item.filter,
+                "transform" to item.transform,
+                "overlays" to item.overlays,
+                "durationMs" to item.durationMs.coerceIn(1_000, 60_000),
+                "altText" to item.altText,
+                "aiGenerated" to item.aiGenerated,
+                "music" to item.music,
+                "sortOrder" to item.sortOrder.coerceAtLeast(0)
+            ), index)
+        }
+    ).filterValues { it != null }
+
+    private fun storyItemInput(raw: Map<String, Any?>, fallbackOrder: Int): Map<String, Any?> = mapOf(
+        "type" to (raw["type"]?.toString()?.lowercase()?.takeIf { it.isNotBlank() } ?: "image"),
+        "media" to when (val media = raw["media"]) {
+            is SocialMedia -> mediaInput(media)
+            is Map<*, *> -> media.entries.mapNotNull { (key, value) -> (key as? String)?.let { it to value } }.toMap()
+            else -> null
+        },
+        "text" to raw["text"]?.toString(),
+        "background" to raw["background"]?.toString(),
+        "filter" to (raw["filter"] as? Map<*, *>)?.entries?.mapNotNull { (key, value) -> (key as? String)?.let { it to value } }?.toMap().orEmpty(),
+        "transform" to (raw["transform"] as? Map<*, *>)?.entries?.mapNotNull { (key, value) -> (key as? String)?.let { it to value } }?.toMap().orEmpty(),
+        "overlays" to (raw["overlays"] as? List<*>)?.mapNotNull { it as? Map<*, *> }?.map { overlay ->
+            overlay.entries.mapNotNull { (key, value) -> (key as? String)?.let { it to value } }.toMap()
+        }.orEmpty(),
+        "durationMs" to ((raw["durationMs"] as? Number)?.toInt() ?: 5_000).coerceIn(1_000, 60_000),
+        "altText" to raw["altText"]?.toString(),
+        "aiGenerated" to (raw["aiGenerated"] as? Boolean ?: false),
+        "music" to (raw["music"] as? Map<*, *>)?.entries?.mapNotNull { (key, value) -> (key as? String)?.let { it to value } }?.toMap().orEmpty(),
+        "sortOrder" to ((raw["sortOrder"] as? Number)?.toInt() ?: fallbackOrder).coerceAtLeast(0)
+    ).filterValues { it != null }
+
     private fun replacePost(updated: SocialPost) {
         _feed.value = if (_feed.value.any { it.id == updated.id }) _feed.value.map { if (it.id == updated.id) updated else it }
         else listOf(updated) + _feed.value
         cache.saveFeed(_feed.value)
+    }
+
+    private fun removeStoryInteractionFromCache(interactionId: String) {
+        _storyTray.value = _storyTray.value.map { group ->
+            group.copy(stories = group.stories.map { story ->
+                story.copy(items = story.items.map { item ->
+                    val removed = item.viewerInteractions.any { it.id == interactionId }
+                    if (!removed) item else item.copy(
+                        interactionCount = (item.interactionCount - 1).coerceAtLeast(0),
+                        viewerInteractions = item.viewerInteractions.filterNot { it.id == interactionId }
+                    )
+                })
+            })
+        }
+        _storyMemories.value = _storyMemories.value.map { story ->
+            story.copy(items = story.items.map { item ->
+                val removed = item.viewerInteractions.any { it.id == interactionId }
+                if (!removed) item else item.copy(
+                    interactionCount = (item.interactionCount - 1).coerceAtLeast(0),
+                    viewerInteractions = item.viewerInteractions.filterNot { it.id == interactionId }
+                )
+            })
+        }
     }
 
     private fun mediaInput(media: SocialMedia): Map<String, Any?> = mapOf(
@@ -1120,11 +1708,22 @@ class SocialRepository(context: Context) {
         const val DECORATION_FIELDS = "id slug kind name assetUrl fileName mimeType animated width height priceUsd status sortOrder owned applied ownershipSource"
         const val PROFILE_FIELDS = "id userId username bio about category website location coverUrl verified badgeType badgePlan badgeExpiresAt avatarDecoration { $DECORATION_FIELDS } profileEffect { $DECORATION_FIELDS } privacy preferences followerCount followingCount postCount isFollowing createdAt user { $PUBLIC_USER_FIELDS }"
         const val POST_FIELDS = "id authorId type body media metadata thumbnailUrl hlsUrl processingStatus visibility commentPermission pinned groupId saved status viewCount shareCount saveCount reactionCount commentCount viewerReaction recommended recommendationLabel publishedAt author { $PUBLIC_USER_FIELDS } authorProfile { id userId username verified badgeType isFollowing avatarDecoration { $DECORATION_FIELDS } }"
+        const val STORY_PROFILE_FIELDS = "id userId username verified badgeType isFollowing avatarDecoration { $DECORATION_FIELDS }"
+        const val STORY_INTERACTION_FIELDS = "id storyId itemId userId kind key value createdAt updatedAt user { $PUBLIC_USER_FIELDS } userProfile { $STORY_PROFILE_FIELDS }"
+        const val STORY_ITEM_FIELDS = "id storyId type media text background filter transform overlays durationMs altText aiGenerated music status sortOrder reactionCount viewerReaction interactionCount viewerInteractions { $STORY_INTERACTION_FIELDS } createdAt updatedAt"
+        const val STORY_FIELDS = "id authorId visibility customAudienceIds allowReplies status caption metadata viewerCount reactionCount replyCount seen viewerLastItemSortOrder expiresAt archivedAt createdAt updatedAt author { $PUBLIC_USER_FIELDS } authorProfile { $STORY_PROFILE_FIELDS } items { $STORY_ITEM_FIELDS }"
+        const val STORY_GROUP_FIELDS = "authorId unseenCount latestAt author { $PUBLIC_USER_FIELDS } authorProfile { $STORY_PROFILE_FIELDS } stories { $STORY_FIELDS }"
+        const val STORY_VIEW_FIELDS = "id viewerId lastItemSortOrder viewedAt viewer { $PUBLIC_USER_FIELDS } viewerProfile { $STORY_PROFILE_FIELDS }"
+        const val STORY_REPLY_FIELDS = "id storyId itemId senderId body conversationId messageId createdAt sender { $PUBLIC_USER_FIELDS } senderProfile { $STORY_PROFILE_FIELDS }"
+        const val STORY_MUSIC_FIELDS = "id title artist artworkUrl streamUrl durationSeconds"
         const val FEED_MODULE_FIELDS = "id kind insertAfter title profiles { $PROFILE_FIELDS } posts { $POST_FIELDS }"
         const val COMMENT_FIELDS = "id postId authorId replyToId body status reactionCount viewerLiked createdAt author { $PUBLIC_USER_FIELDS } authorProfile { id userId username verified badgeType avatarDecoration { $DECORATION_FIELDS } }"
         const val MESSAGE_FIELDS = "id conversationId senderId type body media replyToId deliveryStatus sentAt deliveredAt readAt editedAt unsentAt reactions { id userId emoji } sender { $PUBLIC_USER_FIELDS } senderProfile { id userId username avatarDecoration { $DECORATION_FIELDS } }"
         const val CONVERSATION_FIELDS = "id type title avatarUrl requestStatus requestedById unreadCount updatedAt members { id userId role muted archived typingAt lastReadAt blocked user { $PUBLIC_USER_FIELDS } profile { id userId username verified badgeType avatarDecoration { $DECORATION_FIELDS } } } lastMessage { $MESSAGE_FIELDS }"
         const val CALL_FIELDS = "id conversationId callerId calleeId type status offer answer iceCandidates caller { $PUBLIC_USER_FIELDS } callee { $PUBLIC_USER_FIELDS }"
+        const val LIVE_STREAM_FIELDS = "id hostId title description status visibility playbackUrl qualities viewerCount commentsEnabled paused lastHeartbeatAt startedAt endedAt host { $PUBLIC_USER_FIELDS } hostProfile { $PROFILE_FIELDS }"
+        const val LIVE_PARTICIPANT_FIELDS = "id streamId viewerId status hostOffer viewerAnswer hostIce viewerIce viewer { $PUBLIC_USER_FIELDS } viewerProfile { $PROFILE_FIELDS }"
+        const val LIVE_COMMENT_FIELDS = "id streamId authorId replyToId body status createdAt author { $PUBLIC_USER_FIELDS } authorProfile { $PROFILE_FIELDS }"
         const val NOTIFICATION_FIELDS = "id scope scopeId type title message status metadata readAt createdAt"
         const val GROUP_FIELDS = "id ownerId name description coverUrl privacy status memberCount viewerRole viewerJoined createdAt owner { $PUBLIC_USER_FIELDS }"
         const val GROUP_MEMBER_FIELDS = "id groupId userId role status joinedAt user { $PUBLIC_USER_FIELDS } profile { id userId username verified badgeType avatarDecoration { $DECORATION_FIELDS } }"

@@ -74,6 +74,12 @@ model User {
   passwordResetOtps          PasswordResetOtpChallenge[]
   socialProfile              SocialProfile?
   socialPosts                SocialPost[]                       @relation("SocialPostAuthor")
+  socialStories              SocialStory[]                      @relation("SocialStoryAuthor")
+  socialStoryAudiences       SocialStoryAudience[]              @relation("SocialStoryAudienceUser")
+  socialStoryViews           SocialStoryView[]                  @relation("SocialStoryViewer")
+  socialStoryReactions       SocialStoryReaction[]              @relation("SocialStoryReactionUser")
+  socialStoryReplies         SocialStoryReply[]                 @relation("SocialStoryReplySender")
+  socialStoryInteractions    SocialStoryInteraction[]           @relation("SocialStoryInteractionUser")
   socialComments             SocialComment[]                    @relation("SocialCommentAuthor")
   socialPostReactions        SocialPostReaction[]
   socialCommentReactions     SocialCommentReaction[]
@@ -87,6 +93,8 @@ model User {
   socialCallsPlaced          SocialCallSession[]                @relation("SocialCallCaller")
   socialCallsReceived        SocialCallSession[]                @relation("SocialCallCallee")
   socialLiveStreams          SocialLiveStream[]                 @relation("SocialLiveHost")
+  socialLiveParticipations   SocialLiveParticipant[]            @relation("SocialLiveViewer")
+  socialLiveComments         SocialLiveComment[]                @relation("SocialLiveCommentAuthor")
   socialSavedPosts           SocialSavedPost[]
   socialFavoritesGiven       SocialFavorite[]                   @relation("SocialFavoriteOwner")
   socialFavoritesReceived    SocialFavorite[]                   @relation("SocialFavoriteTarget")
@@ -1533,6 +1541,142 @@ model SocialPost {
   @@index([groupId, status, publishedAt])
 }
 
+model SocialStory {
+  id           String                   @id @default(cuid())
+  legacyPostId String?                  @unique
+  authorId     String
+  author       User                     @relation("SocialStoryAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+  visibility   String                   @default("public")
+  allowReplies Boolean                  @default(true)
+  status       String                   @default("active")
+  caption      String?
+  metadata     Json                     @default("{}")
+  expiresAt    DateTime
+  archivedAt   DateTime?
+  deletedAt    DateTime?
+  createdAt    DateTime                 @default(now())
+  updatedAt    DateTime                 @updatedAt
+  items        SocialStoryItem[]
+  audiences    SocialStoryAudience[]
+  views        SocialStoryView[]
+  reactions    SocialStoryReaction[]
+  replies      SocialStoryReply[]
+  interactions SocialStoryInteraction[]
+
+  @@index([status, expiresAt, createdAt])
+  @@index([authorId, status, createdAt])
+  @@index([visibility, status, expiresAt])
+}
+
+model SocialStoryItem {
+  id           String                   @id @default(cuid())
+  storyId      String
+  story        SocialStory              @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  type         String
+  media        Json                     @default("{}")
+  text         String?
+  background   String?
+  filter       Json                     @default("{}")
+  transform    Json                     @default("{}")
+  overlays     Json                     @default("[]")
+  durationMs   Int                      @default(5000)
+  altText      String?
+  aiGenerated  Boolean                  @default(false)
+  music        Json                     @default("{}")
+  status       String                   @default("active")
+  sortOrder    Int
+  createdAt    DateTime                 @default(now())
+  updatedAt    DateTime                 @updatedAt
+  reactions    SocialStoryReaction[]
+  replies      SocialStoryReply[]
+  interactions SocialStoryInteraction[]
+
+  @@unique([storyId, sortOrder])
+  @@index([storyId, status, sortOrder])
+}
+
+model SocialStoryAudience {
+  id        String      @id @default(cuid())
+  storyId   String
+  story     SocialStory @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User        @relation("SocialStoryAudienceUser", fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime    @default(now())
+
+  @@unique([storyId, userId])
+  @@index([userId, createdAt])
+}
+
+model SocialStoryView {
+  id                String      @id @default(cuid())
+  storyId           String
+  story             SocialStory @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  viewerId          String
+  viewer            User        @relation("SocialStoryViewer", fields: [viewerId], references: [id], onDelete: Cascade)
+  lastItemSortOrder Int         @default(0)
+  seenItemIds       Json        @default("[]")
+  viewedAt          DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+
+  @@unique([storyId, viewerId])
+  @@index([storyId, viewedAt])
+  @@index([viewerId, viewedAt])
+}
+
+model SocialStoryReaction {
+  id        String          @id @default(cuid())
+  storyId   String
+  story     SocialStory     @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  itemId    String
+  item      SocialStoryItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User            @relation("SocialStoryReactionUser", fields: [userId], references: [id], onDelete: Cascade)
+  emoji     String
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+
+  @@unique([itemId, userId])
+  @@index([storyId, createdAt])
+  @@index([userId, createdAt])
+}
+
+model SocialStoryReply {
+  id             String          @id @default(cuid())
+  storyId        String
+  story          SocialStory     @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  itemId         String
+  item           SocialStoryItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  senderId       String
+  sender         User            @relation("SocialStoryReplySender", fields: [senderId], references: [id], onDelete: Cascade)
+  body           String
+  conversationId String?
+  messageId      String?
+  createdAt      DateTime        @default(now())
+
+  @@index([storyId, createdAt])
+  @@index([itemId, createdAt])
+  @@index([senderId, createdAt])
+}
+
+model SocialStoryInteraction {
+  id        String          @id @default(cuid())
+  storyId   String
+  story     SocialStory     @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  itemId    String
+  item      SocialStoryItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User            @relation("SocialStoryInteractionUser", fields: [userId], references: [id], onDelete: Cascade)
+  kind      String
+  key       String
+  value     Json            @default("{}")
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+
+  @@unique([itemId, userId, key])
+  @@index([storyId, createdAt])
+  @@index([userId, createdAt])
+}
+
 model SocialBlock {
   id           String   @id @default(cuid())
   userId       String
@@ -1786,26 +1930,70 @@ model SocialCallSession {
 }
 
 model SocialLiveStream {
-  id          String    @id @default(cuid())
-  hostId      String
-  host        User      @relation("SocialLiveHost", fields: [hostId], references: [id], onDelete: Cascade)
-  title       String
-  description String?
-  status      String    @default("scheduled")
-  visibility  String    @default("public")
-  streamKey   String    @unique
-  ingestUrl   String?
-  playbackUrl String?
-  qualities   Json      @default("[]")
-  viewerCount Int       @default(0)
-  scheduledAt DateTime?
-  startedAt   DateTime?
-  endedAt     DateTime?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  id              String                  @id @default(cuid())
+  hostId          String
+  host            User                    @relation("SocialLiveHost", fields: [hostId], references: [id], onDelete: Cascade)
+  title           String
+  description     String?
+  status          String                  @default("scheduled")
+  visibility      String                  @default("public")
+  streamKey       String                  @unique
+  ingestUrl       String?
+  playbackUrl     String?
+  qualities       Json                    @default("[]")
+  viewerCount     Int                     @default(0)
+  commentsEnabled Boolean                 @default(true)
+  paused          Boolean                 @default(false)
+  lastHeartbeatAt DateTime?
+  scheduledAt     DateTime?
+  startedAt       DateTime?
+  endedAt         DateTime?
+  createdAt       DateTime                @default(now())
+  updatedAt       DateTime                @updatedAt
+  participants    SocialLiveParticipant[]
+  comments        SocialLiveComment[]
 
   @@index([status, createdAt])
   @@index([hostId, status])
+}
+
+model SocialLiveParticipant {
+  id           String           @id @default(cuid())
+  streamId     String
+  stream       SocialLiveStream @relation(fields: [streamId], references: [id], onDelete: Cascade)
+  viewerId     String
+  viewer       User             @relation("SocialLiveViewer", fields: [viewerId], references: [id], onDelete: Cascade)
+  status       String           @default("joining")
+  hostOffer    Json?
+  viewerAnswer Json?
+  hostIce      Json             @default("[]")
+  viewerIce    Json             @default("[]")
+  joinedAt     DateTime         @default(now())
+  lastSeenAt   DateTime         @default(now())
+  leftAt       DateTime?
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  @@unique([streamId, viewerId])
+  @@index([streamId, status, lastSeenAt])
+}
+
+model SocialLiveComment {
+  id        String              @id @default(cuid())
+  streamId  String
+  stream    SocialLiveStream    @relation(fields: [streamId], references: [id], onDelete: Cascade)
+  authorId  String
+  author    User                @relation("SocialLiveCommentAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+  replyToId String?
+  replyTo   SocialLiveComment?  @relation("SocialLiveCommentReplies", fields: [replyToId], references: [id], onDelete: Cascade)
+  replies   SocialLiveComment[] @relation("SocialLiveCommentReplies")
+  body      String
+  status    String              @default("active")
+  createdAt DateTime            @default(now())
+  updatedAt DateTime            @updatedAt
+
+  @@index([streamId, createdAt])
+  @@index([replyToId, createdAt])
 }
 
 model SocialReport {

@@ -60,6 +60,7 @@ class WebRtcCallManager(
     private var audioSource: AudioSource? = null
     private var localAudioTrack: AudioTrack? = null
     private var pollJob: Job? = null
+    private var reconnectTimeoutJob: Job? = null
     private var disposed = false
     private var remoteDescriptionApplied = false
     private val pendingCandidates = mutableListOf<IceCandidate>()
@@ -316,9 +317,23 @@ class WebRtcCallManager(
         override fun onSignalingChange(state: PeerConnection.SignalingState) = Unit
         override fun onIceConnectionChange(state: PeerConnection.IceConnectionState) {
             when (state) {
-                PeerConnection.IceConnectionState.CONNECTED, PeerConnection.IceConnectionState.COMPLETED -> _state.value = "Connected"
-                PeerConnection.IceConnectionState.DISCONNECTED -> _state.value = "Reconnecting…"
-                PeerConnection.IceConnectionState.FAILED -> _state.value = "Call connection failed"
+                PeerConnection.IceConnectionState.CONNECTED, PeerConnection.IceConnectionState.COMPLETED -> {
+                    reconnectTimeoutJob?.cancel()
+                    reconnectTimeoutJob = null
+                    _state.value = "Connected"
+                }
+                PeerConnection.IceConnectionState.DISCONNECTED -> {
+                    _state.value = "Reconnecting…"
+                    if (reconnectTimeoutJob == null) reconnectTimeoutJob = scope.launch {
+                        delay(20_000)
+                        if (_state.value.startsWith("Reconnecting")) hangUp("failed")
+                        reconnectTimeoutJob = null
+                    }
+                }
+                PeerConnection.IceConnectionState.FAILED -> {
+                    _state.value = "Call connection failed"
+                    hangUp("failed")
+                }
                 else -> Unit
             }
         }
@@ -368,6 +383,8 @@ class WebRtcCallManager(
     private fun closeMedia() {
         pollJob?.cancel()
         pollJob = null
+        reconnectTimeoutJob?.cancel()
+        reconnectTimeoutJob = null
         runCatching { cameraCapturer?.stopCapture() }
         cameraCapturer?.dispose()
         cameraCapturer = null
