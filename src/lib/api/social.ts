@@ -73,11 +73,75 @@ export async function fetchSocialSettingsWithApi() {
   return data.socialSettings;
 }
 
+const socialAiBundleModels = [
+  {
+    id: 'text-policy',
+    name: 'Qwen2.5 3B Instruct (Q4_K_M)',
+    kind: 'Text / policy',
+    file: 'Qwen2.5-3B-Instruct-Q4_K_M.gguf',
+    runtime: 'llama.cpp',
+    default: true
+  },
+  {
+    id: 'moderation-vision',
+    name: 'Moondream2 Vision (GGUF)',
+    kind: 'Vision / image moderation',
+    file: 'moondream2-text-model-f16.gguf + mmproj',
+    runtime: 'llama.cpp'
+  },
+  {
+    id: 'embedding',
+    name: 'Nomic Embed Text v1.5 (Q4_K_M)',
+    kind: 'Embedding / duplicate matching',
+    file: 'nomic-embed-text-v1.5.Q4_K_M.gguf',
+    runtime: 'llama.cpp'
+  },
+  {
+    id: 'nsfwjs',
+    name: 'NSFWJS local classifier',
+    kind: 'Image safety',
+    file: 'local Node.js package model',
+    runtime: 'Node.js'
+  }
+];
+
+const isSocialAiSchemaUnavailable = (error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error || '');
+  return /Cannot query field\s+["']adminSocialAiOverview["']/i.test(message);
+};
+
 export async function fetchAdminSocialAiOverviewWithApi() {
-  const data = await graphQL<{ adminSocialAiOverview: Record<string, any> }>(`
-    query AdminSocialAiOverview { adminSocialAiOverview }
-  `);
-  return data.adminSocialAiOverview;
+  try {
+    const data = await graphQL<{ adminSocialAiOverview: Record<string, any> }>(`
+      query AdminSocialAiOverview { adminSocialAiOverview }
+    `);
+    return data.adminSocialAiOverview;
+  } catch (error) {
+    // A frontend release can arrive before the backend deployment. Keep the
+    // rest of Social administration working and make the required deployment
+    // explicit instead of pretending the AI services are available.
+    if (!isSocialAiSchemaUnavailable(error)) throw error;
+    return {
+      schemaUnavailable: true,
+      settings: {},
+      runningFeatures: [],
+      queue: { queued: 0 },
+      jobs: [],
+      cases: [],
+      health: {
+        available: false,
+        packages: {},
+        models: Object.fromEntries(socialAiBundleModels.map((model) => [model.id, {
+          healthy: false,
+          status: 'backend deployment required'
+        }]))
+      },
+      catalog: {
+        packages: [],
+        models: socialAiBundleModels
+      }
+    };
+  }
 }
 
 export async function updateAdminSocialAiSettingsWithApi(input: Record<string, unknown>) {

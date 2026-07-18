@@ -201,6 +201,10 @@ export default function AdminSocial() {
   };
 
   const saveAiSettings = async (next: Record<string, unknown>) => {
+    if (aiOverview?.schemaUnavailable) {
+      setError('This server is running an older GraphQL schema. Deploy the Social AI backend release before changing AI settings.');
+      return;
+    }
     await perform(async () => {
       const updated = await updateAdminSocialAiSettingsWithApi(next);
       setAiOverview(updated);
@@ -208,6 +212,10 @@ export default function AdminSocial() {
   };
 
   const operateAi = async (scope: string, action: string, id?: string) => {
+    if (aiOverview?.schemaUnavailable) {
+      setError('This server is running an older GraphQL schema. Deploy the Social AI backend release before running AI actions.');
+      return;
+    }
     await perform(async () => {
       const result = await operateAdminSocialAiWithApi({ scope, action, id });
       const managerLogs = Array.isArray(result?.logs?.logs) ? result.logs.logs : Array.isArray(result?.health?.logs) ? result.health.logs : [];
@@ -216,6 +224,10 @@ export default function AdminSocial() {
   };
 
   const resolveAiCase = async (id: string, action: string) => {
+    if (aiOverview?.schemaUnavailable) {
+      setError('This server is running an older GraphQL schema. Deploy the Social AI backend release before resolving AI cases.');
+      return;
+    }
     await perform(() => resolveAdminSocialAiCaseWithApi(id, { action }), `Social AI case ${action.replace(/_/g, ' ')}.`);
   };
 
@@ -337,6 +349,7 @@ export default function AdminSocial() {
   const aiHealth = ai.health || {};
   const aiPackages = aiHealth.packages || {};
   const aiModels = aiHealth.models || {};
+  const aiSchemaUnavailable = Boolean(ai.schemaUnavailable);
 
   return (
     <div className="space-y-6 pb-12">
@@ -456,7 +469,7 @@ export default function AdminSocial() {
                 <h2 className="mt-2 text-xl font-black tracking-tight text-[#26344a]">Social AI Control Center</h2>
                 <p className="mt-2 max-w-2xl text-[12px] leading-5 text-slate-600">Verification, reports, public content, optional private-message review, warnings, appeals and automation run from a persistent Social-only queue. The platform-wide Admin AI Model is not changed.</p>
                 <div className="mt-4 flex flex-wrap gap-2">
-                  <span className={`rounded-full px-3 py-1 text-[10px] font-black uppercase ${aiHealth.available ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>{aiHealth.available ? 'Manager online' : 'Manager needs bootstrap'}</span>
+                  <span className={`rounded-full px-3 py-1 text-[10px] font-black uppercase ${aiSchemaUnavailable ? 'bg-red-100 text-red-700' : aiHealth.available ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>{aiSchemaUnavailable ? 'Backend deploy required' : aiHealth.available ? 'Manager online' : 'Manager needs bootstrap'}</span>
                   <span className="rounded-full bg-white px-3 py-1 text-[10px] font-black uppercase text-slate-600">{(ai.runningFeatures || []).length} automation features on</span>
                   <span className="rounded-full bg-white px-3 py-1 text-[10px] font-black uppercase text-slate-600">{Number(ai.queue?.queued || 0)} queued</span>
                 </div>
@@ -467,6 +480,7 @@ export default function AdminSocial() {
                 <button disabled={saving} onClick={() => operateAi('system', 'repair_all')} className="flex items-center gap-2 rounded border border-[#cdd9ec] bg-white px-4 py-2.5 text-[12px] font-black text-[#36527c] disabled:opacity-50"><Settings className="h-4 w-4" /> Repair all</button>
               </div>
             </div>
+            {aiSchemaUnavailable && <div className="border-t border-red-100 bg-red-50 px-5 py-4 text-[12px] leading-5 text-red-800"><p className="font-black">Social AI backend is not deployed on this server yet.</p><p className="mt-1">The running GraphQL schema does not contain <code className="font-bold">adminSocialAiOverview</code>. The model catalog below is included in this app release, but install, status and automation controls remain unavailable until the Social backend deployment runs.</p></div>}
             <div className="grid divide-y divide-[#e8edf5] border-t border-[#e8edf5] sm:grid-cols-3 sm:divide-x sm:divide-y-0">
               <div className="p-4"><p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Package health</p><p className="mt-1 text-lg font-black text-[#26344a]">{Object.values(aiPackages).filter((item: any) => item?.healthy).length}/{(ai.catalog?.packages || []).length}</p></div>
               <div className="p-4"><p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Model health</p><p className="mt-1 text-lg font-black text-[#26344a]">{Object.values(aiModels).filter((item: any) => item?.healthy).length}/{(ai.catalog?.models || []).length}</p></div>
