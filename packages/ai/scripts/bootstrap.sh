@@ -47,6 +47,9 @@ RestartSec=8
 Environment=TIWLO_ROOT=$ROOT
 WorkingDirectory=$ROOT
 ExecStart=$ROOT/packages/ai/scripts/worker.sh
+
+[Install]
+WantedBy=multi-user.target
 EOF
 
 systemctl daemon-reload

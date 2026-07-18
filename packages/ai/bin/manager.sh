@@ -48,9 +48,16 @@ ensure_docker() {
   progress 8 "Installing Docker dependencies"
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -y >>"$LOG_FILE" 2>&1
-  apt-get install -y ca-certificates curl docker.io docker-compose-plugin >>"$LOG_FILE" 2>&1
+  # Ubuntu releases commonly provide docker-compose-plugin while Debian and
+  # older VPS images package the compatible CLI as docker-compose. Support
+  # both without making a missing plugin package abort the whole deployment.
+  if ! apt-get install -y ca-certificates curl docker.io docker-compose-plugin >>"$LOG_FILE" 2>&1; then
+    log "docker-compose-plugin is unavailable; retrying with docker-compose compatibility package"
+    apt-get install -y ca-certificates curl docker.io docker-compose >>"$LOG_FILE" 2>&1
+  fi
   systemctl enable --now docker >>"$LOG_FILE" 2>&1 || true
   have docker || die "Docker installation did not complete"
+  { docker compose version >/dev/null 2>&1 || have docker-compose; } || die "Docker Compose installation did not complete"
 }
 
 write_compose() {
