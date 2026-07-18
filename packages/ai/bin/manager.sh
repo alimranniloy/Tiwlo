@@ -288,6 +288,7 @@ restart_service() {
     *) die "Unknown package $id" ;;
   esac
   for _ in $(seq 1 18); do service_healthy "$id" && { progress 100 "$id restarted and healthy"; return; }; sleep 2; done
+  append_service_diagnostics "$id"
   die "$id did not become healthy after restart"
 }
 
