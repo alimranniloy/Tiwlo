@@ -92,7 +92,9 @@ const DEFAULT_SETTINGS = Object.freeze({
   runtime: {
     searxngUrl: 'http://127.0.0.1:8081',
     crawl4aiUrl: 'http://127.0.0.1:11235',
-    llamaUrl: 'http://127.0.0.1:8082/completion',
+    // The OpenAI-compatible chat endpoint follows JSON instructions much more
+    // reliably than the legacy completion endpoint on compact local models.
+    llamaUrl: 'http://127.0.0.1:8082/v1/chat/completions',
     requestTimeoutMs: 30_000
   },
   features: defaultFeatures(),
@@ -122,6 +124,14 @@ const clamp = (value, min, max, fallback) => {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? Math.min(max, Math.max(min, numeric)) : fallback;
 };
+const normalizeLlamaUrl = (value) => {
+  const url = asText(value || DEFAULT_SETTINGS.runtime.llamaUrl, 500);
+  // Preserve a deliberately configured remote runtime, while transparently
+  // migrating the former local /completion default to the supported chat API.
+  return /^https?:\/\/(?:127\.0\.0\.1|localhost):8082\/completion\/?$/i.test(url)
+    ? DEFAULT_SETTINGS.runtime.llamaUrl
+    : url;
+};
 
 const normalizeSettings = (value = {}) => {
   const source = asObject(value);
@@ -140,7 +150,7 @@ const normalizeSettings = (value = {}) => {
       ...runtime,
       searxngUrl: asText(runtime.searxngUrl || DEFAULT_SETTINGS.runtime.searxngUrl, 500).replace(/\/$/, ''),
       crawl4aiUrl: asText(runtime.crawl4aiUrl || DEFAULT_SETTINGS.runtime.crawl4aiUrl, 500).replace(/\/$/, ''),
-      llamaUrl: asText(runtime.llamaUrl || DEFAULT_SETTINGS.runtime.llamaUrl, 500),
+      llamaUrl: normalizeLlamaUrl(runtime.llamaUrl),
       requestTimeoutMs: Math.floor(clamp(runtime.requestTimeoutMs, 5_000, 120_000, DEFAULT_SETTINGS.runtime.requestTimeoutMs))
     },
     features: asBooleanMap({ ...defaultFeatures(), ...asObject(source.features) }),
@@ -447,31 +457,85 @@ const crawlEvidence = async (settings, url) => {
   return item ? { url, title: asText(item?.metadata?.title || item?.title, 240), markdown: asText(item?.markdown || item?.markdown_v2?.raw_markdown || item?.fit_markdown, 5_000) } : null;
 };
 
+const modelWarmingError = (message) => new AppError(message, 'SOCIAL_AI_MODEL_WARMING');
+
+const policyDecision = (value) => {
+  const normalized = asText(value, 30).toLowerCase();
+  if (['allow', 'review', 'violation'].includes(normalized)) return normalized;
+  if (['yes', 'safe', 'approved', 'no action'].includes(normalized)) return 'allow';
+  if (['unsafe', 'blocked', 'block', 'deny'].includes(normalized)) return 'violation';
+  return 'review';
+};
+
+const policyConfidence = (value) => {
+  const text = asText(value, 40);
+  if (text.endsWith('%')) return clamp(Number(text.slice(0, -1)) / 100, 0, 1, 0);
+  return clamp(text, 0, 1, 0);
+};
+
+const policyAction = (value, decision) => {
+  const action = asText(value, 100).toLowerCase().replace(/[\s-]+/g, '_');
+  const allowed = new Set(['none', 'warning', 'strike', 'remove_content', 'restrict_account', 'approve_verification', 'reject_verification', 'manual_review']);
+  if (allowed.has(action)) return action;
+  if (/no_action|no.*recommended|allow/.test(action)) return 'none';
+  return decision === 'allow' ? 'none' : 'manual_review';
+};
+
 const askPolicyModel = async (settings, task, taskContext, supplemental = {}) => {
-  const prompt = [
-    'You are Tiwi Social Safety AI. Return one strict JSON object only.',
-    'Never infer a protected trait. Analyze only the supplied content and evidence. Use decision allow, review, or violation.',
-    'Required JSON keys: decision, category, confidence (0..1), severity (low|medium|high|critical), reason, recommendedAction (none|warning|strike|remove_content|restrict_account|approve_verification|reject_verification|manual_review), evidenceSummary.',
-    `Task: ${task}.`,
-    `Context: ${JSON.stringify({ text: asText(taskContext.text, 10_000), metadata: taskContext.context, supplemental })}`
-  ].join('\n');
-  const response = await fetch(settings.runtime.llamaUrl, {
-    method: 'POST', signal: AbortSignal.timeout(settings.runtime.requestTimeoutMs), headers: { 'content-type': 'application/json', accept: 'application/json' },
-    body: JSON.stringify({ prompt, n_predict: 420, temperature: 0.1, stop: ['\n\n'] })
+  // Compact VPS instances use a 2k-token local context.  Avoid sending raw
+  // media metadata or crawled pages wholesale: oversized prompts were the
+  // source of llama.cpp 400 responses and served no moderation purpose.
+  const context = {
+    text: asText(taskContext.text, 2_600),
+    metadata: asText(JSON.stringify(taskContext.context || {}), 1_000),
+    supplemental: asText(JSON.stringify(supplemental || {}), 700)
+  };
+  const system = [
+    'You are Tiwi Social Safety AI.',
+    'Return exactly one JSON object and no prose or markdown.',
+    'Analyze only supplied content. Never infer protected traits.',
+    'Use decision exactly allow, review, or violation.',
+    'Required keys: decision, category, confidence as a number from 0 to 1, severity as low/medium/high/critical, reason, recommendedAction, evidenceSummary.',
+    'recommendedAction must be one of none, warning, strike, remove_content, restrict_account, approve_verification, reject_verification, manual_review.'
+  ].join(' ');
+  const user = `Task: ${task}\nContext: ${JSON.stringify(context)}`;
+  const request = (body) => fetch(settings.runtime.llamaUrl, {
+    method: 'POST', signal: AbortSignal.timeout(settings.runtime.requestTimeoutMs), headers: { 'content-type': 'application/json', accept: 'application/json' }, body: JSON.stringify(body)
   });
-  if (!response.ok) throw new Error(`llama.cpp returned ${response.status}`);
+  let response;
+  try {
+    response = await request({
+      messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
+      temperature: 0.1,
+      max_tokens: 260,
+      response_format: { type: 'json_object' }
+    });
+    // A few older llama.cpp builds do not implement response_format. Retry
+    // once with the same constrained prompt rather than failing the review.
+    if (response.status === 400) {
+      response = await request({ messages: [{ role: 'system', content: system }, { role: 'user', content: user }], temperature: 0.1, max_tokens: 260 });
+    }
+  } catch (error) {
+    throw modelWarmingError(`llama.cpp is not reachable: ${asText(error?.message, 300)}`);
+  }
+  if (!response.ok) {
+    const detail = asText(await response.text().catch(() => ''), 400);
+    if ([408, 429, 500, 502, 503, 504].includes(response.status)) throw modelWarmingError(`llama.cpp is warming or unavailable (${response.status})${detail ? `: ${detail}` : ''}`);
+    throw new Error(`llama.cpp returned ${response.status}${detail ? `: ${detail}` : ''}`);
+  }
   const payload = await response.json();
-  const parsed = jsonFromModel(payload?.content || payload?.response || '');
+  const content = payload?.choices?.[0]?.message?.content || payload?.content || payload?.response || '';
+  const parsed = jsonFromModel(content);
   if (!parsed) throw new Error('llama.cpp did not return a policy JSON result');
-  const decision = ['allow', 'review', 'violation'].includes(asText(parsed.decision, 30).toLowerCase()) ? asText(parsed.decision, 30).toLowerCase() : 'review';
+  const decision = policyDecision(parsed.decision);
   const severity = ['low', 'medium', 'high', 'critical'].includes(asText(parsed.severity, 30).toLowerCase()) ? asText(parsed.severity, 30).toLowerCase() : 'medium';
   return {
     decision,
     category: asText(parsed.category || 'unclassified', 120),
-    confidence: clamp(parsed.confidence, 0, 1, 0),
+    confidence: policyConfidence(parsed.confidence),
     severity,
     reason: asText(parsed.reason || 'Social AI completed a policy review.', 1_000),
-    recommendation: asText(parsed.recommendedAction || (decision === 'allow' ? 'none' : 'manual_review'), 80),
+    recommendation: policyAction(parsed.recommendedAction, decision),
     evidenceSummary: asText(parsed.evidenceSummary, 1_500),
     provider: 'social-llama-cpp'
   };
@@ -577,6 +641,7 @@ const runAnalysisJob = async (ctx, job, settings) => {
     try { analysis = await askPolicyModel(settings, job.type, task, supplemental); }
     catch (error) {
       if (signal) analysis = { ...signal, provider: 'policy-pattern-fallback', evidenceSummary: 'Local policy signal was recorded while the language model was unavailable.' };
+      else if (error?.extensions?.code === 'SOCIAL_AI_MODEL_WARMING') throw error;
       else throw new AppError(`Social AI model is unavailable: ${asText(error?.message, 800)}`, 'SOCIAL_AI_DEPENDENCY_ERROR');
     }
   }
@@ -598,6 +663,7 @@ const delayForAttempt = (attempts) => Math.min(30 * 60_000, 5_000 * (2 ** Math.m
 let workerTimer = null;
 let workerRunning = false;
 let lastStaleRecoveryAt = 0;
+let transientFailureRecoveryDone = false;
 
 const recoverStaleSocialAiJobs = async (prisma) => {
   const now = Date.now();
@@ -607,6 +673,35 @@ const recoverStaleSocialAiJobs = async (prisma) => {
   const result = await prisma.socialAiJob.updateMany({
     where: { status: 'running', lockedAt: { lt: threshold } },
     data: { status: 'queued', phase: 'recovered after worker restart', lockedAt: null, runAfter: new Date(), error: 'Recovered after an interrupted Social AI worker.' }
+  });
+  return result.count;
+};
+
+// Jobs that exhausted their retry count only while the previous legacy model
+// endpoint or an early model load was broken are safe to retry after this
+// runtime repair.  Do not reset policy/content failures in general.
+const recoverTransientModelFailures = async (prisma) => {
+  if (transientFailureRecoveryDone) return 0;
+  transientFailureRecoveryDone = true;
+  const result = await prisma.socialAiJob.updateMany({
+    where: {
+      status: 'failed',
+      OR: [
+        { error: { contains: 'llama.cpp returned 400' } },
+        { error: { contains: 'llama.cpp did not return a policy JSON result' } },
+        { error: { contains: 'Loading model' } }
+      ]
+    },
+    data: {
+      status: 'queued',
+      attempts: 0,
+      progress: 0,
+      phase: 'queued after Social AI runtime repair',
+      error: null,
+      runAfter: new Date(),
+      finishedAt: null,
+      lockedAt: null
+    }
   });
   return result.count;
 };
@@ -628,8 +723,14 @@ const processJob = async (ctx, job) => {
   } catch (error) {
     const message = asText(error?.message || error, 2_000);
     const current = await ctx.prisma.socialAiJob.findUnique({ where: { id: job.id }, select: { attempts: true, maxAttempts: true } });
+    const waitingForModel = error?.extensions?.code === 'SOCIAL_AI_MODEL_WARMING';
     const retry = current && current.attempts < current.maxAttempts;
-    await ctx.prisma.socialAiJob.update({ where: { id: job.id }, data: retry ? { status: 'queued', phase: 'retry scheduled', error: message, runAfter: new Date(Date.now() + delayForAttempt(current.attempts)), lockedAt: null } : { status: 'failed', phase: 'failed', error: message, finishedAt: new Date(), lockedAt: null } });
+    await ctx.prisma.socialAiJob.update({ where: { id: job.id }, data: waitingForModel
+      ? { status: 'queued', attempts: { decrement: 1 }, phase: 'waiting for local model', error: message, runAfter: new Date(Date.now() + 30_000), lockedAt: null }
+      : retry
+        ? { status: 'queued', phase: 'retry scheduled', error: message, runAfter: new Date(Date.now() + delayForAttempt(current.attempts)), lockedAt: null }
+        : { status: 'failed', phase: 'failed', error: message, finishedAt: new Date(), lockedAt: null }
+    });
   }
 };
 
@@ -640,6 +741,7 @@ export const runSocialAiQueueOnce = async (ctx) => {
     const settings = await getSocialAiSettings(ctx);
     if (!settings.enabled) return false;
     await recoverStaleSocialAiJobs(ctx.prisma);
+    await recoverTransientModelFailures(ctx.prisma);
     const job = await claimNextJob(ctx.prisma);
     if (!job) return false;
     await processJob(ctx, job);

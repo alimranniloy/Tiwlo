@@ -479,6 +479,18 @@ ensure_feature() {
 for arg in "$@"; do [ "$arg" = "--json" ] && JSON="1"; done
 command="${1:-}"; action="${2:-}"; id="${3:-}"
 
+# Bootstrap, repairs and model reloads all rewrite the same Compose project.
+# The backend worker, systemd worker and health timer can legitimately request
+# those actions close together after a deployment.  Serialize only mutating
+# manager calls so Docker never races two `--force-recreate` operations or
+# leaves a half-created llama container behind. Health reads remain immediate.
+if [ "$command" != "health" ] && ! { [ "$command" = "package" ] && [ "$action" = "logs" ]; }; then
+  if have flock; then
+    exec 9>"$STATE_DIR/manager.lock"
+    flock -w "${TIWLO_SOCIAL_AI_LOCK_TIMEOUT_SECONDS:-1800}" 9 || die "Another Social AI maintenance operation is still running"
+  fi
+fi
+
 case "$command" in
   health) health_json ;;
   cleanup) cleanup_runtime_cache ;;
