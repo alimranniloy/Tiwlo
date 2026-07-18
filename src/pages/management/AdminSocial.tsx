@@ -71,6 +71,24 @@ const dateLabel = (value?: string) => {
   return date && !Number.isNaN(date.getTime()) ? date.toLocaleString() : '-';
 };
 
+// Social records can be returned while an administrator is applying a schema
+// upgrade. Treat an incomplete response as empty data instead of allowing one
+// malformed row to take down the entire management page.
+const asRecord = (value: unknown): Record<string, any> => (
+  value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, any> : {}
+);
+
+const asObjectArray = (value: unknown): Record<string, any>[] => (
+  Array.isArray(value) ? value.filter((item): item is Record<string, any> => Boolean(item) && typeof item === 'object' && !Array.isArray(item)) : []
+);
+
+const asArray = (value: unknown): unknown[] => (Array.isArray(value) ? value : []);
+
+const safeCount = (value: unknown) => {
+  const count = Number(value);
+  return Number.isFinite(count) ? count : 0;
+};
+
 const Toggle = ({ checked, onChange, label, detail }: { checked: boolean; onChange: (value: boolean) => void; label: string; detail: string }) => (
   <label className="flex cursor-pointer items-center justify-between gap-4 rounded border border-[#e5e8ed] bg-white p-4">
     <span>
@@ -180,16 +198,17 @@ function AdminSocialContent() {
         fetchSocialSettingsWithApi(),
         fetchAdminSocialAiOverviewWithApi()
       ]);
-      setOverview(summary || {});
-      setUsers(socialUsers || []);
-      setPosts(socialPosts || []);
-      setReports(socialReports || []);
-      setModerationEvents(automationEvents || []);
-      setDecorations(socialDecorations || []);
-      setEffects(socialEffects || []);
-      setSettings(socialSettings || {});
-      setAiOverview(socialAi || null);
-      setStunJson(JSON.stringify(socialSettings?.stunServers || [], null, 2));
+      const normalizedSettings = asRecord(socialSettings);
+      setOverview(asRecord(summary));
+      setUsers(asObjectArray(socialUsers));
+      setPosts(asObjectArray(socialPosts));
+      setReports(asObjectArray(socialReports));
+      setModerationEvents(asObjectArray(automationEvents));
+      setDecorations(asObjectArray(socialDecorations));
+      setEffects(asObjectArray(socialEffects));
+      setSettings(normalizedSettings);
+      setAiOverview(socialAi ? asRecord(socialAi) : null);
+      setStunJson(JSON.stringify(Array.isArray(normalizedSettings.stunServers) ? normalizedSettings.stunServers : [], null, 2));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to load Social controls');
     } finally {
@@ -397,26 +416,24 @@ function AdminSocialContent() {
   };
 
   const stats = [
-    { label: 'Social Users', value: overview.profiles || 0, icon: Users },
-    { label: 'Verified', value: overview.verifiedProfiles || 0, icon: BadgeCheck },
-    { label: 'Posts', value: overview.posts || 0, icon: Film },
-    { label: 'Messages', value: overview.messages || 0, icon: MessageCircle },
-    { label: 'Live Now', value: overview.activeLiveStreams || 0, icon: Radio },
-    { label: 'Open Reports', value: overview.openReports || 0, icon: Flag }
+    { label: 'Social Users', value: safeCount(overview.profiles), icon: Users },
+    { label: 'Verified', value: safeCount(overview.verifiedProfiles), icon: BadgeCheck },
+    { label: 'Posts', value: safeCount(overview.posts), icon: Film },
+    { label: 'Messages', value: safeCount(overview.messages), icon: MessageCircle },
+    { label: 'Live Now', value: safeCount(overview.activeLiveStreams), icon: Radio },
+    { label: 'Open Reports', value: safeCount(overview.openReports), icon: Flag }
   ];
-  const asRecord = (value: any) => value && typeof value === 'object' && !Array.isArray(value) ? value : {};
-  const asArray = (value: any) => Array.isArray(value) ? value : [];
   const ai = asRecord(aiOverview);
   const aiSettings = asRecord(ai.settings);
   const aiHealth = asRecord(ai.health);
   const aiCatalog = asRecord(ai.catalog);
   const aiPackages = asRecord(aiHealth.packages);
   const aiModels = asRecord(aiHealth.models);
-  const aiCatalogPackages = asArray(aiCatalog.packages);
-  const aiCatalogModels = asArray(aiCatalog.models);
+  const aiCatalogPackages = asObjectArray(aiCatalog.packages);
+  const aiCatalogModels = asObjectArray(aiCatalog.models);
   const aiRunningFeatures = asArray(ai.runningFeatures);
-  const aiJobs = asArray(ai.jobs);
-  const aiCases = asArray(ai.cases);
+  const aiJobs = asObjectArray(ai.jobs);
+  const aiCases = asObjectArray(ai.cases);
   const aiFeatureSettings = asRecord(aiSettings.features);
   const aiSchemaUnavailable = Boolean(ai.schemaUnavailable);
   const aiUnavailable = Boolean(ai.unavailable);
