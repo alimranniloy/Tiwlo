@@ -869,7 +869,13 @@ bootstrap_social_ai_infrastructure() {
     return 0
   fi
   step "Bootstrapping persistent Social AI infrastructure"
-  run_sudo env TIWLO_ROOT="$ROOT" TIWLO_SOCIAL_AI_DATA_DIR="$ROOT/.data/social-ai" TIWLO_SOCIAL_AI_LOG_DIR="$ROOT/.logs/social-ai" bash "$bootstrap"
+  # Social AI retries from its health timer. A temporary image registry or
+  # upstream-search outage must never leave the main GraphQL release on an old
+  # schema after frontend assets have already been replaced.
+  if ! run_sudo env TIWLO_ROOT="$ROOT" TIWLO_SOCIAL_AI_DATA_DIR="$ROOT/.data/social-ai" TIWLO_SOCIAL_AI_LOG_DIR="$ROOT/.logs/social-ai" bash "$bootstrap"; then
+    echo "Warning: Social AI bootstrap is pending repair; continuing the core Tiwlo deployment." >&2
+    echo "Inspect: $ROOT/.logs/social-ai/manager.log" >&2
+  fi
 }
 
 stop_readable_source_services() {

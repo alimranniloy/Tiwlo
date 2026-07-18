@@ -95,18 +95,24 @@ YAML
 
 ensure_searxng_config() {
   mkdir -p "$STATE_DIR/searxng"
-  if [ ! -f "$STATE_DIR/searxng/settings.yml" ]; then
-    cat >"$STATE_DIR/searxng/settings.yml" <<'YAML'
+  # This is an internal-only service. Keeping the limiter off avoids an
+  # unnecessary Redis dependency and makes the image boot on small VPS hosts.
+  cat >"$STATE_DIR/searxng/settings.yml" <<'YAML'
 use_default_settings: true
+general:
+  instance_name: "Tiwlo Social AI Search"
 server:
   bind_address: "0.0.0.0"
   port: 8080
   secret_key: "tiwlo-social-ai-local"
-  limiter: true
+  limiter: false
+  public_instance: false
 search:
   safe_search: 1
+  formats:
+    - html
+    - json
 YAML
-  fi
 }
 
 model_file() {
@@ -174,7 +180,10 @@ download_model() {
 
 service_healthy() {
   case "$1" in
-    searxng) curl -fsS --max-time 5 "http://127.0.0.1:8081/search?q=tiwi&format=json" >/dev/null 2>&1 ;;
+    # The homepage is a stable local readiness endpoint. A search request can
+    # legitimately be rate-limited by an upstream engine even while SearXNG is
+    # healthy, so it must not make package startup fail.
+    searxng) curl -fsS --max-time 5 "http://127.0.0.1:8081/" >/dev/null 2>&1 ;;
     crawl4ai) curl -fsS --max-time 5 "http://127.0.0.1:11235/health" >/dev/null 2>&1 ;;
     llama-cpp) curl -fsS --max-time 5 "http://127.0.0.1:8082/health" >/dev/null 2>&1 ;;
     queue-worker) systemctl is-active --quiet tiwlo-social-ai-worker.service 2>/dev/null ;;
@@ -183,13 +192,25 @@ service_healthy() {
   esac
 }
 
+append_service_diagnostics() {
+  local id="$1"
+  {
+    printf '\n===== %s diagnostic %s =====\n' "$id" "$(date -u +%FT%TZ)"
+    compose ps "$id" || true
+    compose logs --tail 120 "$id" || true
+  } >>"$LOG_FILE" 2>&1
+}
+
 start_service() {
   local id="$1"
   case "$id" in
     searxng|crawl4ai)
       ensure_docker; write_compose; ensure_searxng_config
       progress 45 "Starting $id"
-      compose up -d "$id" >>"$LOG_FILE" 2>&1
+      if ! compose up -d "$id" >>"$LOG_FILE" 2>&1; then
+        append_service_diagnostics "$id"
+        die "$id could not be started; inspect $LOG_FILE"
+      fi
       ;;
     llama-cpp)
       ensure_docker; write_compose
@@ -209,8 +230,9 @@ start_service() {
       ;;
     *) die "Unknown package $id" ;;
   esac
-  for _ in $(seq 1 18); do service_healthy "$id" && { progress 100 "$id is healthy"; return; }; sleep 2; done
-  die "$id did not become healthy"
+  for _ in $(seq 1 45); do service_healthy "$id" && { progress 100 "$id is healthy"; return; }; sleep 2; done
+  append_service_diagnostics "$id"
+  die "$id did not become healthy; inspect $LOG_FILE"
 }
 
 stop_service() {
