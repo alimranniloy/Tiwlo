@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-DEPLOY_SCRIPT_VERSION="2026-07-19-social-ai-schema-contract"
+DEPLOY_SCRIPT_VERSION="2026-07-19-space-efficient-social-ai-release"
 ROOT="${TIWLO_INSTALL_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 BRANCH="${TIWLO_GIT_BRANCH:-main}"
 REPO_URL="${TIWLO_REPO_URL:-}"
@@ -746,6 +746,11 @@ NODE
     ensure_rollup_native_optional_dependency
     npm run build
   fi
+
+  # Vite has emitted the production assets. Keeping the full build dependency
+  # tree until release assembly doubles disk consumption on the VPS, while the
+  # production frontend server only needs Express and compression.
+  rm -rf -- "$CHECKOUT_DIR/node_modules"
 }
 
 ensure_obfuscator() {
@@ -819,6 +824,43 @@ fs.writeFileSync(packagePath, `${JSON.stringify(pkg, null, 2)}\n`);
 NODE
 }
 
+write_frontend_runtime_manifest() {
+  node - "$CHECKOUT_DIR/package.json" "$RELEASE_DIR/package.json" <<'NODE'
+const fs = require('fs');
+const [sourcePath, targetPath] = process.argv.slice(2);
+const source = JSON.parse(fs.readFileSync(sourcePath, 'utf8'));
+const required = ['express', 'compression'];
+const dependencies = {};
+for (const name of required) {
+  const version = source.dependencies?.[name];
+  if (!version) throw new Error(`Frontend runtime dependency is missing: ${name}`);
+  dependencies[name] = version;
+}
+const runtime = {
+  name: source.name || 'tiwlo-frontend-runtime',
+  private: true,
+  version: source.version || '1.0.0',
+  type: 'module',
+  engines: source.engines,
+  scripts: {
+    serve: 'node scripts/serve-tiwlo-frontend.js',
+    start: 'node scripts/serve-tiwlo-frontend.js'
+  },
+  dependencies
+};
+fs.writeFileSync(targetPath, `${JSON.stringify(runtime, null, 2)}\n`);
+NODE
+}
+
+install_frontend_runtime_dependencies() {
+  step "Installing lean frontend runtime dependencies"
+  (
+    cd "$RELEASE_DIR"
+    npm install --omit=dev --package-lock=false --ignore-scripts --no-audit --no-fund --progress=false
+  )
+  validate_node_modules_package_jsons "$RELEASE_DIR/node_modules"
+}
+
 prepare_obfuscated_release() {
   step "Preparing final obfuscated runtime release"
   RELEASE_DIR="$(mktemp -d "$TMP_BASE/tiwlo-release.XXXXXX")"
@@ -834,12 +876,13 @@ prepare_obfuscated_release() {
   [ -d "$CHECKOUT_DIR/public/brand" ] && copy_tree "$CHECKOUT_DIR/public/brand/" "$RELEASE_DIR/public/brand"
   [ -f "$CHECKOUT_DIR/scripts/serve-tiwlo-frontend.mjs" ] && cp "$CHECKOUT_DIR/scripts/serve-tiwlo-frontend.mjs" "$RELEASE_DIR/scripts/serve-tiwlo-frontend.js"
 
-  cp "$CHECKOUT_DIR/package.json" "$RELEASE_DIR/package.json"
-  [ -f "$CHECKOUT_DIR/package-lock.json" ] && cp "$CHECKOUT_DIR/package-lock.json" "$RELEASE_DIR/package-lock.json"
+  write_frontend_runtime_manifest
   cp "$CHECKOUT_DIR/x/package.json" "$RELEASE_DIR/x/package.json"
   [ -f "$CHECKOUT_DIR/x/package-lock.json" ] && cp "$CHECKOUT_DIR/x/package-lock.json" "$RELEASE_DIR/x/package-lock.json"
-  [ -d "$CHECKOUT_DIR/node_modules" ] && copy_tree "$CHECKOUT_DIR/node_modules/" "$RELEASE_DIR/node_modules"
-  [ -d "$CHECKOUT_DIR/x/node_modules" ] && copy_tree "$CHECKOUT_DIR/x/node_modules/" "$RELEASE_DIR/x/node_modules"
+  # The backend dependency tree is no longer needed by the temporary checkout
+  # after build and Prisma validation. Move it instead of making a second copy.
+  [ -d "$CHECKOUT_DIR/x/node_modules" ] && mv "$CHECKOUT_DIR/x/node_modules" "$RELEASE_DIR/x/node_modules"
+  install_frontend_runtime_dependencies
 
   (cd "$RELEASE_DIR" && patch_release_frontend_server_script)
   obfuscate_dir "$RELEASE_DIR/x/src" 0.55
@@ -850,7 +893,19 @@ prepare_obfuscated_release() {
 install_obfuscated_release() {
   step "Installing obfuscated runtime into production root"
   mkdir -p "$ROOT"
-  cp -a "$RELEASE_DIR"/. "$ROOT"/
+  # The default temporary release directory is a sibling of $ROOT, so a move
+  # is atomic and avoids needing space for a full second backend node_modules
+  # tree. Fall back to a copy only when an operator configured another disk.
+  if [ "$(stat -c %d "$RELEASE_DIR")" = "$(stat -c %d "$ROOT")" ]; then
+    shopt -s dotglob nullglob
+    local release_entries=("$RELEASE_DIR"/*)
+    if [ "${#release_entries[@]}" -gt 0 ]; then
+      mv -- "${release_entries[@]}" "$ROOT"/
+    fi
+    shopt -u dotglob nullglob
+  else
+    cp -a "$RELEASE_DIR"/. "$ROOT"/
+  fi
   mkdir -p "$ROOT/public" "$ROOT/.logs"
   if [ -d "$PRESERVE_DIR/public/uploads" ] && [ ! -e "$ROOT/public/uploads" ]; then
     mkdir -p "$ROOT/public"
