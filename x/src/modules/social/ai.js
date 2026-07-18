@@ -95,7 +95,10 @@ const DEFAULT_SETTINGS = Object.freeze({
     // The OpenAI-compatible chat endpoint follows JSON instructions much more
     // reliably than the legacy completion endpoint on compact local models.
     llamaUrl: 'http://127.0.0.1:8082/v1/chat/completions',
-    requestTimeoutMs: 30_000
+    // The compact CPU-only model can need longer for Bengali/emoji-heavy
+    // safety reviews. A short request timeout cancels a healthy generation
+    // and creates needless retry jobs, so retain a bounded 90-second budget.
+    requestTimeoutMs: 90_000
   },
   features: defaultFeatures(),
   automaticActions: {
@@ -151,7 +154,7 @@ const normalizeSettings = (value = {}) => {
       searxngUrl: asText(runtime.searxngUrl || DEFAULT_SETTINGS.runtime.searxngUrl, 500).replace(/\/$/, ''),
       crawl4aiUrl: asText(runtime.crawl4aiUrl || DEFAULT_SETTINGS.runtime.crawl4aiUrl, 500).replace(/\/$/, ''),
       llamaUrl: normalizeLlamaUrl(runtime.llamaUrl),
-      requestTimeoutMs: Math.floor(clamp(runtime.requestTimeoutMs, 5_000, 120_000, DEFAULT_SETTINGS.runtime.requestTimeoutMs))
+      requestTimeoutMs: Math.floor(clamp(runtime.requestTimeoutMs, 60_000, 120_000, DEFAULT_SETTINGS.runtime.requestTimeoutMs))
     },
     features: asBooleanMap({ ...defaultFeatures(), ...asObject(source.features) }),
     automaticActions: {
