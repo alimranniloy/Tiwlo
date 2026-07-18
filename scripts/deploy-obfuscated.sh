@@ -975,6 +975,14 @@ install_obfuscated_release() {
   else
     cp -a "$RELEASE_DIR"/. "$ROOT"/
   fi
+  # tSecurity is shipped beside the backend (rather than inside x/src), so
+  # Node resolves its third-party imports from tSecurity/node_modules. Reuse
+  # the already-installed backend tree instead of storing a second copy of
+  # express-fingerprint, request-ip and the other security dependencies.
+  if [ -d "$ROOT/x/node_modules" ] && [ -d "$ROOT/tSecurity" ]; then
+    rm -rf -- "$ROOT/tSecurity/node_modules"
+    ln -s ../x/node_modules "$ROOT/tSecurity/node_modules"
+  fi
   mkdir -p "$ROOT/public" "$ROOT/.logs"
   if [ -d "$PRESERVE_DIR/public/uploads" ] && [ ! -e "$ROOT/public/uploads" ]; then
     mkdir -p "$ROOT/public"
