@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
+import { createReadStream } from 'node:fs';
 
 const MAX_OUTPUT_BYTES = 96 * 1024;
 const FINGERPRINT_TIMEOUT_MS = 45_000;
@@ -35,6 +36,18 @@ const rightsCatalog = () => {
 
 const fingerprintHash = (value) => createHash('sha256').update(value).digest('hex');
 
+// Chromaprint is the primary matcher because it survives container metadata
+// edits.  This fallback deliberately covers the operational case where the
+// host has not yet installed fpcalc: an identical upload must still be
+// detectable rather than silently skipping copyright protection altogether.
+const exactFileHash = (filePath) => new Promise((resolve) => {
+  const hash = createHash('sha256');
+  const stream = createReadStream(filePath);
+  stream.on('data', (chunk) => hash.update(chunk));
+  stream.once('error', () => resolve(null));
+  stream.once('end', () => resolve(hash.digest('hex')));
+});
+
 const looksLikeAudioMedia = (mimeType = '', filePath = '') => (
   /^(audio|video)\//i.test(String(mimeType || '')) ||
   /\.(?:mp3|m4a|aac|wav|ogg|flac|mp4|mov|mkv|webm|m4v)$/i.test(String(filePath || ''))
@@ -48,19 +61,29 @@ const looksLikeAudioMedia = (mimeType = '', filePath = '') => (
 export const fingerprintAudioFile = async ({ filePath, mimeType }) => {
   if (!looksLikeAudioMedia(mimeType, filePath)) return null;
   const result = await runFingerprint(filePath);
-  if (!result) return null;
+  if (!result) {
+    const exactHash = await exactFileHash(filePath);
+    if (!exactHash) return null;
+    return {
+      fingerprintHash: exactHash,
+      durationSeconds: 0,
+      fingerprint: null,
+      method: 'exact-file-sha256'
+    };
+  }
   return {
     fingerprintHash: fingerprintHash(result.fingerprint),
     durationSeconds: result.durationSeconds,
     // Keep the raw fingerprint private: it is only needed by an optional
     // licensed recognition provider, never returned through GraphQL.
-    fingerprint: result.fingerprint
+    fingerprint: result.fingerprint,
+    method: 'chromaprint'
   };
 };
 
 const inspectRecognitionProvider = async (fingerprint, mimeType) => {
   const endpoint = String(process.env.SOCIAL_AUDIO_FINGERPRINT_WEBHOOK_URL || '').trim();
-  if (!endpoint || !fingerprint) return null;
+  if (!endpoint || !fingerprint?.fingerprint) return null;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 8_000);
   try {
@@ -129,7 +152,7 @@ export const inspectAudioRights = async ({ filePath, mimeType }) => {
     score: 0,
     reason: 'Audio fingerprint did not match the configured rights catalog',
     provider: 'chromaprint-rights-catalog',
-    evidence: { fingerprintHash: hash, durationSeconds: result.durationSeconds }
+    evidence: { fingerprintHash: hash, durationSeconds: result.durationSeconds, method: result.method }
   };
   const policy = String(match.policy || 'block').toLowerCase();
   if (policy === 'allow') return {
@@ -138,7 +161,7 @@ export const inspectAudioRights = async ({ filePath, mimeType }) => {
     score: 1,
     reason: 'Audio is licensed in the configured rights catalog',
     provider: 'chromaprint-rights-catalog',
-    evidence: { fingerprintHash: hash, durationSeconds: result.durationSeconds, referenceId: String(match.id || ''), owner: String(match.owner || '') }
+    evidence: { fingerprintHash: hash, durationSeconds: result.durationSeconds, method: result.method, referenceId: String(match.id || ''), owner: String(match.owner || '') }
   };
   return {
     decision: policy === 'review' ? 'review' : 'block',
@@ -146,6 +169,6 @@ export const inspectAudioRights = async ({ filePath, mimeType }) => {
     score: 0.99,
     reason: `Audio matches protected reference${match.title ? `: ${String(match.title).slice(0, 160)}` : ''}`,
     provider: 'chromaprint-rights-catalog',
-    evidence: { fingerprintHash: hash, durationSeconds: result.durationSeconds, referenceId: String(match.id || ''), owner: String(match.owner || ''), policy }
+    evidence: { fingerprintHash: hash, durationSeconds: result.durationSeconds, method: result.method, referenceId: String(match.id || ''), owner: String(match.owner || ''), policy }
   };
 };

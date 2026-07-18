@@ -978,6 +978,49 @@ const fingerprintsForPost = async (ctx, post, knownEvents = null) => {
   return [...found.values()];
 };
 
+const firstCopyrightMedia = (post) => (Array.isArray(post?.media) ? post.media : []).find((item) => (
+  /^(audio|video)$/i.test(String(item?.type || '')) || /^(audio|video)\//i.test(String(item?.mimeType || ''))
+));
+
+// Copyright Studio is opt-out for a creator's own original uploads.  Indexing
+// happens as the post is published, before it is compared with existing
+// references.  That means a second account posting the same media is claimed
+// automatically; users no longer have to press "Scan existing media" first.
+const registerPostCopyrightReferences = async (ctx, post, knownEvents = null) => {
+  if (!post?.id || post.status !== 'published' || !firstCopyrightMedia(post)) return [];
+  const fingerprints = await fingerprintsForPost(ctx, post, knownEvents);
+  if (!fingerprints.length) return [];
+  const firstMedia = firstCopyrightMedia(post);
+  const mediaType = String(firstMedia?.type || '').toLowerCase() === 'video' || /^video\//i.test(String(firstMedia?.mimeType || ''))
+    ? 'video'
+    : 'audio';
+  const references = [];
+  for (const fingerprint of fingerprints) {
+    // The earliest active upload wins automatically. A later uploader cannot
+    // turn an already detected copy into a competing rights reference.
+    const foreignReference = await ctx.prisma.socialCopyrightReference.findFirst({
+      where: { fingerprintHash: fingerprint.fingerprintHash, status: 'active', ownerId: { not: post.authorId } },
+      orderBy: { createdAt: 'asc' },
+      select: { id: true }
+    });
+    if (foreignReference) continue;
+    const reference = await ctx.prisma.socialCopyrightReference.upsert({
+      where: { ownerId_fingerprintHash: { ownerId: post.authorId, fingerprintHash: fingerprint.fingerprintHash } },
+      create: {
+        ownerId: post.authorId,
+        postId: post.id,
+        title: bounded(post.body || 'Protected media', 180),
+        mediaType,
+        fingerprintHash: fingerprint.fingerprintHash,
+        durationSeconds: fingerprint.durationSeconds || null
+      },
+      update: { postId: post.id, title: bounded(post.body || 'Protected media', 180), mediaType, status: 'active' }
+    });
+    references.push(reference);
+  }
+  return references;
+};
+
 const mapCopyrightReference = (reference) => ({
   ...reference,
   post: reference.post ? mapPost(reference.post) : null,
@@ -1089,6 +1132,14 @@ export const registerCopyrightReference = async (ctx, input) => {
   const fingerprints = await fingerprintsForPost(ctx, post, post.moderationEvents);
   if (!fingerprints.length) throw new AppError('No readable audio/video fingerprint was found for this post', 'BAD_USER_INPUT');
   const fingerprint = fingerprints[0];
+  const foreignReference = await ctx.prisma.socialCopyrightReference.findFirst({
+    where: { fingerprintHash: fingerprint.fingerprintHash, status: 'active', ownerId: { not: actor.id } },
+    select: { id: true }
+  });
+  if (foreignReference) {
+    await createCopyrightClaimsForPost(ctx, post, post.moderationEvents);
+    throw new AppError('This media is already protected by another Tiwi creator', 'FORBIDDEN');
+  }
   const firstMedia = (Array.isArray(post.media) ? post.media : []).find((item) => /^(audio|video)$/i.test(String(item?.type || '')) || /^(audio|video)\//i.test(String(item?.mimeType || '')));
   const reference = await ctx.prisma.socialCopyrightReference.upsert({
     where: { ownerId_fingerprintHash: { ownerId: actor.id, fingerprintHash: fingerprint.fingerprintHash } },
@@ -1131,14 +1182,7 @@ export const scanCopyrightLibrary = async (ctx) => {
     where: { authorId: actor.id, status: 'published' }, include: { author: true, moderationEvents: { select: { evidence: true } } }, orderBy: { publishedAt: 'desc' }, take: 1000
   });
   for (const post of posts) {
-    const fingerprints = await fingerprintsForPost(ctx, post, post.moderationEvents);
-    for (const fingerprint of fingerprints) {
-      await ctx.prisma.socialCopyrightReference.upsert({
-        where: { ownerId_fingerprintHash: { ownerId: actor.id, fingerprintHash: fingerprint.fingerprintHash } },
-        create: { ownerId: actor.id, postId: post.id, title: bounded(post.body || 'Protected media', 180), fingerprintHash: fingerprint.fingerprintHash, durationSeconds: fingerprint.durationSeconds || null },
-        update: { postId: post.id }
-      });
-    }
+    await registerPostCopyrightReferences(ctx, post, post.moderationEvents);
   }
   // Reconcile the existing indexed library in bounded batches. It is safe to
   // run again: the compound unique key prevents duplicate claims.
@@ -1160,16 +1204,7 @@ export const startSocialCopyrightBackfill = async ({ prisma, batchSize = 250 }) 
     orderBy: { publishedAt: 'asc' }, take: Math.max(1, Math.min(Number(batchSize) || 250, 1000))
   });
   for (const post of posts) {
-    const hasAudioMedia = (Array.isArray(post.media) ? post.media : []).some((item) => /^(audio|video)$/i.test(String(item?.type || '')) || /^(audio|video)\//i.test(String(item?.mimeType || '')));
-    if (!hasAudioMedia) continue;
-    const fingerprints = await fingerprintsForPost(ctx, post, post.moderationEvents);
-    for (const fingerprint of fingerprints) {
-      await prisma.socialCopyrightReference.upsert({
-        where: { ownerId_fingerprintHash: { ownerId: post.authorId, fingerprintHash: fingerprint.fingerprintHash } },
-        create: { ownerId: post.authorId, postId: post.id, title: bounded(post.body || 'Protected media', 180), fingerprintHash: fingerprint.fingerprintHash, durationSeconds: fingerprint.durationSeconds || null },
-        update: { postId: post.id }
-      });
-    }
+    await registerPostCopyrightReferences(ctx, post, post.moderationEvents);
   }
   const candidates = await prisma.socialPost.findMany({
     where: { status: 'published' }, include: { author: true, moderationEvents: { select: { evidence: true } } }, orderBy: { publishedAt: 'asc' }, take: Math.max(1, Math.min(Number(batchSize) || 250, 1000))
@@ -2178,6 +2213,9 @@ export const createPost = async (ctx, input) => {
   if (mediaEvents.length) await ctx.prisma.socialModerationEvent.updateMany({
     where: { id: { in: mediaEvents.map((event) => event.id) } }, data: { postId: post.id }
   });
+  await registerPostCopyrightReferences(ctx, post, mediaEvents).catch((error) => {
+    console.warn('[social-copyright] post reference indexing failed:', post.id, error?.message || error);
+  });
   await createCopyrightClaimsForPost(ctx, post, mediaEvents).catch((error) => {
     console.warn('[social-copyright] post claim scan failed:', post.id, error?.message || error);
   });
@@ -2230,9 +2268,14 @@ export const updatePost = async (ctx, input) => {
   if (mediaEvents.length) await ctx.prisma.socialModerationEvent.updateMany({
     where: { id: { in: mediaEvents.map((event) => event.id) } }, data: { postId: post.id }
   });
-  if (updatedMedia !== null) await createCopyrightClaimsForPost(ctx, post, mediaEvents).catch((error) => {
-    console.warn('[social-copyright] updated post claim scan failed:', post.id, error?.message || error);
-  });
+  if (updatedMedia !== null) {
+    await registerPostCopyrightReferences(ctx, post, mediaEvents).catch((error) => {
+      console.warn('[social-copyright] updated post reference indexing failed:', post.id, error?.message || error);
+    });
+    await createCopyrightClaimsForPost(ctx, post, mediaEvents).catch((error) => {
+      console.warn('[social-copyright] updated post claim scan failed:', post.id, error?.message || error);
+    });
+  }
   return mapPost(post);
 };
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-DEPLOY_SCRIPT_VERSION="2026-07-16-backend-runtime-health"
+DEPLOY_SCRIPT_VERSION="2026-07-18-social-copyright-fingerprinting"
 ROOT="${TIWLO_INSTALL_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 BRANCH="${TIWLO_GIT_BRANCH:-main}"
 REPO_URL="${TIWLO_REPO_URL:-}"
@@ -684,6 +684,24 @@ NODE
 install_dependencies_and_build() {
   ensure_deploy_swap
   prepare_low_memory_node_env
+
+  # Decoded-audio fingerprints are the primary copyright matcher. The app has
+  # an exact-file fallback, but fpcalc is required to survive metadata edits.
+  if ! have fpcalc; then
+    if have apt-get; then
+      step "Installing Chromaprint runtime for Social Copyright Studio"
+      if ! run_sudo apt-get update || ! run_sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends chromaprint-tools; then
+        echo "Could not install fpcalc; copyright will use exact-file matching for this deploy." >&2
+      fi
+    else
+      echo "fpcalc is unavailable; copyright will use exact-file matching until Chromaprint is installed." >&2
+    fi
+  fi
+  if have fpcalc; then
+    echo "Chromaprint runtime: $(fpcalc -version 2>&1 | head -n 1)"
+  else
+    echo "Warning: fpcalc is still unavailable; only identical-file copyright matches are active." >&2
+  fi
 
   step "Installing dependencies inside temporary checkout"
   cd "$CHECKOUT_DIR"
