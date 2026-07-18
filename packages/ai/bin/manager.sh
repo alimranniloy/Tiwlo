@@ -79,7 +79,7 @@ services:
       - SEARXNG_BASE_URL=http://127.0.0.1:8081/
       - SEARXNG_SECRET=${SEARXNG_SECRET:-tiwlo-social-ai-local}
   crawl4ai:
-    image: unclecode/crawl4ai:latest
+    image: unclecode/crawl4ai:basic
     restart: unless-stopped
     ports: ["127.0.0.1:11235:11235"]
     shm_size: 1gb

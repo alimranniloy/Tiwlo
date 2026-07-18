@@ -117,12 +117,18 @@ export async function fetchAdminSocialAiOverviewWithApi() {
     `);
     return data.adminSocialAiOverview;
   } catch (error) {
-    // A frontend release can arrive before the backend deployment. Keep the
-    // rest of Social administration working and make the required deployment
-    // explicit instead of pretending the AI services are available.
-    if (!isSocialAiSchemaUnavailable(error)) throw error;
+    // Keep Social administration and the model catalog visible if the AI
+    // endpoint is temporarily unavailable. This is a real unavailable state,
+    // not a fake service status, and prevents one failed AI query from taking
+    // down the whole Social admin page.
+    const message = error instanceof Error ? error.message : 'Social AI overview is unavailable.';
+    const schemaUnavailable = isSocialAiSchemaUnavailable(error);
     return {
-      schemaUnavailable: true,
+      schemaUnavailable,
+      unavailable: true,
+      unavailableMessage: schemaUnavailable
+        ? 'The running GraphQL schema does not contain adminSocialAiOverview. Deploy the Social AI backend release.'
+        : message,
       settings: {},
       runningFeatures: [],
       queue: { queued: 0 },
