@@ -44,6 +44,14 @@ export const socialResolvers = {
       return parent.author || ctx.prisma.user.findUnique({ where: { id: parent.authorId } });
     },
     authorProfile: (parent, _, ctx) => parent.authorProfile || parent.author?.socialProfile || ctx.prisma.socialProfile.findUnique({ where: { userId: parent.authorId } }),
+    collaborators: async (parent, _, ctx) => {
+      const rawIds = Array.isArray(parent.metadata?.collaboratorIds) ? parent.metadata.collaboratorIds : [];
+      const ids = [...new Set(rawIds.map((id) => String(id || '').trim()).filter((id) => id && id !== parent.authorId))].slice(0, 20);
+      if (!ids.length) return [];
+      const profiles = await ctx.prisma.socialProfile.findMany({ where: { userId: { in: ids } }, include: { user: true } });
+      const byUserId = new Map(profiles.map((profile) => [profile.userId, profile]));
+      return ids.map((id) => byUserId.get(id)).filter(Boolean);
+    },
     saveCount: (parent) => Number(parent.saveCount ?? parent._count?.savedBy ?? 0)
   },
   SocialStory: {

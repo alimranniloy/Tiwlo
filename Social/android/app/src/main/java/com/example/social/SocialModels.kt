@@ -142,6 +142,7 @@ data class SocialPost(
     val authorId: String = "",
     val author: SocialUser = SocialUser(),
     val authorProfile: SocialProfile? = null,
+    val collaborators: List<SocialProfile> = emptyList(),
     val type: String = "post",
     val body: String = "",
     val media: List<SocialMedia> = emptyList(),

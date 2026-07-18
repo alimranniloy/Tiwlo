@@ -97,7 +97,6 @@ import androidx.compose.animation.core.*
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.res.painterResource
@@ -672,6 +671,7 @@ data class Reel(
     val author: String,
     val authorAvatarUrl: String? = null,
     val authorDecoration: SocialProfileDecoration? = null,
+    val collaborators: List<SocialProfile> = emptyList(),
     val thumbnail: Int,
     val thumbnailUrl: String? = null,
     val videoUrl: String? = null,
@@ -851,6 +851,7 @@ private fun toUiReel(value: SocialPost): Reel {
         author = value.author.name.ifBlank { value.authorProfile?.username ?: "Tiwi User" },
         authorAvatarUrl = value.author.avatar,
         authorDecoration = value.authorProfile?.avatarDecoration,
+        collaborators = value.collaborators,
         thumbnail = R.drawable.img_tiwi_logo,
         thumbnailUrl = value.thumbnailUrl ?: media?.thumbnailUrl ?: media?.takeUnless { it.type == "video" }?.url,
         videoUrl = media?.hlsUrl?.takeIf { media.processingStatus == "ready" } ?: media?.url ?: value.hlsUrl,
@@ -1138,7 +1139,8 @@ private fun TiwiVideo(
     previewClipMs: Long? = null,
     coordinated: Boolean = true,
     interactive: Boolean = true,
-    showScrubber: Boolean = false
+    showScrubber: Boolean = false,
+    scrubberColor: Color = Color.White
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -1317,7 +1319,7 @@ private fun TiwiVideo(
             }
         }
         AnimatedVisibility(
-            visible = showScrubber && scrubberVisible && player != null,
+            visible = showScrubber && player != null && (scrubberVisible || autoplay),
             enter = fadeIn(tween(130)), exit = fadeOut(tween(240)),
             modifier = Modifier.align(Alignment.BottomCenter)
         ) {
@@ -1329,7 +1331,7 @@ private fun TiwiVideo(
                     player?.seekTo(playbackPosition)
                 },
                 modifier = Modifier.fillMaxWidth().height(24.dp).padding(horizontal = 7.dp),
-                colors = SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = Color.White, inactiveTrackColor = Color.White.copy(alpha = .35f))
+                colors = SliderDefaults.colors(thumbColor = scrubberColor, activeTrackColor = scrubberColor, inactiveTrackColor = Color.White.copy(alpha = .38f))
             )
         }
     }
@@ -1492,6 +1494,7 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
     var selectedPostId by remember { mutableStateOf<String?>(null) }
     var selectedPostMediaIndex by remember { mutableStateOf<Int?>(null) }
     var initialReelId by remember { mutableStateOf<String?>(null) }
+    var composerMusic by remember { mutableStateOf<String?>(null) }
     var selectedEditPostId by remember { mutableStateOf<String?>(null) }
     var callRequest by remember { mutableStateOf<TiwiCallRequest?>(null) }
     var showLiveSetup by remember { mutableStateOf(false) }
@@ -1501,7 +1504,6 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
     var selectedStoryAuthorId by remember { mutableStateOf<String?>(null) }
     var menuDestination by remember { mutableStateOf<String?>(null) }
     var pendingConversationId by remember { mutableStateOf<String?>(null) }
-    var feedHeaderVisible by remember { mutableStateOf(true) }
     
     val apiPosts by repository.feed.collectAsState()
     val currentUser by repository.currentUser.collectAsState()
@@ -1519,7 +1521,6 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
     val appLifecycleOwner = LocalLifecycleOwner.current
     var appVisible by remember { mutableStateOf(appLifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) }
     val appView = LocalView.current
-    val density = LocalDensity.current
     val appActivity = appContext as? Activity
     val permissionPreferences = remember { appContext.getSharedPreferences("tiwi_first_run_permissions", Context.MODE_PRIVATE) }
     var showPermissionIntro by remember { mutableStateOf(!permissionPreferences.getBoolean("requested_v1", false)) }
@@ -1544,18 +1545,6 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
     }
     val hasOverlay = showProfile || showCreatePost || showStoryCreate || selectedStoryAuthorId != null || showLiveSetup || selectedLiveStream != null || showMessages || showConnect || selectedProfileUserId != null || selectedChat != null || selectedPostId != null || selectedEditPostId != null
     val darkChrome = selectedTab == 2 && !hasOverlay
-    // Keep a status-bar guard while the header is hidden.  Translating content
-    // rather than changing Scaffold height prevents LazyColumn from bouncing.
-    val feedContentOffset by animateFloatAsState(
-        targetValue = if (selectedTab == 0 && !hasOverlay && !feedHeaderVisible) -with(density) { 52.dp.toPx() } else 0f,
-        animationSpec = tween(80),
-        label = "feed-header-guard"
-    )
-
-    LaunchedEffect(selectedTab, hasOverlay) {
-        if (selectedTab != 0 || hasOverlay) feedHeaderVisible = true
-    }
-
     if (showPermissionIntro) AlertDialog(
         onDismissRequest = {}, containerColor = Color.White, tonalElevation = 0.dp,
         icon = { Icon(Icons.Default.Security, null, tint = TiwiBlue) },
@@ -1787,7 +1776,6 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
         topBar = { 
             if (selectedTab != 2 && selectedTab != 4 && !showProfile && !showCreatePost && !showStoryCreate && selectedStoryAuthorId == null && !showMessages && !showConnect && selectedProfileUserId == null && selectedChat == null && selectedPostId == null && selectedEditPostId == null) {
                 TiwiTopBar(
-                    visible = feedHeaderVisible,
                     unreadActivity = unreadActivity,
                     onCreateClick = { showCreatePost = true },
                     onNotificationsClick = { selectedTab = 3 },
@@ -1814,7 +1802,7 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
         containerColor = if (darkChrome) Color.Black else MaterialTheme.colorScheme.background,
         contentWindowInsets = WindowInsets(0, 0, 0, 0)
     ) { innerPadding ->
-        Box(modifier = Modifier.padding(innerPadding).graphicsLayer { translationY = feedContentOffset }) {
+        Box(modifier = Modifier.padding(innerPadding)) {
             when {
                 selectedEditPostId != null -> posts.firstOrNull { it.id == selectedEditPostId }?.let { editing -> EditPostPage(repository, editing, onBack = { selectedEditPostId = null }) } ?: run { selectedEditPostId = null }
                 selectedPostId != null -> PostDetailScreen(
@@ -1878,8 +1866,9 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
                 )
                 showCreatePost -> CreatePostScreen(
                     repository,
-                    onBack = { showCreatePost = false },
-                    onLive = { showCreatePost = false; showLiveSetup = true }
+                    onBack = { showCreatePost = false; composerMusic = null },
+                    onLive = { showCreatePost = false; composerMusic = null; showLiveSetup = true },
+                    initialMusic = composerMusic
                 )
                 showProfile -> ProfileScreen(
                     repository,
@@ -1896,9 +1885,9 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
                 )
                 else -> {
                     when (selectedTab) {
-                        0 -> HomeFeed(reels, posts, repository, storyGroups = storyGroups, onCreateStory = { showStoryCreate = true }, onOpenStory = { selectedStoryAuthorId = it }, onShareClick = { sharedPost = it }, onAuthorClick = { selectedProfileUserId = it }, onPostClick = { selectedPostMediaIndex = null; selectedPostId = it }, onMediaClick = { id, index -> selectedPostMediaIndex = index; selectedPostId = id }, onReelClick = { initialReelId = it; selectedTab = 2 }, onEditPost = { selectedEditPostId = it }, onLive = { live -> hostingLive = live.hostId == repository.currentUserId(); selectedLiveStream = live }, onHeaderVisibilityChanged = { feedHeaderVisible = it })
+                        0 -> HomeFeed(reels, posts, repository, storyGroups = storyGroups, onCreateStory = { showStoryCreate = true }, onOpenStory = { selectedStoryAuthorId = it }, onShareClick = { sharedPost = it }, onAuthorClick = { selectedProfileUserId = it }, onPostClick = { selectedPostMediaIndex = null; selectedPostId = it }, onMediaClick = { id, index -> selectedPostMediaIndex = index; selectedPostId = id }, onReelClick = { initialReelId = it; selectedTab = 2 }, onEditPost = { selectedEditPostId = it }, onLive = { live -> hostingLive = live.hostId == repository.currentUserId(); selectedLiveStream = live })
                         1 -> SearchScreen(repository, onProfileClick = { selectedProfileUserId = it }, onPostClick = { selectedPostMediaIndex = null; selectedPostId = it })
-                        2 -> ReelsScreen(reels, repository, initialReelId = initialReelId, onOpen = { selectedPostMediaIndex = null; selectedPostId = it }, onShare = { reel -> sharedPost = posts.firstOrNull { it.id == reel.id } }, onAuthor = { selectedProfileUserId = it })
+                        2 -> ReelsScreen(reels, repository, initialReelId = initialReelId, onOpen = { selectedPostMediaIndex = null; selectedPostId = it }, onShare = { reel -> sharedPost = posts.firstOrNull { it.id == reel.id } }, onAuthor = { selectedProfileUserId = it }, onLive = { live -> hostingLive = live.hostId == repository.currentUserId(); selectedLiveStream = live }, onUseAudio = { reel -> composerMusic = reel.musicTitle?.takeIf { it.isNotBlank() } ?: "Original audio - ${reel.author}"; showCreatePost = true })
                         3 -> NotificationsScreen(
                             repository,
                             onProfileClick = { selectedProfileUserId = it },
@@ -1923,17 +1912,11 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
 }
 
 @Composable
-fun TiwiTopBar(visible: Boolean, unreadActivity: Int = 0, onCreateClick: () -> Unit, onNotificationsClick: () -> Unit, onConnectClick: () -> Unit) {
-    // The outer slot remains constant so a scrolling feed does not relayout or
-    // bounce. Only the 52dp app header fades out; the status area stays clear.
-    Box(modifier = Modifier.fillMaxWidth().statusBarsPadding().height(52.dp).graphicsLayer { clip = true }) {
-        AnimatedVisibility(
-            visible = visible,
-            enter = fadeIn(tween(80)),
-            exit = fadeOut(tween(55)),
-            modifier = Modifier.align(Alignment.BottomCenter)
-        ) {
-            Box(modifier = Modifier.fillMaxWidth().height(52.dp).background(Color.White)) {
+fun TiwiTopBar(unreadActivity: Int = 0, onCreateClick: () -> Unit, onNotificationsClick: () -> Unit, onConnectClick: () -> Unit) {
+    // The system-bar guard and app bar keep a fixed measured height. The feed
+    // therefore never moves under the status/navigation bars while scrolling.
+    Box(modifier = Modifier.fillMaxWidth().background(Color.White).statusBarsPadding().height(52.dp)) {
+        Box(modifier = Modifier.fillMaxWidth().height(52.dp).background(Color.White)) {
             IconButton(onClick = onCreateClick, modifier = Modifier.align(Alignment.CenterStart).padding(start = 7.dp).size(46.dp)) {
                 InstagramCreateGlyph()
             }
@@ -1957,7 +1940,6 @@ fun TiwiTopBar(visible: Boolean, unreadActivity: Int = 0, onCreateClick: () -> U
             }
         }
     }
-}
 }
 
 /** Rounded-square create control matching the compact Instagram-style post action. */
@@ -1994,8 +1976,7 @@ fun HomeFeed(
     onMediaClick: (String, Int) -> Unit,
     onReelClick: (String) -> Unit,
     onEditPost: (String) -> Unit = {},
-    onLive: (SocialLiveStream) -> Unit = {},
-    onHeaderVisibilityChanged: (Boolean) -> Unit = {}
+    onLive: (SocialLiveStream) -> Unit = {}
 ) {
     val scope = rememberTiwiCoroutineScope()
     val syncing by repository.syncing.collectAsState()
@@ -2027,16 +2008,6 @@ fun HomeFeed(
         if (posts.isEmpty() && syncing) FeedSkeleton()
         else {
             val feedListState = rememberLazyListState()
-            LaunchedEffect(feedListState) {
-                var lastPosition = 0
-                snapshotFlow { feedListState.firstVisibleItemIndex * 10_000 + feedListState.firstVisibleItemScrollOffset }
-                    .collect { position ->
-                        val delta = position - lastPosition
-                        if (position <= 4 || delta < -8) onHeaderVisibilityChanged(true)
-                        else if (delta > 10) onHeaderVisibilityChanged(false)
-                        lastPosition = position
-                    }
-            }
             LazyColumn(modifier = Modifier.fillMaxSize(), state = feedListState) {
             if (!online) item {
                 Row(Modifier.fillMaxWidth().background(Color(0xFFF4F6F8)).padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -2154,11 +2125,11 @@ private fun SuggestedFriendsSection(
         LazyRow(contentPadding = PaddingValues(horizontal = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             items(profiles, key = { it.userId }) { profile ->
                 Column(
-                    Modifier.width(150.dp).background(Color(0xFFF7F7F7), RoundedCornerShape(10.dp)).clickable { onProfileClick(profile.userId) }.padding(11.dp),
+                    Modifier.width(164.dp).background(Color(0xFFF7F7F7), RoundedCornerShape(12.dp)).clickable { onProfileClick(profile.userId) }.padding(12.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    DecoratedAvatar(profile.user.avatar, R.drawable.img_tiwi_avatar_1, profile.avatarDecoration, Modifier.size(84.dp))
-                    Spacer(Modifier.height(6.dp))
+                    DecoratedAvatar(profile.user.avatar, R.drawable.img_tiwi_avatar_1, profile.avatarDecoration, Modifier.size(94.dp))
+                    Spacer(Modifier.height(7.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(profile.user.name, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Bold, fontSize = 13.sp)
                         if (profile.verified) VerifiedBadge(profile.badgeType, 14.dp)
@@ -2166,7 +2137,7 @@ private fun SuggestedFriendsSection(
                     Text("@${profile.username}", maxLines = 1, color = Color.Gray, fontSize = 11.sp)
                     Button(
                         onClick = { scope.launch { runCatching { repository.follow(profile.userId, !profile.isFollowing) }.onSuccess(onUpdated) } },
-                        modifier = Modifier.fillMaxWidth().height(32.dp),
+                        modifier = Modifier.fillMaxWidth().height(34.dp),
                         contentPadding = PaddingValues(0.dp),
                         shape = RoundedCornerShape(7.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = if (profile.isFollowing) Color(0xFFE6E6E6) else TiwiBlue, contentColor = if (profile.isFollowing) Color.Black else Color.White)
@@ -2438,11 +2409,18 @@ fun PostCard(
     var showComments by remember { mutableStateOf(false) }
     var showReactions by remember { mutableStateOf(false) }
     var editBody by remember(post.content) { mutableStateOf(post.content) }
+    var displayedLiked by remember(post.id) { mutableStateOf(post.liked) }
+    var displayedLikes by remember(post.id) { mutableIntStateOf(post.likes) }
+    var reacting by remember(post.id) { mutableStateOf(false) }
     val scope = rememberTiwiCoroutineScope()
     val context = LocalContext.current
     val isOwn = post.authorId == repository.currentUserId()
     val backgroundColor = postBackgroundColor(post.metadata["background"])
     val darkBackground = isDarkPostBackground(post.metadata["background"])
+    LaunchedEffect(post.liked, post.likes) {
+        displayedLiked = post.liked
+        displayedLikes = post.likes
+    }
 
     Column(
         modifier = Modifier
@@ -2544,15 +2522,15 @@ fun PostCard(
             onOpenLinkedProfile = onCommentProfile
         )
 
-        if (post.likes + post.comments + post.shares + post.saves + post.views > 0) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 9.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                if (post.likes > 0) {
+        if (displayedLikes + post.comments + post.shares + post.saves + post.views > 0) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 9.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (displayedLikes > 0) {
                     Row(Modifier.clip(RoundedCornerShape(8.dp)).clickable { showReactions = true }.padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
                         Box(Modifier.size(18.dp).background(Color(0xFFFF3B5C), CircleShape), contentAlignment = Alignment.Center) {
                             Icon(Icons.Filled.Favorite, null, tint = Color.White, modifier = Modifier.size(11.dp))
                         }
                         Spacer(Modifier.width(4.dp))
-                        Text(formatCount(post.likes), color = Color.Gray, fontSize = 11.sp)
+                        Text(formatCount(displayedLikes), color = Color.Gray, fontSize = 11.sp)
                     }
                 }
                 Spacer(Modifier.weight(1f))
@@ -2564,25 +2542,36 @@ fun PostCard(
         }
 
         Row(
-            modifier = Modifier.fillMaxWidth().height(46.dp).padding(horizontal = 4.dp),
+            modifier = Modifier.fillMaxWidth().height(42.dp).padding(horizontal = 3.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             CompactPostAction(
-                icon = if (post.liked) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
-                count = post.likes,
-                tint = if (post.liked) Color.Red else Color.Gray,
+                icon = if (displayedLiked) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
+                count = displayedLikes,
+                tint = if (displayedLiked) Color.Red else Color.Gray,
                 description = "Like"
             ) {
-                playLikeSound(context)
-                scope.launch { runCatching { repository.reactToPost(post.id) } }
+                if (!reacting) {
+                    val previousLiked = displayedLiked
+                    val previousLikes = displayedLikes
+                    displayedLiked = !previousLiked
+                    displayedLikes = (previousLikes + if (displayedLiked) 1 else -1).coerceAtLeast(0)
+                    reacting = true
+                    playLikeSound(context)
+                    scope.launch {
+                        runCatching { repository.reactToPost(post.id) }
+                            .onFailure { displayedLiked = previousLiked; displayedLikes = previousLikes }
+                        reacting = false
+                    }
+                }
             }
             CompactPostAction(Icons.Outlined.ChatBubbleOutline, post.comments, description = "Comment") { showComments = true }
             CompactPostAction(Icons.Default.Repeat, post.shares, description = "Repost") {
                 scope.launch { runCatching { repository.repostPost(post.id) }.onSuccess { Toast.makeText(context, "Reposted", Toast.LENGTH_SHORT).show() } }
             }
-            IconButton(onClick = onShareClick, modifier = Modifier.size(40.dp)) { Icon(Icons.Outlined.Share, "Share", Modifier.size(23.dp), tint = Color.Gray) }
-            IconButton(onClick = { scope.launch { runCatching { repository.savePost(post.id, !post.saved) }.onSuccess { Toast.makeText(context, if (post.saved) "Removed from Saved" else "Saved", Toast.LENGTH_SHORT).show() } } }, modifier = Modifier.size(40.dp)) {
-                Icon(if (post.saved) Icons.Filled.Bookmark else Icons.Outlined.BookmarkBorder, "Save", Modifier.size(24.dp), tint = if (post.saved) TiwiBlue else Color.Gray)
+            IconButton(onClick = onShareClick, modifier = Modifier.size(38.dp)) { Icon(Icons.Outlined.Share, "Share", Modifier.size(22.dp), tint = Color.Gray) }
+            IconButton(onClick = { scope.launch { runCatching { repository.savePost(post.id, !post.saved) }.onSuccess { Toast.makeText(context, if (post.saved) "Removed from Saved" else "Saved", Toast.LENGTH_SHORT).show() } } }, modifier = Modifier.size(38.dp)) {
+                Icon(if (post.saved) Icons.Filled.Bookmark else Icons.Outlined.BookmarkBorder, "Save", Modifier.size(22.dp), tint = if (post.saved) TiwiBlue else Color.Gray)
             }
         }
         
@@ -2668,8 +2657,8 @@ private fun CompactPostAction(
     onClick: () -> Unit
 ) {
     Row(verticalAlignment = Alignment.CenterVertically) {
-        IconButton(onClick = onClick, modifier = Modifier.size(40.dp)) {
-            Icon(icon, contentDescription = description, modifier = Modifier.size(23.dp), tint = tint)
+        IconButton(onClick = onClick, modifier = Modifier.size(38.dp)) {
+            Icon(icon, contentDescription = description, modifier = Modifier.size(22.dp), tint = tint)
         }
         if (count > 0) Text(formatCount(count), style = MaterialTheme.typography.labelSmall, color = Color.Gray)
     }
@@ -3754,7 +3743,7 @@ private fun shareDeepLink(context: Context, title: String, text: String, url: St
 }
 
 @Composable
-fun CreatePostScreen(repository: SocialRepository, onBack: () -> Unit, onLive: () -> Unit = {}) {
+fun CreatePostScreen(repository: SocialRepository, onBack: () -> Unit, onLive: () -> Unit = {}, initialMusic: String? = null) {
     var text by remember { mutableStateOf("") }
     var selectedUris by remember { mutableStateOf<List<Uri>>(emptyList()) }
     var visibility by remember { mutableStateOf("public") }
@@ -3762,7 +3751,7 @@ fun CreatePostScreen(repository: SocialRepository, onBack: () -> Unit, onLive: (
     var composerPage by remember { mutableStateOf<String?>(null) }
     var taggedPeople by remember { mutableStateOf<List<SocialProfile>>(emptyList()) }
     var collaborators by remember { mutableStateOf<List<SocialProfile>>(emptyList()) }
-    var music by remember { mutableStateOf<String?>(null) }
+    var music by remember(initialMusic) { mutableStateOf(initialMusic) }
     var location by remember { mutableStateOf<String?>(null) }
     var feeling by remember { mutableStateOf<String?>(null) }
     var background by remember { mutableStateOf<String?>(null) }
@@ -4626,15 +4615,11 @@ private fun ExplorePostTile(post: SocialPost, modifier: Modifier, onPostClick: (
 }
 
 @Composable
-fun ReelsScreen(reels: List<Reel>, repository: SocialRepository, initialReelId: String? = null, onOpen: (String) -> Unit = {}, onShare: (Reel) -> Unit = {}, onAuthor: (String) -> Unit = {}) {
-    if (reels.isEmpty()) {
-        Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
-            Text("No reels yet", color = Color.White)
-        }
-        return
-    }
+fun ReelsScreen(reels: List<Reel>, repository: SocialRepository, initialReelId: String? = null, onOpen: (String) -> Unit = {}, onShare: (Reel) -> Unit = {}, onAuthor: (String) -> Unit = {}, onLive: (SocialLiveStream) -> Unit = {}, onUseAudio: (Reel) -> Unit = {}) {
     val feed by repository.feed.collectAsState()
+    val liveStreams by repository.liveStreams.collectAsState()
     val context = LocalContext.current
+    var feedFilter by remember { mutableStateOf("all") }
     var actionPost by remember { mutableStateOf<Post?>(null) }
     var editPost by remember { mutableStateOf<Post?>(null) }
     var editText by remember { mutableStateOf("") }
@@ -4642,30 +4627,64 @@ fun ReelsScreen(reels: List<Reel>, repository: SocialRepository, initialReelId: 
     var privacyPost by remember { mutableStateOf<Post?>(null) }
     var commentsPost by remember { mutableStateOf<Post?>(null) }
     var audioReel by remember { mutableStateOf<Reel?>(null) }
-    val initialPage = remember(reels, initialReelId) { reels.indexOfFirst { it.id == initialReelId }.coerceAtLeast(0) }
-    val pagerState = rememberPagerState(initialPage = initialPage, pageCount = { reels.size })
     val scope = rememberTiwiCoroutineScope()
+    val orderedReels = remember(reels) { reels.sortedWith(compareByDescending<Reel> { it.following }.thenByDescending { it.publishedAt }) }
+    val visibleReels = remember(orderedReels, feedFilter) {
+        if (feedFilter == "following") orderedReels.filter { it.following } else orderedReels
+    }
+    val activeLives = remember(liveStreams) { liveStreams.filter { it.status == "live" } }
+    LaunchedEffect(Unit) { runCatching { repository.refreshLiveStreams() } }
     audioReel?.let { selected ->
-        ReelAudioPage(selected, reels, onBack = { audioReel = null }, onReel = onOpen)
+        ReelAudioPage(selected, orderedReels, onBack = { audioReel = null }, onReel = onOpen, onAuthor = onAuthor, onUseAudio = { reel -> audioReel = null; onUseAudio(reel) })
         return
     }
-    val currentReelId = reels.getOrNull(pagerState.currentPage)?.id
+    if (feedFilter == "live") {
+        ReelsLiveLanding(activeLives, feedFilter, onFilter = { feedFilter = it }, onOpen = onLive)
+        return
+    }
+    if (visibleReels.isEmpty()) {
+        Box(Modifier.fillMaxSize().background(Color.Black)) {
+            ReelFeedTabs(feedFilter, activeLives.size, Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 8.dp)) { feedFilter = it }
+            Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
+                Icon(Icons.Outlined.Movie, null, tint = Color.White.copy(alpha = .65f), modifier = Modifier.size(34.dp))
+                Text("No reels from people you follow yet", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp, modifier = Modifier.padding(top = 9.dp))
+            }
+        }
+        return
+    }
+    val initialPage = remember(visibleReels, initialReelId) { visibleReels.indexOfFirst { it.id == initialReelId }.coerceAtLeast(0) }
+    val pagerState = rememberPagerState(initialPage = initialPage, pageCount = { visibleReels.size })
+    LaunchedEffect(feedFilter, visibleReels.size) {
+        pagerState.scrollToPage(pagerState.currentPage.coerceIn(0, visibleReels.lastIndex))
+    }
+    val currentReelId = visibleReels.getOrNull(pagerState.currentPage)?.id
     LaunchedEffect(pagerState.currentPage, currentReelId) {
         currentReelId?.let { id -> runCatching { repository.viewPost(id) } }
     }
     VerticalPager(state = pagerState, beyondViewportPageCount = 0, modifier = Modifier.fillMaxSize().background(Color.Black)) { page ->
-        val sourcePost = feed.firstOrNull { it.id == reels[page].id }
-        val reel = sourcePost?.let(::toUiReel) ?: reels[page]
+        val sourcePost = feed.firstOrNull { it.id == visibleReels[page].id }
+        val reel = sourcePost?.let(::toUiReel) ?: visibleReels[page]
         val liked = sourcePost?.viewerReaction == "like" || (sourcePost == null && reel.liked)
+        var displayedLiked by remember(reel.id) { mutableStateOf(liked) }
+        var displayedLikes by remember(reel.id) { mutableIntStateOf(reel.likes) }
+        var displayedUses by remember(reel.id) { mutableIntStateOf(sourcePost?.shareCount ?: 0) }
+        LaunchedEffect(reel.id, liked, reel.likes, sourcePost?.shareCount) {
+            displayedLiked = liked
+            displayedLikes = reel.likes
+            displayedUses = sourcePost?.shareCount ?: displayedUses
+        }
+        val collaborators = reel.collaborators.filter { it.userId.isNotBlank() && it.userId != reel.authorId }.take(4)
+        val collaboratorLabel = if (collaborators.isEmpty()) "@${reel.author}" else "@${reel.author} and ${collaborators.size} more"
+        val firstHashtag = remember(reel.content) { Regex("""#[\\p{L}\\p{N}_]+""").find(reel.content)?.value }
         val reelMedia = reel.media.filter { it.type == "video" || it.type == "image" }
         val mediaPager = rememberPagerState(pageCount = { reelMedia.size.coerceAtLeast(1) })
         Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
             HorizontalPager(state = mediaPager, modifier = Modifier.fillMaxSize(), beyondViewportPageCount = 0) { mediaPage ->
                 val item = reelMedia.getOrNull(mediaPage)
                 when {
-                    item?.type == "video" -> TiwiVideo(item.hlsUrl?.takeIf { item.processingStatus == "ready" } ?: item.url, Modifier.fillMaxSize(), autoplay = pagerState.currentPage == page && mediaPager.currentPage == mediaPage, fallbackUrl = item.url, posterUrl = item.thumbnailUrl, showScrubber = true)
+                    item?.type == "video" -> TiwiVideo(item.hlsUrl?.takeIf { item.processingStatus == "ready" } ?: item.url, Modifier.fillMaxSize(), autoplay = pagerState.currentPage == page && mediaPager.currentPage == mediaPage, fallbackUrl = item.url, posterUrl = item.thumbnailUrl, showScrubber = true, scrubberColor = Color(0xFFFF1744))
                     item?.type == "image" -> AsyncImage(model = item.url, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
-                    !reel.videoUrl.isNullOrBlank() -> TiwiVideo(reel.videoUrl!!, Modifier.fillMaxSize(), autoplay = pagerState.currentPage == page, fallbackUrl = reel.fallbackVideoUrl, posterUrl = reel.thumbnailUrl, showScrubber = true)
+                    !reel.videoUrl.isNullOrBlank() -> TiwiVideo(reel.videoUrl!!, Modifier.fillMaxSize(), autoplay = pagerState.currentPage == page, fallbackUrl = reel.fallbackVideoUrl, posterUrl = reel.thumbnailUrl, showScrubber = true, scrubberColor = Color(0xFFFF1744))
                     !reel.thumbnailUrl.isNullOrBlank() -> AsyncImage(model = reel.thumbnailUrl, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                     else -> Box(Modifier.fillMaxSize().background(Color.Black))
                 }
@@ -4680,54 +4699,88 @@ fun ReelsScreen(reels: List<Reel>, repository: SocialRepository, initialReelId: 
                         )
                     )
             )
-            Text("Reels", modifier = Modifier.align(Alignment.TopStart).statusBarsPadding().padding(horizontal = 14.dp, vertical = 10.dp), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 20.sp)
+            ReelFeedTabs(feedFilter, activeLives.size, Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 8.dp)) { feedFilter = it }
             if (reelMedia.size > 1) Surface(
-                modifier = Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 12.dp),
+                modifier = Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(end = 50.dp, top = 12.dp),
                 color = Color.Black.copy(alpha = .55f), shape = RoundedCornerShape(14.dp), tonalElevation = 0.dp
             ) { Text("${mediaPager.currentPage + 1}/${reelMedia.size}", color = Color.White, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)) }
             IconButton(onClick = { feed.firstOrNull { it.id == reel.id }?.let { actionPost = toUiPost(it) } }, modifier = Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(end = 5.dp, top = 3.dp)) { Icon(Icons.Default.MoreVert, "Reel options", tint = Color.White) }
             Column(
-                modifier = Modifier.align(Alignment.BottomEnd).padding(end = 10.dp, bottom = 14.dp),
+                modifier = Modifier.align(Alignment.BottomEnd).padding(end = 8.dp, bottom = 27.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                IconButton(onClick = { playLikeSound(context); scope.launch { runCatching { repository.reactToPost(reel.id) } } }) { Icon(if (liked) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder, "Like", tint = if (liked) Color(0xFFFF3040) else Color.White, modifier = Modifier.size(30.dp)) }
-                Text(formatCount(reel.likes), color = Color.White, style = MaterialTheme.typography.labelMedium)
-                Spacer(modifier = Modifier.height(12.dp))
-                IconButton(onClick = { onOpen(reel.id) }) { Icon(Icons.Default.Comment, "Comment", tint = Color.White, modifier = Modifier.size(30.dp)) }
-                Text(formatCount(reel.comments), color = Color.White, style = MaterialTheme.typography.labelMedium)
-                Spacer(modifier = Modifier.height(12.dp))
-                ReelViewIcon()
-                Text(formatCount(reel.views), color = Color.White, style = MaterialTheme.typography.labelMedium)
-                Spacer(modifier = Modifier.height(12.dp))
-                IconButton(onClick = { onShare(reel) }) { Icon(Icons.Default.Share, "Share", tint = Color.White, modifier = Modifier.size(30.dp)) }
-                Text("Share", color = Color.White, style = MaterialTheme.typography.labelMedium)
+                ReelRailAction(
+                    icon = if (displayedLiked) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
+                    contentDescription = "Like", value = formatCount(displayedLikes), tint = if (displayedLiked) Color(0xFFFF3040) else Color.White
+                ) {
+                    val wasLiked = displayedLiked
+                    displayedLiked = !wasLiked
+                    displayedLikes = (displayedLikes + if (wasLiked) -1 else 1).coerceAtLeast(0)
+                    playLikeSound(context)
+                    scope.launch {
+                        runCatching { repository.reactToPost(reel.id) }
+                            .onFailure {
+                                displayedLiked = wasLiked
+                                displayedLikes = (displayedLikes + if (wasLiked) 1 else -1).coerceAtLeast(0)
+                            }
+                    }
+                }
+                ReelRailAction(Icons.Outlined.ChatBubbleOutline, "Comment", formatCount(reel.comments)) { onOpen(reel.id) }
+                ReelRailAction(Icons.Default.Visibility, "Views", formatCount(reel.views), iconSize = 26.dp) { onOpen(reel.id) }
+                ReelRailAction(Icons.Default.Share, "Share", "Share") { onShare(reel) }
+                ReelRailAction(Icons.Default.Repeat, "Use this audio", formatCount(displayedUses), iconSize = 29.dp) {
+                    displayedUses += 1
+                    audioReel = reel
+                }
+                Spacer(Modifier.height(5.dp))
+                TiwiAvatar(reel.authorAvatarUrl, R.drawable.img_tiwi_avatar_1, Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).border(1.5.dp, Color.White.copy(alpha = .88f), RoundedCornerShape(10.dp)))
             }
 
-            Column(modifier = Modifier.align(Alignment.BottomStart).padding(start = 12.dp, end = 62.dp, bottom = 14.dp)) {
+            Column(modifier = Modifier.align(Alignment.BottomStart).padding(start = 12.dp, end = 82.dp, bottom = 29.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { onAuthor(reel.authorId) }) {
-                        DecoratedAvatar(reel.authorAvatarUrl, R.drawable.img_tiwi_avatar_1, reel.authorDecoration, Modifier.size(38.dp))
-                        Spacer(modifier = Modifier.width(7.dp))
-                        Text(reel.author, color = Color.White, fontWeight = FontWeight.Bold, maxLines = 1)
-                        if (reel.verified) VerifiedBadge(reel.badgeType, 16.dp)
-                    }
+                    ReelCollaboratorStack(reel, collaborators, onAuthor)
+                    Text(
+                        collaboratorLabel,
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false).padding(start = 7.dp).clickable { onAuthor(reel.authorId) }
+                    )
+                    if (reel.verified) VerifiedBadge(reel.badgeType, 15.dp)
                     if (reel.authorId != repository.currentUserId()) {
-                        Spacer(modifier = Modifier.width(9.dp))
+                        Spacer(modifier = Modifier.width(7.dp))
                         Button(
                             onClick = { scope.launch { runCatching { repository.follow(reel.authorId, !reel.following) } } },
                             colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black),
-                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
-                            modifier = Modifier.height(27.dp),
-                            shape = RoundedCornerShape(7.dp)
-                        ) { Text(if (reel.following) "Following" else "Follow", fontSize = 11.sp) }
+                            contentPadding = PaddingValues(horizontal = 9.dp, vertical = 0.dp),
+                            modifier = Modifier.height(26.dp),
+                            shape = RoundedCornerShape(14.dp)
+                        ) { Text(if (reel.following) "Following" else "Follow", fontSize = 10.sp, fontWeight = FontWeight.Bold) }
                     }
                 }
-                if (reel.content.isNotBlank()) Text(reel.content, color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 7.dp))
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp).clip(RoundedCornerShape(12.dp)).clickable { audioReel = reel }.padding(horizontal = 2.dp, vertical = 2.dp)) {
+                if (reel.content.isNotBlank()) Text(
+                    reel.content.replace('\n', ' '), color = Color.White, fontSize = 12.sp,
+                    maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 6.dp).clickable { onOpen(reel.id) }
+                )
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp)) {
+                    firstHashtag?.let { tag ->
+                        Surface(color = Color.Black.copy(alpha = .38f), shape = RoundedCornerShape(13.dp), tonalElevation = 0.dp, modifier = Modifier.clickable { onOpen(reel.id) }) {
+                            Row(Modifier.padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.PlayArrow, null, tint = Color.White, modifier = Modifier.size(14.dp))
+                                Text(tag, color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 3.dp), maxLines = 1)
+                            }
+                        }
+                        Spacer(Modifier.width(5.dp))
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clip(RoundedCornerShape(13.dp)).background(Color.Black.copy(alpha = .38f)).clickable { audioReel = reel }.padding(horizontal = 8.dp, vertical = 4.dp)) {
                     Box(Modifier.size(21.dp).background(Brush.linearGradient(listOf(TiwiPurple, TiwiBlue)), CircleShape), contentAlignment = Alignment.Center) { Icon(Icons.Default.MusicNote, null, Modifier.size(12.dp), Color.White) }
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text(reel.musicTitle ?: "Original audio · ${reel.author}", color = Color.White, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                    Text("${reel.musicTitle?.takeIf { it.isNotBlank() } ?: "Original audio"} - @${reel.author}", color = Color.White, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Icon(Icons.Default.ChevronRight, null, tint = Color.White.copy(alpha = .8f), modifier = Modifier.size(14.dp))
+                    }
                 }
             }
         }
@@ -4757,23 +4810,148 @@ fun ReelsScreen(reels: List<Reel>, repository: SocialRepository, initialReelId: 
 }
 
 @Composable
-private fun ReelViewIcon() {
-    Box(Modifier.size(29.dp).background(Brush.linearGradient(listOf(Color(0xFFFF4D8D), Color(0xFF7C4DFF), Color(0xFF00A9FF))), CircleShape), contentAlignment = Alignment.Center) {
-        Icon(Icons.Filled.PlayArrow, "Views", tint = Color.White, modifier = Modifier.size(19.dp))
+private fun ReelFeedTabs(selected: String, liveCount: Int, modifier: Modifier = Modifier, onSelect: (String) -> Unit) {
+    Surface(
+        modifier = modifier,
+        color = Color.Black.copy(alpha = .54f),
+        shape = RoundedCornerShape(18.dp),
+        tonalElevation = 0.dp
+    ) {
+        Row(
+            modifier = Modifier.height(34.dp).padding(horizontal = 3.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            ReelFeedTab("All", "all", selected, onSelect)
+            VerticalDivider(Modifier.height(15.dp), color = Color.White.copy(alpha = .28f), thickness = .5.dp)
+            ReelFeedTab("Following", "following", selected, onSelect)
+            VerticalDivider(Modifier.height(15.dp), color = Color.White.copy(alpha = .28f), thickness = .5.dp)
+            ReelFeedTab("Live", "live", selected, onSelect, liveCount)
+        }
     }
 }
 
 @Composable
-private fun ReelAudioPage(current: Reel, reels: List<Reel>, onBack: () -> Unit, onReel: (String) -> Unit) {
+private fun ReelFeedTab(label: String, value: String, selected: String, onSelect: (String) -> Unit, count: Int = 0) {
+    val active = selected == value
+    Row(
+        modifier = Modifier.height(28.dp).clip(RoundedCornerShape(14.dp))
+            .background(if (active) Color.White.copy(alpha = .18f) else Color.Transparent)
+            .clickable { onSelect(value) }.padding(horizontal = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        if (value == "live") Box(Modifier.size(6.dp).background(Color(0xFFE11D48), CircleShape))
+        Text(label, color = Color.White, fontWeight = if (active) FontWeight.Bold else FontWeight.Medium, fontSize = 11.sp, modifier = if (value == "live") Modifier.padding(start = 4.dp) else Modifier)
+        if (value == "live" && count > 0) Text(count.coerceAtMost(99).toString(), color = Color.White, fontSize = 8.sp, fontWeight = FontWeight.Black, modifier = Modifier.padding(start = 4.dp))
+    }
+}
+
+@Composable
+private fun ReelsLiveLanding(streams: List<SocialLiveStream>, selected: String, onFilter: (String) -> Unit, onOpen: (SocialLiveStream) -> Unit) {
+    Box(Modifier.fillMaxSize().background(Color.Black)) {
+        ReelFeedTabs(selected, streams.size, Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 8.dp), onFilter)
+        if (streams.isEmpty()) {
+            Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
+                Box(Modifier.size(46.dp).background(Color.White.copy(alpha = .1f), CircleShape), contentAlignment = Alignment.Center) { Icon(Icons.Outlined.LiveTv, null, tint = Color.White, modifier = Modifier.size(24.dp)) }
+                Text("No one is live right now", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp, modifier = Modifier.padding(top = 10.dp))
+                Text("Live videos will appear here as soon as they start.", color = Color.White.copy(alpha = .65f), fontSize = 11.sp, modifier = Modifier.padding(top = 3.dp))
+            }
+        } else {
+            Column(Modifier.fillMaxSize().statusBarsPadding().padding(top = 52.dp)) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(7.dp).background(Color(0xFFE11D48), CircleShape))
+                    Text("Live now", color = Color.White, fontWeight = FontWeight.Black, fontSize = 14.sp, modifier = Modifier.padding(start = 6.dp))
+                    Text("Tap to watch", color = Color.White.copy(alpha = .62f), fontSize = 10.sp, modifier = Modifier.padding(start = 6.dp))
+                }
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(2), modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 3.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    gridItems(streams, key = { "reel-live-${it.id}" }) { stream ->
+                        Box(
+                            Modifier.aspectRatio(.74f).clip(RoundedCornerShape(13.dp))
+                                .background(Brush.linearGradient(listOf(Color(0xFF253A66), Color(0xFF101828))))
+                                .clickable { onOpen(stream) }
+                        ) {
+                            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = .85f)))) )
+                            Surface(Modifier.align(Alignment.TopStart).padding(8.dp), color = Color(0xFFE11D48), shape = RoundedCornerShape(5.dp), tonalElevation = 0.dp) { Text("LIVE", color = Color.White, fontWeight = FontWeight.Black, fontSize = 8.sp, modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)) }
+                            Column(Modifier.align(Alignment.BottomStart).padding(10.dp)) {
+                                TiwiAvatar(stream.host.avatar, R.drawable.img_tiwi_avatar_1, Modifier.size(38.dp).clip(CircleShape).border(1.5.dp, Color.White, CircleShape))
+                                Text(stream.host.name.ifBlank { "Tiwi creator" }, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp))
+                                Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.Visibility, null, tint = Color.White.copy(alpha = .8f), modifier = Modifier.size(12.dp)); Text("${formatCount(stream.viewerCount)} watching", color = Color.White.copy(alpha = .85f), fontSize = 9.sp, modifier = Modifier.padding(start = 3.dp)) }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReelRailAction(
+    icon: ImageVector,
+    contentDescription: String,
+    value: String,
+    tint: Color = Color.White,
+    iconSize: Dp = 30.dp,
+    onClick: () -> Unit
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier.padding(vertical = 2.dp)
+    ) {
+        Box(
+            modifier = Modifier.size(38.dp).clip(CircleShape).clickable(onClick = onClick),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(icon, contentDescription, tint = tint, modifier = Modifier.size(iconSize))
+        }
+        Text(value, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 11.sp, maxLines = 1)
+    }
+}
+
+@Composable
+private fun ReelCollaboratorStack(reel: Reel, collaborators: List<SocialProfile>, onAuthor: (String) -> Unit) {
+    if (collaborators.isEmpty()) {
+        DecoratedAvatar(
+            reel.authorAvatarUrl,
+            R.drawable.img_tiwi_avatar_1,
+            reel.authorDecoration,
+            Modifier.size(35.dp).clip(CircleShape).clickable { onAuthor(reel.authorId) }
+        )
+        return
+    }
+    val shown = collaborators.take(4)
+    Box(Modifier.width((35 + (shown.size - 1) * 18).dp).height(35.dp)) {
+        shown.forEachIndexed { index, profile ->
+            TiwiAvatar(
+                profile.user.avatar,
+                R.drawable.img_tiwi_avatar_1,
+                Modifier.size(35.dp).offset(x = (index * 18).dp).clip(CircleShape).border(1.dp, Color.White, CircleShape).clickable { onAuthor(profile.userId) }
+            )
+        }
+    }
+}
+
+@Composable
+private fun ReelAudioPage(
+    current: Reel,
+    reels: List<Reel>,
+    onBack: () -> Unit,
+    onReel: (String) -> Unit,
+    onAuthor: (String) -> Unit,
+    onUseAudio: (Reel) -> Unit
+) {
     val title = current.musicTitle ?: "Original audio"
     val related = remember(title, reels) { reels.filter { (it.musicTitle ?: "Original audio") == title }.ifEmpty { listOf(current) } }
     BackHandler(onBack = onBack)
     Column(Modifier.fillMaxSize().background(Color.White)) {
         Row(Modifier.fillMaxWidth().statusBarsPadding().height(52.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
-            Text("Audio", fontWeight = FontWeight.ExtraBold, fontSize = 17.sp)
+            Text("Original audio", fontWeight = FontWeight.ExtraBold, fontSize = 17.sp)
         }
-        Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp).clickable { onAuthor(current.authorId) }, verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(76.dp).clip(RoundedCornerShape(14.dp)).background(Brush.linearGradient(listOf(TiwiPurple, TiwiBlue))), contentAlignment = Alignment.Center) {
                 Icon(Icons.Default.MusicNote, null, tint = Color.White, modifier = Modifier.size(34.dp))
             }
@@ -4784,7 +4962,7 @@ private fun ReelAudioPage(current: Reel, reels: List<Reel>, onBack: () -> Unit, 
             }
         }
         Button(
-            onClick = { onReel(current.id) },
+            onClick = { onUseAudio(current) },
             modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp).height(38.dp),
             shape = RoundedCornerShape(9.dp), contentPadding = PaddingValues(0.dp)
         ) { Icon(Icons.Default.VideoCall, null, Modifier.size(18.dp)); Text("Use this audio", fontSize = 11.sp, modifier = Modifier.padding(start = 6.dp)) }
@@ -4910,8 +5088,8 @@ private fun LiveSetupPage(repository: SocialRepository, onBack: () -> Unit, onSt
                         Text(previewState, color = Color.White.copy(alpha = .75f), fontSize = 11.sp, modifier = Modifier.padding(top = 9.dp))
                     }
                     Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = .52f), Color.Transparent, Color.Black.copy(alpha = .38f)))))
-                    IconButton(onClick = { previewManager.stopPreview(); onBack() }, modifier = Modifier.align(Alignment.TopEnd).padding(8.dp).size(37.dp).background(Color.Black.copy(alpha = .48f), CircleShape)) { Icon(Icons.Default.Close, "Cancel", tint = Color.White, modifier = Modifier.size(22.dp)) }
-                    Row(Modifier.align(Alignment.TopStart).padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = { previewManager.stopPreview(); onBack() }, modifier = Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(8.dp).size(37.dp).background(Color.Black.copy(alpha = .48f), CircleShape)) { Icon(Icons.Default.Close, "Cancel", tint = Color.White, modifier = Modifier.size(22.dp)) }
+                    Row(Modifier.align(Alignment.TopStart).statusBarsPadding().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                         TiwiAvatar(user?.avatar, R.drawable.img_tiwi_avatar_1, Modifier.size(31.dp).clip(CircleShape))
                         Column(Modifier.padding(start = 7.dp)) {
                             Text(user?.name?.ifBlank { "Tiwi" } ?: "Tiwi", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)

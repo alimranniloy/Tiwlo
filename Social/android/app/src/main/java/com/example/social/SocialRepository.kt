@@ -1312,6 +1312,12 @@ class SocialRepository(context: Context) {
         return SocialPost(
             id = value.string("id").orEmpty(), authorId = value.string("authorId") ?: author.id, author = author,
             authorProfile = value.objectValue("authorProfile")?.let { mapProfile(it, author) }, type = value.string("type") ?: "post",
+            collaborators = value.list("collaborators").mapNotNull { raw ->
+                raw.objectMap()?.let { profile ->
+                    val collaborator = mapUser(profile.objectValue("user") ?: emptyMap())
+                    mapProfile(profile, collaborator)
+                }
+            },
             body = value.string("body").orEmpty(), media = value.list("media").mapNotNull { it.objectMap()?.let(::mapMedia) },
             metadata = value.objectValue("metadata") ?: emptyMap(),
             thumbnailUrl = absoluteUrl(value.string("thumbnailUrl")), hlsUrl = absoluteUrl(value.string("hlsUrl")),
@@ -1717,7 +1723,7 @@ class SocialRepository(context: Context) {
         const val PUBLIC_USER_FIELDS = "id name avatar status socialLastActiveAt"
         const val DECORATION_FIELDS = "id slug kind name assetUrl fileName mimeType animated width height priceUsd status sortOrder owned applied ownershipSource"
         const val PROFILE_FIELDS = "id userId username bio about category website location coverUrl verified badgeType badgePlan badgeExpiresAt avatarDecoration { $DECORATION_FIELDS } profileEffect { $DECORATION_FIELDS } privacy preferences followerCount followingCount postCount isFollowing createdAt user { $PUBLIC_USER_FIELDS }"
-        const val POST_FIELDS = "id authorId type body media metadata thumbnailUrl hlsUrl processingStatus visibility commentPermission pinned groupId saved status viewCount shareCount saveCount reactionCount commentCount viewerReaction recommended recommendationLabel publishedAt author { $PUBLIC_USER_FIELDS } authorProfile { id userId username verified badgeType isFollowing avatarDecoration { $DECORATION_FIELDS } }"
+        const val POST_FIELDS = "id authorId type body media metadata thumbnailUrl hlsUrl processingStatus visibility commentPermission pinned groupId saved status viewCount shareCount saveCount reactionCount commentCount viewerReaction recommended recommendationLabel publishedAt author { $PUBLIC_USER_FIELDS } authorProfile { id userId username verified badgeType isFollowing avatarDecoration { $DECORATION_FIELDS } } collaborators { id userId username verified badgeType avatarDecoration { $DECORATION_FIELDS } user { $PUBLIC_USER_FIELDS } }"
         const val STORY_PROFILE_FIELDS = "id userId username verified badgeType isFollowing avatarDecoration { $DECORATION_FIELDS }"
         const val STORY_INTERACTION_FIELDS = "id storyId itemId userId kind key value createdAt updatedAt user { $PUBLIC_USER_FIELDS } userProfile { $STORY_PROFILE_FIELDS }"
         const val STORY_ITEM_FIELDS = "id storyId type media text background filter transform overlays durationMs altText aiGenerated music status sortOrder reactionCount viewerReaction interactionCount viewerInteractions { $STORY_INTERACTION_FIELDS } createdAt updatedAt"

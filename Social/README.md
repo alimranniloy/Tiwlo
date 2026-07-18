@@ -54,5 +54,13 @@ Set `SOCIAL_MEDIA_MAX_MB`, `SOCIAL_FFMPEG_PATH`, `SOCIAL_RTMP_URL` and
 servers entered in **Admin > Social > Settings**. The Ubuntu installer installs
 FFmpeg and configures Nginx to proxy all Social API and media routes.
 
+For audio-rights matching, install Chromaprint's `fpcalc` tool and set
+`SOCIAL_CHROMAPRINT_PATH`. Add only rights-controlled reference tracks to
+`SOCIAL_AUDIO_RIGHTS_CATALOG_JSON`, for example
+`[{"id":"track-1","fingerprintHash":"…","title":"Track","owner":"Rights owner","policy":"block"}]`.
+The fingerprint is calculated from decoded audio, so editing a filename or metadata
+does not alter the match. Public music-identification results must not by themselves
+be used to decide ownership or to disable an account.
+
 Before deployment, run `npm --prefix x run db:generate` and
 `npm --prefix x run db:push`, then rebuild/restart the backend and frontend.

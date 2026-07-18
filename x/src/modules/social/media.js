@@ -7,6 +7,7 @@ import multer from 'multer';
 import { getSettings } from './service.js';
 import { moderateMediaFile, recordModerationDecision } from './moderation.js';
 import { resolveSocialFfmpegPath } from './ffmpeg.js';
+import { inspectAudioRights } from './audioFingerprint.js';
 
 const safeId = (value) => String(value || '').replace(/[^a-zA-Z0-9_-]/g, '');
 const safeProcessingId = (value) => String(value || '').replace(/[^a-zA-Z0-9._-]/g, '');
@@ -212,7 +213,7 @@ export const registerSocialRoutes = (app, { prisma, userFromRequest, rootDir }) 
     const statusFile = join(outputDir, 'status.json');
     const hlsUrl = `${publicRoot}/${userId}/${outputName}/master.m3u8`;
     const thumbnailUrl = `${publicRoot}/${userId}/${outputName}/thumbnail.jpg`;
-    const moderation = await moderateMediaFile({
+    const visualModeration = await moderateMediaFile({
       filePath, mimeType: inspectedMimeType, targetType: boundedKind(kind),
       thresholds: {
         explicit: settings.moderation?.explicitThreshold,
@@ -220,6 +221,8 @@ export const registerSocialRoutes = (app, { prisma, userFromRequest, rootDir }) 
         sexyBlock: settings.moderation?.sexyBlockThreshold
       }
     });
+    const audioRights = await inspectAudioRights({ filePath, mimeType: inspectedMimeType });
+    const moderation = audioRights?.decision === 'block' || audioRights?.decision === 'review' ? audioRights : visualModeration;
     await recordModerationDecision(
       { prisma, user },
       {
@@ -227,17 +230,20 @@ export const registerSocialRoutes = (app, { prisma, userFromRequest, rootDir }) 
         targetType: boundedKind(kind),
         targetId: processingId,
         result: moderation,
-        disableUser: settings.moderation?.autoDisableExplicit !== false
+        disableUser: moderation.category !== 'copyright/match' && settings.moderation?.autoDisableExplicit !== false
       }
     );
     if (moderation.decision === 'block') {
       await rm(filePath, { force: true }).catch(() => undefined);
-      const accountAction = settings.moderation?.autoDisableExplicit === false ? 'The media was permanently deleted.' : 'The media was permanently deleted and the account was disabled for administrator review.';
-      throw new Error(`MEDIA_BLOCKED: Explicit sexual content detected. ${accountAction}`);
+      const copyright = moderation.category === 'copyright/match';
+      const accountAction = copyright ? 'The media was permanently deleted because its audio matches protected content.' : settings.moderation?.autoDisableExplicit === false ? 'The media was permanently deleted.' : 'The media was permanently deleted and the account was disabled for administrator review.';
+      throw new Error(`MEDIA_BLOCKED: ${copyright ? 'Protected audio was detected.' : 'Explicit sexual content detected.'} ${accountAction}`);
     }
     if (moderation.decision === 'review') {
       await rm(filePath, { force: true }).catch(() => undefined);
-      throw new Error('MEDIA_REVIEW: This upload may contain nudity or sexually suggestive content. It was not published and was removed for safety.');
+      throw new Error(moderation.category === 'copyright/match'
+        ? 'MEDIA_REVIEW: The audio matches a protected reference and requires rights review. It was not published.'
+        : 'MEDIA_REVIEW: This upload may contain nudity or sexually suggestive content. It was not published and was removed for safety.');
     }
     if (isVideo && settings.autoTranscode) {
       await mkdir(outputDir, { recursive: true });

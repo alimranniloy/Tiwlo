@@ -2773,6 +2773,7 @@ type SocialPost {
   author: SocialPublicUser!
   adminAuthor: User
   authorProfile: SocialProfile
+  collaborators: [SocialProfile!]!
   type: String!
   body: String
   media: JSON!
