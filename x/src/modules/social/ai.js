@@ -768,6 +768,13 @@ export const startSocialAiInfrastructure = async (ctx) => {
     const existing = await ctx.prisma.socialAiJob.findFirst({ where: { type: 'bootstrap', status: { in: ['queued', 'running'] } } });
     if (!existing) await enqueueSocialAiTask(ctx, { type: 'bootstrap', priority: 100, maxAttempts: 2, payload: { source: 'server_start' } });
   }
+  // Production installs run the PostgreSQL queue through the dedicated
+  // systemd worker.  Keeping a second in-process worker in the HTTP server
+  // can submit two requests at once to the compact one-slot llama.cpp server,
+  // causing one request to be cancelled while the other is generating.
+  // Local/dev environments can explicitly opt in when no worker service is
+  // present with SOCIAL_AI_EMBEDDED_WORKER=1.
+  if (process.env.SOCIAL_AI_EMBEDDED_WORKER !== '1') return;
   if (workerTimer) clearInterval(workerTimer);
   workerTimer = setInterval(() => runSocialAiQueueOnce(ctx).catch((error) => console.warn('[social-ai] queue worker failed:', error?.message || error)), WORKER_DELAY_MS);
   workerTimer.unref?.();
