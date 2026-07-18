@@ -79,7 +79,10 @@ services:
       - SEARXNG_BASE_URL=http://127.0.0.1:8081/
       - SEARXNG_SECRET=${SEARXNG_SECRET:-tiwlo-social-ai-local}
   crawl4ai:
-    image: unclecode/crawl4ai:basic
+    # Use the maintained server image rather than the legacy `basic` image.
+    # The upstream project documents `latest` for self-hosted deployments and
+    # ships the HTTP health endpoint in that image.
+    image: unclecode/crawl4ai:latest
     restart: unless-stopped
     ports: ["127.0.0.1:11235:11235"]
     shm_size: 1gb
@@ -184,7 +187,16 @@ service_healthy() {
     # legitimately be rate-limited by an upstream engine even while SearXNG is
     # healthy, so it must not make package startup fail.
     searxng) curl -fsS --max-time 5 "http://127.0.0.1:8081/" >/dev/null 2>&1 ;;
-    crawl4ai) curl -fsS --max-time 5 "http://127.0.0.1:11235/health" >/dev/null 2>&1 ;;
+    # Recent Crawl4AI images expose /health.  Older images used by existing
+    # deployments may expose the FastAPI docs or playground first, while the
+    # browser pool warms in the background.  Treat any local successful HTTP
+    # response as a readiness signal; the worker's actual crawl request still
+    # performs the functional check before using this service.
+    crawl4ai)
+      curl -fsS --max-time 5 "http://127.0.0.1:11235/health" >/dev/null 2>&1 ||
+      curl -fsS --max-time 5 "http://127.0.0.1:11235/docs" >/dev/null 2>&1 ||
+      curl -fsS --max-time 5 "http://127.0.0.1:11235/playground" >/dev/null 2>&1
+      ;;
     llama-cpp) curl -fsS --max-time 5 "http://127.0.0.1:8082/health" >/dev/null 2>&1 ;;
     queue-worker) systemctl is-active --quiet tiwlo-social-ai-worker.service 2>/dev/null ;;
     health-monitor) systemctl is-active --quiet tiwlo-social-ai-health.timer 2>/dev/null ;;
@@ -230,7 +242,12 @@ start_service() {
       ;;
     *) die "Unknown package $id" ;;
   esac
-  for _ in $(seq 1 45); do service_healthy "$id" && { progress 100 "$id is healthy"; return; }; sleep 2; done
+  # Chromium/browser-pool startup is substantially slower than the lightweight
+  # SearXNG service, especially after a VPS reboot or a first image pull.
+  # Give Crawl4AI four minutes before reporting a real failure.
+  local attempts=45
+  [ "$id" = "crawl4ai" ] && attempts=120
+  for _ in $(seq 1 "$attempts"); do service_healthy "$id" && { progress 100 "$id is healthy"; return; }; sleep 2; done
   append_service_diagnostics "$id"
   die "$id did not become healthy; inspect $LOG_FILE"
 }
