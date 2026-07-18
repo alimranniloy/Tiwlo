@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-DEPLOY_SCRIPT_VERSION="2026-07-19-social-ai-bootstrap"
+DEPLOY_SCRIPT_VERSION="2026-07-19-social-ai-schema-contract"
 ROOT="${TIWLO_INSTALL_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 BRANCH="${TIWLO_GIT_BRANCH:-main}"
 REPO_URL="${TIWLO_REPO_URL:-}"
@@ -901,6 +901,26 @@ release_frontend_port() {
   fi
 }
 
+release_backend_port() {
+  # A stale Node process can keep the API port open while PM2 starts a new
+  # process that immediately exits. The old schema then still passes /health,
+  # which made a successful deploy look real even though GraphQL was stale.
+  if have fuser; then
+    run_sudo fuser -k "${BACKEND_PORT}/tcp" >/dev/null 2>&1 || true
+    sleep 1
+    return 0
+  fi
+  if have lsof; then
+    local pids
+    pids="$(lsof -ti "tcp:${BACKEND_PORT}" 2>/dev/null || true)"
+    if [ -n "$pids" ]; then
+      # shellcheck disable=SC2086
+      run_sudo kill $pids >/dev/null 2>&1 || true
+      sleep 1
+    fi
+  fi
+}
+
 ensure_obfuscated_frontend_service() {
   if [ "$RESTART_SYSTEMD_FRONTEND" != "1" ] || ! have systemctl; then
     return 0
@@ -961,18 +981,19 @@ SERVICE
 restart_obfuscated_backend() {
   step "Restarting backend from obfuscated code"
   if have pm2; then
-    if pm2 describe "$PM2_APP_NAME" >/dev/null 2>&1; then
-      PORT="$BACKEND_PORT" pm2 restart "$PM2_APP_NAME" --update-env
-    else
-      PORT="$BACKEND_PORT" pm2 start "$ROOT/x/src/server.js" \
-        --name "$PM2_APP_NAME" \
-        --cwd "$ROOT/x" \
-        --time \
-        --interpreter node
-    fi
+    # Recreate, rather than restart, so PM2 cannot retain an old script path
+    # or an old release environment after the production root was replaced.
+    pm2 delete "$PM2_APP_NAME" >/dev/null 2>&1 || true
+    release_backend_port
+    PORT="$BACKEND_PORT" pm2 start "$ROOT/x/src/server.js" \
+      --name "$PM2_APP_NAME" \
+      --cwd "$ROOT/x" \
+      --time \
+      --interpreter node
     pm2 save || true
   else
     if have systemctl && systemctl list-unit-files tiwlo-backend.service >/dev/null 2>&1; then
+      release_backend_port
       run_sudo systemctl restart tiwlo-backend.service >/dev/null 2>&1 || true
     else
       local pid_file="$ROOT/.logs/${PM2_APP_NAME}.pid"
@@ -982,6 +1003,7 @@ restart_obfuscated_backend() {
         [ -n "$old_pid" ] && kill "$old_pid" >/dev/null 2>&1 || true
         sleep 2
       fi
+      release_backend_port
       PORT="$BACKEND_PORT" nohup node "$ROOT/x/src/server.js" \
         >"$ROOT/.logs/${PM2_APP_NAME}.out.log" \
         2>"$ROOT/.logs/${PM2_APP_NAME}.err.log" &
@@ -1012,6 +1034,28 @@ verify_obfuscated_backend_health() {
     tail -n 100 "$ROOT/.logs/${PM2_APP_NAME}.err.log" || true
   fi
   return 1
+}
+
+verify_social_ai_schema_contract() {
+  step "Verifying Social AI GraphQL schema contract"
+  local graphql_url="http://127.0.0.1:$BACKEND_PORT/graphql"
+  local payload='{"query":"query SocialAiSchemaContract { adminSocialAiOverview }"}'
+  local response
+  response="$(curl -sS --max-time 10 -X POST "$graphql_url" -H 'Content-Type: application/json' --data "$payload" 2>/dev/null || true)"
+
+  if [ -z "$response" ]; then
+    echo "Social AI GraphQL contract check did not receive a response." >&2
+    return 1
+  fi
+  if printf '%s' "$response" | grep -qi 'Cannot query field.*adminSocialAiOverview'; then
+    echo "The running backend does not expose adminSocialAiOverview. Refusing to mark this deployment successful." >&2
+    return 1
+  fi
+  if ! printf '%s' "$response" | grep -qE '"data"|"errors"'; then
+    echo "Social AI GraphQL contract check returned an unexpected response: $response" >&2
+    return 1
+  fi
+  echo "Social AI GraphQL schema contract passed."
 }
 
 post_wipe_temporary_source() {
@@ -1051,6 +1095,7 @@ main() {
   stop_readable_source_services
   restart_obfuscated_backend
   verify_obfuscated_backend_health
+  verify_social_ai_schema_contract
   post_wipe_temporary_source
 
   step "Secure obfuscated deployment complete"
