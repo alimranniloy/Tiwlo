@@ -60,6 +60,10 @@ class WebRtcCallManager(
     private var peerConnection: PeerConnection? = null
     private var cameraCapturer: CameraVideoCapturer? = null
     private var activeCameraName: String? = null
+    private var usingCamera2 = false
+    private var receivedCameraFrame = false
+    private var cameraFallbackTried = false
+    private var cameraStartupJob: Job? = null
     private var flashEnabled = false
     private var surfaceTextureHelper: SurfaceTextureHelper? = null
     private var videoSource: VideoSource? = null
@@ -236,41 +240,95 @@ class WebRtcCallManager(
     }
 
     private fun startLocalVideo() {
-        val enumerator = cameraEnumerator()
-        val cameraName = enumerator.deviceNames.firstOrNull(enumerator::isFrontFacing)
-            ?: enumerator.deviceNames.firstOrNull()
-            ?: throw SocialApiException("No camera is available")
-        activeCameraName = cameraName
-        val capturer = enumerator.createCapturer(cameraName, cameraEvents())
-            ?: throw SocialApiException("The camera could not start")
-        cameraCapturer = capturer
-        surfaceTextureHelper = SurfaceTextureHelper.create("TiwiCamera", eglContext)
-        videoSource = factory.createVideoSource(false).also { source ->
-            capturer.initialize(surfaceTextureHelper, appContext, source.capturerObserver)
-            capturer.startCapture(640, 480, 30)
+        val source = factory.createVideoSource(false)
+        videoSource = source
+        val camera2Available = Camera2Enumerator.isSupported(appContext)
+        try {
+            openCameraCapture(source, preferCamera2 = camera2Available)
+        } catch (firstError: Exception) {
+            // Some phones advertise Camera2 while delivering only a black
+            // preview. Retry the same WebRTC track through Camera1 instead.
+            if (!camera2Available) throw firstError
+            openCameraCapture(source, preferCamera2 = false)
         }
         _localVideo.value = factory.createVideoTrack("tiwi-video", videoSource).also {
             it.setEnabled(true)
             peerConnection?.addTrack(it, listOf("tiwi-stream"))
         }
+        scheduleCameraFallback()
     }
 
-    /** Camera2 is preferred, while Camera1 keeps preview working on devices with broken Camera2 output. */
+    private fun openCameraCapture(source: VideoSource, preferCamera2: Boolean) {
+        val enumerator = if (preferCamera2 && Camera2Enumerator.isSupported(appContext)) Camera2Enumerator(appContext) else Camera1Enumerator(true)
+        val cameraName = enumerator.deviceNames.firstOrNull(enumerator::isFrontFacing)
+            ?: enumerator.deviceNames.firstOrNull()
+            ?: throw SocialApiException("No camera is available")
+        val capturer = enumerator.createCapturer(cameraName, cameraEvents())
+            ?: throw SocialApiException("The camera could not start")
+        val helper = SurfaceTextureHelper.create("TiwiCamera", eglContext)
+        try {
+            capturer.initialize(helper, appContext, source.capturerObserver)
+            capturer.startCapture(640, 480, 24)
+            cameraCapturer = capturer
+            surfaceTextureHelper = helper
+            activeCameraName = cameraName
+            usingCamera2 = preferCamera2 && Camera2Enumerator.isSupported(appContext)
+            receivedCameraFrame = false
+        } catch (error: Exception) {
+            runCatching { capturer.stopCapture() }
+            capturer.dispose()
+            helper.dispose()
+            throw error
+        }
+    }
+
+    /** Keeps the local VideoTrack attached to an active call while the capture implementation changes. */
+    private fun retryWithCamera1(reason: String) {
+        if (disposed || !usingCamera2 || cameraFallbackTried) {
+            _state.value = reason
+            return
+        }
+        cameraFallbackTried = true
+        cameraStartupJob?.cancel()
+        scope.launch {
+            _state.value = "Retrying camera..."
+            val source = videoSource ?: return@launch
+            runCatching { cameraCapturer?.stopCapture() }
+            cameraCapturer?.dispose()
+            surfaceTextureHelper?.dispose()
+            cameraCapturer = null
+            surfaceTextureHelper = null
+            runCatching { openCameraCapture(source, preferCamera2 = false) }
+                .onFailure { _state.value = it.message ?: reason }
+                .onSuccess { scheduleCameraFallback() }
+        }
+    }
+
+    private fun scheduleCameraFallback() {
+        cameraStartupJob?.cancel()
+        cameraStartupJob = scope.launch {
+            delay(3_500)
+            if (!receivedCameraFrame) retryWithCamera1("Camera preview did not start")
+        }
+    }
+
     private fun cameraEnumerator(): CameraEnumerator =
-        if (Camera2Enumerator.isSupported(appContext)) Camera2Enumerator(appContext) else Camera1Enumerator(false)
+        if (usingCamera2 && Camera2Enumerator.isSupported(appContext)) Camera2Enumerator(appContext) else Camera1Enumerator(true)
 
     private fun cameraEvents() = object : CameraVideoCapturer.CameraEventsHandler {
         override fun onCameraError(errorDescription: String) {
-            _state.value = errorDescription.ifBlank { "Camera preview failed" }
+            retryWithCamera1(errorDescription.ifBlank { "Camera preview failed" })
         }
         override fun onCameraDisconnected() {
             _state.value = "Camera disconnected"
         }
         override fun onCameraFreezed(errorDescription: String) {
-            _state.value = "Camera preview is frozen"
+            retryWithCamera1(errorDescription.ifBlank { "Camera preview is frozen" })
         }
         override fun onCameraOpening(cameraName: String) = Unit
         override fun onFirstFrameAvailable() {
+            receivedCameraFrame = true
+            cameraStartupJob?.cancel()
             if (_state.value.contains("Camera", ignoreCase = true)) _state.value = "Connectingâ€¦"
         }
         override fun onCameraClosed() = Unit
@@ -435,11 +493,16 @@ class WebRtcCallManager(
         pollJob = null
         reconnectTimeoutJob?.cancel()
         reconnectTimeoutJob = null
+        cameraStartupJob?.cancel()
+        cameraStartupJob = null
         if (flashEnabled) setFlash(false)
         runCatching { cameraCapturer?.stopCapture() }
         cameraCapturer?.dispose()
         cameraCapturer = null
         activeCameraName = null
+        usingCamera2 = false
+        receivedCameraFrame = false
+        cameraFallbackTried = false
         surfaceTextureHelper?.dispose()
         surfaceTextureHelper = null
         _localVideo.value?.dispose()

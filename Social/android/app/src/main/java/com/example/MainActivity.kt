@@ -97,6 +97,7 @@ import androidx.compose.animation.core.*
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.res.painterResource
@@ -1517,6 +1518,7 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
     val appLifecycleOwner = LocalLifecycleOwner.current
     var appVisible by remember { mutableStateOf(appLifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) }
     val appView = LocalView.current
+    val density = LocalDensity.current
     val appActivity = appContext as? Activity
     val permissionPreferences = remember { appContext.getSharedPreferences("tiwi_first_run_permissions", Context.MODE_PRIVATE) }
     var showPermissionIntro by remember { mutableStateOf(!permissionPreferences.getBoolean("requested_v1", false)) }
@@ -1541,6 +1543,13 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
     }
     val hasOverlay = showProfile || showCreatePost || showStoryCreate || selectedStoryAuthorId != null || showLiveSetup || selectedLiveStream != null || showMessages || showConnect || selectedProfileUserId != null || selectedChat != null || selectedPostId != null || selectedEditPostId != null
     val darkChrome = selectedTab == 2 && !hasOverlay
+    // Keep a status-bar guard while the header is hidden.  Translating content
+    // rather than changing Scaffold height prevents LazyColumn from bouncing.
+    val feedContentOffset by animateFloatAsState(
+        targetValue = if (selectedTab == 0 && !hasOverlay && !feedHeaderVisible) -with(density) { 52.dp.toPx() } else 0f,
+        animationSpec = tween(80),
+        label = "feed-header-guard"
+    )
 
     LaunchedEffect(selectedTab, hasOverlay) {
         if (selectedTab != 0 || hasOverlay) feedHeaderVisible = true
@@ -1804,7 +1813,7 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
         containerColor = if (darkChrome) Color.Black else MaterialTheme.colorScheme.background,
         contentWindowInsets = WindowInsets(0, 0, 0, 0)
     ) { innerPadding ->
-        Box(modifier = Modifier.padding(innerPadding)) {
+        Box(modifier = Modifier.padding(innerPadding).graphicsLayer { translationY = feedContentOffset }) {
             when {
                 selectedEditPostId != null -> posts.firstOrNull { it.id == selectedEditPostId }?.let { editing -> EditPostPage(repository, editing, onBack = { selectedEditPostId = null }) } ?: run { selectedEditPostId = null }
                 selectedPostId != null -> PostDetailScreen(
@@ -1914,17 +1923,16 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
 
 @Composable
 fun TiwiTopBar(visible: Boolean, unreadActivity: Int = 0, onCreateClick: () -> Unit, onNotificationsClick: () -> Unit, onConnectClick: () -> Unit) {
-    // Collapse the full header slot, including the status-bar inset.  The old
-    // translation left an empty white stripe after the icons had moved away.
-    val headerHeight by animateDpAsState(
-        targetValue = if (visible) 76.dp else 0.dp,
-        animationSpec = tween(120),
-        label = "top-header-height"
-    )
-    Box(
-        modifier = Modifier.fillMaxWidth().height(headerHeight).graphicsLayer { clip = true }.background(Color.White)
-    ) {
-        Box(modifier = Modifier.fillMaxSize().statusBarsPadding()) {
+    // The outer slot remains constant so a scrolling feed does not relayout or
+    // bounce. Only the 52dp app header fades out; the status area stays clear.
+    Box(modifier = Modifier.fillMaxWidth().statusBarsPadding().height(52.dp).graphicsLayer { clip = true }) {
+        AnimatedVisibility(
+            visible = visible,
+            enter = fadeIn(tween(80)),
+            exit = fadeOut(tween(55)),
+            modifier = Modifier.align(Alignment.BottomCenter)
+        ) {
+            Box(modifier = Modifier.fillMaxWidth().height(52.dp).background(Color.White)) {
             IconButton(onClick = onCreateClick, modifier = Modifier.align(Alignment.CenterStart).padding(start = 7.dp).size(46.dp)) {
                 InstagramCreateGlyph()
             }
@@ -1948,6 +1956,7 @@ fun TiwiTopBar(visible: Boolean, unreadActivity: Int = 0, onCreateClick: () -> U
             }
         }
     }
+}
 }
 
 /** Rounded-square create control matching the compact Instagram-style post action. */
@@ -2175,9 +2184,9 @@ private fun SuggestedReelsSection(module: SocialFeedModule, onReelClick: (String
         Text(module.title, modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp), fontWeight = FontWeight.Bold, fontSize = 14.sp)
         LazyRow(contentPadding = PaddingValues(horizontal = 10.dp), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
             itemsIndexed(reels, key = { _, reel -> "${module.id}-${reel.id}" }) { index, reel ->
-                ReelItem(
-                    reel,
-                    autoplayPreview = index == 0,
+                    ReelItem(
+                        reel,
+                    autoplayPreview = true,
                     width = 112.dp,
                     height = 198.dp,
                     showFeedAuthor = true
@@ -2225,7 +2234,7 @@ fun ReelsSection(reels: List<Reel>, onReelClick: (String) -> Unit = {}) {
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             itemsIndexed(reels.take(16), key = { _, reel -> reel.id }) { index, reel ->
-                ReelItem(reel, autoplayPreview = index < 3, showFeedAuthor = true) { onReelClick(reel.id) }
+                ReelItem(reel, autoplayPreview = true, showFeedAuthor = true) { onReelClick(reel.id) }
             }
         }
     }
@@ -2538,8 +2547,8 @@ fun PostCard(
             Row(Modifier.fillMaxWidth().padding(horizontal = 9.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 if (post.likes > 0) {
                     Row(Modifier.clip(RoundedCornerShape(8.dp)).clickable { showReactions = true }.padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.size(18.dp).background(TiwiBlue, CircleShape), contentAlignment = Alignment.Center) {
-                            Icon(Icons.Default.ThumbUp, null, tint = Color.White, modifier = Modifier.size(11.dp))
+                        Box(Modifier.size(18.dp).background(Color(0xFFFF3B5C), CircleShape), contentAlignment = Alignment.Center) {
+                            Icon(Icons.Filled.Favorite, null, tint = Color.White, modifier = Modifier.size(11.dp))
                         }
                         Spacer(Modifier.width(4.dp))
                         Text(formatCount(post.likes), color = Color.Gray, fontSize = 11.sp)
@@ -2803,7 +2812,7 @@ private fun SharedPostCard(media: SocialMedia, onOpenPost: () -> Unit, onOpenPro
                         TiwiVideo(
                             url = media.hlsUrl?.takeIf { media.processingStatus == "ready" } ?: media.url,
                             modifier = Modifier.fillMaxSize(),
-                            autoplay = false,
+                            autoplay = true,
                             fallbackUrl = media.url,
                             posterUrl = media.thumbnailUrl,
                             muted = false,
