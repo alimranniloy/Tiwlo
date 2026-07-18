@@ -284,6 +284,7 @@ const managerArgsForJob = (job) => {
     const scope = asText(payload.scope, 30);
     const id = asText(payload.id, 80);
     const action = asText(payload.action, 30);
+    if (scope === 'system' && action === 'clear_cache') return ['cleanup', '--json'];
     if (!['package', 'model', 'feature'].includes(scope) || !id || !action) throw new AppError('Invalid Social AI maintenance operation', 'BAD_USER_INPUT');
     return [scope, action, id, '--json'];
   }
@@ -717,7 +718,7 @@ const validOperation = (input) => {
   const scope = asText(source.scope, 30);
   const action = asText(source.action, 30);
   const id = asText(source.id, 100);
-  if (scope === 'system' && ['install_all', 'bootstrap', 'health_check', 'repair_all'].includes(action)) return { scope, action, id: action === 'health_check' ? 'health' : 'all' };
+  if (scope === 'system' && ['install_all', 'bootstrap', 'health_check', 'repair_all', 'clear_cache'].includes(action)) return { scope, action, id: action === 'health_check' ? 'health' : action === 'clear_cache' ? 'cache' : 'all' };
   if (scope === 'package' && SOCIAL_AI_PACKAGE_CATALOG.some((item) => item.id === id) && ['install', 'update', 'repair', 'enable', 'disable', 'start', 'stop', 'restart', 'autostart', 'health', 'test', 'logs'].includes(action)) return { scope, action, id };
   if (scope === 'model' && SOCIAL_AI_MODEL_CATALOG.some((item) => item.id === id) && ['download', 'resume', 'install', 'load', 'run', 'restart', 'update', 'repair', 'delete', 'default', 'autoload', 'health'].includes(action)) return { scope, action, id };
   throw new AppError('Unsupported Social AI operation', 'BAD_USER_INPUT');
@@ -736,9 +737,10 @@ export const operateSocialAi = async (ctx, input) => {
     await writeAudit(ctx, 'admin_social_ai_logs', 'socialAiPackage', operation.id, { actorId: actor.id, ok: logs.ok });
     return { immediate: true, logs };
   }
+  const isCacheCleanup = operation.scope === 'system' && operation.action === 'clear_cache';
   const job = await enqueueSocialAiTask(ctx, {
-    type: operation.scope === 'system' ? 'bootstrap' : 'maintenance', priority: 100, requestedById: actor.id,
-    payload: operation.scope === 'system' ? { source: `admin_${operation.action}`, action: operation.action } : operation
+    type: operation.scope === 'system' && !isCacheCleanup ? 'bootstrap' : 'maintenance', priority: 100, requestedById: actor.id,
+    payload: operation.scope === 'system' && !isCacheCleanup ? { source: `admin_${operation.action}`, action: operation.action } : operation
   });
   await writeAudit(ctx, 'admin_social_ai_operation', `socialAi${operation.scope}`, operation.id, { action: operation.action, jobId: job.id });
   return { immediate: false, job };

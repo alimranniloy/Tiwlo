@@ -20,6 +20,56 @@ progress() { printf 'PROGRESS %s %s\n' "$1" "$2"; }
 die() { log "ERROR $*"; exit 1; }
 have() { command -v "$1" >/dev/null 2>&1; }
 
+root_available_bytes() {
+  df -PB1 "$ROOT" 2>/dev/null | awk 'NR == 2 { print $4; exit }'
+}
+
+cleanup_runtime_cache() {
+  # This deliberately excludes Docker volumes, PostgreSQL, uploads, releases
+  # currently in use, models and every Tiwlo .data directory. It only removes
+  # safely recreatable operating-system logs, package caches and unused images.
+  [ "$(id -u)" -eq 0 ] || die "Safe cache cleanup must run from the privileged Tiwlo backend service"
+
+  local before="0" after="0" recovered="0" temp_parent=""
+  before="$(root_available_bytes || echo 0)"
+  progress 5 "Measuring safe server caches"
+
+  if have journalctl; then
+    progress 20 "Trimming archived system logs"
+    journalctl --vacuum-size="${TIWLO_SOCIAL_AI_JOURNAL_MAX_SIZE:-256M}" >>"$LOG_FILE" 2>&1 || log "System journal cleanup was skipped"
+  fi
+
+  if have docker; then
+    progress 45 "Removing unused container images and build cache"
+    docker image prune -af >>"$LOG_FILE" 2>&1 || log "Unused Docker image cleanup was skipped"
+    docker builder prune -af >>"$LOG_FILE" 2>&1 || true
+  fi
+
+  if have apt-get; then
+    progress 65 "Clearing package-manager cache"
+    apt-get clean >>"$LOG_FILE" 2>&1 || log "APT cache cleanup was skipped"
+  fi
+
+  # Never touch a current deployment workspace. Only stale workspaces older
+  # than six hours can be leftovers from an interrupted release.
+  temp_parent="$(dirname "$ROOT")/.tiwlo-tmp"
+  if [ -d "$temp_parent" ]; then
+    progress 80 "Removing stale deployment workspaces"
+    find "$temp_parent" -mindepth 1 -maxdepth 1 -type d \
+      \( -name 'tiwlo-release.*' -o -name 'tiwlo-src.*' -o -name 'tiwlo-npm-cache.*' \) \
+      -mmin +360 -exec rm -rf -- {} + 2>>"$LOG_FILE" || log "Stale deployment workspace cleanup was skipped"
+  fi
+  find "$MODELS_DIR" -type f -name '*.part' -mtime +1 -delete 2>>"$LOG_FILE" || true
+  find "$LOG_DIR" -type f -name '*.log.*' -mtime +14 -delete 2>>"$LOG_FILE" || true
+
+  after="$(root_available_bytes || echo 0)"
+  if [[ "$before" =~ ^[0-9]+$ && "$after" =~ ^[0-9]+$ && "$after" -ge "$before" ]]; then
+    recovered=$((after - before))
+  fi
+  progress 100 "Safe cache cleanup completed; recovered $((recovered / 1024 / 1024)) MB"
+  finish_ok "cache cleared"
+}
+
 json_escape() {
   node -e 'console.log(JSON.stringify(process.argv[1] || ""))' "$1"
 }
@@ -431,6 +481,7 @@ command="${1:-}"; action="${2:-}"; id="${3:-}"
 
 case "$command" in
   health) health_json ;;
+  cleanup) cleanup_runtime_cache ;;
   bootstrap)
     progress 3 "Preparing Social AI infrastructure"
     ensure_docker; [ -f "$STATE_DIR/active-model" ] || printf '%s\n' "text-policy" >"$STATE_DIR/active-model"; write_compose; ensure_searxng_config
@@ -514,5 +565,5 @@ case "$command" in
     [ "$action" = "ensure" ] || finish_error "Unsupported feature action"
     ensure_feature "$id"; finish_ok "ready"
     ;;
-  *) finish_error "Usage: manager.sh health|bootstrap|package|model|feature" ;;
+  *) finish_error "Usage: manager.sh health|cleanup|bootstrap|package|model|feature" ;;
 esac

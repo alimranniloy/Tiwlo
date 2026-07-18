@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-DEPLOY_SCRIPT_VERSION="2026-07-19-space-efficient-social-ai-release"
+DEPLOY_SCRIPT_VERSION="2026-07-19-low-disk-safe-social-ai-release"
 ROOT="${TIWLO_INSTALL_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 BRANCH="${TIWLO_GIT_BRANCH:-main}"
 REPO_URL="${TIWLO_REPO_URL:-}"
@@ -20,6 +20,7 @@ INSTALL_UPDATE_COMMAND="${TIWLO_INSTALL_UPDATE_COMMAND:-1}"
 UPDATE_COMMAND_PATH="${TIWLO_UPDATE_COMMAND_PATH:-/usr/local/bin/tiwlo-secure-update}"
 DEPLOY_SWAP_MB="${TIWLO_DEPLOY_SWAP_MB:-4096}"
 DEPLOY_SWAP_FILE="${TIWLO_DEPLOY_SWAP_FILE:-}"
+DEPLOY_DISK_RESERVE_MB="${TIWLO_DEPLOY_DISK_RESERVE_MB:-1536}"
 KEEP_DEPLOY_SWAP="${TIWLO_KEEP_DEPLOY_SWAP:-0}"
 NPM_CACHE_DIR="${TIWLO_NPM_CACHE_DIR:-}"
 NODE_OLD_SPACE_MB="${TIWLO_NODE_OLD_SPACE_MB:-1024}"
@@ -228,31 +229,63 @@ file_size_mb() {
   fi
 }
 
+available_filesystem_mb() {
+  df -Pm "$(dirname "$DEPLOY_SWAP_FILE")" 2>/dev/null | awk 'NR == 2 { print int($4); exit }'
+}
+
 ensure_deploy_swap() {
+  local requested="${DEPLOY_SWAP_MB:-0}" available="0" max_safe="0" target="0"
   if [ "$(uname -s)" != "Linux" ] || [ "${DEPLOY_SWAP_MB:-0}" = "0" ]; then
     return 0
   fi
-  if [ "$(current_swap_mb)" -ge "$DEPLOY_SWAP_MB" ]; then
-    echo "Existing swap meets deploy target: $(current_swap_mb)MB >= ${DEPLOY_SWAP_MB}MB"
+  if [ "$(current_swap_mb)" -ge "$requested" ]; then
+    echo "Existing swap meets deploy target: $(current_swap_mb)MB >= ${requested}MB"
     return 0
   fi
 
-  step "Ensuring deploy swap (${DEPLOY_SWAP_MB}MB target) to prevent npm OOM kills"
-  mkdir -p "$(dirname "$DEPLOY_SWAP_FILE")"
-  if swap_file_is_active; then
-    run_sudo swapoff "$DEPLOY_SWAP_FILE" >/dev/null 2>&1 || true
+  # A deployment must never consume the final disk space needed for its own
+  # checkout, model state and atomic release move. On small VPS plans the
+  # temporary swap target is reduced (or safely skipped) instead of failing
+  # the release with ENOSPC.
+  available="$(available_filesystem_mb || echo 0)"
+  if ! [[ "$available" =~ ^[0-9]+$ ]]; then available=0; fi
+  max_safe=$((available - DEPLOY_DISK_RESERVE_MB))
+  if [ "$max_safe" -lt 512 ]; then
+    echo "Skipping temporary deploy swap: only ${available}MB is free; reserving ${DEPLOY_DISK_RESERVE_MB}MB for the release."
+    return 0
   fi
-  if [ "$(file_size_mb "$DEPLOY_SWAP_FILE")" -lt "$DEPLOY_SWAP_MB" ]; then
+  target="$requested"
+  if [ "$target" -gt "$max_safe" ]; then
+    target="$max_safe"
+    echo "Reducing temporary deploy swap from ${requested}MB to ${target}MB to preserve release disk space."
+  fi
+
+  step "Ensuring deploy swap (${target}MB target) to prevent npm OOM kills"
+  mkdir -p "$(dirname "$DEPLOY_SWAP_FILE")"
+  if swap_file_is_active && [ "$(file_size_mb "$DEPLOY_SWAP_FILE")" -lt "$target" ]; then
+    echo "Keeping the existing active deploy swap rather than risking memory pressure while resizing it."
+    return 0
+  fi
+  if [ "$(file_size_mb "$DEPLOY_SWAP_FILE")" -lt "$target" ]; then
     run_sudo rm -f "$DEPLOY_SWAP_FILE"
     if have fallocate; then
-      run_sudo fallocate -l "${DEPLOY_SWAP_MB}M" "$DEPLOY_SWAP_FILE"
+      if ! run_sudo fallocate -l "${target}M" "$DEPLOY_SWAP_FILE"; then
+        echo "Could not allocate temporary deploy swap; continuing without a new swap file." >&2
+        return 0
+      fi
     else
-      run_sudo dd if=/dev/zero of="$DEPLOY_SWAP_FILE" bs=1M count="$DEPLOY_SWAP_MB" status=none
+      if ! run_sudo dd if=/dev/zero of="$DEPLOY_SWAP_FILE" bs=1M count="$target" status=none; then
+        echo "Could not allocate temporary deploy swap; continuing without a new swap file." >&2
+        return 0
+      fi
     fi
   fi
+  if swap_file_is_active; then run_sudo swapoff "$DEPLOY_SWAP_FILE" >/dev/null 2>&1 || true; fi
   run_sudo chmod 600 "$DEPLOY_SWAP_FILE"
-  run_sudo mkswap "$DEPLOY_SWAP_FILE" >/dev/null
-  run_sudo swapon "$DEPLOY_SWAP_FILE"
+  if ! run_sudo mkswap "$DEPLOY_SWAP_FILE" >/dev/null || ! run_sudo swapon "$DEPLOY_SWAP_FILE"; then
+    echo "Could not activate temporary deploy swap; continuing without a new swap file." >&2
+    return 0
+  fi
   DEPLOY_SWAP_CREATED="1"
   echo "Deploy swap active: $(current_swap_mb)MB total"
 }
@@ -708,12 +741,27 @@ install_dependencies_and_build() {
   cd "$CHECKOUT_DIR"
   disable_backend_ai_runtime_for_low_memory
 
-  if [ -f package-lock.json ]; then
-    npm_install_with_retry "Frontend" "$CHECKOUT_DIR/node_modules" npm ci --no-audit --no-fund --progress=false \
-      || npm_install_with_retry "Frontend" "$CHECKOUT_DIR/node_modules" npm install --no-audit --no-fund --progress=false
+  # Frontend tooling is only needed to build dist. Complete that work and
+  # release its dependency tree before the backend install starts; otherwise a
+  # small VPS briefly holds two complete node_modules trees plus npm cache.
+  if [ "$RUN_FRONTEND_BUILD" = "1" ]; then
+    step "Installing frontend build dependencies"
+    if [ -f package-lock.json ]; then
+      npm_install_with_retry "Frontend" "$CHECKOUT_DIR/node_modules" npm ci --no-audit --no-fund --progress=false \
+        || npm_install_with_retry "Frontend" "$CHECKOUT_DIR/node_modules" npm install --no-audit --no-fund --progress=false
+    else
+      npm_install_with_retry "Frontend" "$CHECKOUT_DIR/node_modules" npm install --no-audit --no-fund --progress=false
+    fi
+    step "Building frontend in temporary checkout"
+    ensure_rollup_native_optional_dependency
+    npm run build
+    rm -rf -- "$CHECKOUT_DIR/node_modules"
+    clean_npm_cache_for_retry
   else
-    npm_install_with_retry "Frontend" "$CHECKOUT_DIR/node_modules" npm install --no-audit --no-fund --progress=false
+    echo "Skipping frontend build and its full development dependency tree."
   fi
+
+  step "Installing backend runtime dependencies"
   if [ -f x/package-lock.json ]; then
     npm_install_with_retry "Backend" "$CHECKOUT_DIR/x/node_modules" npm --prefix x ci --include=optional --no-audit --no-fund --progress=false \
       || npm_install_with_retry "Backend" "$CHECKOUT_DIR/x/node_modules" npm --prefix x install --include=optional --no-audit --no-fund --progress=false
@@ -741,16 +789,8 @@ NODE
     npm --prefix x run db:push
   fi
 
-  if [ "$RUN_FRONTEND_BUILD" = "1" ]; then
-    step "Building frontend in temporary checkout"
-    ensure_rollup_native_optional_dependency
-    npm run build
-  fi
-
-  # Vite has emitted the production assets. Keeping the full build dependency
-  # tree until release assembly doubles disk consumption on the VPS, while the
-  # production frontend server only needs Express and compression.
-  rm -rf -- "$CHECKOUT_DIR/node_modules"
+  # The full frontend build dependency tree has already been removed above.
+  # The release later installs only the two runtime frontend dependencies.
 }
 
 ensure_obfuscator() {

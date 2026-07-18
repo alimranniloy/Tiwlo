@@ -45,7 +45,7 @@ import {
   uploadSocialProfileEffectWithApi
 } from '../../lib/tiwloApi';
 
-type Tab = 'users' | 'posts' | 'reports' | 'automation' | 'ai' | 'decorations' | 'effects' | 'settings';
+type Tab = 'users' | 'posts' | 'reports' | 'automation' | 'ai' | 'maintenance' | 'decorations' | 'effects' | 'settings';
 
 const emptyDecoration = { id: '', name: '', assetUrl: '', fileName: '', mimeType: 'image/png', animated: false, width: 288, height: 288, priceUsd: 0, status: 'active', sortOrder: 0 };
 const emptyEffect = { ...emptyDecoration, width: 450, height: 880 };
@@ -275,7 +275,12 @@ function AdminSocialContent() {
       const result = await operateAdminSocialAiWithApi({ scope, action, id });
       const managerLogs = Array.isArray(result?.logs?.logs) ? result.logs.logs : Array.isArray(result?.health?.logs) ? result.health.logs : [];
       if (managerLogs.length) setAiLogs(managerLogs.map(String));
-    }, action === 'logs' ? 'Live package logs loaded.' : 'Social AI operation was added to the persistent queue.');
+    }, action === 'logs' ? 'Live package logs loaded.' : action === 'clear_cache' ? 'Safe server cache cleanup was added to the persistent queue.' : 'Social AI operation was added to the persistent queue.');
+  };
+
+  const clearServerCache = () => {
+    if (!window.confirm('Clear only safe server cache now? This keeps Tiwlo database, uploads, Social AI models, active containers and live services.')) return;
+    operateAi('system', 'clear_cache');
   };
 
   const resolveAiCase = async (id: string, action: string) => {
@@ -448,6 +453,7 @@ function AdminSocialContent() {
             ['reports', 'Reports', Flag],
             ['automation', 'Automation', Ban],
             ['ai', 'AI', Sparkles],
+            ['maintenance', 'Clear cache', Trash2],
             ['decorations', 'Profile decor', Sparkles],
             ['effects', 'Profile effects', Layers3],
             ['settings', 'Settings', Settings]
@@ -457,7 +463,7 @@ function AdminSocialContent() {
             </button>
           ))}
         </div>
-        {tab !== 'settings' && tab !== 'ai' && tab !== 'decorations' && tab !== 'effects' && (
+        {tab !== 'settings' && tab !== 'ai' && tab !== 'maintenance' && tab !== 'decorations' && tab !== 'effects' && (
           <label className="flex min-w-[260px] items-center gap-2 rounded border border-[#e5e8ed] px-3 py-2">
             <Search className="h-4 w-4 text-gray-400" />
             <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search real database records" className="w-full text-[12px] outline-none" />
@@ -523,6 +529,27 @@ function AdminSocialContent() {
             </div>
           ))}
         </div>
+      )}
+
+      {tab === 'maintenance' && (
+        <section className="max-w-3xl rounded border border-[#e5e8ed] bg-white p-5">
+          <div className="flex items-start gap-3">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded bg-blue-50 text-[#0069ff]"><Trash2 className="h-5 w-5" /></span>
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-[0.18em] text-[#4169e1]">Server maintenance</p>
+              <h2 className="mt-1 text-[18px] font-black text-[#26344a]">Clear cache</h2>
+              <p className="mt-2 text-[12px] leading-5 text-slate-600">Reclaim only recreatable server space: archived system logs, unused Docker images and build cache, APT cache, stale interrupted deployment folders and old incomplete model downloads.</p>
+            </div>
+          </div>
+          <div className="mt-5 grid gap-3 rounded border border-[#e5e8ed] bg-[#fbfcfe] p-4 text-[11px] text-slate-600 sm:grid-cols-2">
+            <p><strong className="block text-[#2e3d49]">Always kept</strong>Database, user uploads, Social AI model files, live Docker containers, active services and current deployment files.</p>
+            <p><strong className="block text-[#2e3d49]">Runs safely in queue</strong>Real server progress and the final reclaimed space are recorded in the Social AI queue. It never runs arbitrary shell commands.</p>
+          </div>
+          <div className="mt-5 flex flex-wrap items-center gap-3">
+            <button disabled={saving || aiUnavailable} onClick={clearServerCache} className="flex items-center gap-2 rounded bg-[#0069ff] px-4 py-2.5 text-[12px] font-black text-white disabled:opacity-50"><Trash2 className="h-4 w-4" /> Clear cache</button>
+            <button disabled={saving} onClick={() => operateAi('system', 'health_check')} className="rounded border border-[#dfe4ea] px-4 py-2.5 text-[12px] font-black text-slate-600">Refresh status</button>
+          </div>
+        </section>
       )}
 
       {tab === 'ai' && (
