@@ -163,6 +163,7 @@ import com.example.social.SocialLiveStream
 import com.example.social.SocialMessage
 import com.example.social.SocialNotification
 import com.example.social.SocialCopyrightClaim
+import com.example.social.SocialCopyrightReference
 import com.example.social.SocialCopyrightStudio
 import com.example.social.SocialPost
 import com.example.social.SocialProfile
@@ -4639,7 +4640,7 @@ fun ReelsScreen(reels: List<Reel>, repository: SocialRepository, initialReelId: 
     val activeLives = remember(liveStreams) { liveStreams.filter { it.status == "live" } }
     LaunchedEffect(Unit) { runCatching { repository.refreshLiveStreams() } }
     audioReel?.let { selected ->
-        ReelAudioPage(selected, orderedReels, onBack = { audioReel = null }, onReel = onOpen, onAuthor = onAuthor, onUseAudio = { reel -> audioReel = null; onUseAudio(reel) })
+        ReelAudioPage(selected, orderedReels, repository, onBack = { audioReel = null }, onReel = onOpen, onAuthor = onAuthor, onUseAudio = { reel -> audioReel = null; onUseAudio(reel) })
         return
     }
     if (feedFilter == "live") {
@@ -4737,7 +4738,13 @@ fun ReelsScreen(reels: List<Reel>, repository: SocialRepository, initialReelId: 
                     audioReel = reel
                 }
                 Spacer(Modifier.height(5.dp))
-                TiwiAvatar(reel.authorAvatarUrl, R.drawable.img_tiwi_avatar_1, Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).border(1.5.dp, Color.White.copy(alpha = .88f), RoundedCornerShape(10.dp)))
+                TiwiAvatar(
+                    reel.authorAvatarUrl,
+                    R.drawable.img_tiwi_avatar_1,
+                    Modifier.size(36.dp).clip(RoundedCornerShape(10.dp))
+                        .border(1.5.dp, Color.White.copy(alpha = .88f), RoundedCornerShape(10.dp))
+                        .clickable { audioReel = reel }
+                )
             }
 
             Column(modifier = Modifier.align(Alignment.BottomStart).padding(start = 12.dp, end = 82.dp, bottom = 29.dp)) {
@@ -4817,19 +4824,18 @@ fun ReelsScreen(reels: List<Reel>, repository: SocialRepository, initialReelId: 
 private fun ReelFeedTabs(selected: String, liveCount: Int, modifier: Modifier = Modifier, onSelect: (String) -> Unit) {
     Surface(
         modifier = modifier,
-        color = Color.Black.copy(alpha = .54f),
-        shape = RoundedCornerShape(18.dp),
+        color = Color.Black.copy(alpha = .46f),
+        shape = RoundedCornerShape(12.dp),
         tonalElevation = 0.dp
     ) {
         Row(
-            modifier = Modifier.height(34.dp).padding(horizontal = 3.dp),
-            verticalAlignment = Alignment.CenterVertically
+            modifier = Modifier.height(32.dp).padding(horizontal = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(3.dp)
         ) {
             ReelFeedTab("All", "all", selected, onSelect)
-            VerticalDivider(Modifier.height(15.dp), color = Color.White.copy(alpha = .28f), thickness = .5.dp)
             ReelFeedTab("Following", "following", selected, onSelect)
-            VerticalDivider(Modifier.height(15.dp), color = Color.White.copy(alpha = .28f), thickness = .5.dp)
-            ReelFeedTab("Live", "live", selected, onSelect, liveCount)
+            ReelFeedTab("Live", "live", selected, onSelect)
         }
     }
 }
@@ -4838,14 +4844,13 @@ private fun ReelFeedTabs(selected: String, liveCount: Int, modifier: Modifier = 
 private fun ReelFeedTab(label: String, value: String, selected: String, onSelect: (String) -> Unit, count: Int = 0) {
     val active = selected == value
     Row(
-        modifier = Modifier.height(28.dp).clip(RoundedCornerShape(14.dp))
+        modifier = Modifier.height(26.dp).clip(RoundedCornerShape(9.dp))
             .background(if (active) Color.White.copy(alpha = .18f) else Color.Transparent)
-            .clickable { onSelect(value) }.padding(horizontal = 10.dp),
+            .clickable { onSelect(value) }.padding(horizontal = 9.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        if (value == "live") Box(Modifier.size(6.dp).background(Color(0xFFE11D48), CircleShape))
-        Text(label, color = Color.White, fontWeight = if (active) FontWeight.Bold else FontWeight.Medium, fontSize = 11.sp, modifier = if (value == "live") Modifier.padding(start = 4.dp) else Modifier)
-        if (value == "live" && count > 0) Text(count.coerceAtMost(99).toString(), color = Color.White, fontSize = 8.sp, fontWeight = FontWeight.Black, modifier = Modifier.padding(start = 4.dp))
+        Text(label, color = Color.White, fontWeight = if (active) FontWeight.Bold else FontWeight.Medium, fontSize = 11.sp)
+        if (value == "live" && count > 0) Text(" $count", color = Color.White.copy(alpha = .85f), fontSize = 8.sp, fontWeight = FontWeight.Bold)
     }
 }
 
@@ -4942,6 +4947,7 @@ private fun ReelCollaboratorStack(reel: Reel, collaborators: List<SocialProfile>
 private fun ReelAudioPage(
     current: Reel,
     reels: List<Reel>,
+    repository: SocialRepository,
     onBack: () -> Unit,
     onReel: (String) -> Unit,
     onAuthor: (String) -> Unit,
@@ -4949,6 +4955,13 @@ private fun ReelAudioPage(
 ) {
     val title = current.musicTitle ?: "Original audio"
     val related = remember(title, reels) { reels.filter { (it.musicTitle ?: "Original audio") == title }.ifEmpty { listOf(current) } }
+    var source by remember(current.id) { mutableStateOf<SocialCopyrightReference?>(null) }
+    var sourceChecked by remember(current.id) { mutableStateOf(false) }
+    LaunchedEffect(current.id) {
+        runCatching { repository.copyrightStudio() }
+            .onSuccess { studio -> source = studio.references.firstOrNull { it.postId == current.id } }
+        sourceChecked = true
+    }
     BackHandler(onBack = onBack)
     Column(Modifier.fillMaxSize().background(Color.White)) {
         Row(Modifier.fillMaxWidth().statusBarsPadding().height(52.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -4970,6 +4983,28 @@ private fun ReelAudioPage(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp).height(38.dp),
             shape = RoundedCornerShape(9.dp), contentPadding = PaddingValues(0.dp)
         ) { Icon(Icons.Default.VideoCall, null, Modifier.size(18.dp)); Text("Use this audio", fontSize = 11.sp, modifier = Modifier.padding(start = 6.dp)) }
+        Surface(
+            color = Color(0xFFF8FAFC),
+            shape = RoundedCornerShape(11.dp),
+            tonalElevation = 0.dp,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp).clickable { onAuthor(current.authorId) }
+        ) {
+            Row(Modifier.padding(horizontal = 10.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(27.dp).background(TiwiBlue.copy(alpha = .1f), CircleShape), contentAlignment = Alignment.Center) {
+                    Icon(Icons.Default.Copyright, null, tint = TiwiBlue, modifier = Modifier.size(15.dp))
+                }
+                Column(Modifier.weight(1f).padding(start = 8.dp)) {
+                    Text("Original source", fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                    val sourceText = when {
+                        !sourceChecked -> "Checking copyright source..."
+                        source?.protectionEnabled == true -> "Protected by ${source?.owner?.name?.ifBlank { current.author } ?: current.author}"
+                        else -> "Created by ${current.author}"
+                    }
+                    Text(sourceText, color = Color(0xFF667085), fontSize = 9.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                Icon(Icons.Default.ChevronRight, null, tint = Color(0xFF667085), modifier = Modifier.size(17.dp))
+            }
+        }
         Text("Reels using this audio", fontWeight = FontWeight.Bold, fontSize = 14.sp, modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp))
         LazyVerticalGrid(columns = GridCells.Fixed(3), modifier = Modifier.fillMaxWidth().weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
             gridItems(related, key = { "audio-reel-${it.id}" }) { reel ->
@@ -5915,6 +5950,7 @@ private fun CopyrightStudioPage(repository: SocialRepository, onBack: () -> Unit
     var scanning by remember { mutableStateOf(false) }
     var selectedClaim by remember { mutableStateOf<SocialCopyrightClaim?>(null) }
     var selectedClaimIsOwner by remember { mutableStateOf(false) }
+    var selectedCopyrightSection by remember { mutableStateOf("library") }
     var message by remember { mutableStateOf<String?>(null) }
     fun refresh() {
         scope.launch {
@@ -5958,6 +5994,37 @@ private fun CopyrightStudioPage(repository: SocialRepository, onBack: () -> Unit
             return@Column
         }
         val data = studio ?: SocialCopyrightStudio()
+        CopyrightStudioExperience(
+            studio = data,
+            selectedSection = selectedCopyrightSection,
+            scanning = scanning,
+            message = message,
+            onRefresh = ::refresh,
+            onSelectSection = { selectedCopyrightSection = it },
+            onScan = {
+                scanning = true
+                scope.launch {
+                    runCatching { repository.scanCopyrightLibrary() }
+                        .onSuccess { studio = it; message = "Existing media was added to your protected library." }
+                        .onFailure { message = it.message ?: "Copyright scan failed" }
+                    scanning = false
+                }
+            },
+            onUpdateReference = { reference, protection, autoRemove ->
+                scope.launch {
+                    runCatching {
+                        repository.updateCopyrightReference(
+                            reference.id,
+                            protectionEnabled = protection,
+                            autoRemoveMatches = autoRemove
+                        )
+                    }.onSuccess { refresh() }
+                        .onFailure { message = it.message ?: "Copyright setting could not be saved" }
+                }
+            },
+            onOpenClaim = { claim, isOwner -> selectedClaimIsOwner = isOwner; selectedClaim = claim }
+        )
+        return@Column
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).navigationBarsPadding().padding(horizontal = 14.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Surface(color = Color(0xFFF6F8FC), shape = RoundedCornerShape(14.dp), tonalElevation = 0.dp, modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(13.dp)) {
@@ -6015,6 +6082,196 @@ private fun CopyrightStudioPage(repository: SocialRepository, onBack: () -> Unit
             if (data.receivedClaims.isEmpty()) Text("No copyright notices.", color = Color(0xFF667085), fontSize = 11.sp)
             data.receivedClaims.forEach { claim -> CopyrightClaimRow(claim, "View notice", onClick = { selectedClaimIsOwner = false; selectedClaim = claim }) }
             Spacer(Modifier.height(10.dp))
+        }
+    }
+}
+
+@Composable
+private fun CopyrightStudioExperience(
+    studio: SocialCopyrightStudio,
+    selectedSection: String,
+    scanning: Boolean,
+    message: String?,
+    onRefresh: () -> Unit,
+    onSelectSection: (String) -> Unit,
+    onScan: () -> Unit,
+    onUpdateReference: (SocialCopyrightReference, Boolean?, Boolean?) -> Unit,
+    onOpenClaim: (SocialCopyrightClaim, Boolean) -> Unit
+) {
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).navigationBarsPadding().padding(horizontal = 14.dp, vertical = 11.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Surface(color = Color(0xFFF6F8FC), shape = RoundedCornerShape(14.dp), tonalElevation = 0.dp, modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(12.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(34.dp).background(TiwiBlue.copy(alpha = .12f), CircleShape), contentAlignment = Alignment.Center) {
+                        Icon(Icons.Default.Copyright, null, tint = TiwiBlue, modifier = Modifier.size(19.dp))
+                    }
+                    Column(Modifier.weight(1f).padding(start = 9.dp)) {
+                        Text("Your media library", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        Text("Audio and video sources you control.", color = Color(0xFF667085), fontSize = 10.sp)
+                    }
+                    IconButton(onClick = onRefresh, modifier = Modifier.size(31.dp)) {
+                        Icon(Icons.Default.Refresh, "Refresh library", tint = TiwiBlue, modifier = Modifier.size(18.dp))
+                    }
+                }
+                Text(
+                    "Matching is based on decoded media, not file names or upload metadata.",
+                    color = Color(0xFF475467), fontSize = 10.sp, lineHeight = 14.sp,
+                    modifier = Modifier.padding(top = 8.dp)
+                )
+                OutlinedButton(
+                    onClick = onScan,
+                    enabled = !scanning,
+                    modifier = Modifier.padding(top = 9.dp).height(33.dp),
+                    shape = RoundedCornerShape(9.dp),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                    border = BorderStroke(.8.dp, TiwiBlue.copy(alpha = .42f))
+                ) {
+                    if (scanning) CircularProgressIndicator(Modifier.size(13.dp), strokeWidth = 1.5.dp, color = TiwiBlue)
+                    else Icon(Icons.Default.Radar, null, Modifier.size(15.dp))
+                    Spacer(Modifier.width(5.dp))
+                    Text(if (scanning) "Scanning" else "Scan existing media", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                }
+                Row(Modifier.fillMaxWidth().padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    CopyrightStudioMetric("Sources", studio.references.size, Modifier.weight(1f))
+                    CopyrightStudioMetric("Matches", studio.ownerClaims.count { it.status != "released" }, Modifier.weight(1f))
+                    CopyrightStudioMetric("Pending", studio.pendingRemovalCount, Modifier.weight(1f))
+                }
+            }
+        }
+        message?.let { status ->
+            Surface(color = TiwiBlue.copy(alpha = .07f), shape = RoundedCornerShape(10.dp), tonalElevation = 0.dp, modifier = Modifier.fillMaxWidth()) {
+                Row(Modifier.padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.Top) {
+                    Icon(Icons.Outlined.Info, null, tint = TiwiBlue, modifier = Modifier.size(15.dp))
+                    Text(status, color = Color(0xFF344054), fontSize = 10.sp, lineHeight = 14.sp, modifier = Modifier.padding(start = 7.dp))
+                }
+            }
+        }
+        CopyrightStudioTabs(selectedSection, onSelectSection)
+        when (selectedSection) {
+            "library" -> {
+                Text("Protected media", fontWeight = FontWeight.ExtraBold, fontSize = 15.sp)
+                Text("Protection is on by default. Removal stays off until you enable it for a source.", color = Color(0xFF667085), fontSize = 10.sp, lineHeight = 14.sp)
+                if (studio.references.isEmpty()) CopyrightStudioEmpty(
+                    Icons.Outlined.LibraryMusic,
+                    "No protected media yet",
+                    "Scan existing posts to add your original audio and video as protected sources."
+                )
+                studio.references.forEach { reference ->
+                    CopyrightReferenceCard(
+                        reference = reference,
+                        onProtectionChange = { onUpdateReference(reference, it, null) },
+                        onAutoRemoveChange = { onUpdateReference(reference, null, it) }
+                    )
+                }
+            }
+            "matches" -> {
+                Text("Matches on your protected media", fontWeight = FontWeight.ExtraBold, fontSize = 15.sp)
+                Text("Check the source and creator before taking a rights action.", color = Color(0xFF667085), fontSize = 10.sp)
+                if (studio.ownerClaims.isEmpty()) CopyrightStudioEmpty(
+                    Icons.Outlined.CheckCircle,
+                    "No matches found",
+                    "Matching uploads will be listed here for review."
+                )
+                studio.ownerClaims.forEach { CopyrightClaimRow(it, "Review") { onOpenClaim(it, true) } }
+            }
+            else -> {
+                Text("Notices on your uploads", fontWeight = FontWeight.ExtraBold, fontSize = 15.sp)
+                Text("Only the source owner can change a copyright setting or action.", color = Color(0xFF667085), fontSize = 10.sp)
+                if (studio.receivedClaims.isEmpty()) CopyrightStudioEmpty(
+                    Icons.Outlined.VerifiedUser,
+                    "No notices",
+                    "A copyright notice will appear here if one of your uploads matches a protected source."
+                )
+                studio.receivedClaims.forEach { CopyrightClaimRow(it, "View") { onOpenClaim(it, false) } }
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+    }
+}
+
+@Composable
+private fun CopyrightStudioMetric(label: String, value: Int, modifier: Modifier = Modifier) {
+    Column(modifier.clip(RoundedCornerShape(9.dp)).background(Color.White).padding(horizontal = 9.dp, vertical = 7.dp)) {
+        Text(formatCount(value), fontWeight = FontWeight.ExtraBold, fontSize = 13.sp)
+        Text(label, color = Color(0xFF667085), fontSize = 9.sp)
+    }
+}
+
+@Composable
+private fun CopyrightStudioTabs(selected: String, onSelect: (String) -> Unit) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        listOf("library" to "Library", "matches" to "Matches", "notices" to "Notices").forEach { (value, label) ->
+            val active = selected == value
+            Surface(
+                color = if (active) TiwiBlue.copy(alpha = .1f) else Color.Transparent,
+                shape = RoundedCornerShape(9.dp),
+                border = BorderStroke(.7.dp, if (active) TiwiBlue.copy(alpha = .25f) else Color(0xFFE4E7EC)),
+                tonalElevation = 0.dp,
+                modifier = Modifier.weight(1f).height(31.dp).clickable { onSelect(value) }
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Text(label, color = if (active) TiwiBlue else Color(0xFF475467), fontSize = 10.sp, fontWeight = if (active) FontWeight.Bold else FontWeight.Medium)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CopyrightStudioEmpty(icon: ImageVector, title: String, detail: String) {
+    Column(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(13.dp)).background(Color(0xFFF9FAFB)).padding(horizontal = 20.dp, vertical = 21.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Icon(icon, null, tint = Color(0xFF98A2B3), modifier = Modifier.size(27.dp))
+        Text(title, fontWeight = FontWeight.Bold, fontSize = 12.sp, modifier = Modifier.padding(top = 7.dp))
+        Text(detail, color = Color(0xFF667085), fontSize = 10.sp, lineHeight = 14.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 3.dp))
+    }
+}
+
+@Composable
+private fun CopyrightReferenceCard(
+    reference: SocialCopyrightReference,
+    onProtectionChange: (Boolean) -> Unit,
+    onAutoRemoveChange: (Boolean) -> Unit
+) {
+    val preview = reference.post?.media?.firstOrNull()
+    Surface(color = Color.White, shape = RoundedCornerShape(13.dp), border = BorderStroke(.7.dp, Color(0xFFE4E7EC)), tonalElevation = 0.dp, modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(43.dp).clip(RoundedCornerShape(10.dp)).background(Color(0xFFF2F4F7)), contentAlignment = Alignment.Center) {
+                    if (!preview?.thumbnailUrl.isNullOrBlank() || !preview?.url.isNullOrBlank()) {
+                        AsyncImage(preview?.thumbnailUrl ?: preview?.url, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                    } else {
+                        Icon(if (reference.mediaType == "video") Icons.Outlined.VideoLibrary else Icons.Outlined.MusicNote, null, tint = TiwiBlue, modifier = Modifier.size(21.dp))
+                    }
+                }
+                Column(Modifier.weight(1f).padding(start = 9.dp)) {
+                    Text(reference.title.ifBlank { "Protected media" }, fontWeight = FontWeight.Bold, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("${formatCount(reference.useCount)} uses - ${reference.mediaType.replaceFirstChar { it.uppercase() }}", color = Color(0xFF667085), fontSize = 10.sp)
+                }
+                Surface(color = if (reference.protectionEnabled) Color(0xFFECFDF3) else Color(0xFFF2F4F7), shape = RoundedCornerShape(6.dp), tonalElevation = 0.dp) {
+                    Text(if (reference.protectionEnabled) "PROTECTED" else "PAUSED", color = if (reference.protectionEnabled) Color(0xFF027A48) else Color(0xFF667085), fontSize = 8.sp, fontWeight = FontWeight.Black, modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp))
+                }
+            }
+            HorizontalDivider(Modifier.padding(vertical = 8.dp), color = Color(0xFFEFF1F4), thickness = .5.dp)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Protect this source", fontWeight = FontWeight.SemiBold, fontSize = 11.sp)
+                    Text("Detect future matching uploads", color = Color(0xFF667085), fontSize = 9.sp)
+                }
+                Switch(checked = reference.protectionEnabled, onCheckedChange = onProtectionChange, modifier = Modifier.height(25.dp))
+            }
+            Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Remove matching upload", fontWeight = FontWeight.SemiBold, fontSize = 11.sp)
+                    Text("Off by default. A two-minute notice is sent first.", color = Color(0xFF667085), fontSize = 9.sp, lineHeight = 11.sp)
+                }
+                Switch(checked = reference.autoRemoveMatches, onCheckedChange = onAutoRemoveChange, modifier = Modifier.height(25.dp))
+            }
         }
     }
 }

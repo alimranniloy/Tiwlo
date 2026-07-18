@@ -1041,8 +1041,24 @@ class SocialRepository(context: Context) {
     }
 
     suspend fun scanCopyrightLibrary(): SocialCopyrightStudio {
-        val data = client.execute("mutation ScanTiwiCopyright { scanSocialCopyrightLibrary { $COPYRIGHT_STUDIO_FIELDS } }")
-        return mapCopyrightStudio(data.objectValue("scanSocialCopyrightLibrary") ?: throw SocialApiException("Copyright library scan failed"))
+        try {
+            val data = client.execute("mutation ScanTiwiCopyright { scanSocialCopyrightLibrary { $COPYRIGHT_STUDIO_FIELDS } }")
+            return mapCopyrightStudio(data.objectValue("scanSocialCopyrightLibrary") ?: throw SocialApiException("Copyright library scan failed"))
+        } catch (error: SocialApiException) {
+            // An older production backend must never expose its raw GraphQL
+            // schema error to a creator. The mutation is deployed with the
+            // Copyright Studio backend; until that deployment finishes, the
+            // app keeps the existing library readable and gives a clear state.
+            if (error.message.orEmpty().contains("scanSocialCopyrightLibrary", ignoreCase = true) &&
+                error.message.orEmpty().contains("Cannot query field", ignoreCase = true)
+            ) {
+                throw SocialApiException(
+                    "Copyright scanning is being updated on the Tiwlo server. Your protected media is safe; refresh this page after the server update finishes.",
+                    "COPYRIGHT_API_UPDATING"
+                )
+            }
+            throw error
+        }
     }
 
     suspend fun registerCopyrightReference(postId: String, title: String, protectionEnabled: Boolean = true, autoRemoveMatches: Boolean = false): SocialCopyrightReference {
