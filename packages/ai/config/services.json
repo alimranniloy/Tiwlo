@@ -1,5 +1,5 @@
 {
   "searxng": { "image": "searxng/searxng:latest", "port": 8081 },
   "crawl4ai": { "image": "unclecode/crawl4ai:latest", "port": 11235 },
-  "llama-cpp": { "image": "ghcr.io/ggerganov/llama.cpp:server", "port": 8082 }
+  "llama-cpp": { "image": "ghcr.io/ggml-org/llama.cpp:server", "port": 8082 }
 }

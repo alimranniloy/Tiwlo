@@ -124,13 +124,15 @@ services:
       SECRET_KEY: ${CRAWL4AI_SECRET_KEY}
       REDIS_PASSWORD: ${CRAWL4AI_REDIS_PASSWORD}
   llama-cpp:
-    image: ghcr.io/ggerganov/llama.cpp:server
+    # `ggerganov/llama.cpp` is an old publish mirror. The maintained upstream
+    # image is owned by ggml-org and is the only image line we support here.
+    image: ghcr.io/ggml-org/llama.cpp:server
     restart: unless-stopped
     ports: ["127.0.0.1:8082:8080"]
     volumes:
       - ./models:/models:ro
 YAML
-  printf '    command: ["-m", "/models/%s", "--host", "0.0.0.0", "--port", "8080", "-c", "4096", "-np", "2"%s]\n' "$model_file_name" "$mmproj_line" >>"$COMPOSE_FILE"
+  printf '    command: ["-m", "/models/%s", "--host", "0.0.0.0", "--port", "8080", "--ctx-size", "4096", "--parallel", "2"%s]\n' "$model_file_name" "$mmproj_line" >>"$COMPOSE_FILE"
 }
 
 ensure_searxng_config() {
@@ -276,7 +278,12 @@ start_service() {
       [ -f "$STATE_DIR/active-model" ] && active_model="$(cat "$STATE_DIR/active-model" 2>/dev/null || echo text-policy)"
       download_model "$active_model"
       progress 65 "Starting llama.cpp"
-      compose up -d llama-cpp >>"$LOG_FILE" 2>&1
+      # Recreate explicitly: deployments can otherwise retain an obsolete
+      # ggerganov mirror container after the compose image is upgraded.
+      if ! compose up -d --force-recreate llama-cpp >>"$LOG_FILE" 2>&1; then
+        append_service_diagnostics "$id"
+        die "llama.cpp could not be started; inspect $LOG_FILE"
+      fi
       ;;
     queue-worker|health-monitor)
       [ "$(id -u)" -eq 0 ] || die "$id requires the deployment bootstrap to install its systemd unit"
@@ -293,6 +300,9 @@ start_service() {
   # Give Crawl4AI four minutes before reporting a real failure.
   local attempts=45
   [ "$id" = "crawl4ai" ] && attempts=120
+  # A 3B GGUF can take several minutes to memory-map and initialise on a
+  # CPU-only VPS. Do not classify a live model load as a package failure.
+  [ "$id" = "llama-cpp" ] && attempts=180
   for _ in $(seq 1 "$attempts"); do service_healthy "$id" && { progress 100 "$id is healthy"; return; }; sleep 2; done
   append_service_diagnostics "$id"
   die "$id did not become healthy; inspect $LOG_FILE"
@@ -318,13 +328,19 @@ restart_service() {
         [ -f "$STATE_DIR/active-model" ] && active_model="$(cat "$STATE_DIR/active-model" 2>/dev/null || echo text-policy)"
         download_model "$active_model"
       fi
-      compose restart "$id" >>"$LOG_FILE" 2>&1
+      if [ "$id" = "llama-cpp" ]; then
+        compose up -d --force-recreate "$id" >>"$LOG_FILE" 2>&1
+      else
+        compose restart "$id" >>"$LOG_FILE" 2>&1
+      fi
       ;;
     queue-worker) systemctl enable --now tiwlo-social-ai-worker.service >>"$LOG_FILE" 2>&1; systemctl restart tiwlo-social-ai-worker.service >>"$LOG_FILE" 2>&1 ;;
     health-monitor) systemctl enable --now tiwlo-social-ai-health.timer >>"$LOG_FILE" 2>&1; systemctl start tiwlo-social-ai-health.service >>"$LOG_FILE" 2>&1 || true ;;
     *) die "Unknown package $id" ;;
   esac
-  for _ in $(seq 1 18); do service_healthy "$id" && { progress 100 "$id restarted and healthy"; return; }; sleep 2; done
+  local attempts=18
+  [ "$id" = "llama-cpp" ] && attempts=180
+  for _ in $(seq 1 "$attempts"); do service_healthy "$id" && { progress 100 "$id restarted and healthy"; return; }; sleep 2; done
   append_service_diagnostics "$id"
   die "$id did not become healthy after restart"
 }
