@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -111,6 +111,12 @@ const DEFAULT_SETTINGS = Object.freeze({
 const nowIso = () => new Date().toISOString();
 const asText = (value, limit = 6_000) => String(value ?? '').trim().slice(0, limit);
 const asObject = (value) => value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+const crawl4aiApiToken = () => {
+  const supplied = asText(process.env.SOCIAL_AI_CRAWL4AI_API_TOKEN || process.env.CRAWL4AI_API_TOKEN, 512);
+  if (supplied) return supplied;
+  const dataDirectory = process.env.TIWLO_SOCIAL_AI_DATA_DIR || join(ROOT, '.data', 'social-ai');
+  try { return asText(readFileSync(join(dataDirectory, 'secrets', 'crawl4ai-api-token'), 'utf8'), 512); } catch { return ''; }
+};
 const asBooleanMap = (value) => Object.fromEntries(FEATURE_KEYS.map((key) => [key, Boolean(asObject(value)[key]) ]));
 const clamp = (value, min, max, fallback) => {
   const numeric = Number(value);
@@ -429,8 +435,9 @@ const searchNotability = async (settings, query) => {
 
 const crawlEvidence = async (settings, url) => {
   if (!url || !/^https?:\/\//i.test(url)) return null;
+  const token = crawl4aiApiToken();
   const response = await fetch(`${settings.runtime.crawl4aiUrl}/crawl`, {
-    method: 'POST', signal: AbortSignal.timeout(settings.runtime.requestTimeoutMs), headers: { 'content-type': 'application/json', accept: 'application/json' },
+    method: 'POST', signal: AbortSignal.timeout(settings.runtime.requestTimeoutMs), headers: { 'content-type': 'application/json', accept: 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
     body: JSON.stringify({ urls: [url], browser_config: { headless: true }, crawler_config: { word_count_threshold: 20, cache_mode: 'BYPASS' } })
   });
   if (!response.ok) throw new Error(`Crawl4AI returned ${response.status}`);

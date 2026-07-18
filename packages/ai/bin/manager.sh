@@ -7,6 +7,7 @@ ROOT="${TIWLO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
 STATE_DIR="${TIWLO_SOCIAL_AI_DATA_DIR:-$ROOT/.data/social-ai}"
 LOG_DIR="${TIWLO_SOCIAL_AI_LOG_DIR:-$ROOT/.logs/social-ai}"
 MODELS_DIR="$STATE_DIR/models"
+SECRETS_DIR="$STATE_DIR/secrets"
 COMPOSE_FILE="$STATE_DIR/docker-compose.yml"
 LOG_FILE="$LOG_DIR/manager.log"
 JSON="0"
@@ -36,9 +37,37 @@ finish_ok() { emit true "$1"; }
 finish_error() { emit false "error" "$1"; exit 1; }
 
 compose() {
-  if docker compose version >/dev/null 2>&1; then docker compose -f "$COMPOSE_FILE" "$@"; return; fi
-  if have docker-compose; then docker-compose -f "$COMPOSE_FILE" "$@"; return; fi
+  local env_file="$SECRETS_DIR/crawl4ai.env"
+  if docker compose version >/dev/null 2>&1; then docker compose --env-file "$env_file" -f "$COMPOSE_FILE" "$@"; return; fi
+  if have docker-compose; then docker-compose --env-file "$env_file" -f "$COMPOSE_FILE" "$@"; return; fi
   return 127
+}
+
+write_secret() {
+  local file="$1"
+  if [ ! -s "$file" ] || ! grep -Eq '^[a-f0-9]{64}$' "$file"; then
+    umask 077
+    od -An -N32 -tx1 /dev/urandom | tr -d ' \n' >"$file"
+  fi
+  chmod 600 "$file"
+}
+
+ensure_crawl4ai_credentials() {
+  # Crawl4AI 0.9+ deliberately binds only inside its own container when no
+  # credential is configured. Persist private credentials outside the release
+  # directory so upgrades do not invalidate API access or expose the port.
+  mkdir -p "$SECRETS_DIR"
+  chmod 700 "$SECRETS_DIR"
+  write_secret "$SECRETS_DIR/crawl4ai-api-token"
+  write_secret "$SECRETS_DIR/crawl4ai-secret-key"
+  write_secret "$SECRETS_DIR/crawl4ai-redis-password"
+  umask 077
+  cat >"$SECRETS_DIR/crawl4ai.env" <<EOF
+CRAWL4AI_API_TOKEN=$(tr -d '\r\n' <"$SECRETS_DIR/crawl4ai-api-token")
+CRAWL4AI_SECRET_KEY=$(tr -d '\r\n' <"$SECRETS_DIR/crawl4ai-secret-key")
+CRAWL4AI_REDIS_PASSWORD=$(tr -d '\r\n' <"$SECRETS_DIR/crawl4ai-redis-password")
+EOF
+  chmod 600 "$SECRETS_DIR/crawl4ai.env"
 }
 
 ensure_docker() {
@@ -62,6 +91,7 @@ ensure_docker() {
 
 write_compose() {
   local active_model="text-policy" model_file_name="qwen2.5-3b-instruct-q4_k_m.gguf" mmproj_line=""
+  ensure_crawl4ai_credentials
   [ -f "$STATE_DIR/active-model" ] && active_model="$(cat "$STATE_DIR/active-model" 2>/dev/null || echo text-policy)"
   if [ "$active_model" = "vision-review" ]; then
     model_file_name="moondream2-text-model-f16.gguf"
@@ -86,6 +116,13 @@ services:
     restart: unless-stopped
     ports: ["127.0.0.1:11235:11235"]
     shm_size: 1gb
+    environment:
+      CRAWL4AI_API_TOKEN: ${CRAWL4AI_API_TOKEN}
+      # A credential is required by Crawl4AI 0.9+ before it exposes the
+      # container socket. Keep the host mapping loopback-only above.
+      GUNICORN_BIND: 0.0.0.0:11235
+      SECRET_KEY: ${CRAWL4AI_SECRET_KEY}
+      REDIS_PASSWORD: ${CRAWL4AI_REDIS_PASSWORD}
   llama-cpp:
     image: ghcr.io/ggerganov/llama.cpp:server
     restart: unless-stopped
