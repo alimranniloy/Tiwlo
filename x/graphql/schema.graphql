@@ -2945,6 +2945,49 @@ type SocialModerationEvent {
   createdAt: String
 }
 
+type SocialCopyrightReference {
+  id: ID!
+  ownerId: ID!
+  owner: SocialPublicUser!
+  postId: ID
+  post: SocialPost
+  title: String!
+  mediaType: String!
+  durationSeconds: Int
+  protectionEnabled: Boolean!
+  autoRemoveMatches: Boolean!
+  status: String!
+  useCount: Int!
+  claimCount: Int!
+  createdAt: String!
+  updatedAt: String!
+}
+
+type SocialCopyrightClaim {
+  id: ID!
+  referenceId: ID!
+  reference: SocialCopyrightReference!
+  infringingPostId: ID!
+  infringingPost: SocialPost!
+  infringingUserId: ID!
+  infringingUser: SocialPublicUser!
+  status: String!
+  action: String!
+  removeAfter: String
+  removedAt: String
+  evidence: JSON!
+  createdAt: String!
+  updatedAt: String!
+}
+
+type SocialCopyrightStudio {
+  references: [SocialCopyrightReference!]!
+  ownerClaims: [SocialCopyrightClaim!]!
+  receivedClaims: [SocialCopyrightClaim!]!
+  protectionEnabled: Boolean!
+  pendingRemovalCount: Int!
+}
+
 type SocialGroupMember {
   id: ID!
   groupId: ID!
@@ -3242,6 +3285,20 @@ input SocialPostUpdateInput {
   location: String
 }
 
+input SocialCopyrightReferenceInput {
+  postId: ID!
+  title: String
+  protectionEnabled: Boolean
+  autoRemoveMatches: Boolean
+}
+
+input SocialCopyrightReferenceUpdateInput {
+  id: ID!
+  title: String
+  protectionEnabled: Boolean
+  autoRemoveMatches: Boolean
+}
+
 input SocialGroupInput {
   name: String!
   description: String
@@ -3443,6 +3500,7 @@ type Query {
   socialLiveStream(id: ID!): SocialLiveStream
   socialLiveParticipants(streamId: ID!): [SocialLiveParticipant!]!
   socialLiveComments(streamId: ID!, limit: Int): [SocialLiveComment!]!
+  socialCopyrightStudio: SocialCopyrightStudio!
   socialSettings: JSON!
   adminSocialOverview: SocialAdminOverview!
   adminSocialUsers(search: String, status: String, verified: Boolean): [SocialProfile!]!
@@ -3686,6 +3744,10 @@ type Mutation {
   leaveSocialLiveStream(id: ID!): Boolean!
   addSocialLiveComment(streamId: ID!, body: String!, replyToId: ID): SocialLiveComment!
   deleteSocialLiveComment(id: ID!): Boolean!
+  registerSocialCopyrightReference(input: SocialCopyrightReferenceInput!): SocialCopyrightReference!
+  updateSocialCopyrightReference(input: SocialCopyrightReferenceUpdateInput!): SocialCopyrightReference!
+  scanSocialCopyrightLibrary: SocialCopyrightStudio!
+  actOnSocialCopyrightClaim(id: ID!, action: String!): SocialCopyrightClaim!
   reportSocialContent(targetType: String!, targetId: ID!, reason: String!, details: String): SocialReport!
   startSocialVerificationCheckout(packageId: String!, provider: String!, currency: String): CheckoutSession!
   applySocialProfileDecoration(id: ID): SocialProfile!

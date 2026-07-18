@@ -1035,6 +1035,44 @@ class SocialRepository(context: Context) {
         return data.objectValue("socialSettings") ?: emptyMap()
     }
 
+    suspend fun copyrightStudio(): SocialCopyrightStudio {
+        val data = client.execute("query TiwiCopyrightStudio { socialCopyrightStudio { $COPYRIGHT_STUDIO_FIELDS } }")
+        return mapCopyrightStudio(data.objectValue("socialCopyrightStudio") ?: throw SocialApiException("Copyright Studio could not be loaded"))
+    }
+
+    suspend fun scanCopyrightLibrary(): SocialCopyrightStudio {
+        val data = client.execute("mutation ScanTiwiCopyright { scanSocialCopyrightLibrary { $COPYRIGHT_STUDIO_FIELDS } }")
+        return mapCopyrightStudio(data.objectValue("scanSocialCopyrightLibrary") ?: throw SocialApiException("Copyright library scan failed"))
+    }
+
+    suspend fun registerCopyrightReference(postId: String, title: String, protectionEnabled: Boolean = true, autoRemoveMatches: Boolean = false): SocialCopyrightReference {
+        val input = mapOf("postId" to postId, "title" to title, "protectionEnabled" to protectionEnabled, "autoRemoveMatches" to autoRemoveMatches)
+        val data = client.execute(
+            """mutation RegisterTiwiCopyright(${D}input: SocialCopyrightReferenceInput!) { registerSocialCopyrightReference(input: ${D}input) { $COPYRIGHT_REFERENCE_FIELDS } }""",
+            mapOf("input" to input)
+        )
+        return mapCopyrightReference(data.objectValue("registerSocialCopyrightReference") ?: throw SocialApiException("Copyright protection could not be enabled"))
+    }
+
+    suspend fun updateCopyrightReference(id: String, protectionEnabled: Boolean? = null, autoRemoveMatches: Boolean? = null): SocialCopyrightReference {
+        val input = mutableMapOf<String, Any?>("id" to id)
+        protectionEnabled?.let { input["protectionEnabled"] = it }
+        autoRemoveMatches?.let { input["autoRemoveMatches"] = it }
+        val data = client.execute(
+            """mutation UpdateTiwiCopyright(${D}input: SocialCopyrightReferenceUpdateInput!) { updateSocialCopyrightReference(input: ${D}input) { $COPYRIGHT_REFERENCE_FIELDS } }""",
+            mapOf("input" to input)
+        )
+        return mapCopyrightReference(data.objectValue("updateSocialCopyrightReference") ?: throw SocialApiException("Copyright settings could not be updated"))
+    }
+
+    suspend fun actOnCopyrightClaim(id: String, action: String): SocialCopyrightClaim {
+        val data = client.execute(
+            """mutation CopyrightClaimAction(${D}id: ID!, ${D}action: String!) { actOnSocialCopyrightClaim(id: ${D}id, action: ${D}action) { $COPYRIGHT_CLAIM_FIELDS } }""",
+            mapOf("id" to id, "action" to action)
+        )
+        return mapCopyrightClaim(data.objectValue("actOnSocialCopyrightClaim") ?: throw SocialApiException("Copyright action failed"))
+    }
+
     suspend fun refreshNotifications(): List<SocialNotification> {
         val data = client.execute("query TiwiNotifications { notifications(scope: \"social\") { $NOTIFICATION_FIELDS } }")
         return data.list("notifications").mapNotNull { it.objectMap()?.let(::mapNotification) }.also { _notifications.value = it }
@@ -1548,6 +1586,39 @@ class SocialRepository(context: Context) {
         createdAt = value.string("createdAt")
     )
 
+    private fun mapCopyrightReference(value: Map<String, Any?>): SocialCopyrightReference {
+        val owner = mapUser(value.objectValue("owner") ?: emptyMap())
+        return SocialCopyrightReference(
+            id = value.string("id").orEmpty(), ownerId = value.string("ownerId") ?: owner.id, owner = owner,
+            postId = value.string("postId"), post = value.objectValue("post")?.let(::mapPost),
+            title = value.string("title") ?: "Protected media", mediaType = value.string("mediaType") ?: "audio",
+            durationSeconds = value.number("durationSeconds")?.toInt(), protectionEnabled = value.boolean("protectionEnabled"),
+            autoRemoveMatches = value.boolean("autoRemoveMatches"), status = value.string("status") ?: "active",
+            useCount = value.number("useCount")?.toInt() ?: 0, claimCount = value.number("claimCount")?.toInt() ?: 0,
+            createdAt = value.string("createdAt"), updatedAt = value.string("updatedAt")
+        )
+    }
+
+    private fun mapCopyrightClaim(value: Map<String, Any?>): SocialCopyrightClaim {
+        val infringingUser = mapUser(value.objectValue("infringingUser") ?: emptyMap())
+        return SocialCopyrightClaim(
+            id = value.string("id").orEmpty(), referenceId = value.string("referenceId").orEmpty(),
+            reference = value.objectValue("reference")?.let(::mapCopyrightReference),
+            infringingPostId = value.string("infringingPostId").orEmpty(), infringingPost = value.objectValue("infringingPost")?.let(::mapPost),
+            infringingUserId = value.string("infringingUserId") ?: infringingUser.id, infringingUser = infringingUser,
+            status = value.string("status") ?: "detected", action = value.string("action") ?: "notice",
+            removeAfter = value.string("removeAfter"), removedAt = value.string("removedAt"),
+            evidence = value.objectValue("evidence") ?: emptyMap(), createdAt = value.string("createdAt"), updatedAt = value.string("updatedAt")
+        )
+    }
+
+    private fun mapCopyrightStudio(value: Map<String, Any?>) = SocialCopyrightStudio(
+        references = value.list("references").mapNotNull { it.objectMap()?.let(::mapCopyrightReference) },
+        ownerClaims = value.list("ownerClaims").mapNotNull { it.objectMap()?.let(::mapCopyrightClaim) },
+        receivedClaims = value.list("receivedClaims").mapNotNull { it.objectMap()?.let(::mapCopyrightClaim) },
+        protectionEnabled = value.boolean("protectionEnabled"), pendingRemovalCount = value.number("pendingRemovalCount")?.toInt() ?: 0
+    )
+
     private fun mapGroup(value: Map<String, Any?>) = SocialGroup(
         id = value.string("id").orEmpty(), ownerId = value.string("ownerId").orEmpty(), owner = mapUser(value.objectValue("owner") ?: emptyMap()),
         name = value.string("name").orEmpty(), description = value.string("description"), coverUrl = absoluteUrl(value.string("coverUrl")),
@@ -1741,6 +1812,9 @@ class SocialRepository(context: Context) {
         const val LIVE_PARTICIPANT_FIELDS = "id streamId viewerId status role microphoneEnabled hostOffer viewerAnswer hostIce viewerIce viewer { $PUBLIC_USER_FIELDS } viewerProfile { $PROFILE_FIELDS }"
         const val LIVE_COMMENT_FIELDS = "id streamId authorId replyToId body status createdAt author { $PUBLIC_USER_FIELDS } authorProfile { $PROFILE_FIELDS }"
         const val NOTIFICATION_FIELDS = "id scope scopeId type title message status metadata readAt createdAt"
+        const val COPYRIGHT_REFERENCE_FIELDS = "id ownerId postId title mediaType durationSeconds protectionEnabled autoRemoveMatches status useCount claimCount createdAt updatedAt owner { $PUBLIC_USER_FIELDS } post { $POST_FIELDS }"
+        const val COPYRIGHT_CLAIM_FIELDS = "id referenceId infringingPostId infringingUserId status action removeAfter removedAt evidence createdAt updatedAt reference { $COPYRIGHT_REFERENCE_FIELDS } infringingPost { $POST_FIELDS } infringingUser { $PUBLIC_USER_FIELDS }"
+        const val COPYRIGHT_STUDIO_FIELDS = "references { $COPYRIGHT_REFERENCE_FIELDS } ownerClaims { $COPYRIGHT_CLAIM_FIELDS } receivedClaims { $COPYRIGHT_CLAIM_FIELDS } protectionEnabled pendingRemovalCount"
         const val GROUP_FIELDS = "id ownerId name description coverUrl privacy status memberCount viewerRole viewerJoined createdAt owner { $PUBLIC_USER_FIELDS }"
         const val GROUP_MEMBER_FIELDS = "id groupId userId role status joinedAt user { $PUBLIC_USER_FIELDS } profile { id userId username verified badgeType avatarDecoration { $DECORATION_FIELDS } }"
     }

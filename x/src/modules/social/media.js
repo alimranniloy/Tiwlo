@@ -222,7 +222,13 @@ export const registerSocialRoutes = (app, { prisma, userFromRequest, rootDir }) 
       }
     });
     const audioRights = await inspectAudioRights({ filePath, mimeType: inspectedMimeType });
-    const moderation = audioRights?.decision === 'block' || audioRights?.decision === 'review' ? audioRights : visualModeration;
+    // Persist an allow-result fingerprint too. A later post/reference scan can
+    // compare decoded audio without trusting a filename, title or metadata.
+    const moderation = audioRights?.decision === 'block' || audioRights?.decision === 'review'
+      ? audioRights
+      : audioRights?.evidence?.fingerprintHash
+        ? { ...visualModeration, evidence: { ...(visualModeration.evidence || {}), audioFingerprint: audioRights.evidence } }
+        : visualModeration;
     await recordModerationDecision(
       { prisma, user },
       {

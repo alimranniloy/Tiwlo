@@ -162,6 +162,8 @@ import com.example.social.SocialLiveComment
 import com.example.social.SocialLiveStream
 import com.example.social.SocialMessage
 import com.example.social.SocialNotification
+import com.example.social.SocialCopyrightClaim
+import com.example.social.SocialCopyrightStudio
 import com.example.social.SocialPost
 import com.example.social.SocialProfile
 import com.example.social.SocialProfileDecoration
@@ -1893,6 +1895,7 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
                             onProfileClick = { selectedProfileUserId = it },
                             onPostClick = { selectedPostMediaIndex = null; selectedPostId = it },
                             onSupportCenter = { menuDestination = "Support Center"; selectedTab = 4 },
+                            onCopyrightStudio = { menuDestination = "Copyright Studio"; selectedTab = 4 },
                             onLive = { live -> hostingLive = live.hostId == repository.currentUserId(); selectedLiveStream = live }
                         )
                         4 -> MenuScreen(
@@ -1902,6 +1905,7 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
                             initialSetting = menuDestination,
                             onInitialSettingConsumed = { menuDestination = null },
                             onProfileClick = { showProfile = true },
+                            onUserProfileClick = { selectedProfileUserId = it },
                             onLogout = { repository.logout(); onLogout() }
                         )
                     }
@@ -5605,6 +5609,7 @@ fun NotificationsScreen(
     onProfileClick: (String) -> Unit = {},
     onPostClick: (String) -> Unit = {},
     onSupportCenter: () -> Unit = {},
+    onCopyrightStudio: () -> Unit = {},
     onLive: (SocialLiveStream) -> Unit = {}
 ) {
     val notifications by repository.notifications.collectAsState()
@@ -5640,6 +5645,7 @@ fun NotificationsScreen(
                             val liveId = notification.metadata["liveStreamId"]?.toString()
                             when {
                                 notification.metadata["destination"]?.toString() == "support_center" -> onSupportCenter()
+                                notification.metadata["destination"]?.toString() == "copyright_studio" -> onCopyrightStudio()
                                 !liveId.isNullOrBlank() -> repository.getLiveStream(liveId)?.let(onLive)
                                 !postId.isNullOrBlank() -> onPostClick(postId)
                                 !actorId.isNullOrBlank() -> onProfileClick(actorId)
@@ -5667,12 +5673,13 @@ private fun ActivityNotificationRow(repository: SocialRepository, notification: 
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box {
-            if (notification.metadata["destination"]?.toString() == "support_center") {
+            if (notification.metadata["destination"]?.toString() == "support_center" || notification.metadata["destination"]?.toString() == "copyright_studio") {
                 Image(painterResource(R.drawable.tiwi_app_icon), null, Modifier.size(45.dp).clip(CircleShape), contentScale = ContentScale.Crop)
             } else TiwiAvatar(actorAvatar, R.drawable.img_tiwi_avatar_1, Modifier.size(45.dp).clip(CircleShape))
             val marker = when (notification.type) {
                 "follow" -> Icons.Outlined.PersonAdd
                 "post_like", "comment_like" -> Icons.Filled.Favorite
+                "copyright_detected", "copyright_match", "copyright_removed" -> Icons.Default.Copyright
                 "post_comment", "comment_reply" -> Icons.Outlined.ChatBubbleOutline
                 "mention" -> Icons.Outlined.AlternateEmail
                 "live_started" -> Icons.Outlined.LiveTv
@@ -5712,6 +5719,7 @@ fun MenuScreen(
     initialSetting: String? = null,
     onInitialSettingConsumed: () -> Unit = {},
     onProfileClick: () -> Unit,
+    onUserProfileClick: (String) -> Unit = {},
     onLogout: () -> Unit
 ) {
     var selectedSetting by remember { mutableStateOf<String?>(initialSetting) }
@@ -5727,6 +5735,7 @@ fun MenuScreen(
     }
     selectedSetting?.let { setting ->
         if (setting == "Support Center") SupportCenterPage(repository, onBack = { selectedSetting = null })
+        else if (setting == "Copyright Studio") CopyrightStudioPage(repository, onBack = { selectedSetting = null }, onOpenProfile = onUserProfileClick)
         else {
             BackHandler { selectedSetting = null }
             SocialSettingsPage(repository, profile, setting, onBack = { selectedSetting = null })
@@ -5862,6 +5871,7 @@ fun MenuScreen(
                     Pair("Account Settings", Icons.Default.Settings),
                     Pair("Privacy Center", Icons.Default.Security),
                     Pair("Notifications", Icons.Default.Notifications),
+                    Pair("Copyright Studio", Icons.Default.Gavel),
                     Pair("Support Center", Icons.Default.SupportAgent),
                     Pair("Help & Support", Icons.Default.Help),
                     Pair("About Tiwi", Icons.Default.Info)
@@ -5892,6 +5902,167 @@ fun MenuScreen(
                     Text("Log Out", fontWeight = FontWeight.Bold)
                 }
                 Spacer(modifier = Modifier.height(32.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun CopyrightStudioPage(repository: SocialRepository, onBack: () -> Unit, onOpenProfile: (String) -> Unit) {
+    val scope = rememberTiwiCoroutineScope()
+    var studio by remember { mutableStateOf<SocialCopyrightStudio?>(null) }
+    var loading by remember { mutableStateOf(true) }
+    var scanning by remember { mutableStateOf(false) }
+    var selectedClaim by remember { mutableStateOf<SocialCopyrightClaim?>(null) }
+    var selectedClaimIsOwner by remember { mutableStateOf(false) }
+    var message by remember { mutableStateOf<String?>(null) }
+    fun refresh() {
+        scope.launch {
+            loading = true
+            runCatching { repository.copyrightStudio() }
+                .onSuccess { studio = it }
+                .onFailure { message = it.message ?: "Copyright Studio could not be loaded" }
+            loading = false
+        }
+    }
+    LaunchedEffect(Unit) { refresh() }
+    selectedClaim?.let { claim ->
+        CopyrightClaimActionPage(
+            claim = claim,
+            ownerCanAct = selectedClaimIsOwner,
+            onBack = { selectedClaim = null },
+            onOpenProfile = onOpenProfile,
+            onAction = { action ->
+                scope.launch {
+                    runCatching { repository.actOnCopyrightClaim(claim.id, action) }
+                        .onSuccess { selectedClaim = null; refresh() }
+                        .onFailure { message = it.message ?: "Copyright action failed"; selectedClaim = null }
+                }
+            }
+        )
+        return
+    }
+    BackHandler(onBack = onBack)
+    Column(Modifier.fillMaxSize().background(Color.White).statusBarsPadding()) {
+        Row(Modifier.fillMaxWidth().height(52.dp).padding(horizontal = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
+            Column(Modifier.weight(1f)) {
+                Text("Copyright Studio", fontWeight = FontWeight.Black, fontSize = 19.sp)
+                Text("Protect your audio and video", color = Color(0xFF667085), fontSize = 10.sp)
+            }
+            IconButton(onClick = ::refresh) { Icon(Icons.Default.Refresh, "Refresh", tint = TiwiBlue, modifier = Modifier.size(20.dp)) }
+        }
+        HorizontalDivider(color = Color(0xFFE9ECF1))
+        if (loading && studio == null) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(Modifier.size(26.dp), strokeWidth = 2.dp) }
+            return@Column
+        }
+        val data = studio ?: SocialCopyrightStudio()
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).navigationBarsPadding().padding(horizontal = 14.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Surface(color = Color(0xFFF6F8FC), shape = RoundedCornerShape(14.dp), tonalElevation = 0.dp, modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(13.dp)) {
+                    Text("Your protected library", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    Text("We scan decoded audio, not filenames or upload metadata. Existing posts can be indexed below.", color = Color(0xFF475467), fontSize = 11.sp, lineHeight = 15.sp, modifier = Modifier.padding(top = 3.dp))
+                    Button(
+                        onClick = {
+                            scanning = true
+                            scope.launch {
+                                runCatching { repository.scanCopyrightLibrary() }
+                                    .onSuccess { studio = it; message = "Your existing audio and video library was scanned." }
+                                    .onFailure { message = it.message ?: "Copyright scan failed" }
+                                scanning = false
+                            }
+                        }, enabled = !scanning,
+                        modifier = Modifier.padding(top = 10.dp).height(34.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp), shape = RoundedCornerShape(9.dp)
+                    ) { if (scanning) CircularProgressIndicator(Modifier.size(13.dp), strokeWidth = 1.6.dp, color = Color.White) else Icon(Icons.Default.Radar, null, Modifier.size(15.dp)); Spacer(Modifier.width(6.dp)); Text(if (scanning) "Scanning…" else "Scan existing media", fontSize = 11.sp, fontWeight = FontWeight.Bold) }
+                }
+            }
+            message?.let { Text(it, color = Color(0xFF155EEF), fontSize = 11.sp, modifier = Modifier.fillMaxWidth().padding(horizontal = 3.dp)) }
+
+            Text("Protected media", fontWeight = FontWeight.Black, fontSize = 15.sp, modifier = Modifier.padding(top = 3.dp))
+            if (data.references.isEmpty()) {
+                Text("No protected media yet. Scan your existing posts, then keep protection on for each item you own.", color = Color(0xFF667085), fontSize = 11.sp, lineHeight = 15.sp, modifier = Modifier.padding(bottom = 3.dp))
+            }
+            data.references.forEach { reference ->
+                Surface(color = Color.White, shape = RoundedCornerShape(13.dp), border = BorderStroke(.7.dp, Color(0xFFE6EAF0)), tonalElevation = 0.dp, modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(Modifier.size(31.dp).background(TiwiBlue.copy(alpha = .1f), CircleShape), contentAlignment = Alignment.Center) { Icon(if (reference.mediaType == "video") Icons.Default.VideoLibrary else Icons.Default.MusicNote, null, tint = TiwiBlue, modifier = Modifier.size(17.dp)) }
+                            Column(Modifier.weight(1f).padding(start = 9.dp)) {
+                                Text(reference.title.ifBlank { "Protected media" }, fontWeight = FontWeight.Bold, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text("${reference.useCount} detected uses · ${reference.mediaType}", color = Color(0xFF667085), fontSize = 10.sp)
+                            }
+                            Switch(checked = reference.protectionEnabled, onCheckedChange = { enabled ->
+                                scope.launch { runCatching { repository.updateCopyrightReference(reference.id, protectionEnabled = enabled) }.onSuccess { refresh() }.onFailure { message = it.message } }
+                            }, modifier = Modifier.height(26.dp))
+                        }
+                        Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) { Text("Remove matched media", fontWeight = FontWeight.SemiBold, fontSize = 11.sp); Text("Off by default · removes after a two-minute notice", color = Color(0xFF667085), fontSize = 9.sp, lineHeight = 11.sp) }
+                            Switch(checked = reference.autoRemoveMatches, onCheckedChange = { enabled ->
+                                scope.launch { runCatching { repository.updateCopyrightReference(reference.id, autoRemoveMatches = enabled) }.onSuccess { refresh() }.onFailure { message = it.message } }
+                            }, modifier = Modifier.height(25.dp))
+                        }
+                    }
+                }
+            }
+
+            Text("Matches on your protected media", fontWeight = FontWeight.Black, fontSize = 15.sp, modifier = Modifier.padding(top = 6.dp))
+            if (data.ownerClaims.isEmpty()) Text("No matched uploads yet.", color = Color(0xFF667085), fontSize = 11.sp)
+            data.ownerClaims.forEach { claim -> CopyrightClaimRow(claim, "Review action", onClick = { selectedClaimIsOwner = true; selectedClaim = claim }) }
+
+            Text("Copyright notices on your uploads", fontWeight = FontWeight.Black, fontSize = 15.sp, modifier = Modifier.padding(top = 6.dp))
+            if (data.receivedClaims.isEmpty()) Text("No copyright notices.", color = Color(0xFF667085), fontSize = 11.sp)
+            data.receivedClaims.forEach { claim -> CopyrightClaimRow(claim, "View notice", onClick = { selectedClaimIsOwner = false; selectedClaim = claim }) }
+            Spacer(Modifier.height(10.dp))
+        }
+    }
+}
+
+@Composable
+private fun CopyrightClaimRow(claim: SocialCopyrightClaim, label: String, onClick: () -> Unit) {
+    val owner = claim.reference?.owner?.name?.ifBlank { null } ?: "Rights owner"
+    Surface(color = Color.White, shape = RoundedCornerShape(13.dp), border = BorderStroke(.7.dp, Color(0xFFE6EAF0)), tonalElevation = 0.dp, modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)) {
+        Row(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(30.dp).background(Color(0xFFFFF1F0), CircleShape), contentAlignment = Alignment.Center) { Icon(Icons.Default.Copyright, null, tint = Color(0xFFD92D20), modifier = Modifier.size(16.dp)) }
+            Column(Modifier.weight(1f).padding(start = 9.dp)) {
+                Text(claim.reference?.title?.ifBlank { "Protected media" } ?: "Protected media", fontWeight = FontWeight.Bold, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("$owner · ${claim.status.replace('_', ' ')}", color = Color(0xFF667085), fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            Text(label, color = TiwiBlue, fontWeight = FontWeight.Bold, fontSize = 10.sp)
+        }
+    }
+}
+
+@Composable
+private fun CopyrightClaimActionPage(claim: SocialCopyrightClaim, ownerCanAct: Boolean, onBack: () -> Unit, onOpenProfile: (String) -> Unit, onAction: (String) -> Unit) {
+    var working by remember { mutableStateOf(false) }
+    fun act(action: String) { if (!working) { working = true; onAction(action) } }
+    BackHandler(onBack = onBack)
+    Column(Modifier.fillMaxSize().background(Color.White).statusBarsPadding().navigationBarsPadding()) {
+        Row(Modifier.fillMaxWidth().height(52.dp).padding(horizontal = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
+            Text("Copyright details", fontWeight = FontWeight.Black, fontSize = 19.sp)
+        }
+        HorizontalDivider(color = Color(0xFFE9ECF1))
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(claim.reference?.title?.ifBlank { "Protected media" } ?: "Protected media", fontWeight = FontWeight.Black, fontSize = 17.sp)
+            Text("Status: ${claim.status.replace('_', ' ')}", color = Color(0xFF475467), fontSize = 12.sp)
+            Text("Owner: ${claim.reference?.owner?.name ?: "Rights owner"}", color = Color(0xFF475467), fontSize = 12.sp)
+            claim.reference?.ownerId?.takeIf { it.isNotBlank() }?.let { ownerId ->
+                Text("View rights owner profile", color = TiwiBlue, fontWeight = FontWeight.Bold, fontSize = 11.sp, modifier = Modifier.clickable { onOpenProfile(ownerId) })
+            }
+            claim.removeAfter?.let { Text("Automatic removal is scheduled after the notice window.", color = Color(0xFFD92D20), fontSize = 11.sp) }
+            HorizontalDivider(color = Color(0xFFE9ECF1))
+            // The app only shows owner actions when the reference belongs to the current account. A received notice is informational.
+            if (ownerCanAct) {
+                Text("Owner actions", fontWeight = FontWeight.Black, fontSize = 15.sp)
+                Text("Remove this matched post immediately, release the claim, or block this person from your Social account. Platform-wide account suspension is reviewed by Tiwi administrators.", color = Color(0xFF667085), fontSize = 11.sp, lineHeight = 15.sp)
+                Button(onClick = { act("takedown") }, enabled = !working, modifier = Modifier.fillMaxWidth().height(40.dp), shape = RoundedCornerShape(10.dp)) { Text("Take down matched post", fontSize = 12.sp, fontWeight = FontWeight.Bold) }
+                OutlinedButton(onClick = { act("release") }, enabled = !working, modifier = Modifier.fillMaxWidth().height(40.dp), shape = RoundedCornerShape(10.dp)) { Text("Release claim", fontSize = 12.sp, fontWeight = FontWeight.Bold) }
+                OutlinedButton(onClick = { act("block_account") }, enabled = !working, modifier = Modifier.fillMaxWidth().height(40.dp), shape = RoundedCornerShape(10.dp), colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFD92D20))) { Text("Block this user from my Social", fontSize = 12.sp, fontWeight = FontWeight.Bold) }
+            } else {
+                Text("This upload matched protected content. Only the rights owner can change protection or take down settings. You can review the owner and status here.", color = Color(0xFF667085), fontSize = 12.sp, lineHeight = 16.sp)
             }
         }
     }

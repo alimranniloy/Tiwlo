@@ -105,6 +105,8 @@ model User {
   socialBlocksGiven          SocialBlock[]                      @relation("SocialBlockOwner")
   socialBlocksReceived       SocialBlock[]                      @relation("SocialBlockTarget")
   socialModerationEvents     SocialModerationEvent[]
+  socialCopyrightReferences  SocialCopyrightReference[]         @relation("SocialCopyrightReferenceOwner")
+  socialCopyrightClaims      SocialCopyrightClaim[]             @relation("SocialCopyrightClaimInfringer")
   socialDecorationOwnerships SocialProfileDecorationOwnership[]
 }
 
@@ -1535,6 +1537,8 @@ model SocialPost {
   reports           SocialReport[]
   savedBy           SocialSavedPost[]
   moderationEvents  SocialModerationEvent[]
+  copyrightReferences SocialCopyrightReference[] @relation("SocialCopyrightReferencePost")
+  copyrightClaims     SocialCopyrightClaim[]     @relation("SocialCopyrightClaimPost")
 
   @@index([status, type, publishedAt])
   @@index([authorId, status, publishedAt])
@@ -1709,6 +1713,53 @@ model SocialModerationEvent {
   @@index([userId, createdAt])
   @@index([decision, createdAt])
   @@index([postId, createdAt])
+}
+
+// A reference is created only by the owner of one of their own uploaded
+// posts. It stores a hash of decoded audio, never a filename or public song
+// metadata. Claims are therefore auditable and cannot be created by a user
+// against media they do not own in Tiwi.
+model SocialCopyrightReference {
+  id                String    @id @default(cuid())
+  ownerId           String
+  owner             User      @relation("SocialCopyrightReferenceOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  postId            String?
+  post              SocialPost? @relation("SocialCopyrightReferencePost", fields: [postId], references: [id], onDelete: SetNull)
+  title             String    @default("")
+  mediaType         String    @default("audio")
+  fingerprintHash   String
+  durationSeconds   Int?
+  protectionEnabled Boolean   @default(true)
+  autoRemoveMatches Boolean   @default(false)
+  status            String    @default("active")
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  claims            SocialCopyrightClaim[]
+
+  @@unique([ownerId, fingerprintHash])
+  @@index([fingerprintHash, status])
+  @@index([ownerId, createdAt])
+}
+
+model SocialCopyrightClaim {
+  id                String    @id @default(cuid())
+  referenceId       String
+  reference         SocialCopyrightReference @relation(fields: [referenceId], references: [id], onDelete: Cascade)
+  infringingPostId  String
+  infringingPost    SocialPost @relation("SocialCopyrightClaimPost", fields: [infringingPostId], references: [id], onDelete: Cascade)
+  infringingUserId  String
+  infringingUser    User      @relation("SocialCopyrightClaimInfringer", fields: [infringingUserId], references: [id], onDelete: Cascade)
+  status            String    @default("detected")
+  action            String    @default("notice")
+  removeAfter       DateTime?
+  removedAt         DateTime?
+  evidence          Json      @default("{}")
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@unique([referenceId, infringingPostId])
+  @@index([infringingUserId, status, createdAt])
+  @@index([status, removeAfter])
 }
 
 model SocialSavedPost {

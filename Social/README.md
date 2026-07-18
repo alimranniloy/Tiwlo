@@ -62,5 +62,22 @@ The fingerprint is calculated from decoded audio, so editing a filename or metad
 does not alter the match. Public music-identification results must not by themselves
 be used to decide ownership or to disable an account.
 
+## Copyright Studio
+
+Copyright Studio lets a creator register audio/video from their own Tiwi post as
+a protected reference. Existing posts can be scanned from the Studio; fingerprints
+are stored with the moderation events and are compared when new media is posted.
+The owner can keep protection on, switch automatic two-minute removal on or off,
+review matches, release a claim, remove a matched post, or block the matched user
+from their own Social account. Platform-wide account suspension remains an admin
+decision with an audit trail.
+
+`fpcalc` gives reliable decoded-audio fingerprints for unchanged or near-identical
+media, including filename/container metadata changes. For clipped audio, mixes and
+background audio, configure a licensed recognition provider using
+`SOCIAL_AUDIO_FINGERPRINT_WEBHOOK_URL` (and optional bearer token). The webhook is
+expected to return a rights-controlled `referenceId`, `ownerId`, confidence and
+policy; public metadata-only lookups are deliberately not treated as ownership.
+
 Before deployment, run `npm --prefix x run db:generate` and
 `npm --prefix x run db:push`, then rebuild/restart the backend and frontend.

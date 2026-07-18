@@ -453,6 +453,52 @@ data class SocialNotification(
 )
 
 @JsonClass(generateAdapter = true)
+data class SocialCopyrightReference(
+    val id: String = "",
+    val ownerId: String = "",
+    val owner: SocialUser = SocialUser(),
+    val postId: String? = null,
+    val post: SocialPost? = null,
+    val title: String = "Protected media",
+    val mediaType: String = "audio",
+    val durationSeconds: Int? = null,
+    val protectionEnabled: Boolean = true,
+    val autoRemoveMatches: Boolean = false,
+    val status: String = "active",
+    val useCount: Int = 0,
+    val claimCount: Int = 0,
+    val createdAt: String? = null,
+    val updatedAt: String? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class SocialCopyrightClaim(
+    val id: String = "",
+    val referenceId: String = "",
+    val reference: SocialCopyrightReference? = null,
+    val infringingPostId: String = "",
+    val infringingPost: SocialPost? = null,
+    val infringingUserId: String = "",
+    val infringingUser: SocialUser = SocialUser(),
+    val status: String = "detected",
+    val action: String = "notice",
+    val removeAfter: String? = null,
+    val removedAt: String? = null,
+    val evidence: Map<String, Any?> = emptyMap(),
+    val createdAt: String? = null,
+    val updatedAt: String? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class SocialCopyrightStudio(
+    val references: List<SocialCopyrightReference> = emptyList(),
+    val ownerClaims: List<SocialCopyrightClaim> = emptyList(),
+    val receivedClaims: List<SocialCopyrightClaim> = emptyList(),
+    val protectionEnabled: Boolean = false,
+    val pendingRemovalCount: Int = 0
+)
+
+@JsonClass(generateAdapter = true)
 data class PasswordResetChallenge(
     val challengeId: String = "",
     val channel: String = "email",

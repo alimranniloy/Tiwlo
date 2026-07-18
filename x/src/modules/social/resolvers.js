@@ -145,6 +145,7 @@ export const socialResolvers = {
     socialLiveStream: (_, { id }, ctx) => api(service.getLiveStream(ctx, id)),
     socialLiveParticipants: (_, { streamId }, ctx) => api(service.listLiveParticipants(ctx, streamId)),
     socialLiveComments: (_, { streamId, limit }, ctx) => api(service.listLiveComments(ctx, streamId, limit)),
+    socialCopyrightStudio: (_, __, ctx) => api(service.getCopyrightStudio(ctx)),
     socialSettings: async (_, __, ctx) => {
       await requireAuth(ctx);
       return service.getSettings(ctx);
@@ -211,6 +212,10 @@ export const socialResolvers = {
     leaveSocialLiveStream: (_, { id }, ctx) => service.leaveLiveStream(ctx, id),
     addSocialLiveComment: (_, { streamId, body, replyToId }, ctx) => api(service.addLiveComment(ctx, streamId, body, replyToId)),
     deleteSocialLiveComment: (_, { id }, ctx) => service.deleteLiveComment(ctx, id),
+    registerSocialCopyrightReference: (_, { input }, ctx) => api(service.registerCopyrightReference(ctx, input)),
+    updateSocialCopyrightReference: (_, { input }, ctx) => api(service.updateCopyrightReference(ctx, input)),
+    scanSocialCopyrightLibrary: (_, __, ctx) => api(service.scanCopyrightLibrary(ctx)),
+    actOnSocialCopyrightClaim: (_, { id, action }, ctx) => api(service.actOnCopyrightClaim(ctx, id, action)),
     reportSocialContent: (_, { targetType, targetId, reason, details }, ctx) => api(service.reportContent(ctx, targetType, targetId, reason, details)),
     startSocialVerificationCheckout: (_, { packageId, provider, currency }, ctx) => api(service.startVerificationCheckout(ctx, packageId, provider, currency)),
     applySocialProfileDecoration: (_, { id }, ctx) => api(service.applyProfileDecoration(ctx, id)),

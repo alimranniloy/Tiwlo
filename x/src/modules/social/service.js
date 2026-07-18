@@ -1,12 +1,15 @@
 import { randomBytes } from 'node:crypto';
 import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
+import { existsSync } from 'node:fs';
+import { resolve, sep } from 'node:path';
 import { isAdmin, requireAdmin, requireAuth } from '../../core/auth.js';
 import { AppError, forbidden, notFound } from '../../core/errors.js';
 import { removeUndefined } from '../../core/format.js';
 import { writeAudit } from '../../core/audit.js';
 import { convertMoneyForCtx, startInvoicePayment } from '../billing/service.js';
 import { enforceTextModeration } from './moderation.js';
+import { fingerprintAudioFile } from './audioFingerprint.js';
 
 export const SOCIAL_SETTING_KEY = 'social';
 
@@ -904,6 +907,304 @@ const mapPost = (post) => ({
   recommended: Boolean(post.recommended),
   recommendationLabel: post.recommendationLabel || null
 });
+
+const copyrightReferenceInclude = (viewerId) => ({
+  owner: { include: { socialProfile: true } },
+  post: { include: postInclude(viewerId) },
+  _count: { select: { claims: true } }
+});
+
+const copyrightClaimInclude = (viewerId) => ({
+  reference: { include: copyrightReferenceInclude(viewerId) },
+  infringingPost: { include: postInclude(viewerId) },
+  infringingUser: { include: { socialProfile: true } }
+});
+
+const audioFingerprintEvidence = (event) => {
+  const evidence = event?.evidence && typeof event.evidence === 'object' ? event.evidence : {};
+  const value = evidence.audioFingerprint && typeof evidence.audioFingerprint === 'object'
+    ? evidence.audioFingerprint
+    : evidence;
+  const fingerprintHash = String(value.fingerprintHash || '').trim().toLowerCase();
+  return /^[a-f0-9]{32,128}$/i.test(fingerprintHash)
+    ? { fingerprintHash, durationSeconds: Number(value.durationSeconds) || null }
+    : null;
+};
+
+const localPostMediaFile = (post, media) => {
+  const source = String(media?.url || '').trim();
+  if (!source) return null;
+  let pathname = source;
+  try { pathname = new URL(source, 'https://tiwlo.invalid').pathname; } catch { return null; }
+  const prefix = `/api/social/media/files/${post.authorId}/`;
+  if (!pathname.startsWith(prefix)) return null;
+  let filename;
+  try { filename = decodeURIComponent(pathname.slice(prefix.length)); } catch { return null; }
+  if (!filename || filename.includes('..') || filename.includes('\\')) return null;
+  const roots = [
+    resolve(process.cwd(), '..', 'public', 'uploads', 'social'),
+    resolve(process.cwd(), 'public', 'uploads', 'social')
+  ];
+  const uploadRoot = roots.find((root) => existsSync(root)) || roots[0];
+  const directory = resolve(uploadRoot, post.authorId);
+  const filePath = resolve(directory, filename);
+  return filePath.startsWith(`${directory}${sep}`) && existsSync(filePath) ? filePath : null;
+};
+
+const fingerprintsForPost = async (ctx, post, knownEvents = null) => {
+  const events = knownEvents || await ctx.prisma.socialModerationEvent.findMany({
+    where: { postId: post.id }, select: { evidence: true }
+  });
+  const found = new Map();
+  events.map(audioFingerprintEvidence).filter(Boolean).forEach((item) => found.set(item.fingerprintHash, item));
+  if (found.size) return [...found.values()];
+  const media = Array.isArray(post.media) ? post.media : [];
+  for (const item of media) {
+    const filePath = localPostMediaFile(post, item);
+    if (!filePath) continue;
+    const fingerprint = await fingerprintAudioFile({ filePath, mimeType: item?.mimeType || item?.type });
+    if (!fingerprint) continue;
+    const value = { fingerprintHash: fingerprint.fingerprintHash, durationSeconds: fingerprint.durationSeconds || null };
+    found.set(value.fingerprintHash, value);
+    await ctx.prisma.socialModerationEvent.create({
+      data: {
+        userId: post.authorId, postId: post.id, targetType: 'copyright-backfill', targetId: post.id,
+        decision: 'allow', category: 'copyright/unmatched', score: 0,
+        reason: 'Decoded audio fingerprint stored for copyright matching', provider: 'chromaprint-copyright-backfill',
+        evidence: { audioFingerprint: value }
+      }
+    }).catch(() => undefined);
+  }
+  return [...found.values()];
+};
+
+const mapCopyrightReference = (reference) => ({
+  ...reference,
+  post: reference.post ? mapPost(reference.post) : null,
+  useCount: Number(reference._count?.claims || 0),
+  claimCount: Number(reference._count?.claims || 0)
+});
+
+const mapCopyrightClaim = (claim) => ({
+  ...claim,
+  reference: claim.reference ? mapCopyrightReference(claim.reference) : null,
+  infringingPost: claim.infringingPost ? mapPost(claim.infringingPost) : null
+});
+
+const createCopyrightClaimsForPost = async (ctx, post, knownEvents = null) => {
+  if (!post?.id || post.status !== 'published') return [];
+  const fingerprints = await fingerprintsForPost(ctx, post, knownEvents);
+  if (!fingerprints.length) return [];
+  const references = await ctx.prisma.socialCopyrightReference.findMany({
+    where: {
+      fingerprintHash: { in: fingerprints.map((item) => item.fingerprintHash) },
+      status: 'active', protectionEnabled: true,
+      ownerId: { not: post.authorId }
+    },
+    include: { owner: { include: { socialProfile: true } }, _count: { select: { claims: true } } }
+  });
+  const claims = [];
+  for (const reference of references) {
+    const existing = await ctx.prisma.socialCopyrightClaim.findUnique({
+      where: { referenceId_infringingPostId: { referenceId: reference.id, infringingPostId: post.id } }
+    });
+    if (existing) continue;
+    const fingerprint = fingerprints.find((item) => item.fingerprintHash === reference.fingerprintHash);
+    const removeAfter = reference.autoRemoveMatches ? new Date(Date.now() + 120_000) : null;
+    const claim = await ctx.prisma.socialCopyrightClaim.create({
+      data: {
+        referenceId: reference.id, infringingPostId: post.id, infringingUserId: post.authorId,
+        action: reference.autoRemoveMatches ? 'scheduled_removal' : 'notice', removeAfter,
+        evidence: { fingerprintHash: reference.fingerprintHash, durationSeconds: fingerprint?.durationSeconds || null, ownerId: reference.ownerId }
+      },
+      include: copyrightClaimInclude(post.authorId)
+    });
+    const ownerName = reference.owner?.name || reference.owner?.socialProfile?.username || 'the rights owner';
+    await Promise.all([
+      createSocialNotification(ctx, {
+        ownerId: post.authorId, scopeId: claim.id, type: 'copyright_detected', title: 'Copyright detected',
+        message: `Your ${reference.mediaType === 'video' ? 'video' : 'audio'} matches protected content owned by ${ownerName}. The owner can turn off monetization or request removal.`,
+        metadata: { destination: 'copyright_studio', claimId: claim.id, postId: post.id, referenceId: reference.id, ownerId: reference.ownerId, ownerName, scheduledRemovalAt: removeAfter?.toISOString() || null }
+      }),
+      createSocialNotification(ctx, {
+        ownerId: reference.ownerId, scopeId: claim.id, type: 'copyright_match', title: 'Copyright match found',
+        message: `${post.author?.name || 'A Tiwi user'} used your protected ${reference.mediaType}. Review or take down this post in Copyright Studio.`,
+        metadata: { destination: 'copyright_studio', claimId: claim.id, postId: post.id, referenceId: reference.id, infringingUserId: post.authorId }
+      })
+    ]);
+    claims.push(mapCopyrightClaim(claim));
+  }
+  return claims;
+};
+
+export const processDueCopyrightTakedowns = async (ctx) => {
+  const due = await ctx.prisma.socialCopyrightClaim.findMany({
+    where: { status: 'detected', removeAfter: { lte: new Date() } },
+    include: { reference: { include: { owner: true } }, infringingPost: true, infringingUser: true }, take: 200
+  });
+  let removed = 0;
+  for (const claim of due) {
+    if (!claim.reference.protectionEnabled || !claim.reference.autoRemoveMatches || claim.reference.status !== 'active') continue;
+    const changed = await ctx.prisma.socialCopyrightClaim.updateMany({
+      where: { id: claim.id, status: 'detected' }, data: { status: 'removed', action: 'auto_removed', removedAt: new Date() }
+    });
+    if (!changed.count) continue;
+    await ctx.prisma.socialPost.updateMany({
+      where: { id: claim.infringingPostId, status: 'published' },
+      data: { status: 'removed', deletedAt: new Date(), moderationStatus: 'copyright_removed', moderationReason: 'Removed after a protected audio/video match', moderationScore: 1 }
+    });
+    await createSocialNotification(ctx, {
+      ownerId: claim.infringingUserId, scopeId: claim.id, type: 'copyright_removed', title: 'Content removed for copyright',
+      message: `Your post was removed because it matched protected content owned by ${claim.reference.owner?.name || 'the rights owner'}.`,
+      metadata: { destination: 'copyright_studio', claimId: claim.id, postId: claim.infringingPostId, referenceId: claim.referenceId, ownerId: claim.reference.ownerId }
+    });
+    removed += 1;
+  }
+  return removed;
+};
+
+const copyrightStudio = async (ctx, actor) => {
+  await processDueCopyrightTakedowns(ctx).catch(() => undefined);
+  const [references, ownerClaims, receivedClaims] = await Promise.all([
+    ctx.prisma.socialCopyrightReference.findMany({ where: { ownerId: actor.id }, include: copyrightReferenceInclude(actor.id), orderBy: { updatedAt: 'desc' } }),
+    ctx.prisma.socialCopyrightClaim.findMany({ where: { reference: { ownerId: actor.id } }, include: copyrightClaimInclude(actor.id), orderBy: { createdAt: 'desc' }, take: 300 }),
+    ctx.prisma.socialCopyrightClaim.findMany({ where: { infringingUserId: actor.id }, include: copyrightClaimInclude(actor.id), orderBy: { createdAt: 'desc' }, take: 300 })
+  ]);
+  return {
+    references: references.map(mapCopyrightReference),
+    ownerClaims: ownerClaims.map(mapCopyrightClaim),
+    receivedClaims: receivedClaims.map(mapCopyrightClaim),
+    protectionEnabled: references.some((reference) => reference.protectionEnabled),
+    pendingRemovalCount: ownerClaims.filter((claim) => claim.status === 'detected' && claim.removeAfter).length
+  };
+};
+
+export const getCopyrightStudio = async (ctx) => copyrightStudio(ctx, await requireAuth(ctx));
+
+export const registerCopyrightReference = async (ctx, input) => {
+  const actor = await requireAuth(ctx);
+  const post = await ctx.prisma.socialPost.findUnique({ where: { id: input.postId }, include: { author: true, moderationEvents: { select: { evidence: true } } } });
+  if (!post) notFound('Post');
+  if (post.authorId !== actor.id) forbidden('Only the creator can protect this media');
+  const fingerprints = await fingerprintsForPost(ctx, post, post.moderationEvents);
+  if (!fingerprints.length) throw new AppError('No readable audio/video fingerprint was found for this post', 'BAD_USER_INPUT');
+  const fingerprint = fingerprints[0];
+  const firstMedia = (Array.isArray(post.media) ? post.media : []).find((item) => /^(audio|video)$/i.test(String(item?.type || '')) || /^(audio|video)\//i.test(String(item?.mimeType || '')));
+  const reference = await ctx.prisma.socialCopyrightReference.upsert({
+    where: { ownerId_fingerprintHash: { ownerId: actor.id, fingerprintHash: fingerprint.fingerprintHash } },
+    create: {
+      ownerId: actor.id, postId: post.id, title: bounded(input.title || post.body || 'Untitled protected media', 180),
+      mediaType: String(firstMedia?.type || 'audio').toLowerCase() === 'video' ? 'video' : 'audio',
+      fingerprintHash: fingerprint.fingerprintHash, durationSeconds: fingerprint.durationSeconds || null,
+      protectionEnabled: input.protectionEnabled !== false, autoRemoveMatches: Boolean(input.autoRemoveMatches)
+    },
+    update: {
+      postId: post.id, title: bounded(input.title || post.body || 'Untitled protected media', 180),
+      protectionEnabled: input.protectionEnabled !== false, autoRemoveMatches: Boolean(input.autoRemoveMatches), status: 'active'
+    },
+    include: copyrightReferenceInclude(actor.id)
+  });
+  await createCopyrightClaimsForPost(ctx, post, post.moderationEvents);
+  return mapCopyrightReference(reference);
+};
+
+export const updateCopyrightReference = async (ctx, input) => {
+  const actor = await requireAuth(ctx);
+  const current = await ctx.prisma.socialCopyrightReference.findUnique({ where: { id: input.id } });
+  if (!current) notFound('Copyright reference');
+  if (current.ownerId !== actor.id && !isAdmin(actor)) forbidden();
+  const reference = await ctx.prisma.socialCopyrightReference.update({
+    where: { id: input.id },
+    data: removeUndefined({ title: input.title === undefined ? undefined : bounded(input.title, 180), protectionEnabled: input.protectionEnabled, autoRemoveMatches: input.autoRemoveMatches }),
+    include: copyrightReferenceInclude(actor.id)
+  });
+  if (input.autoRemoveMatches !== undefined) await ctx.prisma.socialCopyrightClaim.updateMany({
+    where: { referenceId: reference.id, status: 'detected' },
+    data: input.autoRemoveMatches ? { action: 'scheduled_removal', removeAfter: new Date(Date.now() + 120_000) } : { action: 'notice', removeAfter: null }
+  });
+  return mapCopyrightReference(reference);
+};
+
+export const scanCopyrightLibrary = async (ctx) => {
+  const actor = await requireAuth(ctx);
+  const posts = await ctx.prisma.socialPost.findMany({
+    where: { authorId: actor.id, status: 'published' }, include: { author: true, moderationEvents: { select: { evidence: true } } }, orderBy: { publishedAt: 'desc' }, take: 1000
+  });
+  for (const post of posts) {
+    const fingerprints = await fingerprintsForPost(ctx, post, post.moderationEvents);
+    for (const fingerprint of fingerprints) {
+      await ctx.prisma.socialCopyrightReference.upsert({
+        where: { ownerId_fingerprintHash: { ownerId: actor.id, fingerprintHash: fingerprint.fingerprintHash } },
+        create: { ownerId: actor.id, postId: post.id, title: bounded(post.body || 'Protected media', 180), fingerprintHash: fingerprint.fingerprintHash, durationSeconds: fingerprint.durationSeconds || null },
+        update: { postId: post.id }
+      });
+    }
+  }
+  // Reconcile the existing indexed library in bounded batches. It is safe to
+  // run again: the compound unique key prevents duplicate claims.
+  const candidates = await ctx.prisma.socialPost.findMany({
+    where: { status: 'published' }, include: { author: true, moderationEvents: { select: { evidence: true } } }, orderBy: { publishedAt: 'asc' }, take: 2500
+  });
+  for (const post of candidates) await createCopyrightClaimsForPost(ctx, post, post.moderationEvents);
+  return copyrightStudio(ctx, actor);
+};
+
+export const startSocialCopyrightBackfill = async ({ prisma, batchSize = 250 }) => {
+  // Process legacy media once at boot in bounded batches. Each audio/video
+  // reference defaults to protected; automatic deletion remains off until its
+  // owner explicitly enables it in Copyright Studio.
+  const ctx = { prisma };
+  const posts = await prisma.socialPost.findMany({
+    where: { status: 'published' },
+    include: { author: true, moderationEvents: { select: { evidence: true } } },
+    orderBy: { publishedAt: 'asc' }, take: Math.max(1, Math.min(Number(batchSize) || 250, 1000))
+  });
+  for (const post of posts) {
+    const hasAudioMedia = (Array.isArray(post.media) ? post.media : []).some((item) => /^(audio|video)$/i.test(String(item?.type || '')) || /^(audio|video)\//i.test(String(item?.mimeType || '')));
+    if (!hasAudioMedia) continue;
+    const fingerprints = await fingerprintsForPost(ctx, post, post.moderationEvents);
+    for (const fingerprint of fingerprints) {
+      await prisma.socialCopyrightReference.upsert({
+        where: { ownerId_fingerprintHash: { ownerId: post.authorId, fingerprintHash: fingerprint.fingerprintHash } },
+        create: { ownerId: post.authorId, postId: post.id, title: bounded(post.body || 'Protected media', 180), fingerprintHash: fingerprint.fingerprintHash, durationSeconds: fingerprint.durationSeconds || null },
+        update: { postId: post.id }
+      });
+    }
+  }
+  const candidates = await prisma.socialPost.findMany({
+    where: { status: 'published' }, include: { author: true, moderationEvents: { select: { evidence: true } } }, orderBy: { publishedAt: 'asc' }, take: Math.max(1, Math.min(Number(batchSize) || 250, 1000))
+  });
+  for (const post of candidates) await createCopyrightClaimsForPost(ctx, post, post.moderationEvents);
+};
+
+export const actOnCopyrightClaim = async (ctx, id, action) => {
+  const actor = await requireAuth(ctx);
+  const claim = await ctx.prisma.socialCopyrightClaim.findUnique({ where: { id }, include: copyrightClaimInclude(actor.id) });
+  if (!claim) notFound('Copyright claim');
+  if (claim.reference.ownerId !== actor.id && !isAdmin(actor)) forbidden('Only the rights owner can take action');
+  const normalized = String(action || '').toLowerCase();
+  if (!['takedown', 'release', 'block_video', 'block_account'].includes(normalized)) throw new AppError('Invalid copyright action', 'BAD_USER_INPUT');
+  if (normalized === 'release') {
+    const updated = await ctx.prisma.socialCopyrightClaim.update({ where: { id }, data: { status: 'released', action: 'released', removeAfter: null }, include: copyrightClaimInclude(actor.id) });
+    return mapCopyrightClaim(updated);
+  }
+  if (normalized === 'block_account') {
+    // A rights owner may block the infringer from their own Social presence;
+    // platform-wide disabling remains an auditable administrator decision.
+    await ctx.prisma.socialBlock.upsert({ where: { userId_targetUserId: { userId: claim.reference.ownerId, targetUserId: claim.infringingUserId } }, create: { userId: claim.reference.ownerId, targetUserId: claim.infringingUserId, reason: 'copyright claim' }, update: { reason: 'copyright claim' } });
+  }
+  await ctx.prisma.socialPost.update({ where: { id: claim.infringingPostId }, data: { status: 'removed', deletedAt: new Date(), moderationStatus: 'copyright_removed', moderationReason: 'Removed after rights-owner copyright action', moderationScore: 1 } });
+  const updated = await ctx.prisma.socialCopyrightClaim.update({
+    where: { id }, data: { status: 'removed', action: normalized, removeAfter: null, removedAt: new Date() }, include: copyrightClaimInclude(actor.id)
+  });
+  await createSocialNotification(ctx, {
+    ownerId: claim.infringingUserId, scopeId: id, type: 'copyright_removed', title: 'Content removed for copyright',
+    message: `Your post was removed after a rights-owner copyright action by ${claim.reference.owner?.name || 'the rights owner'}.`,
+    metadata: { destination: 'copyright_studio', claimId: id, postId: claim.infringingPostId, referenceId: claim.referenceId, ownerId: claim.reference.ownerId }
+  });
+  await writeAudit(ctx, 'social_copyright_action', 'socialCopyrightClaim', id, { action: normalized, ownerId: claim.reference.ownerId, infringingUserId: claim.infringingUserId });
+  return mapCopyrightClaim(updated);
+};
 
 const hydrateSharedPostMedia = async (ctx, posts, viewerId) => {
   const rows = Array.isArray(posts) ? posts : [posts];
@@ -1849,7 +2150,7 @@ export const createPost = async (ctx, input) => {
   const processingIds = media.map((item) => bounded(item?.processingId, 240)).filter(Boolean);
   const mediaEvents = processingIds.length ? await ctx.prisma.socialModerationEvent.findMany({
     where: { userId: actor.id, targetId: { in: processingIds }, postId: null },
-    select: { id: true, decision: true, reason: true, score: true }
+    select: { id: true, decision: true, reason: true, score: true, evidence: true }
   }) : [];
   const reviewEvents = mediaEvents.filter((event) => event.decision === 'review');
   const post = await ctx.prisma.socialPost.create({
@@ -1877,6 +2178,9 @@ export const createPost = async (ctx, input) => {
   if (mediaEvents.length) await ctx.prisma.socialModerationEvent.updateMany({
     where: { id: { in: mediaEvents.map((event) => event.id) } }, data: { postId: post.id }
   });
+  await createCopyrightClaimsForPost(ctx, post, mediaEvents).catch((error) => {
+    console.warn('[social-copyright] post claim scan failed:', post.id, error?.message || error);
+  });
   await notifyMentions(ctx, actor, body, post.id, 'post', { postId: post.id });
   const collaboratorIds = [...new Set([...(metadata.taggedUserIds || []), ...(metadata.collaboratorIds || [])])]
     .filter((id) => id && id !== actor.id);
@@ -1901,7 +2205,7 @@ export const updatePost = async (ctx, input) => {
   const processingIds = updatedMedia?.map((item) => bounded(item?.processingId, 240)).filter(Boolean) || [];
   const mediaEvents = processingIds.length ? await ctx.prisma.socialModerationEvent.findMany({
     where: { userId: actor.id, targetId: { in: processingIds }, postId: null },
-    select: { id: true, decision: true, reason: true, score: true }
+    select: { id: true, decision: true, reason: true, score: true, evidence: true }
   }) : [];
   const reviewEvents = mediaEvents.filter((event) => event.decision === 'review');
   const post = await ctx.prisma.socialPost.update({
@@ -1925,6 +2229,9 @@ export const updatePost = async (ctx, input) => {
   });
   if (mediaEvents.length) await ctx.prisma.socialModerationEvent.updateMany({
     where: { id: { in: mediaEvents.map((event) => event.id) } }, data: { postId: post.id }
+  });
+  if (updatedMedia !== null) await createCopyrightClaimsForPost(ctx, post, mediaEvents).catch((error) => {
+    console.warn('[social-copyright] updated post claim scan failed:', post.id, error?.message || error);
   });
   return mapPost(post);
 };

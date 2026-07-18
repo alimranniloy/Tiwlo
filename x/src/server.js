@@ -31,6 +31,7 @@ import { registerDiscordRoutes } from './modules/discord/service.js';
 import { ensureWhatsAppAuthSchema, publicWhatsAppStatus } from './modules/whatsapp/service.js';
 import { registerSocialRoutes } from './modules/social/media.js';
 import { startSocialModerationBackfill } from './modules/social/moderation.js';
+import { processDueCopyrightTakedowns, startSocialCopyrightBackfill } from './modules/social/service.js';
 import { publicCurrencyContext } from './core/currency.js';
 import { registerTSecurity } from '../../tSecurity/index.js';
 
@@ -571,6 +572,19 @@ app.listen(port, () => {
       console.warn('[social-moderation] backfill failed:', error?.message || error);
     });
   }, 5_000);
+  // The two-minute removal window is stored in PostgreSQL, so a server restart
+  // cannot lose it. This small worker only performs due, rights-owner-enabled
+  // removals and is safe to run on every application instance.
+  const runCopyrightTakedowns = () => processDueCopyrightTakedowns({ prisma }).catch((error) => {
+    console.warn('[social-copyright] scheduled takedown failed:', error?.message || error);
+  });
+  setTimeout(runCopyrightTakedowns, 10_000);
+  setInterval(runCopyrightTakedowns, 30_000).unref?.();
+  setTimeout(() => {
+    startSocialCopyrightBackfill({ prisma }).catch((error) => {
+      console.warn('[social-copyright] legacy media scan failed:', error?.message || error);
+    });
+  }, 15_000);
   ensureWhatsAppAuthSchema(prisma).catch((error) => {
     console.warn('[whatsapp] schema prepare failed:', error?.message || error);
   });
