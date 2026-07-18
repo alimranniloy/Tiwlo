@@ -486,9 +486,13 @@ const askPolicyModel = async (settings, task, taskContext, supplemental = {}) =>
   // media metadata or crawled pages wholesale: oversized prompts were the
   // source of llama.cpp 400 responses and served no moderation purpose.
   const context = {
-    text: asText(taskContext.text, 2_600),
-    metadata: asText(JSON.stringify(taskContext.context || {}), 1_000),
-    supplemental: asText(JSON.stringify(supplemental || {}), 700)
+    // Bengali and emoji-heavy content can consume close to one token per
+    // visible character. Keep the entire request comfortably below the 2k
+    // context selected for compact VPS plans; deterministic policy signals
+    // above still inspect the complete original text for urgent patterns.
+    text: asText(taskContext.text, 700),
+    metadata: asText(JSON.stringify(taskContext.context || {}), 240),
+    supplemental: asText(JSON.stringify(supplemental || {}), 160)
   };
   const system = [
     'You are Tiwi Social Safety AI.',
@@ -507,13 +511,13 @@ const askPolicyModel = async (settings, task, taskContext, supplemental = {}) =>
     response = await request({
       messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
       temperature: 0.1,
-      max_tokens: 260,
+      max_tokens: 180,
       response_format: { type: 'json_object' }
     });
     // A few older llama.cpp builds do not implement response_format. Retry
     // once with the same constrained prompt rather than failing the review.
     if (response.status === 400) {
-      response = await request({ messages: [{ role: 'system', content: system }, { role: 'user', content: user }], temperature: 0.1, max_tokens: 260 });
+      response = await request({ messages: [{ role: 'system', content: system }, { role: 'user', content: user }], temperature: 0.1, max_tokens: 180 });
     }
   } catch (error) {
     throw modelWarmingError(`llama.cpp is not reachable: ${asText(error?.message, 300)}`);
@@ -526,7 +530,16 @@ const askPolicyModel = async (settings, task, taskContext, supplemental = {}) =>
   const payload = await response.json();
   const content = payload?.choices?.[0]?.message?.content || payload?.content || payload?.response || '';
   const parsed = jsonFromModel(content);
-  if (!parsed) throw new Error('llama.cpp did not return a policy JSON result');
+  // A compact local model can occasionally stop before its JSON is complete.
+  // Treat that as a conservative manual review rather than losing the review
+  // job: no automated action is taken and the admin still gets a real case.
+  if (!parsed) {
+    return {
+      decision: 'review', category: 'unclassified', confidence: 0, severity: 'low',
+      reason: 'The local language model response was incomplete, so this content was held for manual Social review.',
+      recommendation: 'manual_review', evidenceSummary: 'Local policy response could not be normalized safely.', provider: 'social-llama-cpp-fallback'
+    };
+  }
   const decision = policyDecision(parsed.decision);
   const severity = ['low', 'medium', 'high', 'critical'].includes(asText(parsed.severity, 30).toLowerCase()) ? asText(parsed.severity, 30).toLowerCase() : 'medium';
   return {
