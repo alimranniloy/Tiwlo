@@ -930,6 +930,31 @@ prepare_obfuscated_release() {
   [ -f "$RELEASE_DIR/scripts/serve-tiwlo-frontend.js" ] && obfuscate_file "$RELEASE_DIR/scripts/serve-tiwlo-frontend.js"
 }
 
+move_release_tree() {
+  local source="$1" target="$2" entry name
+  if [ ! -e "$target" ] && [ ! -L "$target" ]; then
+    mv -- "$source" "$target"
+    return 0
+  fi
+  if [ ! -d "$source" ] || [ ! -d "$target" ]; then
+    rm -rf -- "$target"
+    mv -- "$source" "$target"
+    return 0
+  fi
+
+  # The production root deliberately retains .env and public/uploads while
+  # source code is replaced. Merge only release children into those preserved
+  # parent directories, so `mv` never fails merely because the parent exists.
+  shopt -s dotglob nullglob
+  local entries=("$source"/*)
+  for entry in "${entries[@]}"; do
+    name="$(basename "$entry")"
+    move_release_tree "$entry" "$target/$name"
+  done
+  shopt -u dotglob nullglob
+  rmdir "$source" 2>/dev/null || true
+}
+
 install_obfuscated_release() {
   step "Installing obfuscated runtime into production root"
   mkdir -p "$ROOT"
@@ -940,7 +965,11 @@ install_obfuscated_release() {
     shopt -s dotglob nullglob
     local release_entries=("$RELEASE_DIR"/*)
     if [ "${#release_entries[@]}" -gt 0 ]; then
-      mv -- "${release_entries[@]}" "$ROOT"/
+      local entry name
+      for entry in "${release_entries[@]}"; do
+        name="$(basename "$entry")"
+        move_release_tree "$entry" "$ROOT/$name"
+      done
     fi
     shopt -u dotglob nullglob
   else
