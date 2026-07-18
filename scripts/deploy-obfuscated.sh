@@ -724,7 +724,19 @@ install_dependencies_and_build() {
   if ! have fpcalc; then
     if have apt-get; then
       step "Installing Chromaprint runtime for Social Copyright Studio"
-      if ! run_sudo apt-get update || ! run_sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends chromaprint-tools; then
+      # Debian/Ubuntu package names differ: current Ubuntu releases expose
+      # fpcalc via libchromaprint-tools, while some older images use
+      # chromaprint-tools. Try the current name first and retain compatibility.
+      chromaprint_installed=0
+      if run_sudo apt-get update; then
+        for chromaprint_package in libchromaprint-tools chromaprint-tools; do
+          if run_sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$chromaprint_package"; then
+            chromaprint_installed=1
+            break
+          fi
+        done
+      fi
+      if [ "$chromaprint_installed" -ne 1 ]; then
         echo "Could not install fpcalc; copyright will use exact-file matching for this deploy." >&2
       fi
     else
