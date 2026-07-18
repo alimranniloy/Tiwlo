@@ -210,7 +210,16 @@ append_service_diagnostics() {
     printf '\n===== %s diagnostic %s =====\n' "$id" "$(date -u +%FT%TZ)"
     compose ps "$id" || true
     compose logs --tail 120 "$id" || true
-  } >>"$LOG_FILE" 2>&1
+    printf '\n===== %s localhost probes =====\n' "$id"
+    case "$id" in
+      crawl4ai)
+        curl -i --max-time 8 "http://127.0.0.1:11235/health" || true
+        curl -i --max-time 8 "http://127.0.0.1:11235/docs" || true
+        ;;
+      searxng) curl -i --max-time 8 "http://127.0.0.1:8081/" || true ;;
+      llama-cpp) curl -i --max-time 8 "http://127.0.0.1:8082/health" || true ;;
+    esac
+  } 2>&1 | tee -a "$LOG_FILE" >&2
 }
 
 start_service() {
@@ -314,11 +323,17 @@ case "$command" in
     progress 3 "Preparing Social AI infrastructure"
     ensure_docker; [ -f "$STATE_DIR/active-model" ] || printf '%s\n' "text-policy" >"$STATE_DIR/active-model"; write_compose; ensure_searxng_config
     compose pull searxng crawl4ai llama-cpp >>"$LOG_FILE" 2>&1 || true
-    progress 15 "Installing SearXNG"; start_service searxng
-    progress 35 "Installing Crawl4AI"; start_service crawl4ai
-    progress 55 "Installing default Social AI models"; download_model text-policy; download_model embedding; download_model moderation-vision
-    progress 78 "Starting llama.cpp"; start_service llama-cpp
+    # Keep the independent Social AI services progressing even when one
+    # optional dependency (usually the browser crawler) is still warming or
+    # needs repair. The persisted health timer retries the failed component.
+    # A non-zero final status still accurately reports that repair is pending.
+    bootstrap_pending=0
+    progress 15 "Installing SearXNG"; if ! (start_service searxng); then bootstrap_pending=1; log "SearXNG is pending repair; continuing Social AI bootstrap"; fi
+    progress 35 "Installing Crawl4AI"; if ! (start_service crawl4ai); then bootstrap_pending=1; log "Crawl4AI is pending repair; continuing Social AI bootstrap"; fi
+    progress 55 "Installing default Social AI models"; if ! (download_model text-policy; download_model embedding; download_model moderation-vision); then bootstrap_pending=1; log "One or more Social AI models are pending repair"; fi
+    progress 78 "Starting llama.cpp"; if ! (start_service llama-cpp); then bootstrap_pending=1; log "llama.cpp is pending repair; continuing Social AI bootstrap"; fi
     progress 90 "Verifying Social AI health"; health_json
+    [ "$bootstrap_pending" -eq 0 ] || exit 1
     ;;
   package)
     case "$action" in

@@ -108,11 +108,39 @@ class SocialAiPanelBoundary extends React.Component<React.PropsWithChildren, { f
   }
 }
 
+class SocialAdminPageBoundary extends React.Component<React.PropsWithChildren, { failed: boolean }> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  componentDidCatch(error: Error) {
+    console.error('Social administration render failed', error);
+  }
+
+  render() {
+    if (this.state.failed) {
+      return (
+        <section className="m-5 rounded border border-red-200 bg-white p-5 text-[12px] text-slate-700">
+          <div className="flex items-center gap-2 font-black text-red-700"><AlertCircle className="h-4 w-4" /> Social administration could not render safely</div>
+          <p className="mt-2 leading-5">Refresh after the current release finishes. The error is isolated here so no blank screen is shown and no data or settings are changed.</p>
+        </section>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 const aiFeatureLabels: Record<string, string> = {
   verification: 'Blue verification & identity review', reportReview: 'Report investigation', postReview: 'Post review', commentReview: 'Comment review', messageModeration: 'Private-message moderation', imageModeration: 'Image moderation', videoCaptionModeration: 'Video & caption moderation', spam: 'Spam detection', scam: 'Scam detection', fakeAccount: 'Fake-account detection', fakeProfile: 'Fake-profile detection', impersonation: 'Impersonation detection', harassment: 'Harassment detection', hateSpeech: 'Hate-speech detection', threat: 'Threat detection', weaponSale: 'Weapon-sale detection', drugSale: 'Drug-sale detection', adultContent: 'Adult-content detection', violence: 'Violence detection', selfHarm: 'Self-harm detection', copyright: 'Copyright & duplicate content', warning: 'Private warnings', strike: 'Strike system', appeal: 'Appeal review', notificationAutomation: 'Notification automation'
 };
 
 export default function AdminSocial() {
+  return <SocialAdminPageBoundary><AdminSocialContent /></SocialAdminPageBoundary>;
+}
+
+function AdminSocialContent() {
   const [tab, setTab] = React.useState<Tab>('users');
   const [overview, setOverview] = React.useState<any>({});
   const [users, setUsers] = React.useState<any[]>([]);
