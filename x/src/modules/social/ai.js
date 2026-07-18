@@ -26,7 +26,7 @@ export const SOCIAL_AI_PACKAGE_CATALOG = Object.freeze([
 ]);
 
 export const SOCIAL_AI_MODEL_CATALOG = Object.freeze([
-  { id: 'text-policy', name: 'Qwen 2.5 3B Instruct', kind: 'text', file: 'qwen2.5-3b-instruct-q4_k_m.gguf', default: true, requiredFor: ['verification', 'reportReview', 'postReview', 'commentReview', 'messageModeration', 'appeal'] },
+  { id: 'text-policy', name: 'Qwen 2.5 Policy (adaptive)', kind: 'text', file: 'Auto-selects 0.5B or 3B Q4_K_M by server memory', default: true, requiredFor: ['verification', 'reportReview', 'postReview', 'commentReview', 'messageModeration', 'appeal'] },
   { id: 'moderation-vision', name: 'MobileNetV2 Mid NSFW', kind: 'moderation', file: 'nsfwjs-mobilenet-v2-mid', default: true, requiredFor: ['adultContent', 'imageModeration', 'videoCaptionModeration'] },
   { id: 'vision-review', name: 'Moondream 2', kind: 'vision', file: 'moondream2-text-model-f16.gguf', default: false, requiredFor: ['imageModeration', 'videoCaptionModeration', 'violence', 'weaponSale'] },
   { id: 'embedding', name: 'Nomic Embed Text v1.5', kind: 'embedding', file: 'nomic-embed-text-v1.5.Q4_K_M.gguf', default: true, requiredFor: ['spam', 'scam', 'duplicateContent', 'fakeAccount'] }

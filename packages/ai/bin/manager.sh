@@ -89,12 +89,51 @@ ensure_docker() {
   { docker compose version >/dev/null 2>&1 || have docker-compose; } || die "Docker Compose installation did not complete"
 }
 
+policy_variant() {
+  # Select once per persistent Social AI data directory.  The 3B policy model
+  # needs several GB free *in addition to* the crawler and backend.  Small VPS
+  # plans must stay functional, so use the official 0.5B Q4 model when fewer
+  # than 5 GiB are currently available.  An operator can explicitly override
+  # this with TIWLO_SOCIAL_AI_POLICY_MODEL=standard|compact.
+  local requested="${TIWLO_SOCIAL_AI_POLICY_MODEL:-}" persisted="" available="0" selected="compact"
+  case "$requested" in
+    standard|compact) printf '%s\n' "$requested"; return ;;
+  esac
+  if [ -s "$STATE_DIR/text-policy-variant" ]; then
+    persisted="$(tr -d '\r\n' <"$STATE_DIR/text-policy-variant")"
+    case "$persisted" in standard|compact) printf '%s\n' "$persisted"; return ;; esac
+  fi
+  if [ -r /proc/meminfo ]; then available="$(awk '/^MemAvailable:/ { print $2; exit }' /proc/meminfo 2>/dev/null || echo 0)"; fi
+  if [[ "$available" =~ ^[0-9]+$ ]] && [ "$available" -ge 5242880 ]; then selected="standard"; fi
+  printf '%s\n' "$selected" >"$STATE_DIR/text-policy-variant"
+  printf '%s\n' "$selected"
+}
+
+policy_model_file() {
+  case "$(policy_variant)" in
+    standard) echo "qwen2.5-3b-instruct-q4_k_m.gguf" ;;
+    *) echo "qwen2.5-0.5b-instruct-q4_k_m.gguf" ;;
+  esac
+}
+
+policy_model_url() {
+  case "$(policy_variant)" in
+    standard) echo "https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q4_k_m.gguf?download=true" ;;
+    *) echo "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf?download=true" ;;
+  esac
+}
+
 write_compose() {
-  local active_model="text-policy" model_file_name="qwen2.5-3b-instruct-q4_k_m.gguf" mmproj_line=""
+  local active_model="text-policy" model_file_name="" mmproj_line="" context_size="4096" parallelism="2"
   ensure_crawl4ai_credentials
   [ -f "$STATE_DIR/active-model" ] && active_model="$(cat "$STATE_DIR/active-model" 2>/dev/null || echo text-policy)"
+  model_file_name="$(model_file "$active_model")"
+  if [ "$active_model" = "text-policy" ] && [ "$(policy_variant)" = "compact" ]; then
+    # The compact model is chosen specifically for low-memory VPS plans.
+    context_size="2048"
+    parallelism="1"
+  fi
   if [ "$active_model" = "vision-review" ]; then
-    model_file_name="moondream2-text-model-f16.gguf"
     mmproj_line=', "--mmproj", "/models/moondream2-mmproj-f16.gguf"'
   fi
   cat >"$COMPOSE_FILE" <<'YAML'
@@ -132,7 +171,7 @@ services:
     volumes:
       - ./models:/models:ro
 YAML
-  printf '    command: ["-m", "/models/%s", "--host", "0.0.0.0", "--port", "8080", "--ctx-size", "4096", "--parallel", "2"%s]\n' "$model_file_name" "$mmproj_line" >>"$COMPOSE_FILE"
+  printf '    command: ["-m", "/models/%s", "--host", "0.0.0.0", "--port", "8080", "--ctx-size", "%s", "--parallel", "%s"%s]\n' "$model_file_name" "$context_size" "$parallelism" "$mmproj_line" >>"$COMPOSE_FILE"
 }
 
 ensure_searxng_config() {
@@ -159,7 +198,7 @@ YAML
 
 model_file() {
   case "$1" in
-    text-policy) echo "qwen2.5-3b-instruct-q4_k_m.gguf" ;;
+    text-policy) policy_model_file ;;
     vision-review) echo "moondream2-text-model-f16.gguf" ;;
     embedding) echo "nomic-embed-text-v1.5.Q4_K_M.gguf" ;;
     moderation-vision) echo "nsfwjs-mobilenet-v2-mid" ;;
@@ -169,7 +208,7 @@ model_file() {
 
 model_url() {
   case "$1" in
-    text-policy) echo "https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q4_k_m.gguf?download=true" ;;
+    text-policy) policy_model_url ;;
     vision-review) echo "https://huggingface.co/moondream/moondream2-gguf/resolve/main/moondream2-text-model-f16.gguf?download=true" ;;
     embedding) echo "https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.Q4_K_M.gguf?download=true" ;;
     *) return 1 ;;

@@ -1,10 +1,10 @@
 [
   {
     "id": "text-policy",
-    "name": "Qwen 2.5 3B Instruct",
+    "name": "Qwen 2.5 Policy (adaptive 0.5B / 3B)",
     "kind": "text",
-    "file": "qwen2.5-3b-instruct-q4_k_m.gguf",
-    "url": "https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q4_k_m.gguf?download=true",
+    "file": "auto: qwen2.5-0.5b or qwen2.5-3b Q4_K_M.gguf",
+    "url": "Auto-selected by available server memory; official Qwen GGUF source",
     "default": true
   },
   {

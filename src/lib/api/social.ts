@@ -76,9 +76,9 @@ export async function fetchSocialSettingsWithApi() {
 const socialAiBundleModels = [
   {
     id: 'text-policy',
-    name: 'Qwen2.5 3B Instruct (Q4_K_M)',
+    name: 'Qwen2.5 Policy (adaptive 0.5B / 3B)',
     kind: 'Text / policy',
-    file: 'Qwen2.5-3B-Instruct-Q4_K_M.gguf',
+    file: 'Auto-selects Q4_K_M model for available server memory',
     runtime: 'llama.cpp',
     default: true
   },
