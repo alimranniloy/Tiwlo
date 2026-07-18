@@ -29,6 +29,7 @@ import {
   adminUpsertSocialProfileDecorationWithApi,
   adminUpsertSocialProfileEffectWithApi,
   deleteUserWithApi,
+  fetchAdminSocialAiOverviewWithApi,
   fetchAdminSocialOverviewWithApi,
   fetchAdminSocialModerationEventsWithApi,
   fetchAdminSocialPostsWithApi,
@@ -37,11 +38,14 @@ import {
   fetchAdminSocialProfileDecorationsWithApi,
   fetchAdminSocialProfileEffectsWithApi,
   fetchSocialSettingsWithApi,
+  operateAdminSocialAiWithApi,
+  resolveAdminSocialAiCaseWithApi,
+  updateAdminSocialAiSettingsWithApi,
   uploadSocialProfileDecorationWithApi,
   uploadSocialProfileEffectWithApi
 } from '../../lib/tiwloApi';
 
-type Tab = 'users' | 'posts' | 'reports' | 'automation' | 'decorations' | 'effects' | 'settings';
+type Tab = 'users' | 'posts' | 'reports' | 'automation' | 'ai' | 'decorations' | 'effects' | 'settings';
 
 const emptyDecoration = { id: '', name: '', assetUrl: '', fileName: '', mimeType: 'image/png', animated: false, width: 288, height: 288, priceUsd: 0, status: 'active', sortOrder: 0 };
 const emptyEffect = { ...emptyDecoration, width: 450, height: 880 };
@@ -77,6 +81,10 @@ const Toggle = ({ checked, onChange, label, detail }: { checked: boolean; onChan
   </label>
 );
 
+const aiFeatureLabels: Record<string, string> = {
+  verification: 'Blue verification & identity review', reportReview: 'Report investigation', postReview: 'Post review', commentReview: 'Comment review', messageModeration: 'Private-message moderation', imageModeration: 'Image moderation', videoCaptionModeration: 'Video & caption moderation', spam: 'Spam detection', scam: 'Scam detection', fakeAccount: 'Fake-account detection', fakeProfile: 'Fake-profile detection', impersonation: 'Impersonation detection', harassment: 'Harassment detection', hateSpeech: 'Hate-speech detection', threat: 'Threat detection', weaponSale: 'Weapon-sale detection', drugSale: 'Drug-sale detection', adultContent: 'Adult-content detection', violence: 'Violence detection', selfHarm: 'Self-harm detection', copyright: 'Copyright & duplicate content', warning: 'Private warnings', strike: 'Strike system', appeal: 'Appeal review', notificationAutomation: 'Notification automation'
+};
+
 export default function AdminSocial() {
   const [tab, setTab] = React.useState<Tab>('users');
   const [overview, setOverview] = React.useState<any>({});
@@ -93,6 +101,8 @@ export default function AdminSocial() {
   const [effectFile, setEffectFile] = React.useState<File | null>(null);
   const [effectPreview, setEffectPreview] = React.useState('');
   const [settings, setSettings] = React.useState<any>({});
+  const [aiOverview, setAiOverview] = React.useState<any>(null);
+  const [aiLogs, setAiLogs] = React.useState<string[]>([]);
   const [stunJson, setStunJson] = React.useState('[]');
   const [search, setSearch] = React.useState('');
   const [loading, setLoading] = React.useState(true);
@@ -104,7 +114,7 @@ export default function AdminSocial() {
     setLoading(true);
     setError('');
     try {
-      const [summary, socialUsers, socialPosts, socialReports, automationEvents, socialDecorations, socialEffects, socialSettings] = await Promise.all([
+      const [summary, socialUsers, socialPosts, socialReports, automationEvents, socialDecorations, socialEffects, socialSettings, socialAi] = await Promise.all([
         fetchAdminSocialOverviewWithApi(),
         fetchAdminSocialUsersWithApi(search || undefined),
         fetchAdminSocialPostsWithApi(undefined, undefined, search || undefined),
@@ -112,7 +122,8 @@ export default function AdminSocial() {
         fetchAdminSocialModerationEventsWithApi(),
         fetchAdminSocialProfileDecorationsWithApi(),
         fetchAdminSocialProfileEffectsWithApi(),
-        fetchSocialSettingsWithApi()
+        fetchSocialSettingsWithApi(),
+        fetchAdminSocialAiOverviewWithApi()
       ]);
       setOverview(summary || {});
       setUsers(socialUsers || []);
@@ -122,6 +133,7 @@ export default function AdminSocial() {
       setDecorations(socialDecorations || []);
       setEffects(socialEffects || []);
       setSettings(socialSettings || {});
+      setAiOverview(socialAi || null);
       setStunJson(JSON.stringify(socialSettings?.stunServers || [], null, 2));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to load Social controls');
@@ -186,6 +198,25 @@ export default function AdminSocial() {
       stunServers,
       verificationPackages: Array.isArray(settings.verificationPackages) ? settings.verificationPackages : []
     }), 'Social settings saved.');
+  };
+
+  const saveAiSettings = async (next: Record<string, unknown>) => {
+    await perform(async () => {
+      const updated = await updateAdminSocialAiSettingsWithApi(next);
+      setAiOverview(updated);
+    }, 'Social AI settings saved. Required packages and models are queued automatically.');
+  };
+
+  const operateAi = async (scope: string, action: string, id?: string) => {
+    await perform(async () => {
+      const result = await operateAdminSocialAiWithApi({ scope, action, id });
+      const managerLogs = Array.isArray(result?.logs?.logs) ? result.logs.logs : Array.isArray(result?.health?.logs) ? result.health.logs : [];
+      if (managerLogs.length) setAiLogs(managerLogs.map(String));
+    }, action === 'logs' ? 'Live package logs loaded.' : 'Social AI operation was added to the persistent queue.');
+  };
+
+  const resolveAiCase = async (id: string, action: string) => {
+    await perform(() => resolveAdminSocialAiCaseWithApi(id, { action }), `Social AI case ${action.replace(/_/g, ' ')}.`);
   };
 
   const chooseDecorationFile = async (file?: File) => {
@@ -301,6 +332,11 @@ export default function AdminSocial() {
     { label: 'Live Now', value: overview.activeLiveStreams || 0, icon: Radio },
     { label: 'Open Reports', value: overview.openReports || 0, icon: Flag }
   ];
+  const ai = aiOverview || {};
+  const aiSettings = ai.settings || {};
+  const aiHealth = ai.health || {};
+  const aiPackages = aiHealth.packages || {};
+  const aiModels = aiHealth.models || {};
 
   return (
     <div className="space-y-6 pb-12">
@@ -333,6 +369,7 @@ export default function AdminSocial() {
             ['posts', 'Posts & Reels', Film],
             ['reports', 'Reports', Flag],
             ['automation', 'Automation', Ban],
+            ['ai', 'AI', Sparkles],
             ['decorations', 'Profile decor', Sparkles],
             ['effects', 'Profile effects', Layers3],
             ['settings', 'Settings', Settings]
@@ -342,7 +379,7 @@ export default function AdminSocial() {
             </button>
           ))}
         </div>
-        {tab !== 'settings' && tab !== 'decorations' && tab !== 'effects' && (
+        {tab !== 'settings' && tab !== 'ai' && tab !== 'decorations' && tab !== 'effects' && (
           <label className="flex min-w-[260px] items-center gap-2 rounded border border-[#e5e8ed] px-3 py-2">
             <Search className="h-4 w-4 text-gray-400" />
             <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search real database records" className="w-full text-[12px] outline-none" />
@@ -407,6 +444,69 @@ export default function AdminSocial() {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {tab === 'ai' && (
+        <div className="space-y-5">
+          <section className="overflow-hidden rounded border border-[#dce5f3] bg-white">
+            <div className="grid gap-5 bg-[linear-gradient(115deg,#f8fbff_0%,#eef5ff_52%,#fbfaff_100%)] p-5 lg:grid-cols-[1fr_auto] lg:items-center">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-[0.18em] text-[#4169e1]">Social module only</p>
+                <h2 className="mt-2 text-xl font-black tracking-tight text-[#26344a]">Social AI Control Center</h2>
+                <p className="mt-2 max-w-2xl text-[12px] leading-5 text-slate-600">Verification, reports, public content, optional private-message review, warnings, appeals and automation run from a persistent Social-only queue. The platform-wide Admin AI Model is not changed.</p>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <span className={`rounded-full px-3 py-1 text-[10px] font-black uppercase ${aiHealth.available ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>{aiHealth.available ? 'Manager online' : 'Manager needs bootstrap'}</span>
+                  <span className="rounded-full bg-white px-3 py-1 text-[10px] font-black uppercase text-slate-600">{(ai.runningFeatures || []).length} automation features on</span>
+                  <span className="rounded-full bg-white px-3 py-1 text-[10px] font-black uppercase text-slate-600">{Number(ai.queue?.queued || 0)} queued</span>
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2 lg:max-w-[300px] lg:justify-end">
+                <button disabled={saving} onClick={() => operateAi('system', 'install_all')} className="flex items-center gap-2 rounded bg-[#0069ff] px-4 py-2.5 text-[12px] font-black text-white disabled:opacity-50"><Sparkles className="h-4 w-4" /> Install all required</button>
+                <button disabled={saving} onClick={() => operateAi('system', 'health_check')} className="flex items-center gap-2 rounded border border-[#cdd9ec] bg-white px-4 py-2.5 text-[12px] font-black text-[#36527c] disabled:opacity-50"><RefreshCw className="h-4 w-4" /> Health check</button>
+                <button disabled={saving} onClick={() => operateAi('system', 'repair_all')} className="flex items-center gap-2 rounded border border-[#cdd9ec] bg-white px-4 py-2.5 text-[12px] font-black text-[#36527c] disabled:opacity-50"><Settings className="h-4 w-4" /> Repair all</button>
+              </div>
+            </div>
+            <div className="grid divide-y divide-[#e8edf5] border-t border-[#e8edf5] sm:grid-cols-3 sm:divide-x sm:divide-y-0">
+              <div className="p-4"><p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Package health</p><p className="mt-1 text-lg font-black text-[#26344a]">{Object.values(aiPackages).filter((item: any) => item?.healthy).length}/{(ai.catalog?.packages || []).length}</p></div>
+              <div className="p-4"><p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Model health</p><p className="mt-1 text-lg font-black text-[#26344a]">{Object.values(aiModels).filter((item: any) => item?.healthy).length}/{(ai.catalog?.models || []).length}</p></div>
+              <div className="p-4"><p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Open review cases</p><p className="mt-1 text-lg font-black text-[#26344a]">{(ai.cases || []).filter((item: any) => ['open', 'manual_review', 'appeal_pending'].includes(item.status)).length}</p></div>
+            </div>
+          </section>
+
+          <section className="rounded border border-[#e5e8ed] bg-white p-5">
+            <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between"><div><h3 className="text-[15px] font-black text-[#2e3d49]">Packages</h3><p className="mt-1 text-[11px] text-gray-500">Every action is sent to the persistent server queue. Status is read from the real package health check.</p></div><span className="rounded bg-slate-50 px-3 py-1.5 text-[10px] font-black text-slate-600">AUTO START {aiSettings.autoStart === false ? 'OFF' : 'ON'}</span></div>
+            <div className="mt-4 grid gap-3 xl:grid-cols-2">
+              {(ai.catalog?.packages || []).map((item: any) => {
+                const state = aiPackages[item.id] || {};
+                return <article key={item.id} className="rounded border border-[#e5e8ed] p-4"><div className="flex items-start justify-between gap-4"><div><div className="flex items-center gap-2"><span className="flex h-8 w-8 items-center justify-center rounded bg-blue-50 text-[#0069ff]"><Sparkles className="h-4 w-4" /></span><div><h4 className="text-[13px] font-black text-[#2e3d49]">{item.name}</h4><p className="text-[10px] text-gray-500">{item.role}</p></div></div></div><span className={`rounded px-2 py-1 text-[9px] font-black uppercase ${state.healthy ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{state.healthy ? 'healthy' : state.status || 'offline'}</span></div><div className="mt-4 flex flex-wrap gap-2"><button disabled={saving} onClick={() => operateAi('package', 'install', item.id)} className="rounded border border-blue-200 px-2.5 py-1.5 text-[10px] font-black text-blue-700">Install</button><button disabled={saving} onClick={() => operateAi('package', 'enable', item.id)} className="rounded border px-2.5 py-1.5 text-[10px] font-black text-slate-600">Enable</button><button disabled={saving} onClick={() => operateAi('package', 'disable', item.id)} className="rounded border px-2.5 py-1.5 text-[10px] font-black text-slate-600">Disable</button><button disabled={saving} onClick={() => operateAi('package', 'update', item.id)} className="rounded border px-2.5 py-1.5 text-[10px] font-black text-slate-600">Update</button><button disabled={saving} onClick={() => operateAi('package', 'repair', item.id)} className="rounded border px-2.5 py-1.5 text-[10px] font-black text-slate-600">Repair</button><button disabled={saving} onClick={() => operateAi('package', state.healthy ? 'stop' : 'start', item.id)} className="rounded border px-2.5 py-1.5 text-[10px] font-black text-slate-600">{state.healthy ? 'Stop' : 'Start'}</button><button disabled={saving} onClick={() => operateAi('package', 'restart', item.id)} className="rounded border px-2.5 py-1.5 text-[10px] font-black text-slate-600">Restart</button><button disabled={saving} onClick={() => operateAi('package', 'autostart', item.id)} className="rounded border px-2.5 py-1.5 text-[10px] font-black text-slate-600">Auto start</button><button disabled={saving} onClick={() => operateAi('package', 'health', item.id)} className="rounded border px-2.5 py-1.5 text-[10px] font-black text-slate-600">Test</button><button disabled={saving} onClick={() => operateAi('package', 'logs', item.id)} className="rounded border px-2.5 py-1.5 text-[10px] font-black text-slate-600">Logs</button></div></article>;
+              })}
+            </div>
+          </section>
+
+          <section className="rounded border border-[#e5e8ed] bg-white p-5">
+            <div><h3 className="text-[15px] font-black text-[#2e3d49]">Models</h3><p className="mt-1 text-[11px] text-gray-500">Downloads resume on interruption and GGUF files are verified before the model can load.</p></div>
+            <div className="mt-4 grid gap-3 xl:grid-cols-2">
+              {(ai.catalog?.models || []).map((item: any) => {
+                const state = aiModels[item.id] || {};
+                return <article key={item.id} className="rounded border border-[#e5e8ed] p-4"><div className="flex items-start justify-between gap-4"><div><p className="text-[10px] font-black uppercase tracking-widest text-[#0069ff]">{item.kind} model</p><h4 className="mt-1 text-[13px] font-black text-[#2e3d49]">{item.name}</h4><p className="mt-1 text-[10px] text-gray-500">{item.file}</p></div><span className={`rounded px-2 py-1 text-[9px] font-black uppercase ${state.healthy ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>{state.healthy ? 'verified' : state.status || 'missing'}</span></div><div className="mt-4 flex flex-wrap gap-2"><button disabled={saving} onClick={() => operateAi('model', 'download', item.id)} className="rounded border border-blue-200 px-2.5 py-1.5 text-[10px] font-black text-blue-700">Download</button><button disabled={saving} onClick={() => operateAi('model', 'install', item.id)} className="rounded border px-2.5 py-1.5 text-[10px] font-black text-slate-600">Install</button><button disabled={saving} onClick={() => operateAi('model', 'resume', item.id)} className="rounded border px-2.5 py-1.5 text-[10px] font-black text-slate-600">Resume</button><button disabled={saving} onClick={() => operateAi('model', 'repair', item.id)} className="rounded border px-2.5 py-1.5 text-[10px] font-black text-slate-600">Repair</button><button disabled={saving} onClick={() => operateAi('model', item.id === 'moderation-vision' ? 'health' : 'load', item.id)} className="rounded border px-2.5 py-1.5 text-[10px] font-black text-slate-600">{item.id === 'moderation-vision' ? 'Verify' : 'Load & run'}</button><button disabled={saving} onClick={() => operateAi('model', 'restart', item.id)} className="rounded border px-2.5 py-1.5 text-[10px] font-black text-slate-600">Restart</button><button disabled={saving} onClick={() => operateAi('model', 'update', item.id)} className="rounded border px-2.5 py-1.5 text-[10px] font-black text-slate-600">Update</button>{item.id === 'text-policy' && <button disabled={saving} onClick={() => operateAi('model', 'default', item.id)} className="rounded border px-2.5 py-1.5 text-[10px] font-black text-slate-600">Set default</button>}<button disabled={saving} onClick={() => operateAi('model', 'autoload', item.id)} className="rounded border px-2.5 py-1.5 text-[10px] font-black text-slate-600">Auto load</button>{!item.default && <button disabled={saving} onClick={() => operateAi('model', 'delete', item.id)} className="rounded border border-red-100 px-2.5 py-1.5 text-[10px] font-black text-red-600">Delete</button>}</div></article>;
+              })}
+            </div>
+          </section>
+
+          <section className="rounded border border-[#e5e8ed] bg-white p-5">
+            <div className="flex items-start justify-between gap-4"><div><h3 className="text-[15px] font-black text-[#2e3d49]">Social AI automation</h3><p className="mt-1 text-[11px] text-gray-500">Turning on a feature creates a real dependency-install task before that feature receives queue work. Private message review is off until explicitly enabled.</p></div><label className="flex items-center gap-2 text-[11px] font-black text-[#2e3d49]">System enabled<input type="checkbox" checked={aiSettings.enabled !== false} disabled={saving} onChange={(event) => saveAiSettings({ ...aiSettings, enabled: event.target.checked })} className="h-4 w-4 accent-[#0069ff]" /></label></div>
+            <div className="mt-4"><Toggle checked={aiSettings.autoBootstrap !== false} onChange={(checked) => saveAiSettings({ ...aiSettings, autoBootstrap: checked })} label="Bootstrap after backend start" detail="Queue a full Social AI verification and repair pass when the backend starts. Package auto-start and health repair are controlled on each real package." /></div>
+            <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">{Object.entries(aiSettings.features || {}).map(([key, value]) => <Toggle key={key} checked={Boolean(value)} onChange={(checked) => saveAiSettings({ ...aiSettings, features: { ...(aiSettings.features || {}), [key]: checked } })} label={aiFeatureLabels[key] || key} detail={checked ? 'Enabled — dependencies are enforced by queue.' : 'Off — no new Social data is sent to this feature.'} />)}</div>
+            <div className="mt-5 border-t border-[#edf0f4] pt-5"><h4 className="text-[13px] font-black text-[#2e3d49]">Automatic action policy</h4><div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4"><Toggle checked={Boolean(aiSettings.automaticActions?.autoApproveVerification)} onChange={(checked) => saveAiSettings({ ...aiSettings, automaticActions: { ...(aiSettings.automaticActions || {}), autoApproveVerification: checked } })} label="Auto-approve verification" detail="Only on high-confidence evidence." /><Toggle checked={Boolean(aiSettings.automaticActions?.autoRejectVerification)} onChange={(checked) => saveAiSettings({ ...aiSettings, automaticActions: { ...(aiSettings.automaticActions || {}), autoRejectVerification: checked } })} label="Auto-reject verification" detail="Low-confidence cases stay manual." /><Toggle checked={Boolean(aiSettings.automaticActions?.removeContent)} onChange={(checked) => saveAiSettings({ ...aiSettings, automaticActions: { ...(aiSettings.automaticActions || {}), removeContent: checked } })} label="Auto-remove violating content" detail="Requires high confidence and policy action." /><Toggle checked={Boolean(aiSettings.automaticActions?.restrictAccount)} onChange={(checked) => saveAiSettings({ ...aiSettings, automaticActions: { ...(aiSettings.automaticActions || {}), restrictAccount: checked } })} label="Auto-restrict account" detail="Only critical high-confidence violations." /></div><label className="mt-4 block max-w-xs text-[10px] font-black uppercase tracking-wide text-gray-500">High confidence threshold<input type="number" min="0.5" max="0.995" step="0.005" value={aiSettings.automaticActions?.highConfidence ?? 0.92} onChange={(event) => saveAiSettings({ ...aiSettings, automaticActions: { ...(aiSettings.automaticActions || {}), highConfidence: Number(event.target.value) } })} className="mt-1 w-full rounded border border-[#dfe4ea] px-3 py-2 text-[12px] normal-case text-[#2e3d49] outline-none focus:border-[#0069ff]" /></label></div>
+          </section>
+
+          <div className="grid gap-5 2xl:grid-cols-[1.15fr_.85fr]">
+            <section className="rounded border border-[#e5e8ed] bg-white p-5"><div className="flex items-center justify-between"><div><h3 className="text-[15px] font-black text-[#2e3d49]">AI queue</h3><p className="mt-1 text-[11px] text-gray-500">Persistent jobs survive backend restarts and deployment.</p></div><button disabled={saving} onClick={() => operateAi('system', 'health_check')} className="rounded border px-3 py-1.5 text-[10px] font-black text-slate-600">Refresh status</button></div><div className="mt-4 space-y-2">{(ai.jobs || []).slice(0, 12).map((job: any) => <div key={job.id} className="rounded border border-[#edf0f4] p-3"><div className="flex items-center justify-between gap-3"><div className="min-w-0"><p className="truncate text-[12px] font-black text-[#2e3d49]">{job.type.replace(/_/g, ' ')}</p><p className="mt-1 text-[10px] text-gray-500">{job.phase} · attempt {job.attempts}/{job.maxAttempts}</p></div><span className={`rounded px-2 py-1 text-[9px] font-black uppercase ${job.status === 'failed' ? 'bg-red-50 text-red-700' : job.status === 'completed' ? 'bg-emerald-50 text-emerald-700' : 'bg-blue-50 text-blue-700'}`}>{job.status}</span></div><div className="mt-2 h-1.5 overflow-hidden rounded bg-slate-100"><div className="h-full bg-[#0069ff]" style={{ width: `${Math.max(0, Math.min(100, Number(job.progress) || 0))}%` }} /></div>{job.error && <p className="mt-2 text-[10px] text-red-600">{job.error}</p>}</div>)}{!(ai.jobs || []).length && <p className="rounded border border-dashed p-6 text-center text-[11px] font-bold text-gray-400">No Social AI job has been queued yet.</p>}</div></section>
+            <section className="rounded border border-[#e5e8ed] bg-white p-5"><h3 className="text-[15px] font-black text-[#2e3d49]">Manager logs</h3><p className="mt-1 text-[11px] text-gray-500">Actual service output from the selected package.</p><pre className="mt-4 min-h-[220px] max-h-[360px] overflow-auto rounded bg-[#101828] p-3 text-[10px] leading-5 text-slate-200">{aiLogs.length ? aiLogs.join('\n') : 'Select Logs on any package to load its latest server output.'}</pre></section>
+          </div>
+
+          <section className="rounded border border-[#e5e8ed] bg-white p-5"><div><h3 className="text-[15px] font-black text-[#2e3d49]">Warnings, strikes & appeals</h3><p className="mt-1 text-[11px] text-gray-500">Private case records are visible only to the affected user and authorised Social administrators.</p></div><div className="mt-4 space-y-3">{(ai.cases || []).slice(0, 30).map((socialCase: any) => { const reportedType = socialCase.evidence?.context?.target?.type; const canRemove = socialCase.sourceType === 'post' || socialCase.sourceType === 'comment' || (socialCase.sourceType === 'report' && ['post', 'comment'].includes(reportedType)); return <article key={socialCase.id} className="flex flex-col gap-3 rounded border border-[#edf0f4] p-4 lg:flex-row lg:items-center lg:justify-between"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><p className="text-[12px] font-black text-[#2e3d49]">{socialCase.subjectUser?.name || socialCase.subjectUserId}</p><span className="rounded bg-slate-100 px-2 py-0.5 text-[9px] font-black uppercase text-slate-600">{socialCase.category || 'review'}</span><span className="rounded bg-amber-50 px-2 py-0.5 text-[9px] font-black uppercase text-amber-700">{socialCase.severity}</span><span className="rounded bg-blue-50 px-2 py-0.5 text-[9px] font-black uppercase text-blue-700">{socialCase.status}</span></div><p className="mt-1 text-[11px] text-gray-600">{socialCase.warningMessage || socialCase.recommendation || 'Social AI review recorded.'}</p><p className="mt-1 text-[10px] text-gray-400">{socialCase.sourceType} · confidence {Number(socialCase.confidence || 0).toFixed(2)} · strikes {socialCase.strikeCount} · appeal {socialCase.appealStatus}</p></div><div className="flex shrink-0 flex-wrap gap-2"><button disabled={saving} onClick={() => resolveAiCase(socialCase.id, 'manual_review')} className="rounded border px-2.5 py-1.5 text-[10px] font-black text-slate-600">Manual</button><button disabled={saving} onClick={() => resolveAiCase(socialCase.id, 'warn')} className="rounded border border-amber-200 px-2.5 py-1.5 text-[10px] font-black text-amber-700">Warn</button><button disabled={saving} onClick={() => resolveAiCase(socialCase.id, 'strike')} className="rounded border border-orange-200 px-2.5 py-1.5 text-[10px] font-black text-orange-700">Strike</button>{canRemove && <button disabled={saving} onClick={() => resolveAiCase(socialCase.id, 'remove_content')} className="rounded border border-red-100 px-2.5 py-1.5 text-[10px] font-black text-red-600">Remove</button>}<button disabled={saving} onClick={() => resolveAiCase(socialCase.id, 'restrict_account')} className="rounded border border-red-100 px-2.5 py-1.5 text-[10px] font-black text-red-600">Restrict</button><button disabled={saving} onClick={() => resolveAiCase(socialCase.id, 'dismiss')} className="rounded border px-2.5 py-1.5 text-[10px] font-black text-slate-600">Dismiss</button></div></article>; })}{!(ai.cases || []).length && <p className="rounded border border-dashed p-6 text-center text-[11px] font-bold text-gray-400">No Social AI warning, strike or appeal is waiting.</p>}</div></section>
         </div>
       )}
 

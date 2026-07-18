@@ -1,6 +1,7 @@
 import { requireAdmin, requireAuth } from '../../core/auth.js';
 import { toApi } from '../../core/format.js';
 import * as service from './service.js';
+import * as socialAi from './ai.js';
 
 const api = async (promise) => toApi(await promise);
 
@@ -156,7 +157,11 @@ export const socialResolvers = {
     adminSocialReports: (_, { status }, ctx) => api(service.adminReports(ctx, status)),
     adminSocialModerationEvents: (_, args, ctx) => api(service.adminModerationEvents(ctx, args)),
     adminSocialProfileDecorations: (_, __, ctx) => api(service.adminProfileDecorations(ctx)),
-    adminSocialProfileEffects: (_, __, ctx) => api(service.adminProfileEffects(ctx))
+    adminSocialProfileEffects: (_, __, ctx) => api(service.adminProfileEffects(ctx)),
+    adminSocialAiOverview: (_, __, ctx) => api(socialAi.socialAiOverview(ctx)),
+    adminSocialAiJobs: (_, { status, limit }, ctx) => api(socialAi.listAdminSocialAiJobs(ctx, status, limit)),
+    adminSocialAiCases: (_, { status, limit }, ctx) => api(socialAi.listAdminSocialAiCases(ctx, status, limit)),
+    socialAiMyCases: (_, __, ctx) => api(socialAi.getMySocialAiCases(ctx))
   },
   Mutation: {
     upsertSocialProfile: (_, { input }, ctx) => api(service.upsertProfile(ctx, input)),
@@ -232,6 +237,10 @@ export const socialResolvers = {
     adminUpsertSocialProfileDecoration: (_, { input }, ctx) => api(service.adminUpsertProfileDecoration(ctx, input)),
     adminArchiveSocialProfileDecoration: (_, { id }, ctx) => service.adminArchiveProfileDecoration(ctx, id),
     adminUpsertSocialProfileEffect: (_, { input }, ctx) => api(service.adminUpsertProfileEffect(ctx, input)),
-    adminArchiveSocialProfileEffect: (_, { id }, ctx) => service.adminArchiveProfileEffect(ctx, id)
+    adminArchiveSocialProfileEffect: (_, { id }, ctx) => service.adminArchiveProfileEffect(ctx, id),
+    adminUpdateSocialAiSettings: (_, { input }, ctx) => api(socialAi.updateSocialAiSettings(ctx, input)),
+    adminOperateSocialAi: (_, { input }, ctx) => api(socialAi.operateSocialAi(ctx, input)),
+    adminResolveSocialAiCase: (_, { id, input }, ctx) => api(socialAi.resolveSocialAiCase(ctx, id, input)),
+    requestSocialAiAppeal: (_, { id, text }, ctx) => api(socialAi.requestSocialAiAppeal(ctx, id, text))
   }
 };

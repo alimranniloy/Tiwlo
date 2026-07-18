@@ -1,0 +1,26 @@
+[
+  {
+    "id": "text-policy",
+    "name": "Qwen 2.5 3B Instruct",
+    "kind": "text",
+    "file": "qwen2.5-3b-instruct-q4_k_m.gguf",
+    "url": "https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q4_k_m.gguf?download=true",
+    "default": true
+  },
+  {
+    "id": "vision-review",
+    "name": "Moondream 2",
+    "kind": "vision",
+    "file": "moondream2-text-model-f16.gguf",
+    "url": "https://huggingface.co/moondream/moondream2-gguf/resolve/main/moondream2-text-model-f16.gguf?download=true",
+    "default": false
+  },
+  {
+    "id": "embedding",
+    "name": "Nomic Embed Text v1.5",
+    "kind": "embedding",
+    "file": "nomic-embed-text-v1.5.Q4_K_M.gguf",
+    "url": "https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.Q4_K_M.gguf?download=true",
+    "default": true
+  }
+]

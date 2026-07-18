@@ -32,6 +32,7 @@ import { ensureWhatsAppAuthSchema, publicWhatsAppStatus } from './modules/whatsa
 import { registerSocialRoutes } from './modules/social/media.js';
 import { startSocialModerationBackfill } from './modules/social/moderation.js';
 import { processDueCopyrightTakedowns, startSocialCopyrightBackfill } from './modules/social/service.js';
+import { startSocialAiInfrastructure } from './modules/social/ai.js';
 import { publicCurrencyContext } from './core/currency.js';
 import { registerTSecurity } from '../../tSecurity/index.js';
 
@@ -585,6 +586,11 @@ app.listen(port, () => {
       console.warn('[social-copyright] legacy media scan failed:', error?.message || error);
     });
   }, 15_000);
+  // Social AI is a separate service namespace. Its bootstrap and persistent
+  // PostgreSQL queue never touch the platform-wide Admin AI Model runtime.
+  startSocialAiInfrastructure({ prisma }).catch((error) => {
+    console.warn('[social-ai] infrastructure start failed:', error?.message || error);
+  });
   ensureWhatsAppAuthSchema(prisma).catch((error) => {
     console.warn('[whatsapp] schema prepare failed:', error?.message || error);
   });

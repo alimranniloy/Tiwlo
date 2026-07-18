@@ -73,6 +73,42 @@ export async function fetchSocialSettingsWithApi() {
   return data.socialSettings;
 }
 
+export async function fetchAdminSocialAiOverviewWithApi() {
+  const data = await graphQL<{ adminSocialAiOverview: Record<string, any> }>(`
+    query AdminSocialAiOverview { adminSocialAiOverview }
+  `);
+  return data.adminSocialAiOverview;
+}
+
+export async function updateAdminSocialAiSettingsWithApi(input: Record<string, unknown>) {
+  const data = await graphQL<{ adminUpdateSocialAiSettings: Record<string, any> }>(`
+    mutation UpdateAdminSocialAiSettings($input: JSON!) {
+      adminUpdateSocialAiSettings(input: $input)
+    }
+  `, { input });
+  return data.adminUpdateSocialAiSettings;
+}
+
+export async function operateAdminSocialAiWithApi(input: { scope: string; action: string; id?: string }) {
+  const data = await graphQL<{ adminOperateSocialAi: Record<string, any> }>(`
+    mutation OperateAdminSocialAi($input: JSON!) {
+      adminOperateSocialAi(input: $input)
+    }
+  `, { input });
+  return data.adminOperateSocialAi;
+}
+
+export async function resolveAdminSocialAiCaseWithApi(id: string, input: Record<string, unknown>) {
+  const data = await graphQL<{ adminResolveSocialAiCase: any }>(`
+    mutation ResolveAdminSocialAiCase($id: ID!, $input: JSON) {
+      adminResolveSocialAiCase(id: $id, input: $input) {
+        id status actionTaken decision severity category warningMessage strikeCount appealStatus updatedAt
+      }
+    }
+  `, { id, input });
+  return data.adminResolveSocialAiCase;
+}
+
 export async function adminVerifySocialProfileWithApi(userId: string, verified: boolean) {
   const data = await graphQL<{ adminVerifySocialProfile: any }>(`
     mutation AdminVerifySocialProfile($userId: ID!, $verified: Boolean!) {

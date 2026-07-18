@@ -79,5 +79,31 @@ background audio, configure a licensed recognition provider using
 expected to return a rights-controlled `referenceId`, `ownerId`, confidence and
 policy; public metadata-only lookups are deliberately not treated as ownership.
 
+## Social AI Control Center
+
+**Admin > Social > AI** is a completely isolated Social-only control plane. It
+does not read, rename, replace, or configure the platform-wide **Admin > AI
+Model** service. Its settings are stored under the independent `socialAi`
+platform setting, while every queue item, case, appeal, warning and strike is
+stored in the Social AI PostgreSQL tables.
+
+The production bundle is in `packages/ai/`. It provides a persistent queue
+worker, health monitor, auto-repair/bootstrap scripts, SearXNG, Crawl4AI,
+llama.cpp and the managed text, vision, embedding and local NSFW moderation
+models. The secure deployment script automatically preserves
+`.data/social-ai`, `.logs/social-ai`, queue records and review history, then
+reinstalls missing dependencies, restores configuration, restarts services and
+loads the default policy model. Administrators use the Social AI package and
+model controls in the dashboard; no Linux, Docker or model-download command is
+required in the UI.
+
+Social AI feature switches are intentionally off by default. Turning one on
+creates a persistent dependency-install task before new Social data enters its
+queue. Private message review is opt-in and supplies only the reported message,
+not an entire conversation. Reports receive only the reported target plus the
+report reason. High-confidence automatic actions remain separately opt-in,
+audited and policy controlled; low-confidence work is retained for manual
+review and appeals.
+
 Before deployment, run `npm --prefix x run db:generate` and
 `npm --prefix x run db:push`, then rebuild/restart the backend and frontend.

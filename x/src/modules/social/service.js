@@ -10,6 +10,7 @@ import { writeAudit } from '../../core/audit.js';
 import { convertMoneyForCtx, startInvoicePayment } from '../billing/service.js';
 import { enforceTextModeration } from './moderation.js';
 import { fingerprintAudioFile } from './audioFingerprint.js';
+import { enqueueSocialAiIfEnabled } from './ai.js';
 
 export const SOCIAL_SETTING_KEY = 'social';
 
@@ -674,6 +675,9 @@ export const upsertProfile = async (ctx, input) => {
       include: profileInclude
     });
   });
+  enqueueSocialAiIfEnabled(ctx, 'fakeProfile', {
+    type: 'profile_review', priority: 12, payload: { userId: actor.id, targetId: actor.id, source: 'profile_update' }
+  }).catch((error) => console.warn('[social-ai] profile review enqueue failed:', error?.message || error));
   return mapProfile(ctx, profile, actor.id);
 };
 
@@ -2298,6 +2302,15 @@ export const createPost = async (ctx, input) => {
     singular: metadata.collaboratorIds?.includes(ownerId) ? 'Invited you to collaborate on a post' : 'Tagged you in a post',
     plural: 'tagged you in a post', count: 1, metadata: { postId: post.id, targetType: 'post' }
   })));
+  enqueueSocialAiIfEnabled(ctx, 'postReview', {
+    type: 'post_review', priority: 24, payload: { postId: post.id, targetId: post.id }
+  }).catch((error) => console.warn('[social-ai] post review enqueue failed:', error?.message || error));
+  if (media.some((item) => ['image', 'video'].includes(String(item?.type || '').toLowerCase()))) {
+    const feature = media.some((item) => String(item?.type || '').toLowerCase() === 'video') ? 'videoCaptionModeration' : 'imageModeration';
+    enqueueSocialAiIfEnabled(ctx, feature, {
+      type: 'content_review', priority: 25, payload: { postId: post.id, targetId: post.id, feature }
+    }).catch((error) => console.warn('[social-ai] media review enqueue failed:', error?.message || error));
+  }
   return mapPost(post);
 };
 
@@ -2729,6 +2742,9 @@ export const addComment = async (ctx, postId, body, replyToId) => {
     metadata: { postId, commentId: row.id, parentCommentId: parent.id }
   });
   await notifyMentions(ctx, actor, text, row.id, 'comment', { postId, commentId: row.id }, [post.authorId, parent?.authorId].filter(Boolean));
+  enqueueSocialAiIfEnabled(ctx, 'commentReview', {
+    type: 'comment_review', priority: 18, payload: { commentId: row.id, targetId: row.id }
+  }).catch((error) => console.warn('[social-ai] comment review enqueue failed:', error?.message || error));
   return mapComment(row);
 };
 
@@ -2995,6 +3011,11 @@ export const sendMessage = async (ctx, input) => {
     include: { members: true }
   });
   if (conversation) await createMessageNotification(ctx, actor, conversation, message);
+  // Private-message review is off by default. When an administrator explicitly
+  // enables it, only this message is queued; no conversation history is copied.
+  enqueueSocialAiIfEnabled(ctx, 'messageModeration', {
+    type: 'message_review', priority: 15, payload: { messageId: message.id, targetId: message.id }
+  }).catch((error) => console.warn('[social-ai] message review enqueue failed:', error?.message || error));
   return mapMessage(message);
 };
 
@@ -3683,6 +3704,9 @@ export const reportContent = async (ctx, targetType, targetId, reason, details) 
       targetId
     })
   });
+  enqueueSocialAiIfEnabled(ctx, 'reportReview', {
+    type: 'report_review', priority: 55, payload: { reportId: report.id, targetId: report.id }
+  }).catch((error) => console.warn('[social-ai] report review enqueue failed:', error?.message || error));
   return report;
 };
 
@@ -3847,6 +3871,9 @@ export const startVerificationCheckout = async (ctx, packageId, provider, curren
         message: 'Tiwi Team will review your notable-person application. You will receive a Support Center notification when a decision is made.',
         metadata: supportCenterMetadata({ caseType: 'verification', reportId: report.id, badgeType: 'gold', packageId: plan.id })
       });
+      enqueueSocialAiIfEnabled(ctx, 'verification', {
+        type: 'verification_review', priority: 70, payload: { reportId: report.id, targetId: report.id }
+      }).catch((error) => console.warn('[social-ai] verification review enqueue failed:', error?.message || error));
     }
     return { status: 'pending_review', provider: 'manual', message: 'Your Gold Notable application was sent to the Social administrators.' };
   }

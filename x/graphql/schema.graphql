@@ -3188,6 +3188,50 @@ type SocialAdminOverview {
   openReports: Int!
 }
 
+type SocialAiJob {
+  id: ID!
+  type: String!
+  status: String!
+  priority: Int!
+  payload: JSON!
+  result: JSON
+  error: String
+  progress: Int!
+  phase: String!
+  attempts: Int!
+  maxAttempts: Int!
+  runAfter: String!
+  lockedAt: String
+  startedAt: String
+  finishedAt: String
+  requestedById: ID
+  createdAt: String!
+  updatedAt: String!
+}
+
+type SocialAiCase {
+  id: ID!
+  subjectUserId: ID!
+  sourceType: String!
+  sourceId: String
+  category: String
+  decision: String!
+  severity: String!
+  confidence: Float
+  recommendation: String
+  actionTaken: String
+  status: String!
+  warningMessage: String
+  strikeCount: Int!
+  evidence: JSON!
+  appealStatus: String!
+  appealText: String
+  reviewedById: ID
+  resolvedAt: String
+  createdAt: String!
+  updatedAt: String!
+}
+
 type SocialPublicUser {
   id: ID!
   name: String!
@@ -3510,6 +3554,10 @@ type Query {
   adminSocialModerationEvents(decision: String, userId: ID, limit: Int): [SocialModerationEvent!]!
   adminSocialProfileDecorations: [SocialProfileDecoration!]!
   adminSocialProfileEffects: [SocialProfileDecoration!]!
+  adminSocialAiOverview: JSON!
+  adminSocialAiJobs(status: String, limit: Int): [SocialAiJob!]!
+  adminSocialAiCases(status: String, limit: Int): [SocialAiCase!]!
+  socialAiMyCases: [SocialAiCase!]!
 }
 
 type Mutation {
@@ -3766,4 +3814,8 @@ type Mutation {
   adminArchiveSocialProfileDecoration(id: ID!): Boolean!
   adminUpsertSocialProfileEffect(input: SocialProfileDecorationAdminInput!): SocialProfileDecoration!
   adminArchiveSocialProfileEffect(id: ID!): Boolean!
+  adminUpdateSocialAiSettings(input: JSON!): JSON!
+  adminOperateSocialAi(input: JSON!): JSON!
+  adminResolveSocialAiCase(id: ID!, input: JSON): SocialAiCase!
+  requestSocialAiAppeal(id: ID!, text: String!): SocialAiCase!
 }

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-DEPLOY_SCRIPT_VERSION="2026-07-18-social-copyright-fingerprinting"
+DEPLOY_SCRIPT_VERSION="2026-07-19-social-ai-bootstrap"
 ROOT="${TIWLO_INSTALL_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 BRANCH="${TIWLO_GIT_BRANCH:-main}"
 REPO_URL="${TIWLO_REPO_URL:-}"
@@ -24,6 +24,7 @@ KEEP_DEPLOY_SWAP="${TIWLO_KEEP_DEPLOY_SWAP:-0}"
 NPM_CACHE_DIR="${TIWLO_NPM_CACHE_DIR:-}"
 NODE_OLD_SPACE_MB="${TIWLO_NODE_OLD_SPACE_MB:-1024}"
 INSTALL_AI_MODEL_RUNTIME="${TIWLO_INSTALL_AI_MODEL_RUNTIME:-0}"
+INSTALL_SOCIAL_AI_INFRASTRUCTURE="${TIWLO_INSTALL_SOCIAL_AI_INFRASTRUCTURE:-1}"
 
 CHECKOUT_DIR=""
 RELEASE_DIR=""
@@ -822,12 +823,13 @@ prepare_obfuscated_release() {
   step "Preparing final obfuscated runtime release"
   RELEASE_DIR="$(mktemp -d "$TMP_BASE/tiwlo-release.XXXXXX")"
 
-  mkdir -p "$RELEASE_DIR/x" "$RELEASE_DIR/public" "$RELEASE_DIR/scripts"
+  mkdir -p "$RELEASE_DIR/x" "$RELEASE_DIR/public" "$RELEASE_DIR/scripts" "$RELEASE_DIR/packages"
   copy_tree "$CHECKOUT_DIR/x/src/" "$RELEASE_DIR/x/src"
   copy_tree "$CHECKOUT_DIR/tSecurity/" "$RELEASE_DIR/tSecurity"
   copy_tree "$CHECKOUT_DIR/x/graphql/" "$RELEASE_DIR/x/graphql"
   [ -d "$CHECKOUT_DIR/x/private-assets" ] && copy_tree "$CHECKOUT_DIR/x/private-assets/" "$RELEASE_DIR/x/private-assets"
   [ -d "$CHECKOUT_DIR/x/api" ] && copy_tree "$CHECKOUT_DIR/x/api/" "$RELEASE_DIR/x/api"
+  [ -d "$CHECKOUT_DIR/packages/ai" ] && copy_tree "$CHECKOUT_DIR/packages/ai/" "$RELEASE_DIR/packages/ai"
   [ -d "$CHECKOUT_DIR/dist" ] && copy_tree "$CHECKOUT_DIR/dist/" "$RELEASE_DIR/dist"
   [ -d "$CHECKOUT_DIR/public/brand" ] && copy_tree "$CHECKOUT_DIR/public/brand/" "$RELEASE_DIR/public/brand"
   [ -f "$CHECKOUT_DIR/scripts/serve-tiwlo-frontend.mjs" ] && cp "$CHECKOUT_DIR/scripts/serve-tiwlo-frontend.mjs" "$RELEASE_DIR/scripts/serve-tiwlo-frontend.js"
@@ -854,6 +856,20 @@ install_obfuscated_release() {
     mkdir -p "$ROOT/public"
     mv "$PRESERVE_DIR/public/uploads" "$ROOT/public/uploads"
   fi
+}
+
+bootstrap_social_ai_infrastructure() {
+  if [ "$INSTALL_SOCIAL_AI_INFRASTRUCTURE" != "1" ]; then
+    echo "Social AI bootstrap skipped by TIWLO_INSTALL_SOCIAL_AI_INFRASTRUCTURE=$INSTALL_SOCIAL_AI_INFRASTRUCTURE"
+    return 0
+  fi
+  local bootstrap="$ROOT/packages/ai/scripts/bootstrap.sh"
+  if [ ! -f "$bootstrap" ]; then
+    echo "Social AI bundle is not present in this release; skipping Social AI bootstrap."
+    return 0
+  fi
+  step "Bootstrapping persistent Social AI infrastructure"
+  run_sudo env TIWLO_ROOT="$ROOT" TIWLO_SOCIAL_AI_DATA_DIR="$ROOT/.data/social-ai" TIWLO_SOCIAL_AI_LOG_DIR="$ROOT/.logs/social-ai" bash "$bootstrap"
 }
 
 stop_readable_source_services() {
@@ -1031,6 +1047,7 @@ main() {
   ensure_obfuscator
   prepare_obfuscated_release
   install_obfuscated_release
+  bootstrap_social_ai_infrastructure
   stop_readable_source_services
   restart_obfuscated_backend
   verify_obfuscated_backend_health
