@@ -228,14 +228,16 @@ class WebRtcLiveManager(context: Context, private val repository: SocialReposito
     private suspend fun startCapture() {
         val source = factory.createVideoSource(false)
         videoSource = source
+        // Start with Camera1's byte-buffer route. Some devices advertise
+        // Camera2 yet deliver a black external texture to WebRTC.
         val camera2Available = Camera2Enumerator.isSupported(appContext)
         try {
-            openCameraCapture(source, preferCamera2 = camera2Available)
-        } catch (firstError: Exception) {
-            // A number of Android devices report Camera2 support but return a
-            // black SurfaceTexture output.  Camera1 is the proven fallback.
-            if (!camera2Available) throw firstError
             openCameraCapture(source, preferCamera2 = false)
+        } catch (firstError: Exception) {
+            // Camera2 remains a fallback only when the compatibility capturer
+            // itself cannot be opened.
+            if (!camera2Available) throw firstError
+            openCameraCapture(source, preferCamera2 = true)
         }
         localVideoTrack = factory.createVideoTrack("tiwi-live-video", videoSource).also { _localVideo.value = it }
         audioSource = factory.createAudioSource(MediaConstraints())
@@ -244,7 +246,7 @@ class WebRtcLiveManager(context: Context, private val repository: SocialReposito
     }
 
     private fun openCameraCapture(source: VideoSource, preferCamera2: Boolean) {
-        val enumerator = if (preferCamera2 && Camera2Enumerator.isSupported(appContext)) Camera2Enumerator(appContext) else Camera1Enumerator(true)
+        val enumerator = if (preferCamera2 && Camera2Enumerator.isSupported(appContext)) Camera2Enumerator(appContext) else Camera1Enumerator(false)
         val camera = enumerator.deviceNames.firstOrNull(enumerator::isFrontFacing) ?: enumerator.deviceNames.firstOrNull()
             ?: throw SocialApiException("No camera is available")
         val capturer = enumerator.createCapturer(camera, cameraEvents()) ?: throw SocialApiException("Camera could not start")
@@ -269,7 +271,7 @@ class WebRtcLiveManager(context: Context, private val repository: SocialReposito
 
     /** Replaces only the capture device. The existing VideoSource/track remains attached to every peer. */
     private fun retryWithCamera1(reason: String) {
-        if (disposed || !usingCamera2 || cameraFallbackTried) {
+        if (disposed || cameraFallbackTried) {
             _state.value = reason
             return
         }
@@ -283,7 +285,7 @@ class WebRtcLiveManager(context: Context, private val repository: SocialReposito
             textureHelper?.dispose()
             cameraCapturer = null
             textureHelper = null
-            runCatching { openCameraCapture(source, preferCamera2 = false) }
+            runCatching { openCameraCapture(source, preferCamera2 = !usingCamera2 && Camera2Enumerator.isSupported(appContext)) }
                 .onFailure { _state.value = it.message ?: reason }
                 .onSuccess { scheduleCameraFallback() }
         }
@@ -298,7 +300,7 @@ class WebRtcLiveManager(context: Context, private val repository: SocialReposito
     }
 
     private fun cameraEnumerator(): CameraEnumerator =
-        if (usingCamera2 && Camera2Enumerator.isSupported(appContext)) Camera2Enumerator(appContext) else Camera1Enumerator(true)
+        if (usingCamera2 && Camera2Enumerator.isSupported(appContext)) Camera2Enumerator(appContext) else Camera1Enumerator(false)
 
     private fun cameraEvents() = object : CameraVideoCapturer.CameraEventsHandler {
         override fun onCameraError(errorDescription: String) {

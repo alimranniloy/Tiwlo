@@ -242,14 +242,15 @@ class WebRtcCallManager(
     private fun startLocalVideo() {
         val source = factory.createVideoSource(false)
         videoSource = source
+        // Prefer the compatibility byte-buffer capturer. Camera2 external
+        // textures can give a black local preview on some devices.
         val camera2Available = Camera2Enumerator.isSupported(appContext)
         try {
-            openCameraCapture(source, preferCamera2 = camera2Available)
-        } catch (firstError: Exception) {
-            // Some phones advertise Camera2 while delivering only a black
-            // preview. Retry the same WebRTC track through Camera1 instead.
-            if (!camera2Available) throw firstError
             openCameraCapture(source, preferCamera2 = false)
+        } catch (firstError: Exception) {
+            // Use Camera2 only if the compatibility path cannot open.
+            if (!camera2Available) throw firstError
+            openCameraCapture(source, preferCamera2 = true)
         }
         _localVideo.value = factory.createVideoTrack("tiwi-video", videoSource).also {
             it.setEnabled(true)
@@ -259,7 +260,7 @@ class WebRtcCallManager(
     }
 
     private fun openCameraCapture(source: VideoSource, preferCamera2: Boolean) {
-        val enumerator = if (preferCamera2 && Camera2Enumerator.isSupported(appContext)) Camera2Enumerator(appContext) else Camera1Enumerator(true)
+        val enumerator = if (preferCamera2 && Camera2Enumerator.isSupported(appContext)) Camera2Enumerator(appContext) else Camera1Enumerator(false)
         val cameraName = enumerator.deviceNames.firstOrNull(enumerator::isFrontFacing)
             ?: enumerator.deviceNames.firstOrNull()
             ?: throw SocialApiException("No camera is available")
@@ -284,7 +285,7 @@ class WebRtcCallManager(
 
     /** Keeps the local VideoTrack attached to an active call while the capture implementation changes. */
     private fun retryWithCamera1(reason: String) {
-        if (disposed || !usingCamera2 || cameraFallbackTried) {
+        if (disposed || cameraFallbackTried) {
             _state.value = reason
             return
         }
@@ -298,7 +299,7 @@ class WebRtcCallManager(
             surfaceTextureHelper?.dispose()
             cameraCapturer = null
             surfaceTextureHelper = null
-            runCatching { openCameraCapture(source, preferCamera2 = false) }
+            runCatching { openCameraCapture(source, preferCamera2 = !usingCamera2 && Camera2Enumerator.isSupported(appContext)) }
                 .onFailure { _state.value = it.message ?: reason }
                 .onSuccess { scheduleCameraFallback() }
         }
@@ -313,7 +314,7 @@ class WebRtcCallManager(
     }
 
     private fun cameraEnumerator(): CameraEnumerator =
-        if (usingCamera2 && Camera2Enumerator.isSupported(appContext)) Camera2Enumerator(appContext) else Camera1Enumerator(true)
+        if (usingCamera2 && Camera2Enumerator.isSupported(appContext)) Camera2Enumerator(appContext) else Camera1Enumerator(false)
 
     private fun cameraEvents() = object : CameraVideoCapturer.CameraEventsHandler {
         override fun onCameraError(errorDescription: String) {

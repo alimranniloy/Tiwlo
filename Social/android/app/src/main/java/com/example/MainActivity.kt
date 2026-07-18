@@ -189,6 +189,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.collect
 import com.github.penfeizhou.animation.apng.APNGDrawable
 import org.webrtc.EglBase
+import org.webrtc.RendererCommon
 import org.webrtc.SurfaceViewRenderer
 import org.webrtc.VideoTrack
 import java.io.File
@@ -1945,8 +1946,8 @@ fun TiwiTopBar(visible: Boolean, unreadActivity: Int = 0, onCreateClick: () -> U
                 modifier = Modifier.align(Alignment.Center)
             )
             Row(Modifier.align(Alignment.CenterEnd).padding(end = 5.dp), verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = onConnectClick, modifier = Modifier.size(43.dp)) {
-                    Icon(Icons.Outlined.Groups, contentDescription = "Connected people", tint = Color.Black, modifier = Modifier.size(26.dp))
+                IconButton(onClick = onConnectClick, modifier = Modifier.size(44.dp)) {
+                    Icon(Icons.Outlined.Group, contentDescription = "Connected people", tint = Color.Black, modifier = Modifier.size(26.dp))
                 }
                 IconButton(onClick = onNotificationsClick, modifier = Modifier.size(44.dp)) {
                     BadgedBox(badge = { if (unreadActivity > 0) Badge(Modifier.size(8.dp)) }) {
@@ -2153,10 +2154,10 @@ private fun SuggestedFriendsSection(
         LazyRow(contentPadding = PaddingValues(horizontal = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             items(profiles, key = { it.userId }) { profile ->
                 Column(
-                    Modifier.width(136.dp).background(Color(0xFFF7F7F7), RoundedCornerShape(10.dp)).clickable { onProfileClick(profile.userId) }.padding(10.dp),
+                    Modifier.width(150.dp).background(Color(0xFFF7F7F7), RoundedCornerShape(10.dp)).clickable { onProfileClick(profile.userId) }.padding(11.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    DecoratedAvatar(profile.user.avatar, R.drawable.img_tiwi_avatar_1, profile.avatarDecoration, Modifier.size(78.dp))
+                    DecoratedAvatar(profile.user.avatar, R.drawable.img_tiwi_avatar_1, profile.avatarDecoration, Modifier.size(84.dp))
                     Spacer(Modifier.height(6.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(profile.user.name, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Bold, fontSize = 13.sp)
@@ -2563,7 +2564,7 @@ fun PostCard(
         }
 
         Row(
-            modifier = Modifier.fillMaxWidth().height(50.dp).padding(horizontal = 7.dp),
+            modifier = Modifier.fillMaxWidth().height(46.dp).padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             CompactPostAction(
@@ -2579,9 +2580,8 @@ fun PostCard(
             CompactPostAction(Icons.Default.Repeat, post.shares, description = "Repost") {
                 scope.launch { runCatching { repository.repostPost(post.id) }.onSuccess { Toast.makeText(context, "Reposted", Toast.LENGTH_SHORT).show() } }
             }
-            IconButton(onClick = onShareClick, modifier = Modifier.size(42.dp)) { Icon(Icons.Outlined.Share, "Share", Modifier.size(24.dp), tint = Color.Gray) }
-            Spacer(Modifier.weight(1f))
-            IconButton(onClick = { scope.launch { runCatching { repository.savePost(post.id, !post.saved) }.onSuccess { Toast.makeText(context, if (post.saved) "Removed from Saved" else "Saved", Toast.LENGTH_SHORT).show() } } }, modifier = Modifier.size(42.dp)) {
+            IconButton(onClick = onShareClick, modifier = Modifier.size(40.dp)) { Icon(Icons.Outlined.Share, "Share", Modifier.size(23.dp), tint = Color.Gray) }
+            IconButton(onClick = { scope.launch { runCatching { repository.savePost(post.id, !post.saved) }.onSuccess { Toast.makeText(context, if (post.saved) "Removed from Saved" else "Saved", Toast.LENGTH_SHORT).show() } } }, modifier = Modifier.size(40.dp)) {
                 Icon(if (post.saved) Icons.Filled.Bookmark else Icons.Outlined.BookmarkBorder, "Save", Modifier.size(24.dp), tint = if (post.saved) TiwiBlue else Color.Gray)
             }
         }
@@ -2668,8 +2668,8 @@ private fun CompactPostAction(
     onClick: () -> Unit
 ) {
     Row(verticalAlignment = Alignment.CenterVertically) {
-        IconButton(onClick = onClick, modifier = Modifier.size(42.dp)) {
-            Icon(icon, contentDescription = description, modifier = Modifier.size(24.dp), tint = tint)
+        IconButton(onClick = onClick, modifier = Modifier.size(40.dp)) {
+            Icon(icon, contentDescription = description, modifier = Modifier.size(23.dp), tint = tint)
         }
         if (count > 0) Text(formatCount(count), style = MaterialTheme.typography.labelSmall, color = Color.Gray)
     }
@@ -5397,27 +5397,26 @@ private fun CallControl(icon: ImageVector, color: Color, description: String, on
 
 @Composable
 private fun WebRtcVideoSurface(track: VideoTrack?, eglContext: EglBase.Context, modifier: Modifier, mirror: Boolean) {
-    var renderer by remember { mutableStateOf<SurfaceViewRenderer?>(null) }
+    val context = LocalContext.current
+    // A stable renderer prevents a valid WebRTC track from being connected to
+    // a released SurfaceView during Compose recomposition on slower phones.
+    val renderer = remember { SurfaceViewRenderer(context) }
+    DisposableEffect(renderer, eglContext) {
+        renderer.init(eglContext, null)
+        renderer.setEnableHardwareScaler(false)
+        renderer.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FILL)
+        renderer.setMirror(mirror)
+        onDispose { renderer.release() }
+    }
     AndroidView(
-        factory = { viewContext ->
-            SurfaceViewRenderer(viewContext).apply {
-                init(eglContext, null)
-                setEnableHardwareScaler(true)
-                setMirror(mirror)
-                renderer = this
-            }
-        },
+        factory = { renderer },
         update = { it.setMirror(mirror) },
         modifier = modifier.background(Color.Black)
     )
     DisposableEffect(renderer, track) {
-        val activeRenderer = renderer
-        if (activeRenderer != null && track != null) track.addSink(activeRenderer)
-        onDispose { if (activeRenderer != null && track != null) track.removeSink(activeRenderer) }
-    }
-    DisposableEffect(renderer) {
-        val activeRenderer = renderer
-        onDispose { activeRenderer?.release() }
+        track?.setEnabled(true)
+        track?.addSink(renderer)
+        onDispose { track?.removeSink(renderer) }
     }
 }
 
