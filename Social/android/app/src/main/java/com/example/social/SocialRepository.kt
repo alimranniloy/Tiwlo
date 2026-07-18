@@ -1089,6 +1089,14 @@ class SocialRepository(context: Context) {
         return mapCopyrightClaim(data.objectValue("actOnSocialCopyrightClaim") ?: throw SocialApiException("Copyright action failed"))
     }
 
+    suspend fun requestCopyrightReview(id: String, reason: String): SocialCopyrightClaim {
+        val data = client.execute(
+            """mutation RequestTiwiCopyrightReview(${D}id: ID!, ${D}reason: String) { requestSocialCopyrightReview(id: ${D}id, reason: ${D}reason) { $COPYRIGHT_CLAIM_FIELDS } }""",
+            mapOf("id" to id, "reason" to reason.trim().take(1000))
+        )
+        return mapCopyrightClaim(data.objectValue("requestSocialCopyrightReview") ?: throw SocialApiException("Copyright review could not be requested"))
+    }
+
     suspend fun refreshNotifications(): List<SocialNotification> {
         val data = client.execute("query TiwiNotifications { notifications(scope: \"social\") { $NOTIFICATION_FIELDS } }")
         return data.list("notifications").mapNotNull { it.objectMap()?.let(::mapNotification) }.also { _notifications.value = it }
@@ -1383,6 +1391,7 @@ class SocialRepository(context: Context) {
             reactionCount = value.number("reactionCount")?.toInt() ?: 0,
             commentCount = value.number("commentCount")?.toInt() ?: 0, viewerReaction = value.string("viewerReaction"),
             recommended = value.boolean("recommended"), recommendationLabel = value.string("recommendationLabel"),
+            copyrightReference = value.objectValue("copyrightReference")?.let(::mapCopyrightReference),
             publishedAt = value.string("publishedAt")
         )
     }
@@ -1810,7 +1819,7 @@ class SocialRepository(context: Context) {
         const val PUBLIC_USER_FIELDS = "id name avatar status socialLastActiveAt"
         const val DECORATION_FIELDS = "id slug kind name assetUrl fileName mimeType animated width height priceUsd status sortOrder owned applied ownershipSource"
         const val PROFILE_FIELDS = "id userId username bio about category website location coverUrl verified badgeType badgePlan badgeExpiresAt avatarDecoration { $DECORATION_FIELDS } profileEffect { $DECORATION_FIELDS } privacy preferences followerCount followingCount postCount isFollowing createdAt user { $PUBLIC_USER_FIELDS }"
-        const val POST_FIELDS = "id authorId type body media metadata thumbnailUrl hlsUrl processingStatus visibility commentPermission pinned groupId saved status viewCount shareCount saveCount reactionCount commentCount viewerReaction recommended recommendationLabel publishedAt author { $PUBLIC_USER_FIELDS } authorProfile { id userId username verified badgeType isFollowing avatarDecoration { $DECORATION_FIELDS } } collaborators { id userId username verified badgeType avatarDecoration { $DECORATION_FIELDS } user { $PUBLIC_USER_FIELDS } }"
+        const val POST_FIELDS = "id authorId type body media metadata thumbnailUrl hlsUrl processingStatus visibility commentPermission pinned groupId saved status viewCount shareCount saveCount reactionCount commentCount viewerReaction recommended recommendationLabel publishedAt copyrightReference { id ownerId postId title mediaType durationSeconds protectionEnabled autoRemoveMatches status useCount claimCount createdAt updatedAt owner { $PUBLIC_USER_FIELDS } } author { $PUBLIC_USER_FIELDS } authorProfile { id userId username verified badgeType isFollowing avatarDecoration { $DECORATION_FIELDS } } collaborators { id userId username verified badgeType avatarDecoration { $DECORATION_FIELDS } user { $PUBLIC_USER_FIELDS } }"
         const val STORY_PROFILE_FIELDS = "id userId username verified badgeType isFollowing avatarDecoration { $DECORATION_FIELDS }"
         const val STORY_INTERACTION_FIELDS = "id storyId itemId userId kind key value createdAt updatedAt user { $PUBLIC_USER_FIELDS } userProfile { $STORY_PROFILE_FIELDS }"
         const val STORY_ITEM_FIELDS = "id storyId type media text background filter transform overlays durationMs altText aiGenerated music status sortOrder reactionCount viewerReaction interactionCount viewerInteractions { $STORY_INTERACTION_FIELDS } createdAt updatedAt"

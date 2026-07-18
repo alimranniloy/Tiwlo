@@ -164,6 +164,7 @@ data class SocialPost(
     val viewerReaction: String? = null,
     val recommended: Boolean = false,
     val recommendationLabel: String? = null,
+    val copyrightReference: SocialCopyrightReference? = null,
     val publishedAt: String? = null
 )
 

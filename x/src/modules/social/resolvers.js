@@ -216,6 +216,7 @@ export const socialResolvers = {
     updateSocialCopyrightReference: (_, { input }, ctx) => api(service.updateCopyrightReference(ctx, input)),
     scanSocialCopyrightLibrary: (_, __, ctx) => api(service.scanCopyrightLibrary(ctx)),
     actOnSocialCopyrightClaim: (_, { id, action }, ctx) => api(service.actOnCopyrightClaim(ctx, id, action)),
+    requestSocialCopyrightReview: (_, { id, reason }, ctx) => api(service.requestCopyrightClaimReview(ctx, id, reason)),
     reportSocialContent: (_, { targetType, targetId, reason, details }, ctx) => api(service.reportContent(ctx, targetType, targetId, reason, details)),
     startSocialVerificationCheckout: (_, { packageId, provider, currency }, ctx) => api(service.startVerificationCheckout(ctx, packageId, provider, currency)),
     applySocialProfileDecoration: (_, { id }, ctx) => api(service.applyProfileDecoration(ctx, id)),

@@ -2778,6 +2778,7 @@ type SocialPost {
   body: String
   media: JSON!
   metadata: JSON!
+  copyrightReference: SocialCopyrightReference
   thumbnailUrl: String
   hlsUrl: String
   processingStatus: String!
@@ -3748,6 +3749,7 @@ type Mutation {
   updateSocialCopyrightReference(input: SocialCopyrightReferenceUpdateInput!): SocialCopyrightReference!
   scanSocialCopyrightLibrary: SocialCopyrightStudio!
   actOnSocialCopyrightClaim(id: ID!, action: String!): SocialCopyrightClaim!
+  requestSocialCopyrightReview(id: ID!, reason: String): SocialCopyrightClaim!
   reportSocialContent(targetType: String!, targetId: ID!, reason: String!, details: String): SocialReport!
   startSocialVerificationCheckout(packageId: String!, provider: String!, currency: String): CheckoutSession!
   applySocialProfileDecoration(id: ID): SocialProfile!

@@ -887,7 +887,13 @@ const postInclude = (viewerId) => ({
   } },
   _count: { select: { reactions: true, comments: true, savedBy: true } },
   reactions: viewerId ? { where: { userId: viewerId }, take: 1 } : false,
-  savedBy: viewerId ? { where: { userId: viewerId }, take: 1 } : false
+  savedBy: viewerId ? { where: { userId: viewerId }, take: 1 } : false,
+  copyrightReferences: {
+    where: { status: 'active' },
+    orderBy: { createdAt: 'asc' },
+    take: 1,
+    include: { owner: { include: { socialProfile: true } }, _count: { select: { claims: true } } }
+  }
 });
 
 const mapPost = (post) => ({
@@ -905,7 +911,8 @@ const mapPost = (post) => ({
   viewerReaction: post.reactions?.[0]?.kind || null,
   saved: Boolean(post.savedBy?.length),
   recommended: Boolean(post.recommended),
-  recommendationLabel: post.recommendationLabel || null
+  recommendationLabel: post.recommendationLabel || null,
+  copyrightReference: post.copyrightReferences?.[0] ? mapCopyrightReference(post.copyrightReferences[0]) : null
 });
 
 const copyrightReferenceInclude = (viewerId) => ({
@@ -1034,6 +1041,18 @@ const mapCopyrightClaim = (claim) => ({
   infringingPost: claim.infringingPost ? mapPost(claim.infringingPost) : null
 });
 
+// The recurring server worker remains the authority for removals. This small
+// one-shot check makes a newly enabled auto-removal reliable even when a
+// process has just restarted and has not reached its next polling interval.
+const scheduleCopyrightTakedownCheck = (ctx, delayMs = 122_000) => {
+  const timer = setTimeout(() => {
+    processDueCopyrightTakedowns(ctx).catch((error) => {
+      console.warn('[social-copyright] scheduled removal check failed:', error?.message || error);
+    });
+  }, Math.max(1_000, delayMs));
+  timer.unref?.();
+};
+
 const createCopyrightClaimsForPost = async (ctx, post, knownEvents = null) => {
   if (!post?.id || post.status !== 'published') return [];
   const fingerprints = await fingerprintsForPost(ctx, post, knownEvents);
@@ -1047,6 +1066,7 @@ const createCopyrightClaimsForPost = async (ctx, post, knownEvents = null) => {
     include: { owner: { include: { socialProfile: true } }, _count: { select: { claims: true } } }
   });
   const claims = [];
+  let hasScheduledRemoval = false;
   for (const reference of references) {
     const existing = await ctx.prisma.socialCopyrightClaim.findUnique({
       where: { referenceId_infringingPostId: { referenceId: reference.id, infringingPostId: post.id } }
@@ -1062,6 +1082,7 @@ const createCopyrightClaimsForPost = async (ctx, post, knownEvents = null) => {
       },
       include: copyrightClaimInclude(post.authorId)
     });
+    if (removeAfter) hasScheduledRemoval = true;
     const ownerName = reference.owner?.name || reference.owner?.socialProfile?.username || 'the rights owner';
     await Promise.all([
       createSocialNotification(ctx, {
@@ -1077,6 +1098,7 @@ const createCopyrightClaimsForPost = async (ctx, post, knownEvents = null) => {
     ]);
     claims.push(mapCopyrightClaim(claim));
   }
+  if (hasScheduledRemoval) scheduleCopyrightTakedownCheck(ctx);
   return claims;
 };
 
@@ -1169,10 +1191,13 @@ export const updateCopyrightReference = async (ctx, input) => {
     data: removeUndefined({ title: input.title === undefined ? undefined : bounded(input.title, 180), protectionEnabled: input.protectionEnabled, autoRemoveMatches: input.autoRemoveMatches }),
     include: copyrightReferenceInclude(actor.id)
   });
-  if (input.autoRemoveMatches !== undefined) await ctx.prisma.socialCopyrightClaim.updateMany({
-    where: { referenceId: reference.id, status: 'detected' },
-    data: input.autoRemoveMatches ? { action: 'scheduled_removal', removeAfter: new Date(Date.now() + 120_000) } : { action: 'notice', removeAfter: null }
-  });
+  if (input.autoRemoveMatches !== undefined) {
+    const scheduled = await ctx.prisma.socialCopyrightClaim.updateMany({
+      where: { referenceId: reference.id, status: 'detected' },
+      data: input.autoRemoveMatches ? { action: 'scheduled_removal', removeAfter: new Date(Date.now() + 120_000) } : { action: 'notice', removeAfter: null }
+    });
+    if (input.autoRemoveMatches && scheduled.count) scheduleCopyrightTakedownCheck(ctx);
+  }
   return mapCopyrightReference(reference);
 };
 
@@ -1218,7 +1243,7 @@ export const actOnCopyrightClaim = async (ctx, id, action) => {
   if (!claim) notFound('Copyright claim');
   if (claim.reference.ownerId !== actor.id && !isAdmin(actor)) forbidden('Only the rights owner can take action');
   const normalized = String(action || '').toLowerCase();
-  if (!['takedown', 'release', 'block_video', 'block_account'].includes(normalized)) throw new AppError('Invalid copyright action', 'BAD_USER_INPUT');
+  if (!['takedown', 'release', 'block_video', 'block_account', 'disable_monetization'].includes(normalized)) throw new AppError('Invalid copyright action', 'BAD_USER_INPUT');
   if (normalized === 'release') {
     const updated = await ctx.prisma.socialCopyrightClaim.update({ where: { id }, data: { status: 'released', action: 'released', removeAfter: null }, include: copyrightClaimInclude(actor.id) });
     return mapCopyrightClaim(updated);
@@ -1227,6 +1252,29 @@ export const actOnCopyrightClaim = async (ctx, id, action) => {
     // A rights owner may block the infringer from their own Social presence;
     // platform-wide disabling remains an auditable administrator decision.
     await ctx.prisma.socialBlock.upsert({ where: { userId_targetUserId: { userId: claim.reference.ownerId, targetUserId: claim.infringingUserId } }, create: { userId: claim.reference.ownerId, targetUserId: claim.infringingUserId, reason: 'copyright claim' }, update: { reason: 'copyright claim' } });
+  }
+  if (normalized === 'disable_monetization') {
+    const metadata = claim.infringingPost?.metadata && typeof claim.infringingPost.metadata === 'object'
+      ? claim.infringingPost.metadata
+      : {};
+    await ctx.prisma.socialPost.update({
+      where: { id: claim.infringingPostId },
+      data: { metadata: { ...metadata, monetizationDisabled: true, monetizationDisabledReason: 'copyright_match', monetizationDisabledAt: new Date().toISOString() } }
+    });
+    const updated = await ctx.prisma.socialCopyrightClaim.update({
+      where: { id },
+      data: { status: 'monetization_disabled', action: 'disable_monetization', removeAfter: null },
+      include: copyrightClaimInclude(actor.id)
+    });
+    await createSocialNotification(ctx, {
+      ownerId: claim.infringingUserId,
+      scopeId: claim.id,
+      type: 'copyright_monetization_disabled',
+      title: 'Monetization disabled for copyright',
+      message: `Monetization was disabled on your upload after a copyright match from ${claim.reference.owner?.name || 'the rights owner'}. You can request a review in Copyright Studio.`,
+      metadata: { destination: 'copyright_studio', claimId: claim.id, postId: claim.infringingPostId, referenceId: claim.referenceId, ownerId: claim.reference.ownerId, reviewAvailable: true }
+    });
+    return mapCopyrightClaim(updated);
   }
   await ctx.prisma.socialPost.update({ where: { id: claim.infringingPostId }, data: { status: 'removed', deletedAt: new Date(), moderationStatus: 'copyright_removed', moderationReason: 'Removed after rights-owner copyright action', moderationScore: 1 } });
   const updated = await ctx.prisma.socialCopyrightClaim.update({
@@ -1238,6 +1286,29 @@ export const actOnCopyrightClaim = async (ctx, id, action) => {
     metadata: { destination: 'copyright_studio', claimId: id, postId: claim.infringingPostId, referenceId: claim.referenceId, ownerId: claim.reference.ownerId }
   });
   await writeAudit(ctx, 'social_copyright_action', 'socialCopyrightClaim', id, { action: normalized, ownerId: claim.reference.ownerId, infringingUserId: claim.infringingUserId });
+  return mapCopyrightClaim(updated);
+};
+
+export const requestCopyrightClaimReview = async (ctx, id, reason = '') => {
+  const actor = await requireAuth(ctx);
+  const claim = await ctx.prisma.socialCopyrightClaim.findUnique({ where: { id }, include: copyrightClaimInclude(actor.id) });
+  if (!claim) notFound('Copyright claim');
+  if (claim.infringingUserId !== actor.id) forbidden('Only the uploader can request a copyright review');
+  if (claim.status === 'removed') throw new AppError('Removed content cannot be reviewed from the app', 'BAD_USER_INPUT');
+  const note = bounded(reason, 1_000);
+  const updated = await ctx.prisma.socialCopyrightClaim.update({
+    where: { id },
+    data: { status: 'review_requested', action: 'review_requested' },
+    include: copyrightClaimInclude(actor.id)
+  });
+  await createSocialNotification(ctx, {
+    ownerId: claim.reference.ownerId,
+    scopeId: claim.id,
+    type: 'copyright_review_requested',
+    title: 'Copyright review requested',
+    message: `${actor.name || 'A Tiwi creator'} requested a review of your copyright action${note ? `: ${note}` : '.'}`,
+    metadata: { destination: 'copyright_studio', claimId: claim.id, postId: claim.infringingPostId, referenceId: claim.referenceId, infringingUserId: actor.id, reason: note }
+  });
   return mapCopyrightClaim(updated);
 };
 
