@@ -234,10 +234,23 @@ download_model() {
   target="$MODELS_DIR/$file"
   part="$target.part"
   if verify_gguf "$target"; then progress 100 "Verified $id"; return; fi
+  # A completed download can be left as .part if the process was interrupted
+  # between validation and rename. Do not issue a byte-range request against
+  # an already complete Hugging Face object: that returns HTTP 416 and used to
+  # make a healthy model look like a failed download.
+  if verify_gguf "$part"; then
+    mv "$part" "$target"
+    progress 100 "Verified $id"
+    return
+  fi
   have curl || { [ "$(id -u)" -eq 0 ] && apt-get install -y curl >>"$LOG_FILE" 2>&1 || die "curl is required to download models"; }
   progress 25 "Downloading $id"
   rm -f "$target" 2>/dev/null || true
-  curl --fail --location --retry 3 --continue-at - --output "$part" "$url" >>"$LOG_FILE" 2>&1 || die "Download failed for $id"
+  if [ -s "$part" ]; then
+    curl --fail --location --retry 5 --retry-delay 2 --continue-at - --output "$part" "$url" >>"$LOG_FILE" 2>&1 || die "Download failed for $id"
+  else
+    curl --fail --location --retry 5 --retry-delay 2 --output "$part" "$url" >>"$LOG_FILE" 2>&1 || die "Download failed for $id"
+  fi
   progress 85 "Verifying $id"
   if ! verify_gguf "$part"; then
     rm -f "$part"
@@ -247,8 +260,14 @@ download_model() {
   if [ "$id" = "vision-review" ]; then
     local projection="$MODELS_DIR/moondream2-mmproj-f16.gguf" projection_part="$MODELS_DIR/moondream2-mmproj-f16.gguf.part"
     if ! verify_gguf "$projection"; then
-      progress 92 "Downloading vision projection"
-      curl --fail --location --retry 3 --continue-at - --output "$projection_part" "$(vision_projection_url)" >>"$LOG_FILE" 2>&1 || die "Download failed for vision projection"
+    progress 92 "Downloading vision projection"
+      if verify_gguf "$projection_part"; then
+        :
+      elif [ -s "$projection_part" ]; then
+        curl --fail --location --retry 5 --retry-delay 2 --continue-at - --output "$projection_part" "$(vision_projection_url)" >>"$LOG_FILE" 2>&1 || die "Download failed for vision projection"
+      else
+        curl --fail --location --retry 5 --retry-delay 2 --output "$projection_part" "$(vision_projection_url)" >>"$LOG_FILE" 2>&1 || die "Download failed for vision projection"
+      fi
       if ! verify_gguf "$projection_part"; then
         rm -f "$projection_part"
         die "Vision projection verification failed"
@@ -426,6 +445,11 @@ case "$command" in
     progress 55 "Installing default Social AI models"; if ! (download_model text-policy; download_model embedding; download_model moderation-vision); then bootstrap_pending=1; log "One or more Social AI models are pending repair"; fi
     progress 78 "Starting llama.cpp"; if ! (start_service llama-cpp); then bootstrap_pending=1; log "llama.cpp is pending repair; continuing Social AI bootstrap"; fi
     progress 90 "Verifying Social AI health"; health_json
+    # If the final health snapshot is fully ready, an earlier transient model
+    # CDN retry must not leave deployment marked as pending repair.
+    if service_healthy searxng && service_healthy crawl4ai && service_healthy llama-cpp && verify_gguf "$MODELS_DIR/$(model_file text-policy)" && verify_gguf "$MODELS_DIR/$(model_file embedding)" && [ -d "$ROOT/x/node_modules/nsfwjs" ]; then
+      bootstrap_pending=0
+    fi
     [ "$bootstrap_pending" -eq 0 ] || exit 1
     ;;
   package)
