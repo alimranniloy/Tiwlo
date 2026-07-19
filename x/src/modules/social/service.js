@@ -496,8 +496,15 @@ const touchSocialPresence = (ctx, userId) => {
   ctx.prisma.user.update({ where: { id: userId }, data: { socialLastActiveAt: new Date(now) } }).catch(() => undefined);
 };
 
+const socialMediaPrefixes = (actorId) => [
+  `/api/tiwi/media/files/${actorId}/`,
+  // Existing database rows remain valid while Tiwi moves the physical Social
+  // media tree into its independent persistent store.
+  `/api/social/media/files/${actorId}/`
+];
+
 const validateOwnedMedia = (actorId, media) => {
-  const prefix = `/api/social/media/files/${actorId}/`;
+  const prefixes = socialMediaPrefixes(actorId);
   for (const item of media) {
     if (!item || !['image', 'video', 'audio', 'file'].includes(String(item.type || '').toLowerCase())) continue;
     const values = [item.url, item.hlsUrl, item.thumbnailUrl].filter(Boolean);
@@ -505,7 +512,7 @@ const validateOwnedMedia = (actorId, media) => {
     for (const value of values) {
       let path = '';
       try { path = new URL(String(value), 'https://tiwlo.invalid').pathname; } catch { /* rejected below */ }
-      if (!path.startsWith(prefix)) throw new AppError('Posts can only use media uploaded by this account', 'FORBIDDEN');
+      if (!prefixes.some((prefix) => path.startsWith(prefix))) throw new AppError('Posts can only use media uploaded by this account', 'FORBIDDEN');
     }
   }
 };
@@ -1069,19 +1076,30 @@ const localPostMediaFile = (post, media) => {
   if (!source) return null;
   let pathname = source;
   try { pathname = new URL(source, 'https://tiwlo.invalid').pathname; } catch { return null; }
-  const prefix = `/api/social/media/files/${post.authorId}/`;
-  if (!pathname.startsWith(prefix)) return null;
+  const prefixes = socialMediaPrefixes(post.authorId);
+  const prefix = prefixes.find((item) => pathname.startsWith(item));
+  if (!prefix) return null;
   let filename;
   try { filename = decodeURIComponent(pathname.slice(prefix.length)); } catch { return null; }
   if (!filename || filename.includes('..') || filename.includes('\\')) return null;
-  const roots = [
-    resolve(process.cwd(), '..', 'public', 'uploads', 'social'),
-    resolve(process.cwd(), 'public', 'uploads', 'social')
+  const cwd = process.cwd();
+  const newRoots = [
+    resolve(cwd, '..', '.data', 'Tiwi', 'social', 'media', 'users'),
+    resolve(cwd, '.data', 'Tiwi', 'social', 'media', 'users')
   ];
-  const uploadRoot = roots.find((root) => existsSync(root)) || roots[0];
-  const directory = resolve(uploadRoot, post.authorId);
-  const filePath = resolve(directory, filename);
-  return filePath.startsWith(`${directory}${sep}`) && existsSync(filePath) ? filePath : null;
+  const legacyRoots = [
+    resolve(cwd, '..', '.data', 'Tiwi', 'social', 'media', 'legacy'),
+    resolve(cwd, '.data', 'Tiwi', 'social', 'media', 'legacy'),
+    resolve(cwd, '..', 'public', 'uploads', 'social'),
+    resolve(cwd, 'public', 'uploads', 'social')
+  ];
+  const roots = prefix.startsWith('/api/tiwi/') ? newRoots : legacyRoots;
+  for (const uploadRoot of roots) {
+    const directory = resolve(uploadRoot, post.authorId);
+    const filePath = resolve(directory, filename);
+    if (filePath.startsWith(`${directory}${sep}`) && existsSync(filePath)) return filePath;
+  }
+  return null;
 };
 
 const fingerprintsForPost = async (ctx, post, knownEvents = null) => {
@@ -4289,7 +4307,7 @@ const adminUpsertProfileCatalogItem = async (ctx, input, kind) => {
   const name = bounded(input.name, 120);
   if (!name) throw new AppError(`${config.title} name is required`, 'BAD_USER_INPUT');
   const assetUrl = bounded(input.assetUrl, 2000);
-  if (!assetUrl || (!assetUrl.startsWith(`/api/social/media/files/${actor.id}/`) && !assetUrl.startsWith(config.brandPrefix))) {
+  if (!assetUrl || (!socialMediaPrefixes(actor.id).some((prefix) => assetUrl.startsWith(prefix)) && !assetUrl.startsWith(config.brandPrefix))) {
     throw new AppError('Upload the PNG/APNG file from this administrator account first', 'BAD_USER_INPUT');
   }
   const mimeType = bounded(input.mimeType || 'image/png', 100).toLowerCase();

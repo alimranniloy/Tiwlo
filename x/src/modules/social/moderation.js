@@ -208,13 +208,25 @@ let moderationBackfillRunning = false;
 const localSocialMediaPath = (rootDir, authorId, value) => {
   let pathname = '';
   try { pathname = new URL(String(value || ''), 'https://tiwlo.invalid').pathname; } catch { return null; }
-  const prefix = `/api/social/media/files/${authorId}/`;
+  const newPrefix = `/api/tiwi/media/files/${authorId}/`;
+  const legacyPrefix = `/api/social/media/files/${authorId}/`;
+  const prefix = pathname.startsWith(newPrefix) ? newPrefix : pathname.startsWith(legacyPrefix) ? legacyPrefix : null;
   if (!pathname.startsWith(prefix)) return null;
-  const mediaRoot = resolve(rootDir, 'public', 'uploads', 'social');
-  const relativePath = decodeURIComponent(pathname.slice('/api/social/media/files/'.length)).replace(/^[/\\]+/, '');
-  const filePath = resolve(mediaRoot, relativePath);
-  if (filePath !== mediaRoot && !filePath.startsWith(`${mediaRoot}${sep}`)) return null;
-  return filePath;
+  let relativePath = '';
+  try { relativePath = decodeURIComponent(pathname.slice(prefix.length)).replace(/^[/\\]+/, ''); } catch { return null; }
+  if (!relativePath || relativePath.includes('..')) return null;
+  const mediaRoots = prefix === newPrefix
+    ? [resolve(rootDir, '.data', 'Tiwi', 'social', 'media', 'users')]
+    : [
+      resolve(rootDir, '.data', 'Tiwi', 'social', 'media', 'legacy'),
+      resolve(rootDir, 'public', 'uploads', 'social')
+    ];
+  for (const mediaRoot of mediaRoots) {
+    const directory = resolve(mediaRoot, authorId);
+    const filePath = resolve(directory, relativePath);
+    if (filePath.startsWith(`${directory}${sep}`)) return filePath;
+  }
+  return null;
 };
 
 const removeModeratedAsset = async (filePath) => {

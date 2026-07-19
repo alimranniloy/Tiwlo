@@ -77,6 +77,7 @@ app.use(['/graphql', '/api', '/ai', '/automation', '/payments'], rateLimit({
   validate: { trustProxy: false },
   skip: (req) => req.path === '/health'
     || req.originalUrl.startsWith('/api/system-assets/')
+    || req.originalUrl.startsWith('/api/tiwi/media/files/')
     || req.originalUrl.startsWith('/api/social/media/files/')
     || req.originalUrl.startsWith('/api/social/media/chunks/')
 }));

@@ -885,7 +885,12 @@ private fun toUiReel(value: SocialPost): Reel {
 @Composable
 private fun TiwiAvatar(url: String?, fallback: Int, modifier: Modifier, contentScale: ContentScale = ContentScale.Crop) {
     if (!url.isNullOrBlank()) AsyncImage(model = url, contentDescription = null, modifier = modifier, contentScale = contentScale)
-    else Image(painter = painterResource(fallback), contentDescription = null, modifier = modifier, contentScale = contentScale)
+    else Image(
+        painter = painterResource(if (fallback == R.drawable.img_tiwi_avatar_1) R.drawable.avatar else fallback),
+        contentDescription = null,
+        modifier = modifier,
+        contentScale = contentScale
+    )
 }
 
 @Composable
@@ -2260,15 +2265,25 @@ private fun adCtaLabel(type: String): String = when (type.lowercase()) {
     else -> "Learn more"
 }
 
+private fun adDestinationLabel(ad: SocialAd): String {
+    val target = ad.destinationUrl?.trim().orEmpty()
+    return when (ad.ctaType.lowercase()) {
+        "call" -> target.filter { it.isDigit() || it == '+' }.takeIf { it.isNotBlank() } ?: "Phone number"
+        "whatsapp" -> "WhatsApp · ${target.filter(Char::isDigit).takeLast(15).ifBlank { "Message us" }}"
+        else -> target.removePrefix("https://").removePrefix("http://").trimEnd('/').ifBlank { "Visit website" }
+    }
+}
+
 private fun openSponsoredAd(context: Context, ad: SocialAd) {
     val target = ad.destinationUrl?.trim().orEmpty()
     if (target.isBlank()) return
     val uri = when (ad.ctaType.lowercase()) {
-        "call" -> android.net.Uri.parse("tel:$target")
+        "call" -> android.net.Uri.parse("tel:${target.filter { it.isDigit() || it == '+' }}")
         "whatsapp" -> android.net.Uri.parse("https://wa.me/${target.filter(Char::isDigit)}")
-        else -> android.net.Uri.parse(target)
+        else -> android.net.Uri.parse(if (target.startsWith("http://") || target.startsWith("https://")) target else "https://$target")
     }
     runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, uri)) }
+        .onFailure { Toast.makeText(context, "This ad link could not be opened", Toast.LENGTH_SHORT).show() }
 }
 
 @Composable
@@ -2279,30 +2294,30 @@ private fun SponsoredAdCard(ad: SocialAd, repository: SocialRepository, placemen
     val media = ad.media.firstOrNull()
     LaunchedEffect(ad.id, placement) { runCatching { repository.trackSocialAdEvent(ad.id, placement, "impression") } }
     Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.background)) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 11.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            AsyncImage(model = ad.advertiserAvatarUrl ?: R.drawable.img_tiwi_avatar_1, contentDescription = null, modifier = Modifier.size(42.dp).clip(CircleShape), contentScale = ContentScale.Crop)
-            Column(Modifier.weight(1f).padding(start = 8.dp)) {
-                Text(ad.advertiserName, fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text("Sponsored", color = Color(0xFF65676B), fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+        Row(Modifier.fillMaxWidth().padding(horizontal = 11.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+            AsyncImage(model = ad.advertiserAvatarUrl ?: R.drawable.avatar, contentDescription = null, modifier = Modifier.size(36.dp).clip(CircleShape), contentScale = ContentScale.Crop)
+            Row(Modifier.weight(1f).padding(start = 7.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(ad.advertiserName, modifier = Modifier.weight(1f, fill = false), fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(" · Sponsored", color = Color(0xFF65676B), fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            Icon(Icons.Outlined.MoreHoriz, "Ad options", tint = Color(0xFF65676B), modifier = Modifier.size(21.dp))
+            Icon(Icons.Outlined.MoreHoriz, "Ad options", tint = Color(0xFF65676B), modifier = Modifier.size(19.dp))
         }
-        if (!ad.body.isNullOrBlank()) Text(ad.body!!, modifier = Modifier.padding(horizontal = 11.dp, vertical = 2.dp), fontSize = 14.sp, lineHeight = 19.sp, maxLines = 4, overflow = TextOverflow.Ellipsis)
+        if (!ad.body.isNullOrBlank()) Text(ad.body!!, modifier = Modifier.padding(horizontal = 11.dp, vertical = 2.dp), fontSize = 13.sp, lineHeight = 17.sp, maxLines = 4, overflow = TextOverflow.Ellipsis)
         media?.let { item ->
             if (item.type == "video") TiwiVideo(item.hlsUrl?.takeIf { item.processingStatus == "ready" } ?: item.url, Modifier.fillMaxWidth().heightIn(min = 190.dp, max = 420.dp), autoplay = true, muted = true, fallbackUrl = item.url, posterUrl = item.thumbnailUrl)
             else AsyncImage(model = item.url, contentDescription = ad.headline, modifier = Modifier.fillMaxWidth().heightIn(min = 150.dp, max = 430.dp).clickable { scope.launch { runCatching { repository.trackSocialAdEvent(ad.id, placement, "click") }; openSponsoredAd(context, ad) } }, contentScale = ContentScale.Crop)
         }
-        if (!ad.headline.isNullOrBlank() || ad.destinationUrl != null) Row(Modifier.fillMaxWidth().background(Color(0xFFF5F6F7)).padding(horizontal = 11.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (!ad.headline.isNullOrBlank() || ad.destinationUrl != null) Row(Modifier.fillMaxWidth().background(Color(0xFFF5F6F7)).padding(horizontal = 11.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(ad.headline ?: ad.advertiserName, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(ad.destinationUrl?.replace(Regex("^https?://"), "") ?: ad.ctaType, color = Color(0xFF65676B), fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(adDestinationLabel(ad), color = Color(0xFF65676B), fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            Button(onClick = { scope.launch { runCatching { repository.trackSocialAdEvent(ad.id, placement, "click") }; openSponsoredAd(context, ad) } }, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp), modifier = Modifier.height(31.dp), shape = RoundedCornerShape(7.dp)) { Text(adCtaLabel(ad.ctaType), fontSize = 11.sp, fontWeight = FontWeight.Bold) }
+            Button(onClick = { scope.launch { runCatching { repository.trackSocialAdEvent(ad.id, placement, "click") }; openSponsoredAd(context, ad) } }, contentPadding = PaddingValues(horizontal = 11.dp, vertical = 0.dp), modifier = Modifier.height(30.dp), shape = RoundedCornerShape(6.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1877F2), contentColor = Color.White)) { Text(adCtaLabel(ad.ctaType), fontSize = 11.sp, fontWeight = FontWeight.Bold) }
         }
-        Row(Modifier.fillMaxWidth().height(42.dp).padding(horizontal = 3.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = { liked = !liked; scope.launch { runCatching { repository.trackSocialAdEvent(ad.id, placement, "engagement", mapOf("action" to "like", "liked" to liked)) } } }, modifier = Modifier.size(40.dp)) { Icon(if (liked) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder, "Like ad", tint = if (liked) Color(0xFFE91E63) else Color.Gray) }
-            IconButton(onClick = { scope.launch { runCatching { repository.trackSocialAdEvent(ad.id, placement, "engagement", mapOf("action" to "feedback")) }; Toast.makeText(context, "Feedback recorded", Toast.LENGTH_SHORT).show() } }, modifier = Modifier.size(40.dp)) { Icon(Icons.Outlined.ChatBubbleOutline, "Ad feedback", tint = Color.Gray) }
-            IconButton(onClick = { scope.launch { runCatching { repository.trackSocialAdEvent(ad.id, placement, "engagement", mapOf("action" to "share")) }; val share = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, ad.destinationUrl ?: ad.headline ?: ad.advertiserName); context.startActivity(Intent.createChooser(share, "Share ad")) } }, modifier = Modifier.size(40.dp)) { Icon(Icons.Outlined.Share, "Share ad", tint = Color.Gray) }
+        Row(Modifier.fillMaxWidth().height(38.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = { liked = !liked; scope.launch { runCatching { repository.trackSocialAdEvent(ad.id, placement, "engagement", mapOf("action" to "like", "liked" to liked)) } } }, modifier = Modifier.size(38.dp)) { Icon(if (liked) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder, "Like ad", tint = if (liked) Color(0xFFE91E63) else Color.Gray, modifier = Modifier.size(21.dp)) }
+            IconButton(onClick = { scope.launch { runCatching { repository.trackSocialAdEvent(ad.id, placement, "engagement", mapOf("action" to "feedback")) }; Toast.makeText(context, "Feedback recorded", Toast.LENGTH_SHORT).show() } }, modifier = Modifier.size(38.dp)) { Icon(Icons.Outlined.ChatBubbleOutline, "Ad feedback", tint = Color.Gray, modifier = Modifier.size(20.dp)) }
+            IconButton(onClick = { scope.launch { runCatching { repository.trackSocialAdEvent(ad.id, placement, "engagement", mapOf("action" to "share")) }; val share = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, ad.destinationUrl ?: ad.headline ?: ad.advertiserName); context.startActivity(Intent.createChooser(share, "Share ad")) } }, modifier = Modifier.size(38.dp)) { Icon(Icons.Outlined.Share, "Share ad", tint = Color.Gray, modifier = Modifier.size(20.dp)) }
         }
         HorizontalDivider(thickness = .5.dp, color = MaterialTheme.colorScheme.onBackground.copy(alpha = .1f))
     }
@@ -4885,7 +4900,13 @@ private fun SponsoredReelAd(ad: SocialAd, repository: SocialRepository, onSkip: 
             Text(ad.advertiserName, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (!ad.headline.isNullOrBlank()) Text(ad.headline!!, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 3.dp))
             if (!ad.body.isNullOrBlank()) Text(ad.body!!, color = Color.White.copy(alpha = .88f), fontSize = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 3.dp))
-            Button(onClick = { scope.launch { runCatching { repository.trackSocialAdEvent(ad.id, "reels", "click") }; openSponsoredAd(context, ad) } }, modifier = Modifier.padding(top = 9.dp).height(33.dp), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp), shape = RoundedCornerShape(8.dp)) { Text(adCtaLabel(ad.ctaType), fontSize = 11.sp, fontWeight = FontWeight.Bold) }
+            Button(
+                onClick = { scope.launch { runCatching { repository.trackSocialAdEvent(ad.id, "reels", "click") }; openSponsoredAd(context, ad) } },
+                modifier = Modifier.padding(top = 8.dp).height(32.dp),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+                shape = RoundedCornerShape(7.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1877F2), contentColor = Color.White)
+            ) { Text(adCtaLabel(ad.ctaType), fontSize = 11.sp, fontWeight = FontWeight.Bold) }
         }
         Column(Modifier.align(Alignment.BottomEnd).padding(end = 9.dp, bottom = 28.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             ReelRailAction(if (liked) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder, "Like sponsored ad", "", tint = if (liked) Color(0xFFFF3040) else Color.White) { liked = !liked; scope.launch { runCatching { repository.trackSocialAdEvent(ad.id, "reels", "engagement", mapOf("action" to "like", "liked" to liked)) } } }
@@ -10664,7 +10685,7 @@ internal fun ExactMessengerFloatingButton(modifier: Modifier = Modifier) {
         tonalElevation = 0.dp
     ) {
         Box(contentAlignment = Alignment.Center) {
-            Image(painterResource(R.drawable.img_tiwi_avatar_1), null, modifier = Modifier.size(36.dp).clip(CircleShape), contentScale = ContentScale.Crop)
+            Image(painterResource(R.drawable.avatar), null, modifier = Modifier.size(36.dp).clip(CircleShape), contentScale = ContentScale.Crop)
         }
     }
 }
@@ -13882,7 +13903,7 @@ fun UserPin(name: String, isMatched: Boolean = false) {
                 shadowElevation = 6.dp
             ) {
                 Image(
-                    painter = painterResource(R.drawable.img_tiwi_avatar_1),
+                    painter = painterResource(R.drawable.avatar),
                     contentDescription = null,
                     modifier = Modifier.fillMaxSize().clip(CircleShape),
                     contentScale = ContentScale.Crop

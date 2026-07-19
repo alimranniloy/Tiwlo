@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { extname, join } from 'node:path';
+import { existsSync, mkdirSync, renameSync } from 'node:fs';
 import { appendFile, mkdir, open, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import express from 'express';
 import multer from 'multer';
@@ -15,6 +16,36 @@ const allowedExtensions = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif', '.m
 const restrictedUserStatuses = new Set(['disabled', 'banned', 'blocked', 'suspended']);
 const isAllowedMime = (mime = '') => /^(image|video|audio)\//i.test(mime) || mime === 'application/pdf' || mime === 'application/octet-stream';
 const chunkBytes = 768 * 1024;
+
+// Tiwi owns Social media independently from the main Tiwlo application.  The
+// `.data` location is deliberately used because production updates replace
+// source files, while `.data` is preserved by the secure deployer.
+const tiwiMediaBucket = (kind, mimeType) => {
+  const normalizedKind = String(kind || 'post').trim().toLowerCase();
+  const normalizedMime = String(mimeType || '').toLowerCase();
+  if (normalizedKind === 'profile' || normalizedKind === 'avatar') return 'profile/avatar';
+  if (normalizedKind === 'cover') return 'profile/cover';
+  if (normalizedKind === 'story') return 'stories';
+  if (normalizedKind === 'chat' || normalizedKind === 'message') return 'messages';
+  if (normalizedKind === 'live') return 'live';
+  if (normalizedKind === 'ad' || normalizedKind === 'advertisement') return 'ads';
+  if (normalizedMime.startsWith('video/') || ['reel', 'video'].includes(normalizedKind)) return 'videos';
+  if (normalizedMime.startsWith('audio/')) return 'audio';
+  if (normalizedMime.startsWith('image/')) return 'images';
+  return 'files';
+};
+
+const staticMediaOptions = {
+  dotfiles: 'deny',
+  fallthrough: true,
+  index: false,
+  maxAge: '1d',
+  immutable: false,
+  setHeaders: (res) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  }
+};
 
 const sniffMediaMime = async (filePath, claimedMime, filename, kind) => {
   const claimed = String(claimedMime || '').trim().toLowerCase();
@@ -160,11 +191,38 @@ const transcodeVideo = async ({ inputPath, outputDir, publicBase, statusFile }) 
 };
 
 export const registerSocialRoutes = (app, { prisma, userFromRequest, rootDir }) => {
-  const uploadRoot = join(rootDir, 'public', 'uploads', 'social');
+  const tiwiRoot = join(rootDir, '.data', 'Tiwi', 'social', 'media');
+  const uploadRoot = join(tiwiRoot, 'users');
+  const stagingRoot = join(tiwiRoot, 'staging');
+  const jobsRoot = join(tiwiRoot, 'jobs');
+  const legacyRoot = join(tiwiRoot, 'legacy');
+  const legacySourceRoot = join(rootDir, 'public', 'uploads', 'social');
+  // Move the old Social-only tree once.  Database rows keep their old public
+  // URL and are served through the compatibility mount below, so no existing
+  // post, chat, avatar, cover, reel or HLS video link breaks.
+  try {
+    mkdirSync(uploadRoot, { recursive: true });
+    mkdirSync(stagingRoot, { recursive: true });
+    mkdirSync(jobsRoot, { recursive: true });
+    if (existsSync(legacySourceRoot) && !existsSync(legacyRoot)) {
+      mkdirSync(join(tiwiRoot), { recursive: true });
+      renameSync(legacySourceRoot, legacyRoot);
+      console.info('[tiwi-media] migrated legacy Social media into .data/Tiwi/social/media/legacy');
+    }
+  } catch (error) {
+    // Keep serving the legacy path when an operator has mounted it on another
+    // filesystem. New uploads still use Tiwi storage, and the warning gives a
+    // deploy log a useful repair target without interrupting the API.
+    console.warn('[tiwi-media] legacy media migration deferred:', String(error?.message || error));
+  }
+
+  const mediaDirectory = (userId, kind, mimeType) => join(uploadRoot, safeId(userId), tiwiMediaBucket(kind, mimeType));
+  const stagingDirectory = (userId, area = 'multipart') => join(stagingRoot, safeId(userId), area);
+  const publicRoot = '/api/tiwi/media/files';
   const maxBytes = Math.max(1, Math.min(Number(process.env.SOCIAL_MEDIA_MAX_MB || 2048), 2048)) * 1024 * 1024;
   const storage = multer.diskStorage({
     destination: (req, _file, callback) => {
-      const directory = join(uploadRoot, safeId(req.socialUser?.id));
+      const directory = stagingDirectory(req.socialUser?.id);
       mkdir(directory, { recursive: true }).then(() => callback(null, directory)).catch(callback);
     },
     filename: (_req, file, callback) => {
@@ -202,18 +260,23 @@ export const registerSocialRoutes = (app, { prisma, userFromRequest, rootDir }) 
   };
 
   const finishUpload = async ({ user, userId, filename, filePath, mimeType, size, kind }) => {
-    const publicRoot = '/api/social/media/files';
-    const sourceUrl = `${publicRoot}/${userId}/${filename}`;
     const inspectedMimeType = await sniffMediaMime(filePath, mimeType, filename, kind);
+    const bucket = tiwiMediaBucket(kind, inspectedMimeType);
+    const directory = mediaDirectory(userId, kind, inspectedMimeType);
+    const storedFilePath = join(directory, filename);
+    await mkdir(directory, { recursive: true });
+    if (filePath !== storedFilePath) await rename(filePath, storedFilePath);
+    filePath = storedFilePath;
+    const sourceUrl = `${publicRoot}/${userId}/${bucket}/${filename}`;
     const isVideo = inspectedMimeType.startsWith('video/');
     const isImage = inspectedMimeType.startsWith('image/');
     const settings = await getSettings({ prisma });
     const processingId = filename.replace(/[^a-zA-Z0-9._-]/g, '');
     const outputName = `${processingId}-hls`;
-    const outputDir = join(uploadRoot, userId, outputName);
-    const statusFile = join(outputDir, 'status.json');
-    const hlsUrl = `${publicRoot}/${userId}/${outputName}/master.m3u8`;
-    const thumbnailUrl = `${publicRoot}/${userId}/${outputName}/thumbnail.jpg`;
+    const outputDir = join(directory, outputName);
+    const statusFile = join(jobsRoot, userId, `${processingId}.json`);
+    const hlsUrl = `${publicRoot}/${userId}/${bucket}/${outputName}/master.m3u8`;
+    const thumbnailUrl = `${publicRoot}/${userId}/${bucket}/${outputName}/thumbnail.jpg`;
     const visualModeration = await moderateMediaFile({
       filePath, mimeType: inspectedMimeType, targetType: boundedKind(kind),
       thresholds: {
@@ -258,14 +321,14 @@ export const registerSocialRoutes = (app, { prisma, userFromRequest, rootDir }) 
     let imageThumbnailUrl = null;
     if (isImage) {
       const imageThumbnailName = `${processingId}-feed.jpg`;
-      const imageThumbnailPath = join(uploadRoot, userId, imageThumbnailName);
+      const imageThumbnailPath = join(directory, imageThumbnailName);
       try {
         await runProcess(resolveSocialFfmpegPath(), [
           '-hide_banner', '-loglevel', 'error', '-y', '-i', filePath,
           '-frames:v', '1', '-vf', 'scale=1080:-2:force_original_aspect_ratio=decrease',
           '-q:v', '4', imageThumbnailPath
         ]);
-        imageThumbnailUrl = `${publicRoot}/${userId}/${imageThumbnailName}`;
+        imageThumbnailUrl = `${publicRoot}/${userId}/${bucket}/${imageThumbnailName}`;
       } catch {
         // The original image remains a safe fallback for unusual formats.
         imageThumbnailUrl = null;
@@ -273,6 +336,7 @@ export const registerSocialRoutes = (app, { prisma, userFromRequest, rootDir }) 
     }
     if (isVideo && settings.autoTranscode) {
       await mkdir(outputDir, { recursive: true });
+      await mkdir(join(jobsRoot, userId), { recursive: true });
       await writeStatus(statusFile, { status: 'queued', progress: 0, sourceUrl, hlsUrl, thumbnailUrl: null });
       setImmediate(() => {
         transcodeVideo({
@@ -296,17 +360,11 @@ export const registerSocialRoutes = (app, { prisma, userFromRequest, rootDir }) 
     };
   };
 
-  app.use('/api/social/media/files', express.static(uploadRoot, {
-    dotfiles: 'deny',
-    fallthrough: false,
-    index: false,
-    maxAge: '1d',
-    immutable: false,
-    setHeaders: (res) => {
-      res.setHeader('X-Content-Type-Options', 'nosniff');
-      res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
-    }
-  }));
+  app.use('/api/tiwi/media/files', express.static(uploadRoot, staticMediaOptions));
+  app.use('/api/social/media/files', express.static(legacyRoot, staticMediaOptions));
+  // This final fallback is only used if a cross-filesystem migration was
+  // deferred. It can be removed after the next successful startup move.
+  app.use('/api/social/media/files', express.static(legacySourceRoot, staticMediaOptions));
 
   app.get('/api/social/config', authenticate, async (req, res) => {
     const settings = await getSettings({ prisma });
@@ -364,7 +422,7 @@ export const registerSocialRoutes = (app, { prisma, userFromRequest, rootDir }) 
       return;
     }
     const userId = safeId(req.socialUser.id);
-    const directory = join(uploadRoot, userId);
+    const directory = stagingDirectory(userId, 'chunks');
     await mkdir(directory, { recursive: true });
     const uploadId = randomBytes(20).toString('hex');
     const originalExtension = extname(originalName).toLowerCase();
@@ -393,7 +451,7 @@ export const registerSocialRoutes = (app, { prisma, userFromRequest, rootDir }) 
       res.status(400).json({ error: 'Invalid media chunk' });
       return;
     }
-    const directory = join(uploadRoot, safeId(req.socialUser.id));
+    const directory = stagingDirectory(req.socialUser.id, 'chunks');
     const metadataPath = join(directory, `.chunk-${uploadId}.json`);
     const partPath = join(directory, `.chunk-${uploadId}.part`);
     try {
@@ -423,7 +481,7 @@ export const registerSocialRoutes = (app, { prisma, userFromRequest, rootDir }) 
       return;
     }
     const userId = safeId(req.socialUser.id);
-    const directory = join(uploadRoot, userId);
+    const directory = stagingDirectory(userId, 'chunks');
     const metadataPath = join(directory, `.chunk-${uploadId}.json`);
     const partPath = join(directory, `.chunk-${uploadId}.part`);
     try {
@@ -452,11 +510,22 @@ export const registerSocialRoutes = (app, { prisma, userFromRequest, rootDir }) 
       res.status(400).json({ error: 'Invalid processing id' });
       return;
     }
-    const statusFile = join(uploadRoot, safeId(req.socialUser.id), `${processingId}-hls`, 'status.json');
+    const userId = safeId(req.socialUser.id);
+    const statusFiles = [
+      join(jobsRoot, userId, `${processingId}.json`),
+      join(legacyRoot, userId, `${processingId}-hls`, 'status.json'),
+      join(legacySourceRoot, userId, `${processingId}-hls`, 'status.json')
+    ];
     try {
-      const status = JSON.parse(await readFile(statusFile, 'utf8'));
-      res.setHeader('Cache-Control', 'no-store');
-      res.json(status);
+      for (const statusFile of statusFiles) {
+        try {
+          const status = JSON.parse(await readFile(statusFile, 'utf8'));
+          res.setHeader('Cache-Control', 'no-store');
+          res.json(status);
+          return;
+        } catch { /* try next compatible location */ }
+      }
+      res.status(404).json({ error: 'Processing job was not found' });
     } catch {
       res.status(404).json({ error: 'Processing job was not found' });
     }
