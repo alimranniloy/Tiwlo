@@ -11911,6 +11911,7 @@ fun ChatDetailScreen(
 ) {
     var messageText by remember { mutableStateOf("") }
     var messageToUnsend by remember { mutableStateOf<SocialMessage?>(null) }
+    var messageToReport by remember { mutableStateOf<SocialMessage?>(null) }
     var selectedMessageId by remember { mutableStateOf<String?>(null) }
     var replyTo by remember { mutableStateOf<SocialMessage?>(null) }
     var messageToEdit by remember { mutableStateOf<SocialMessage?>(null) }
@@ -12659,6 +12660,12 @@ fun ChatDetailScreen(
                     chatPreferences.edit().putStringSet("pinned_messages_${conversation.id}", pinnedMessageIds).apply()
                     messageActions = null
                 }
+                if (target.senderId != repository.currentUserId() && target.unsentAt == null && !target.id.startsWith("local-")) {
+                    MessengerOptionRow(Icons.Outlined.Report, "Report message", destructive = true) {
+                        messageActions = null
+                        messageToReport = target
+                    }
+                }
                 if (target.senderId == repository.currentUserId() && target.unsentAt == null) MessengerOptionRow(Icons.Outlined.Edit, if (target.media.isEmpty()) "Edit message" else "Edit caption") {
                     editText = target.body; messageToEdit = target; messageActions = null
                 }
@@ -12666,6 +12673,28 @@ fun ChatDetailScreen(
                 if (target.senderId == repository.currentUserId() && target.unsentAt == null) MessengerOptionRow(Icons.Outlined.DeleteForever, "Unsend for everyone", destructive = true) { messageToUnsend = target; messageActions = null }
             }
         }
+    }
+
+    messageToReport?.let { target ->
+        AlertDialog(
+            onDismissRequest = { messageToReport = null },
+            containerColor = Color.White,
+            tonalElevation = 0.dp,
+            title = { Text("Report message?") },
+            text = { Text("Only this reported message and the necessary conversation context will be reviewed confidentially. The other person will not be told who reported it.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    messageToReport = null
+                    selectedMessageId = null
+                    scope.launch {
+                        runCatching { repository.reportContent("message", target.id, "threat_or_harassment") }
+                            .onSuccess { Toast.makeText(context, "Message sent for confidential review", Toast.LENGTH_SHORT).show() }
+                            .onFailure { Toast.makeText(context, it.message ?: "Report failed", Toast.LENGTH_SHORT).show() }
+                    }
+                }) { Text("Send report", color = Color(0xFFD92D20)) }
+            },
+            dismissButton = { TextButton(onClick = { messageToReport = null }) { Text("Cancel") } }
+        )
     }
 
     messageToUnsend?.let { target ->

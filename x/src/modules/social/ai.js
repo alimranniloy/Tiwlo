@@ -20,22 +20,20 @@ const MANAGER_TIMEOUT_MS = Math.max(10_000, Math.min(Number(process.env.SOCIAL_A
 export const SOCIAL_AI_PACKAGE_CATALOG = Object.freeze([
   { id: 'searxng', name: 'SearXNG', role: 'Public notability search', requiredFor: ['verification', 'impersonation'], port: 8081 },
   { id: 'crawl4ai', name: 'Crawl4AI', role: 'Evidence collection', requiredFor: ['verification', 'reportReview'], port: 11235 },
-  { id: 'llama-cpp', name: 'llama.cpp', role: 'Local policy analysis', requiredFor: ['verification', 'reportReview', 'postReview', 'commentReview', 'messageModeration'], port: 8082 },
+  { id: 'llama-cpp', name: 'llama.cpp', role: 'Local text policy analysis', requiredFor: ['verification', 'reportReview', 'postReview', 'commentReview'], port: 8082 },
   { id: 'queue-worker', name: 'Social AI Queue Worker', role: 'Persistent Social background processing', requiredFor: ['all'], port: null },
   { id: 'health-monitor', name: 'Social AI Health Monitor', role: 'Automatic service repair', requiredFor: ['all'], port: null }
 ]);
 
 export const SOCIAL_AI_MODEL_CATALOG = Object.freeze([
-  { id: 'text-policy', name: 'Qwen 2.5 Policy (adaptive)', kind: 'text', file: 'Auto-selects 0.5B or 3B Q4_K_M by server memory', default: true, requiredFor: ['verification', 'reportReview', 'postReview', 'commentReview', 'messageModeration', 'appeal'] },
-  { id: 'moderation-vision', name: 'MobileNetV2 Mid NSFW', kind: 'moderation', file: 'nsfwjs-mobilenet-v2-mid', default: true, requiredFor: ['adultContent', 'imageModeration', 'videoCaptionModeration'] },
-  { id: 'vision-review', name: 'Moondream 2', kind: 'vision', file: 'moondream2-text-model-f16.gguf', default: false, requiredFor: ['imageModeration', 'videoCaptionModeration', 'violence', 'weaponSale'] },
+  { id: 'text-policy', name: 'Qwen 2.5 Policy (adaptive)', kind: 'text', file: 'Auto-selects 0.5B or 3B Q4_K_M by server memory', default: true, requiredFor: ['verification', 'reportReview', 'postReview', 'commentReview', 'appeal'] },
   { id: 'embedding', name: 'Nomic Embed Text v1.5', kind: 'embedding', file: 'nomic-embed-text-v1.5.Q4_K_M.gguf', default: true, requiredFor: ['spam', 'scam', 'duplicateContent', 'fakeAccount'] }
 ]);
 
 const FEATURE_KEYS = Object.freeze([
-  'verification', 'reportReview', 'postReview', 'commentReview', 'messageModeration', 'imageModeration', 'videoCaptionModeration',
+  'verification', 'reportReview', 'postReview', 'commentReview',
   'spam', 'scam', 'fakeAccount', 'fakeProfile', 'impersonation', 'harassment', 'hateSpeech', 'threat', 'weaponSale', 'drugSale',
-  'adultContent', 'violence', 'selfHarm', 'copyright', 'warning', 'strike', 'appeal', 'notificationAutomation'
+  'violence', 'selfHarm', 'warning', 'strike', 'appeal', 'notificationAutomation'
 ]);
 
 const FEATURE_REQUIREMENTS = Object.freeze({
@@ -43,9 +41,6 @@ const FEATURE_REQUIREMENTS = Object.freeze({
   reportReview: { packages: ['crawl4ai', 'llama-cpp'], models: ['text-policy'] },
   postReview: { packages: ['llama-cpp'], models: ['text-policy'] },
   commentReview: { packages: ['llama-cpp'], models: ['text-policy'] },
-  messageModeration: { packages: ['llama-cpp'], models: ['text-policy'] },
-  imageModeration: { packages: ['llama-cpp'], models: ['moderation-vision', 'vision-review'] },
-  videoCaptionModeration: { packages: ['llama-cpp'], models: ['moderation-vision', 'vision-review'] },
   spam: { packages: ['llama-cpp'], models: ['text-policy', 'embedding'] },
   scam: { packages: ['llama-cpp'], models: ['text-policy', 'embedding'] },
   fakeAccount: { packages: ['llama-cpp'], models: ['embedding'] },
@@ -54,12 +49,10 @@ const FEATURE_REQUIREMENTS = Object.freeze({
   harassment: { packages: ['llama-cpp'], models: ['text-policy'] },
   hateSpeech: { packages: ['llama-cpp'], models: ['text-policy'] },
   threat: { packages: ['llama-cpp'], models: ['text-policy'] },
-  weaponSale: { packages: ['llama-cpp'], models: ['text-policy', 'vision-review'] },
+  weaponSale: { packages: ['llama-cpp'], models: ['text-policy'] },
   drugSale: { packages: ['llama-cpp'], models: ['text-policy'] },
-  adultContent: { packages: ['llama-cpp'], models: ['moderation-vision'] },
-  violence: { packages: ['llama-cpp'], models: ['text-policy', 'vision-review'] },
+  violence: { packages: ['llama-cpp'], models: ['text-policy'] },
   selfHarm: { packages: ['llama-cpp'], models: ['text-policy'] },
-  copyright: { packages: ['llama-cpp'], models: ['embedding'] },
   appeal: { packages: ['llama-cpp'], models: ['text-policy'] }
 });
 
@@ -67,9 +60,8 @@ const FEATURE_REQUIREMENTS = Object.freeze({
 // category toggles remain authoritative: enabling a category queues the
 // relevant source pipeline, while a disabled category can never take action.
 const PIPELINE_FEATURES = Object.freeze({
-  postReview: ['postReview', 'spam', 'scam', 'impersonation', 'harassment', 'hateSpeech', 'threat', 'weaponSale', 'drugSale', 'adultContent', 'violence', 'selfHarm', 'copyright'],
+  postReview: ['postReview', 'spam', 'scam', 'impersonation', 'harassment', 'hateSpeech', 'threat', 'weaponSale', 'drugSale', 'violence', 'selfHarm'],
   commentReview: ['commentReview', 'spam', 'scam', 'harassment', 'hateSpeech', 'threat', 'weaponSale', 'drugSale', 'selfHarm'],
-  messageModeration: ['messageModeration', 'spam', 'scam', 'harassment', 'hateSpeech', 'threat', 'weaponSale', 'drugSale', 'selfHarm'],
   profileReview: ['fakeProfile', 'fakeAccount', 'impersonation'],
   reportReview: ['reportReview'],
   verification: ['verification'],
@@ -78,12 +70,20 @@ const PIPELINE_FEATURES = Object.freeze({
 
 const CATEGORY_FEATURES = Object.freeze({
   threat: 'threat', weapon_sale: 'weaponSale', drug_sale: 'drugSale', self_harm: 'selfHarm', scam: 'scam', spam: 'spam',
-  harassment: 'harassment', hate_speech: 'hateSpeech', impersonation: 'impersonation', adult_content: 'adultContent', violence: 'violence', copyright: 'copyright'
+  harassment: 'harassment', hate_speech: 'hateSpeech', impersonation: 'impersonation', violence: 'violence'
 });
 
-const defaultFeatures = () => Object.fromEntries(FEATURE_KEYS.map((key) => [key, false]));
+const SOCIAL_AI_SETTINGS_VERSION = 2;
+const CORE_FEATURE_DEFAULTS = Object.freeze({
+  verification: true, reportReview: true, postReview: true, commentReview: true,
+  spam: true, scam: true, fakeAccount: true, fakeProfile: true, impersonation: true,
+  harassment: true, hateSpeech: true, threat: true, weaponSale: true, drugSale: true,
+  violence: true, selfHarm: true, warning: true, strike: true, appeal: true, notificationAutomation: true
+});
+const defaultFeatures = () => Object.fromEntries(FEATURE_KEYS.map((key) => [key, Boolean(CORE_FEATURE_DEFAULTS[key])]));
 
 const DEFAULT_SETTINGS = Object.freeze({
+  settingsVersion: SOCIAL_AI_SETTINGS_VERSION,
   enabled: true,
   autoBootstrap: true,
   autoRepair: true,
@@ -140,9 +140,18 @@ const normalizeSettings = (value = {}) => {
   const source = asObject(value);
   const runtime = asObject(source.runtime);
   const actions = asObject(source.automaticActions);
+  const legacyFeatureSettings = Number(source.settingsVersion || 0) < SOCIAL_AI_SETTINGS_VERSION;
+  const sourceFeatures = asObject(source.features);
+  // Earlier releases stored every feature as false. Upgrade that unused
+  // baseline once so public content, reports and verification reach the queue.
+  // Administrator choices made after this version are never overwritten.
+  const normalizedFeatures = legacyFeatureSettings
+    ? { ...defaultFeatures(), ...Object.fromEntries(Object.entries(sourceFeatures).filter(([, enabled]) => enabled === true)) }
+    : { ...defaultFeatures(), ...sourceFeatures };
   return {
     ...DEFAULT_SETTINGS,
     ...source,
+    settingsVersion: SOCIAL_AI_SETTINGS_VERSION,
     enabled: source.enabled !== false,
     autoBootstrap: source.autoBootstrap !== false,
     autoRepair: source.autoRepair !== false,
@@ -156,7 +165,7 @@ const normalizeSettings = (value = {}) => {
       llamaUrl: normalizeLlamaUrl(runtime.llamaUrl),
       requestTimeoutMs: Math.floor(clamp(runtime.requestTimeoutMs, 60_000, 120_000, DEFAULT_SETTINGS.runtime.requestTimeoutMs))
     },
-    features: asBooleanMap({ ...defaultFeatures(), ...asObject(source.features) }),
+    features: asBooleanMap(normalizedFeatures),
     automaticActions: {
       ...DEFAULT_SETTINGS.automaticActions,
       ...actions,
@@ -178,7 +187,13 @@ export const getSocialAiSettings = async (ctx) => {
     create: { scope: SETTING_SCOPE, scopeId: SETTING_SCOPE_ID, key: SETTING_KEY, value: DEFAULT_SETTINGS },
     update: {}
   });
-  return normalizeSettings(setting.value);
+  const normalized = normalizeSettings(setting.value);
+  // Persist the one-time safe-default migration so the queue and Admin UI use
+  // the same policy configuration after restarts and deployments.
+  if (Number(asObject(setting.value).settingsVersion || 0) < SOCIAL_AI_SETTINGS_VERSION && typeof ctx.prisma.systemSetting.update === 'function') {
+    await ctx.prisma.systemSetting.update({ where: { id: setting.id }, data: { value: normalized } }).catch(() => undefined);
+  }
+  return normalized;
 };
 
 const saveSocialAiSettings = async (ctx, value) => {
@@ -284,9 +299,13 @@ const taskFeature = (type, payload = {}) => {
   if (type === 'profile_review') return 'fakeProfile';
   if (type === 'post_review') return 'postReview';
   if (type === 'comment_review') return 'commentReview';
-  if (type === 'message_review') return 'messageModeration';
+  // Private messages are never proactively inspected. Reported messages are
+  // handled through report_review with the narrow reported-message context.
+  if (type === 'message_review') return 'privateMessageNotQueued';
   if (type === 'appeal_review') return 'appeal';
-  if (type === 'content_review') return String(payload.feature || 'postReview');
+  // Copyright/audio and NSFW image/video checks stay in their existing local
+  // Node pipelines, outside this text-policy AI control surface.
+  if (type === 'content_review') return 'localMediaPipeline';
   return null;
 };
 
@@ -333,21 +352,41 @@ const jsonFromModel = (value) => {
   return start >= 0 && end > start ? safeJson(text.slice(start, end + 1)) : null;
 };
 
-const policySignals = (text) => {
-  const value = asText(text, 12_000).toLowerCase();
+export const policySignals = (text) => {
+  const value = asText(text, 12_000).normalize('NFKC').toLowerCase();
   const rules = [
-    ['threat', /\b(kill you|murder you|shoot you|bomb threat|মেরে ফেল|হত্যা কর|গুলি কর)\b/i, .97, 'high'],
-    ['weapon_sale', /\b(buy (a |an )?(gun|weapon)|sell (a |an )?(gun|weapon)|firearm for sale|অস্ত্র বিক্রি|বন্দুক বিক্রি)\b/i, .94, 'high'],
-    ['drug_sale', /\b(buy (weed|cocaine|heroin|meth)|drug(s)? for sale|ড্রাগ বিক্রি|মাদক বিক্রি)\b/i, .94, 'high'],
-    ['self_harm', /\b(kill myself|suicide plan|end my life|আত্মহত্যা করব|নিজেকে মেরে)\b/i, .92, 'high'],
-    ['scam', /\b(send (your )?(otp|password|seed phrase)|guaranteed investment|double your money|otp দিন|পাসওয়ার্ড দিন)\b/i, .88, 'medium'],
-    ['harassment', /\b(you are worthless|go die|তুই মরে যা|তোমাকে মেরে)\b/i, .86, 'medium']
+    ['threat', [
+      /\b(?:i(?:\s+am|'m)?\s+going\s+to|i\s+will|i'll|gonna)?\s*(?:kill|murder|shoot|stab|bomb|hang|burn)\s+(?:you|u)\b/i,
+      /\b(?:toke|tore|tomake|tumi(?:ke)?|tui)\s+(?:khun|mere|mara|guli|bomb)\s*(?:korbo|dib(?:o)?|debo|felbo|felay\s*dib(?:o)?)\b/i,
+      /(?:তোকে|তোরে|তোমাকে|তুই)\s*(?:খুন|মেরে|মারা|গুলি|বোমা)\s*(?:করব|করবো|দেব|দেবো|ফেলব|ফেলবো)/u
+    ], .99, 'critical', 'remove_content'],
+    ['weapon_sale', [
+      /\b(?:buy|sell)\s+(?:a\s+)?(?:gun|weapon|firearm)\b|\bfirearm\s+for\s+sale\b/i,
+      /(?:অস্ত্র|বন্দুক)\s*(?:বিক্রি|কিনতে|কিনুন)/u
+    ], .96, 'high', 'remove_content'],
+    ['drug_sale', [
+      /\b(?:buy|sell)\s+(?:weed|cocaine|heroin|meth|drugs?)\b|\bdrugs?\s+for\s+sale\b/i,
+      /(?:ড্রাগ|মাদক)\s*(?:বিক্রি|কিনতে|কিনুন)/u
+    ], .96, 'high', 'remove_content'],
+    ['self_harm', [
+      /\b(?:kill myself|suicide plan|end my life|want to die)\b/i,
+      /(?:আত্মহত্যা\s*করব|নিজেকে\s*মেরে\s*ফেলব)/u
+    ], .94, 'high', 'manual_review'],
+    ['scam', [
+      /\b(?:send\s+(?:your\s+)?(?:otp|password|seed phrase)|guaranteed\s+investment|double\s+your\s+money)\b/i,
+      /(?:otp|পাসওয়ার্ড|পাসওয়ার্ড)\s*(?:দিন|দাও)/u
+    ], .91, 'medium', 'warning'],
+    ['harassment', [
+      /\b(?:you\s+are\s+worthless|go\s+die|fuck\s+you|motherfucker|bitch|asshole|bastard)\b/i,
+      /\b(?:tui|toke|tore|tomake)\s+(?:mere\s+felbo|mara\s+uchit|mor|morte\s+bolchi)\b/i,
+      /(?:তুই\s*মরে\s*যা|তোকে\s*মারব|তোমাকে\s*মারব|হারামজাদা|খানকির)/u
+    ], .93, 'medium', 'warning']
   ];
-  const found = rules.find(([, pattern]) => pattern.test(value));
+  const found = rules.find(([, patterns]) => patterns.some((pattern) => pattern.test(value)));
   return found ? {
     category: found[0], confidence: found[2], severity: found[3], decision: 'violation',
-    recommendation: found[3] === 'high' ? 'remove_content' : 'warning',
-    reason: `High-confidence ${found[0].replace(/_/g, ' ')} policy signal`,
+    recommendation: found[4],
+    reason: `Potential ${found[0].replace(/_/g, ' ')} violates Tiwi Community Standards.`,
     evidenceSummary: 'A high-confidence local policy pattern was identified.', provider: 'social-policy-patterns'
   } : null;
 };
@@ -498,30 +537,24 @@ const askPolicyModel = async (settings, task, taskContext, supplemental = {}) =>
     supplemental: asText(JSON.stringify(supplemental || {}), 160)
   };
   const system = [
-    'You are Tiwi Social Safety AI.',
-    'Return exactly one JSON object and no prose or markdown.',
-    'Analyze only supplied content. Never infer protected traits.',
-    'Use decision exactly allow, review, or violation.',
-    'Required keys: decision, category, confidence as a number from 0 to 1, severity as low/medium/high/critical, reason, recommendedAction, evidenceSummary.',
-    'recommendedAction must be one of none, warning, strike, remove_content, restrict_account, approve_verification, reject_verification, manual_review.'
+    'Classify supplied Tiwi content only.',
+    'Reply with one minified JSON object and no markdown.',
+    'Keys: decision, category, confidence, severity, recommendedAction, reason, evidenceSummary.',
+    'decision is allow, review, or violation. confidence is 0 to 1.',
+    'severity is low, medium, high, or critical.',
+    'recommendedAction is none, warning, strike, remove_content, restrict_account, approve_verification, reject_verification, or manual_review.',
+    'Use short values and do not explain the JSON format.'
   ].join(' ');
   const user = `Task: ${task}\nContext: ${JSON.stringify(context)}`;
   const request = (body) => fetch(settings.runtime.llamaUrl, {
     method: 'POST', signal: AbortSignal.timeout(settings.runtime.requestTimeoutMs), headers: { 'content-type': 'application/json', accept: 'application/json' }, body: JSON.stringify(body)
   });
+  const requestMessages = (messages, maxTokens = 128) => request({ messages, temperature: 0, max_tokens: maxTokens, stream: false });
   let response;
   try {
-    response = await request({
-      messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
-      temperature: 0.1,
-      max_tokens: 180,
-      response_format: { type: 'json_object' }
-    });
-    // A few older llama.cpp builds do not implement response_format. Retry
-    // once with the same constrained prompt rather than failing the review.
-    if (response.status === 400) {
-      response = await request({ messages: [{ role: 'system', content: system }, { role: 'user', content: user }], temperature: 0.1, max_tokens: 180 });
-    }
+    // Some llama.cpp versions reject response_format with HTTP 400. The plain
+    // OpenAI-chat request works with old and current server images.
+    response = await requestMessages([{ role: 'system', content: system }, { role: 'user', content: user }]);
   } catch (error) {
     throw modelWarmingError(`llama.cpp is not reachable: ${asText(error?.message, 300)}`);
   }
@@ -532,15 +565,27 @@ const askPolicyModel = async (settings, task, taskContext, supplemental = {}) =>
   }
   const payload = await response.json();
   const content = payload?.choices?.[0]?.message?.content || payload?.content || payload?.response || '';
-  const parsed = jsonFromModel(content);
+  let parsed = jsonFromModel(content);
+  // Retry once with a tiny prompt if the compact local model ended halfway
+  // through the first JSON response. A failed retry stays a private manual
+  // review and never becomes a user-facing model error.
+  if (!parsed) {
+    try {
+      const retry = await requestMessages([{ role: 'user', content: `Return only valid minified JSON with decision,category,confidence,severity,recommendedAction,reason,evidenceSummary. Content: ${asText(taskContext.text, 420)}` }], 112);
+      if (retry.ok) {
+        const retryPayload = await retry.json();
+        parsed = jsonFromModel(retryPayload?.choices?.[0]?.message?.content || retryPayload?.content || retryPayload?.response || '');
+      }
+    } catch { /* Safe manual review below. */ }
+  }
   // A compact local model can occasionally stop before its JSON is complete.
   // Treat that as a conservative manual review rather than losing the review
   // job: no automated action is taken and the admin still gets a real case.
   if (!parsed) {
     return {
       decision: 'review', category: 'unclassified', confidence: 0, severity: 'low',
-      reason: 'The local language model response was incomplete, so this content was held for manual Social review.',
-      recommendation: 'manual_review', evidenceSummary: 'Local policy response could not be normalized safely.', provider: 'social-llama-cpp-fallback'
+      reason: 'This content is waiting for a Tiwi manual review.',
+      recommendation: 'manual_review', evidenceSummary: 'The automated review could not safely reach a final classification.', provider: 'social-llama-cpp-fallback'
     };
   }
   const decision = policyDecision(parsed.decision);
@@ -588,7 +633,12 @@ const recordCase = async (ctx, task, analysis, actionTaken = null) => {
       evidence: { provider: analysis.provider, summary: analysis.evidenceSummary || '', context: task.context, createdAt: nowIso() }
     }
   });
-  if (settings.features.notificationAutomation && warningEnabled) {
+  // Pending/manual analysis is internal work, not a warning. Do not reveal a
+  // local-model state or incomplete response to members. Verification members
+  // are notified only after a final decision is recorded.
+  const shouldNotifyMember = settings.features.notificationAutomation && warningEnabled
+    && analysis.decision === 'violation' && task.sourceType !== 'verification';
+  if (shouldNotifyMember) {
     await createSocialAiNotification(ctx, task.subjectUserId, 'social_ai_warning', 'Tiwi Community Standards notice', analysis.reason, { caseId: socialCase.id, category: analysis.category, actionTaken }).catch(() => undefined);
   }
   return socialCase;
@@ -604,11 +654,13 @@ const applyAutomatedAction = async (ctx, task, analysis) => {
   if (task.sourceType === 'verification') {
     const report = await ctx.prisma.socialReport.findUnique({ where: { id: task.sourceId } });
     if (report && recommendation === 'approve_verification' && settings.automaticActions.autoApproveVerification) {
-      await ctx.prisma.socialReport.update({ where: { id: report.id }, data: { status: 'resolved', resolution: 'High-confidence Social AI verification recommendation; administrator audit retained.' } });
+      await ctx.prisma.socialReport.update({ where: { id: report.id }, data: { status: 'resolved', resolution: 'Verification request approved after policy review.' } });
+      await createSocialAiNotification(ctx, report.reporterId, 'verification_reviewed', 'Verification review completed', 'Your verification request was approved.', { reportId: report.id, caseType: 'verification', outcome: 'resolved' });
       return 'verification_approved';
     }
     if (report && recommendation === 'reject_verification' && settings.automaticActions.autoRejectVerification) {
-      await ctx.prisma.socialReport.update({ where: { id: report.id }, data: { status: 'dismissed', resolution: 'High-confidence Social AI verification recommendation; administrator audit retained.' } });
+      await ctx.prisma.socialReport.update({ where: { id: report.id }, data: { status: 'dismissed', resolution: 'Verification request was not approved after policy review.' } });
+      await createSocialAiNotification(ctx, report.reporterId, 'verification_reviewed', 'Verification review completed', 'Your verification request was not approved at this time.', { reportId: report.id, caseType: 'verification', outcome: 'dismissed' });
       return 'verification_rejected';
     }
     return null;
@@ -628,6 +680,14 @@ const applyAutomatedAction = async (ctx, task, analysis) => {
   if (targetType === 'comment' && settings.automaticActions.removeContent && ['remove_content', 'restrict_account'].includes(recommendation)) {
     await ctx.prisma.socialComment.update({ where: { id: targetId }, data: { status: 'deleted', body: '' } });
     return 'comment_removed';
+  }
+  if (targetType === 'message' && settings.automaticActions.removeContent && ['remove_content', 'restrict_account'].includes(recommendation)) {
+    await ctx.prisma.socialMessage.update({ where: { id: targetId }, data: { body: '', media: [], unsentAt: new Date(), deletedAt: new Date() } });
+    if (settings.automaticActions.restrictAccount && recommendation === 'restrict_account') {
+      await ctx.prisma.user.update({ where: { id: task.subjectUserId }, data: { status: 'disabled', socialRestrictionCode: `ai_${analysis.category.replace(/[^a-z0-9]+/gi, '_').toLowerCase()}`, socialRestrictionReason: analysis.reason, socialRestrictedAt: new Date(), socialModerationScore: analysis.confidence } });
+      return 'message_removed_account_restricted';
+    }
+    return 'message_removed';
   }
   return null;
 };

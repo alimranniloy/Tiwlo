@@ -401,6 +401,7 @@ const reportTargetLabel = (targetType = '') => {
   const normalized = bounded(targetType, 40).toLowerCase();
   if (normalized === 'profile') return 'profile';
   if (normalized === 'comment') return 'comment';
+  if (normalized === 'message') return 'message';
   if (normalized === 'reel' || normalized === 'video') return 'reel';
   return 'post';
 };
@@ -2338,12 +2339,8 @@ export const createPost = async (ctx, input) => {
   enqueueSocialAiIfEnabled(ctx, 'postReview', {
     type: 'post_review', priority: 24, payload: { postId: post.id, targetId: post.id }
   }).catch((error) => console.warn('[social-ai] post review enqueue failed:', error?.message || error));
-  if (media.some((item) => ['image', 'video'].includes(String(item?.type || '').toLowerCase()))) {
-    const feature = media.some((item) => String(item?.type || '').toLowerCase() === 'video') ? 'videoCaptionModeration' : 'imageModeration';
-    enqueueSocialAiIfEnabled(ctx, feature, {
-      type: 'content_review', priority: 25, payload: { postId: post.id, targetId: post.id, feature }
-    }).catch((error) => console.warn('[social-ai] media review enqueue failed:', error?.message || error));
-  }
+  // Audio/video copyright and explicit-media classification are handled by the
+  // existing local Node pipelines. The Social AI queue is for text and reports.
   return mapPost(post);
 };
 
@@ -3044,11 +3041,9 @@ export const sendMessage = async (ctx, input) => {
     include: { members: true }
   });
   if (conversation) await createMessageNotification(ctx, actor, conversation, message);
-  // Private-message review is off by default. When an administrator explicitly
-  // enables it, only this message is queued; no conversation history is copied.
-  enqueueSocialAiIfEnabled(ctx, 'messageModeration', {
-    type: 'message_review', priority: 15, payload: { messageId: message.id, targetId: message.id }
-  }).catch((error) => console.warn('[social-ai] message review enqueue failed:', error?.message || error));
+  // Private messages are never sent to Social AI merely because they were
+  // received. A member must explicitly report a message before report-review
+  // receives only that reported message and the submitted reason.
   return mapMessage(message);
 };
 
