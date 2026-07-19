@@ -8,6 +8,7 @@ import {
   Flag,
   Layers3,
   MessageCircle,
+  Megaphone,
   Radio,
   RefreshCw,
   Save,
@@ -20,6 +21,7 @@ import {
 } from 'lucide-react';
 import {
   adminDeleteSocialPostWithApi,
+  adminDeleteSocialAdWithApi,
   adminResolveSocialReportWithApi,
   adminUpdateSocialSettingsWithApi,
   adminUpdateSocialUserStatusWithApi,
@@ -28,6 +30,7 @@ import {
   adminArchiveSocialProfileEffectWithApi,
   adminUpsertSocialProfileDecorationWithApi,
   adminUpsertSocialProfileEffectWithApi,
+  adminUpsertSocialAdWithApi,
   deleteUserWithApi,
   fetchAdminSocialAiOverviewWithApi,
   fetchAdminSocialOverviewWithApi,
@@ -37,18 +40,30 @@ import {
   fetchAdminSocialUsersWithApi,
   fetchAdminSocialProfileDecorationsWithApi,
   fetchAdminSocialProfileEffectsWithApi,
+  fetchAdminSocialAdsWithApi,
   fetchSocialSettingsWithApi,
   operateAdminSocialAiWithApi,
   resolveAdminSocialAiCaseWithApi,
   updateAdminSocialAiSettingsWithApi,
   uploadSocialProfileDecorationWithApi,
-  uploadSocialProfileEffectWithApi
+  uploadSocialProfileEffectWithApi,
+  uploadSocialAdMediaWithApi
 } from '../../lib/tiwloApi';
 
-type Tab = 'users' | 'posts' | 'reports' | 'automation' | 'ai' | 'maintenance' | 'decorations' | 'effects' | 'settings';
+type Tab = 'users' | 'posts' | 'ads' | 'reports' | 'automation' | 'ai' | 'maintenance' | 'decorations' | 'effects' | 'settings';
 
 const emptyDecoration = { id: '', name: '', assetUrl: '', fileName: '', mimeType: 'image/png', animated: false, width: 288, height: 288, priceUsd: 0, status: 'active', sortOrder: 0 };
 const emptyEffect = { ...emptyDecoration, width: 450, height: 880 };
+const emptyAd = { id: '', advertiserName: '', advertiserAvatarUrl: '', headline: '', body: '', media: [] as any[], ctaType: 'website', destinationUrl: '', placements: ['feed'], status: 'draft', startAt: '', endAt: '', skipAfterSeconds: 5, frequencyCap: 2 };
+
+const editableAd = (item: any = {}) => ({
+  ...emptyAd,
+  id: item.id || '', advertiserName: item.advertiserName || '', advertiserAvatarUrl: item.advertiserAvatarUrl || '',
+  headline: item.headline || '', body: item.body || '', media: Array.isArray(item.media) ? item.media : [],
+  ctaType: item.ctaType || 'website', destinationUrl: item.destinationUrl || '', placements: Array.isArray(item.placements) ? item.placements : ['feed'],
+  status: item.status || 'draft', startAt: item.startAt ? String(item.startAt).slice(0, 16) : '', endAt: item.endAt ? String(item.endAt).slice(0, 16) : '',
+  skipAfterSeconds: Number(item.skipAfterSeconds ?? 5), frequencyCap: Number(item.frequencyCap ?? 2)
+});
 
 const editableDecoration = (item: any = {}) => ({
   ...emptyDecoration,
@@ -89,7 +104,7 @@ const safeCount = (value: unknown) => {
   return Number.isFinite(count) ? count : 0;
 };
 
-const Toggle = ({ checked, onChange, label, detail }: { checked: boolean; onChange: (value: boolean) => void; label: string; detail: string }) => (
+const Toggle = ({ checked, onChange, label, detail }: { key?: React.Key; checked: boolean; onChange: (value: boolean) => void | Promise<void>; label: string; detail: string }) => (
   <label className="flex cursor-pointer items-center justify-between gap-4 rounded border border-[#e5e8ed] bg-white p-4">
     <span>
       <span className="block text-[13px] font-bold text-[#2e3d49]">{label}</span>
@@ -102,7 +117,7 @@ const Toggle = ({ checked, onChange, label, detail }: { checked: boolean; onChan
 // A failed or partially upgraded Social AI response must never blank the
 // complete Social administration area. The boundary keeps the remaining
 // Social tools usable and gives the administrator an actionable recovery UI.
-class SocialAiPanelBoundary extends React.Component<React.PropsWithChildren, { failed: boolean }> {
+class SocialAiPanelBoundary extends React.Component<{ children?: React.ReactNode }, { failed: boolean }> {
   state = { failed: false };
 
   static getDerivedStateFromError() {
@@ -122,11 +137,11 @@ class SocialAiPanelBoundary extends React.Component<React.PropsWithChildren, { f
         </section>
       );
     }
-    return this.props.children;
+    return (this as any).props?.children || null;
   }
 }
 
-class SocialAdminPageBoundary extends React.Component<React.PropsWithChildren, { failed: boolean }> {
+class SocialAdminPageBoundary extends React.Component<{ children?: React.ReactNode }, { failed: boolean }> {
   state = { failed: false };
 
   static getDerivedStateFromError() {
@@ -146,7 +161,7 @@ class SocialAdminPageBoundary extends React.Component<React.PropsWithChildren, {
         </section>
       );
     }
-    return this.props.children;
+    return (this as any).props?.children || null;
   }
 }
 
@@ -163,6 +178,10 @@ function AdminSocialContent() {
   const [overview, setOverview] = React.useState<any>({});
   const [users, setUsers] = React.useState<any[]>([]);
   const [posts, setPosts] = React.useState<any[]>([]);
+  const [ads, setAds] = React.useState<any[]>([]);
+  const [adForm, setAdForm] = React.useState<any>(emptyAd);
+  const [adFile, setAdFile] = React.useState<File | null>(null);
+  const [adPreview, setAdPreview] = React.useState('');
   const [reports, setReports] = React.useState<any[]>([]);
   const [moderationEvents, setModerationEvents] = React.useState<any[]>([]);
   const [decorations, setDecorations] = React.useState<any[]>([]);
@@ -187,10 +206,11 @@ function AdminSocialContent() {
     setLoading(true);
     setError('');
     try {
-      const [summary, socialUsers, socialPosts, socialReports, automationEvents, socialDecorations, socialEffects, socialSettings, socialAi] = await Promise.all([
+      const [summary, socialUsers, socialPosts, socialAds, socialReports, automationEvents, socialDecorations, socialEffects, socialSettings, socialAi] = await Promise.all([
         fetchAdminSocialOverviewWithApi(),
         fetchAdminSocialUsersWithApi(search || undefined),
         fetchAdminSocialPostsWithApi(undefined, undefined, search || undefined),
+        fetchAdminSocialAdsWithApi(),
         fetchAdminSocialReportsWithApi(),
         fetchAdminSocialModerationEventsWithApi(),
         fetchAdminSocialProfileDecorationsWithApi(),
@@ -202,6 +222,7 @@ function AdminSocialContent() {
       setOverview(asRecord(summary));
       setUsers(asObjectArray(socialUsers));
       setPosts(asObjectArray(socialPosts));
+      setAds(asObjectArray(socialAds));
       setReports(asObjectArray(socialReports));
       setModerationEvents(asObjectArray(automationEvents));
       setDecorations(asObjectArray(socialDecorations));
@@ -244,6 +265,35 @@ function AdminSocialContent() {
   const deletePost = (post: any) => {
     if (!window.confirm('Delete this post from every feed?')) return;
     perform(() => adminDeleteSocialPostWithApi(post.id), 'Post removed from Social feeds.');
+  };
+
+  const resetAdForm = () => {
+    if (adPreview.startsWith('blob:')) URL.revokeObjectURL(adPreview);
+    setAdForm(emptyAd); setAdFile(null); setAdPreview('');
+  };
+
+  const chooseAdFile = (file?: File) => {
+    if (!file) return;
+    if (!file.type.startsWith('image/') && !file.type.startsWith('video/')) { setError('Choose an image or video for this campaign.'); return; }
+    if (adPreview.startsWith('blob:')) URL.revokeObjectURL(adPreview);
+    setAdFile(file); setAdPreview(URL.createObjectURL(file));
+  };
+
+  const saveAd = async () => {
+    if (!adForm.advertiserName.trim()) { setError('Advertiser name is required.'); return; }
+    await perform(async () => {
+      const upload = adFile ? await uploadSocialAdMediaWithApi(adFile) : null;
+      const type = String(upload?.mimeType || adForm.media?.[0]?.mimeType || adFile?.type || '').startsWith('video/') ? 'video' : 'image';
+      await adminUpsertSocialAdWithApi({
+        id: adForm.id || undefined, advertiserName: adForm.advertiserName.trim(), advertiserAvatarUrl: adForm.advertiserAvatarUrl || undefined,
+        headline: adForm.headline || undefined, body: adForm.body || undefined,
+        media: upload ? [{ type, url: upload.sourceUrl, hlsUrl: upload.hlsUrl, thumbnailUrl: upload.thumbnailUrl, mimeType: upload.mimeType, processingStatus: upload.processingStatus }] : adForm.media,
+        ctaType: adForm.ctaType, destinationUrl: adForm.destinationUrl || undefined, placements: adForm.placements,
+        status: adForm.status, startAt: adForm.startAt || null, endAt: adForm.endAt || null,
+        skipAfterSeconds: Number(adForm.skipAfterSeconds || 0), frequencyCap: Number(adForm.frequencyCap || 1)
+      });
+      resetAdForm();
+    }, adForm.id ? 'Ad campaign updated.' : 'Ad campaign created.');
   };
 
   const saveSettings = async () => {
@@ -467,6 +517,7 @@ function AdminSocialContent() {
           {([
             ['users', 'Users', Users],
             ['posts', 'Posts & Reels', Film],
+            ['ads', 'Ads', Megaphone],
             ['reports', 'Reports', Flag],
             ['automation', 'Automation', Ban],
             ['ai', 'AI', Sparkles],
@@ -480,7 +531,7 @@ function AdminSocialContent() {
             </button>
           ))}
         </div>
-        {tab !== 'settings' && tab !== 'ai' && tab !== 'maintenance' && tab !== 'decorations' && tab !== 'effects' && (
+        {tab !== 'settings' && tab !== 'ai' && tab !== 'maintenance' && tab !== 'decorations' && tab !== 'effects' && tab !== 'ads' && (
           <label className="flex min-w-[260px] items-center gap-2 rounded border border-[#e5e8ed] px-3 py-2">
             <Search className="h-4 w-4 text-gray-400" />
             <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search real database records" className="w-full text-[12px] outline-none" />
@@ -516,6 +567,39 @@ function AdminSocialContent() {
               <button disabled={saving || post.status === 'deleted'} onClick={() => deletePost(post)} className="flex shrink-0 items-center justify-center gap-2 rounded border border-red-100 px-3 py-2 text-[12px] font-bold text-red-600 hover:bg-red-50 disabled:opacity-40"><Trash2 className="h-4 w-4" /> Delete</button>
             </div>
           ))}
+        </div>
+      )}
+
+      {tab === 'ads' && (
+        <div className="grid gap-5 xl:grid-cols-[390px_1fr]">
+          <section className="rounded border border-[#dfe4ea] bg-white p-5">
+            <div className="flex items-start gap-3">
+              <span className="rounded-lg bg-blue-50 p-2.5 text-[#0069ff]"><Megaphone className="h-5 w-5" /></span>
+              <div><h2 className="text-[15px] font-black text-[#2e3d49]">{adForm.id ? 'Edit ad campaign' : 'Add new ad'}</h2><p className="mt-1 text-[11px] leading-5 text-gray-500">Create a clearly disclosed sponsored card for Feed and/or Reels. Media is uploaded through the Social API and is validated before it can run.</p></div>
+            </div>
+            <div className="mt-5 grid gap-3">
+              <label className="text-[10px] font-black uppercase tracking-wide text-gray-500">Advertiser name<input value={adForm.advertiserName} onChange={(event) => setAdForm({ ...adForm, advertiserName: event.target.value })} placeholder="Brand or business name" className="mt-1 w-full rounded-lg border border-[#dfe4ea] px-3 py-2.5 text-[13px] normal-case text-[#2e3d49] outline-none focus:border-[#0069ff]" /></label>
+              <label className="text-[10px] font-black uppercase tracking-wide text-gray-500">Advertiser avatar URL <span className="font-normal normal-case text-gray-400">(optional)</span><input value={adForm.advertiserAvatarUrl} onChange={(event) => setAdForm({ ...adForm, advertiserAvatarUrl: event.target.value })} placeholder="https://..." className="mt-1 w-full rounded-lg border border-[#dfe4ea] px-3 py-2.5 text-[13px] normal-case text-[#2e3d49] outline-none focus:border-[#0069ff]" /></label>
+              <label className="text-[10px] font-black uppercase tracking-wide text-gray-500">Headline <span className="font-normal normal-case text-gray-400">(optional)</span><input value={adForm.headline} onChange={(event) => setAdForm({ ...adForm, headline: event.target.value })} placeholder="What should people notice?" className="mt-1 w-full rounded-lg border border-[#dfe4ea] px-3 py-2.5 text-[13px] normal-case text-[#2e3d49] outline-none focus:border-[#0069ff]" /></label>
+              <label className="text-[10px] font-black uppercase tracking-wide text-gray-500">Primary text<textarea rows={3} value={adForm.body} onChange={(event) => setAdForm({ ...adForm, body: event.target.value })} placeholder="Sponsored message" className="mt-1 w-full resize-y rounded-lg border border-[#dfe4ea] px-3 py-2.5 text-[13px] normal-case text-[#2e3d49] outline-none focus:border-[#0069ff]" /></label>
+              <label className="flex cursor-pointer items-center justify-center overflow-hidden rounded-xl border-2 border-dashed border-[#cdd5df] bg-[#f8fafc] p-3 hover:border-[#0069ff]">
+                {adPreview || adForm.media?.[0]?.thumbnailUrl || adForm.media?.[0]?.url ? <div className="relative h-40 w-full overflow-hidden rounded-lg bg-black"><img src={adPreview || adForm.media?.[0]?.thumbnailUrl || adForm.media?.[0]?.url} className="h-full w-full object-cover" /><span className="absolute bottom-2 left-2 rounded bg-black/60 px-2 py-1 text-[9px] font-black uppercase text-white">{adFile?.type?.startsWith('video/') || adForm.media?.[0]?.type === 'video' ? 'Video' : 'Image'}</span></div> : <div className="py-7 text-center"><Upload className="mx-auto h-7 w-7 text-[#0069ff]" /><span className="mt-2 block text-[12px] font-black text-[#344054]">Upload image or video</span><span className="mt-1 block text-[10px] text-gray-500">Image, MP4, WebM or MOV</span></div>}
+                <input type="file" accept="image/*,video/*" className="hidden" onChange={(event) => chooseAdFile(event.target.files?.[0])} />
+              </label>
+              <div className="grid grid-cols-2 gap-3">
+                <label className="text-[10px] font-black uppercase tracking-wide text-gray-500">Action<select value={adForm.ctaType} onChange={(event) => setAdForm({ ...adForm, ctaType: event.target.value })} className="mt-1 w-full rounded-lg border border-[#dfe4ea] bg-white px-3 py-2.5 text-[13px] normal-case text-[#2e3d49] outline-none focus:border-[#0069ff]"><option value="website">Visit website</option><option value="call">Call</option><option value="whatsapp">WhatsApp</option><option value="visit">Visit</option></select></label>
+                <label className="text-[10px] font-black uppercase tracking-wide text-gray-500">Campaign status<select value={adForm.status} onChange={(event) => setAdForm({ ...adForm, status: event.target.value })} className="mt-1 w-full rounded-lg border border-[#dfe4ea] bg-white px-3 py-2.5 text-[13px] normal-case text-[#2e3d49] outline-none focus:border-[#0069ff]"><option value="draft">Draft</option><option value="active">Active</option><option value="paused">Paused</option></select></label>
+              </div>
+              <label className="text-[10px] font-black uppercase tracking-wide text-gray-500">{adForm.ctaType === 'call' ? 'Phone number' : adForm.ctaType === 'whatsapp' ? 'WhatsApp number' : 'Destination URL'}<input value={adForm.destinationUrl} onChange={(event) => setAdForm({ ...adForm, destinationUrl: event.target.value })} placeholder={adForm.ctaType === 'call' ? '+880...' : adForm.ctaType === 'whatsapp' ? '880...' : 'https://example.com'} className="mt-1 w-full rounded-lg border border-[#dfe4ea] px-3 py-2.5 text-[13px] normal-case text-[#2e3d49] outline-none focus:border-[#0069ff]" /></label>
+              <div className="grid grid-cols-2 gap-3"><label className="text-[10px] font-black uppercase tracking-wide text-gray-500">Feed <input checked={adForm.placements.includes('feed')} onChange={(event) => setAdForm({ ...adForm, placements: event.target.checked ? [...new Set([...adForm.placements, 'feed'])] : adForm.placements.filter((item: string) => item !== 'feed') })} type="checkbox" className="ml-2 h-4 w-4 align-middle accent-[#0069ff]" /></label><label className="text-[10px] font-black uppercase tracking-wide text-gray-500">Reels <input checked={adForm.placements.includes('reels')} onChange={(event) => setAdForm({ ...adForm, placements: event.target.checked ? [...new Set([...adForm.placements, 'reels'])] : adForm.placements.filter((item: string) => item !== 'reels') })} type="checkbox" className="ml-2 h-4 w-4 align-middle accent-[#0069ff]" /></label></div>
+              <div className="grid grid-cols-2 gap-3"><label className="text-[10px] font-black uppercase tracking-wide text-gray-500">Skip after (seconds)<input type="number" min={0} max={30} value={adForm.skipAfterSeconds} onChange={(event) => setAdForm({ ...adForm, skipAfterSeconds: Number(event.target.value) })} className="mt-1 w-full rounded-lg border border-[#dfe4ea] px-3 py-2.5 text-[13px] text-[#2e3d49] outline-none focus:border-[#0069ff]" /></label><label className="text-[10px] font-black uppercase tracking-wide text-gray-500">Daily cap per viewer<input type="number" min={1} max={20} value={adForm.frequencyCap} onChange={(event) => setAdForm({ ...adForm, frequencyCap: Number(event.target.value) })} className="mt-1 w-full rounded-lg border border-[#dfe4ea] px-3 py-2.5 text-[13px] text-[#2e3d49] outline-none focus:border-[#0069ff]" /></label></div>
+              <div className="grid grid-cols-2 gap-3"><label className="text-[10px] font-black uppercase tracking-wide text-gray-500">Start <input type="datetime-local" value={adForm.startAt} onChange={(event) => setAdForm({ ...adForm, startAt: event.target.value })} className="mt-1 w-full rounded-lg border border-[#dfe4ea] px-2 py-2 text-[11px] text-[#2e3d49] outline-none focus:border-[#0069ff]" /></label><label className="text-[10px] font-black uppercase tracking-wide text-gray-500">End <input type="datetime-local" value={adForm.endAt} onChange={(event) => setAdForm({ ...adForm, endAt: event.target.value })} className="mt-1 w-full rounded-lg border border-[#dfe4ea] px-2 py-2 text-[11px] text-[#2e3d49] outline-none focus:border-[#0069ff]" /></label></div>
+            </div>
+            <div className="mt-5 flex gap-2"><button onClick={saveAd} disabled={saving} className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-[#0069ff] px-4 py-2.5 text-[12px] font-black text-white disabled:opacity-50"><Save className="h-4 w-4" /> {saving ? 'Saving...' : adForm.id ? 'Save campaign' : 'Create campaign'}</button>{adForm.id && <button onClick={resetAdForm} className="rounded-lg border border-[#dfe4ea] px-4 py-2.5 text-[12px] font-bold text-gray-600">Cancel</button>}</div>
+          </section>
+          <section className="space-y-3"><div className="flex items-center justify-between"><div><h2 className="text-[15px] font-black text-[#2e3d49]">Ad campaigns</h2><p className="mt-1 text-[11px] text-gray-500">Only active campaigns inside their date window can be requested by the app.</p></div><span className="rounded-full bg-white px-3 py-1.5 text-[11px] font-black text-gray-600">{ads.length} total</span></div>
+            {loading ? <div className="rounded border bg-white p-12 text-center text-sm font-bold text-gray-400">Loading ad campaigns...</div> : ads.length === 0 ? <div className="rounded border bg-white p-12 text-center text-sm font-bold text-gray-400">No ad campaigns yet. Create a draft or active campaign here.</div> : ads.map((ad) => { const media = Array.isArray(ad.media) ? ad.media[0] : null; return <article key={ad.id} className="overflow-hidden rounded-xl border border-[#dfe4ea] bg-white"><div className="flex gap-4 p-4"><div className="h-24 w-24 shrink-0 overflow-hidden rounded-lg bg-[#f3f5f7]">{media ? <img src={media.thumbnailUrl || media.url} className="h-full w-full object-cover" /> : <div className="flex h-full items-center justify-center text-[10px] font-black text-gray-400">NO MEDIA</div>}</div><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><span className="text-[10px] font-black uppercase tracking-wide text-[#65676b]">Sponsored</span><span className={`rounded px-2 py-0.5 text-[9px] font-black uppercase ${ad.status === 'active' ? 'bg-green-50 text-green-700' : ad.status === 'paused' ? 'bg-amber-50 text-amber-700' : 'bg-gray-100 text-gray-600'}`}>{ad.status}</span></div><h3 className="mt-1 truncate text-[14px] font-black text-[#2e3d49]">{ad.advertiserName}</h3><p className="mt-1 line-clamp-2 text-[11px] text-gray-600">{ad.headline || ad.body || 'No campaign copy'}</p><p className="mt-2 text-[10px] text-gray-500">{Array.isArray(ad.placements) ? ad.placements.join(' + ') : 'feed'} Â· {ad.ctaType} Â· {safeCount(ad.impressionCount)} impressions Â· {safeCount(ad.clickCount)} clicks</p></div></div><div className="flex items-center justify-between border-t border-[#eef1f4] px-4 py-3"><span className="text-[10px] text-gray-500">{dateLabel(ad.startAt)} â†’ {dateLabel(ad.endAt)}</span><div className="flex gap-2"><button onClick={() => { resetAdForm(); setAdForm(editableAd(ad)); setAdPreview(media?.thumbnailUrl || media?.url || ''); window.scrollTo({ top: 0, behavior: 'smooth' }); }} className="rounded border border-[#dfe4ea] px-3 py-1.5 text-[10px] font-black text-[#344054]">Edit</button><button disabled={saving} onClick={() => { if (window.confirm(`Delete ${ad.advertiserName}'s ad campaign?`)) perform(() => adminDeleteSocialAdWithApi(ad.id), 'Ad campaign deleted.'); }} className="rounded border border-red-100 p-1.5 text-red-600 hover:bg-red-50"><Trash2 className="h-4 w-4" /></button></div></div></article>; })}
+          </section>
         </div>
       )}
 

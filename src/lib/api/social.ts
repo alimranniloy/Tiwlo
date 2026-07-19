@@ -68,6 +68,32 @@ export async function fetchAdminSocialModerationEventsWithApi(decision?: string,
   return data.adminSocialModerationEvents;
 }
 
+const socialAdFields = `
+  id advertiserName advertiserAvatarUrl headline body media ctaType destinationUrl placements status
+  startAt endAt skipAfterSeconds frequencyCap impressionCount clickCount createdAt updatedAt
+`;
+
+export async function fetchAdminSocialAdsWithApi(status?: string) {
+  const data = await graphQL<{ adminSocialAds: any[] }>(`
+    query AdminSocialAds($status: String) { adminSocialAds(status: $status) { ${socialAdFields} } }
+  `, { status });
+  return data.adminSocialAds;
+}
+
+export async function adminUpsertSocialAdWithApi(input: Record<string, unknown>) {
+  const data = await graphQL<{ adminUpsertSocialAd: any }>(`
+    mutation AdminUpsertSocialAd($input: SocialAdAdminInput!) { adminUpsertSocialAd(input: $input) { ${socialAdFields} } }
+  `, { input });
+  return data.adminUpsertSocialAd;
+}
+
+export async function adminDeleteSocialAdWithApi(id: string) {
+  const data = await graphQL<{ adminDeleteSocialAd: boolean }>(`
+    mutation AdminDeleteSocialAd($id: ID!) { adminDeleteSocialAd(id: $id) }
+  `, { id });
+  return data.adminDeleteSocialAd;
+}
+
 export async function fetchSocialSettingsWithApi() {
   const data = await graphQL<{ socialSettings: Record<string, any> }>(`query SocialSettings { socialSettings }`);
   return data.socialSettings;
@@ -283,6 +309,9 @@ type SocialMediaUpload = {
   sourceUrl: string;
   mimeType: string;
   size: number;
+  hlsUrl?: string | null;
+  thumbnailUrl?: string | null;
+  processingStatus?: string | null;
 };
 
 const socialMediaUrl = (suffix = '') => {
@@ -365,5 +394,18 @@ export async function uploadSocialProfileEffectWithApi(file: File) {
     body
   });
   if (response.status === 413) return uploadSocialProfileDecorationInChunks(file, 'profile-effect');
+  return socialUploadPayload(response) as Promise<SocialMediaUpload>;
+}
+
+export async function uploadSocialAdMediaWithApi(file: File) {
+  // Campaign media uses the same resumable, server-moderated upload route as
+  // member media. This prevents 413 errors and makes image/video ads subject
+  // to the same file validation and transcode pipeline.
+  if (file.size > 512 * 1024) return uploadSocialProfileDecorationInChunks(file, 'ad-media');
+  const body = new FormData();
+  body.append('file', file);
+  body.append('kind', 'ad-media');
+  const response = await fetch(socialMediaUrl(), { method: 'POST', headers: socialUploadHeaders(), body });
+  if (response.status === 413) return uploadSocialProfileDecorationInChunks(file, 'ad-media');
   return socialUploadPayload(response) as Promise<SocialMediaUpload>;
 }

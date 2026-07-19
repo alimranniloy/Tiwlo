@@ -90,6 +90,9 @@ const AVATAR_DECORATION_KIND = 'avatar-decoration';
 const PROFILE_EFFECT_KIND = 'profile-effect';
 
 const POST_TYPES = new Set(['post', 'news', 'reel', 'video', 'live', 'story']);
+const AD_CTA_TYPES = new Set(['website', 'call', 'whatsapp', 'visit']);
+const AD_PLACEMENTS = new Set(['feed', 'reels']);
+const AD_EVENT_TYPES = new Set(['impression', 'click', 'skip', 'engagement', 'complete']);
 const VISIBILITIES = new Set(['public', 'followers', 'private']);
 const STORY_VISIBILITIES = new Set(['public', 'followers', 'custom', 'only_me']);
 const STORY_ITEM_TYPES = new Set(['image', 'video', 'text', 'music', 'collage']);
@@ -506,6 +509,94 @@ const validateOwnedMedia = (actorId, media) => {
     }
   }
 };
+
+const adPlacementsFrom = (value) => {
+  const entries = Array.isArray(value) ? value : typeof value === 'string' ? [value] : [];
+  const placements = [...new Set(entries.map((item) => bounded(item, 20).toLowerCase()).filter((item) => AD_PLACEMENTS.has(item)))];
+  return placements.length ? placements : ['feed'];
+};
+
+const sanitizeAdMedia = (value) => {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 8).flatMap((item) => {
+    if (!item || typeof item !== 'object') return [];
+    const type = ['image', 'video'].includes(String(item.type || '').toLowerCase())
+      ? String(item.type).toLowerCase()
+      : 'image';
+    const url = bounded(item.url, 2000) || '';
+    const hlsUrl = bounded(item.hlsUrl, 2000) || null;
+    const thumbnailUrl = bounded(item.thumbnailUrl, 2000) || null;
+    if (!url && !hlsUrl && !thumbnailUrl) return [];
+    for (const target of [url, hlsUrl, thumbnailUrl].filter(Boolean)) {
+      let parsed;
+      try { parsed = new URL(target, 'https://tiwlo.invalid'); } catch { throw new AppError('Ad media URL is invalid', 'BAD_USER_INPUT'); }
+      if (!['http:', 'https:'].includes(parsed.protocol)) throw new AppError('Ad media must use HTTP or HTTPS', 'BAD_USER_INPUT');
+    }
+    return [{
+      type,
+      url,
+      hlsUrl,
+      thumbnailUrl,
+      mimeType: bounded(item.mimeType, 120) || (type === 'video' ? 'video/*' : 'image/*'),
+      processingStatus: bounded(item.processingStatus, 30) || 'ready'
+    }];
+  });
+};
+
+const normalizeAdDestination = (ctaType, value) => {
+  const raw = bounded(value, 2000) || null;
+  if (ctaType === 'visit' && !raw) return null;
+  if (!raw) throw new AppError('This action needs a destination', 'BAD_USER_INPUT');
+  if (ctaType === 'website' || ctaType === 'visit') {
+    let url;
+    try { url = new URL(raw); } catch { throw new AppError('Enter a valid website link', 'BAD_USER_INPUT'); }
+    if (!['http:', 'https:'].includes(url.protocol)) throw new AppError('Website links must use HTTP or HTTPS', 'BAD_USER_INPUT');
+    return url.toString();
+  }
+  if (ctaType === 'call') {
+    const phone = raw.replace(/[^\d+]/g, '');
+    if (!/^\+?[0-9]{7,18}$/.test(phone)) throw new AppError('Enter a valid call number', 'BAD_USER_INPUT');
+    return phone;
+  }
+  const phone = raw.replace(/\D/g, '');
+  if (!/^[0-9]{7,18}$/.test(phone)) throw new AppError('Enter a valid WhatsApp number', 'BAD_USER_INPUT');
+  return phone;
+};
+
+const normalizeAdInput = (input = {}) => {
+  const advertiserName = bounded(input.advertiserName, 120);
+  if (!advertiserName || advertiserName.length < 2) throw new AppError('Advertiser name is required', 'BAD_USER_INPUT');
+  const ctaType = bounded(input.ctaType, 24).toLowerCase();
+  if (!AD_CTA_TYPES.has(ctaType)) throw new AppError('Unsupported ad action', 'BAD_USER_INPUT');
+  const status = bounded(input.status || 'draft', 24).toLowerCase();
+  if (!['draft', 'active', 'paused', 'archived'].includes(status)) throw new AppError('Unsupported campaign status', 'BAD_USER_INPUT');
+  const startAt = input.startAt === null || input.startAt === '' ? null : safeDate(input.startAt);
+  const endAt = input.endAt === null || input.endAt === '' ? null : safeDate(input.endAt);
+  if (startAt && endAt && endAt <= startAt) throw new AppError('Campaign end time must be after its start time', 'BAD_USER_INPUT');
+  const media = sanitizeAdMedia(input.media);
+  if (status === 'active' && !media.length) throw new AppError('An active campaign needs at least one image or video', 'BAD_USER_INPUT');
+  return {
+    advertiserName,
+    advertiserAvatarUrl: bounded(input.advertiserAvatarUrl, 2000) || null,
+    headline: bounded(input.headline, 180) || null,
+    body: bounded(input.body, 4000) || null,
+    media,
+    ctaType,
+    destinationUrl: normalizeAdDestination(ctaType, input.destinationUrl),
+    placements: adPlacementsFrom(input.placements),
+    status,
+    startAt,
+    endAt,
+    skipAfterSeconds: Math.max(0, Math.min(Number(input.skipAfterSeconds) || 5, 30)),
+    frequencyCap: Math.max(1, Math.min(Number(input.frequencyCap) || 2, 20))
+  };
+};
+
+const mapAd = (campaign) => ({
+  ...campaign,
+  media: Array.isArray(campaign?.media) ? campaign.media : [],
+  placements: adPlacementsFrom(campaign?.placements)
+});
 
 const usernameFrom = (value) => String(value || '')
   .trim()
@@ -1588,6 +1679,78 @@ export const listFeedModules = async (ctx, feedSize) => {
       posts: kind === 'reels' ? rotate(reels, reelOffset, 10) : []
     };
   }).filter((module) => module.profiles.length || module.posts.length);
+};
+
+// Campaigns are selected separately from organic feed rows.  This keeps the
+// post ranking and RecyclerView/ListAdapter identity stable while still
+// letting the client insert one clearly-labelled sponsored card at a time.
+export const listAdPlacements = async (ctx, placement, limit) => {
+  const actor = await requireAuth(ctx);
+  await requireSocialFeature(ctx);
+  const normalizedPlacement = bounded(placement, 20).toLowerCase();
+  if (!AD_PLACEMENTS.has(normalizedPlacement)) throw new AppError('Unsupported ad placement', 'BAD_USER_INPUT');
+  const take = Math.min(boundedLimit(limit, normalizedPlacement === 'reels' ? 2 : 1, 4), normalizedPlacement === 'reels' ? 2 : 1);
+  const now = new Date();
+  const candidates = await ctx.prisma.socialAdCampaign.findMany({
+    where: {
+      status: 'active',
+      AND: [
+        { OR: [{ startAt: null }, { startAt: { lte: now } }] },
+        { OR: [{ endAt: null }, { endAt: { gte: now } }] }
+      ]
+    },
+    orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }],
+    take: 80
+  });
+  const placementCandidates = candidates.filter((campaign) => adPlacementsFrom(campaign.placements).includes(normalizedPlacement));
+  if (!placementCandidates.length) return [];
+  const recentEvents = await ctx.prisma.socialAdEvent.findMany({
+    where: {
+      viewerId: actor.id,
+      campaignId: { in: placementCandidates.map((campaign) => campaign.id) },
+      eventType: 'impression',
+      createdAt: { gte: new Date(Date.now() - 86_400_000) }
+    },
+    select: { campaignId: true }
+  });
+  const exposureCount = recentEvents.reduce((counts, event) => counts.set(event.campaignId, (counts.get(event.campaignId) || 0) + 1), new Map());
+  const eligible = placementCandidates.filter((campaign) => (exposureCount.get(campaign.id) || 0) < Math.max(1, campaign.frequencyCap || 1));
+  if (!eligible.length) return [];
+  const seed = stableTextSeed(`${actor.id}:${normalizedPlacement}:${new Date().toISOString().slice(0, 10)}`);
+  const offset = seed % eligible.length;
+  return [...eligible.slice(offset), ...eligible.slice(0, offset)].slice(0, take).map(mapAd);
+};
+
+export const trackAdEvent = async (ctx, input = {}) => {
+  const actor = await requireAuth(ctx);
+  await requireSocialFeature(ctx);
+  const campaignId = bounded(input.id, 120);
+  const placement = bounded(input.placement, 20).toLowerCase();
+  const eventType = bounded(input.eventType, 24).toLowerCase();
+  if (!campaignId || !AD_PLACEMENTS.has(placement) || !AD_EVENT_TYPES.has(eventType)) throw new AppError('Invalid ad event', 'BAD_USER_INPUT');
+  const campaign = await ctx.prisma.socialAdCampaign.findUnique({ where: { id: campaignId } });
+  if (!campaign || campaign.status !== 'active' || !adPlacementsFrom(campaign.placements).includes(placement)) notFound('Ad campaign');
+  const dedupeWindow = eventType === 'impression' ? 10 * 60_000 : 8_000;
+  const recent = await ctx.prisma.socialAdEvent.findFirst({
+    where: { campaignId, viewerId: actor.id, placement, eventType, createdAt: { gte: new Date(Date.now() - dedupeWindow) } },
+    select: { id: true }
+  });
+  if (recent) return mapAd(campaign);
+  let metadata = {};
+  if (input.metadata && typeof input.metadata === 'object' && !Array.isArray(input.metadata)) {
+    try {
+      const encoded = JSON.stringify(input.metadata);
+      metadata = encoded.length <= 8000 ? JSON.parse(encoded) : { truncated: true };
+    } catch { metadata = {}; }
+  }
+  const updated = await ctx.prisma.$transaction(async (tx) => {
+    await tx.socialAdEvent.create({ data: { campaignId, viewerId: actor.id, placement, eventType, metadata } });
+    return tx.socialAdCampaign.update({
+      where: { id: campaignId },
+      data: eventType === 'impression' ? { impressionCount: { increment: 1 } } : eventType === 'click' ? { clickCount: { increment: 1 } } : {}
+    });
+  });
+  return mapAd(updated);
 };
 
 export const listStories = async (ctx, args = {}) => listFeed(ctx, { ...args, type: 'story', limit: boundedLimit(args.limit, 50, 100) });
@@ -3750,6 +3913,45 @@ export const adminOverview = async (ctx) => {
     ctx.prisma.socialReport.count({ where: { status: 'open' } })
   ]);
   return { profiles, verifiedProfiles, posts, reels, messages, activeLiveStreams, openReports };
+};
+
+export const adminAds = async (ctx, status) => {
+  await requireAdmin(ctx);
+  const normalized = bounded(status, 24)?.toLowerCase();
+  return (await ctx.prisma.socialAdCampaign.findMany({
+    where: normalized && normalized !== 'all' ? { status: normalized } : undefined,
+    orderBy: [{ updatedAt: 'desc' }, { createdAt: 'desc' }],
+    take: 300
+  })).map(mapAd);
+};
+
+export const adminUpsertAd = async (ctx, input = {}) => {
+  const actor = await requireAdmin(ctx);
+  const values = normalizeAdInput(input);
+  const id = bounded(input.id, 120);
+  let campaign;
+  if (id) {
+    const existing = await ctx.prisma.socialAdCampaign.findUnique({ where: { id } });
+    if (!existing) notFound('Ad campaign');
+    campaign = await ctx.prisma.socialAdCampaign.update({ where: { id }, data: values });
+  } else {
+    campaign = await ctx.prisma.socialAdCampaign.create({ data: { ...values, createdById: actor.id } });
+  }
+  await writeAudit(ctx, id ? 'update_social_ad_campaign' : 'create_social_ad_campaign', 'social_ad_campaign', campaign.id, {
+    status: campaign.status, placements: campaign.placements, ctaType: campaign.ctaType
+  });
+  return mapAd(campaign);
+};
+
+export const adminDeleteAd = async (ctx, id) => {
+  await requireAdmin(ctx);
+  const campaignId = bounded(id, 120);
+  if (!campaignId) throw new AppError('Ad campaign is required', 'BAD_USER_INPUT');
+  const existing = await ctx.prisma.socialAdCampaign.findUnique({ where: { id: campaignId } });
+  if (!existing) notFound('Ad campaign');
+  await ctx.prisma.socialAdCampaign.delete({ where: { id: campaignId } });
+  await writeAudit(ctx, 'delete_social_ad_campaign', 'social_ad_campaign', campaignId, { advertiserName: existing.advertiserName });
+  return true;
 };
 
 export const adminUsers = async (ctx, args = {}) => {

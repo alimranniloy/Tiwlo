@@ -123,6 +123,26 @@ data class SocialMedia(
 )
 
 @JsonClass(generateAdapter = true)
+data class SocialAd(
+    val id: String = "",
+    val advertiserName: String = "",
+    val advertiserAvatarUrl: String? = null,
+    val headline: String? = null,
+    val body: String? = null,
+    val media: List<SocialMedia> = emptyList(),
+    val ctaType: String = "website",
+    val destinationUrl: String? = null,
+    val placements: List<String> = emptyList(),
+    val status: String = "active",
+    val startAt: String? = null,
+    val endAt: String? = null,
+    val skipAfterSeconds: Int = 5,
+    val frequencyCap: Int = 2,
+    val impressionCount: Int = 0,
+    val clickCount: Int = 0
+)
+
+@JsonClass(generateAdapter = true)
 data class SocialLinkPreview(
     val url: String = "",
     val canonicalUrl: String = "",

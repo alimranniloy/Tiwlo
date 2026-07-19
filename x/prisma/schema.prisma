@@ -1548,6 +1548,49 @@ model SocialPost {
   @@index([groupId, status, publishedAt])
 }
 
+// Social advertising is deliberately separate from SocialPost.  Sponsored
+// content must be labelled as an ad and must not inherit a normal member's
+// reactions, privacy or moderation state by accident.
+model SocialAdCampaign {
+  id                String          @id @default(cuid())
+  createdById       String?
+  advertiserName    String
+  advertiserAvatarUrl String?
+  headline          String?
+  body              String?
+  media             Json            @default("[]")
+  ctaType           String          @default("website")
+  destinationUrl    String?
+  placements        Json            @default("[\"feed\"]")
+  status            String          @default("draft")
+  startAt           DateTime?
+  endAt             DateTime?
+  skipAfterSeconds  Int             @default(5)
+  frequencyCap      Int             @default(2)
+  impressionCount   Int             @default(0)
+  clickCount        Int             @default(0)
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  events            SocialAdEvent[]
+
+  @@index([status, startAt, endAt])
+  @@index([createdById, createdAt])
+}
+
+model SocialAdEvent {
+  id          String            @id @default(cuid())
+  campaignId  String
+  campaign    SocialAdCampaign  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  viewerId    String?
+  placement   String
+  eventType   String
+  metadata    Json              @default("{}")
+  createdAt   DateTime          @default(now())
+
+  @@index([campaignId, eventType, createdAt])
+  @@index([viewerId, campaignId, createdAt])
+}
+
 model SocialStory {
   id           String                   @id @default(cuid())
   legacyPostId String?                  @unique

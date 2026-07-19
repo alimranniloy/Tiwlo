@@ -155,6 +155,7 @@ import com.example.social.SocialConversation
 import com.example.social.SocialCallSession
 import com.example.social.SocialComment
 import com.example.social.SocialFeedModule
+import com.example.social.SocialAd
 import com.example.social.SocialGroup
 import com.example.social.SocialGroupMember
 import com.example.social.SocialMedia
@@ -2118,6 +2119,7 @@ fun HomeFeed(
     val online by rememberNetworkAvailable()
     val pendingUpload by rememberPendingUploadSnapshot()
     val feedListState = rememberLazyListState()
+    var sponsoredFeedAds by remember { mutableStateOf<List<SocialAd>>(emptyList()) }
     // Avoid filtering every module for every post during a scroll.  The map is
     // recreated only when the small server-driven module list changes.
     val feedModulesByPosition = remember(feedModules) { feedModules.groupBy { it.insertAfter } }
@@ -2130,6 +2132,9 @@ fun HomeFeed(
         }
     }
     LaunchedEffect(Unit) {
+        // This request is intentionally separate from refreshAll/feed paging:
+        // sponsored content may arrive later without replacing organic rows.
+        runCatching { repository.socialAdPlacements("feed", 1) }.onSuccess { sponsoredFeedAds = it }
         while (true) {
             runCatching { repository.refreshLiveStreams() }
             // Avoid invalidating the entire Feed while the user is scrolling.
@@ -2227,6 +2232,12 @@ fun HomeFeed(
                             else -> SuggestedFriendsSection(module.title, module.profiles, repository, onAuthorClick) { }
                         }
                     }
+                    // One disclosed ad after a small organic context.  Later
+                    // pages stay organic in this session; the server applies a
+                    // daily frequency cap before returning this campaign.
+                    if (index == 1) sponsoredFeedAds.firstOrNull()?.let { ad ->
+                        SponsoredAdCard(ad, repository, placement = "feed")
+                    }
                 }
             }
             if (feedLoadingMore) item(key = "feed-page-loading") {
@@ -2236,6 +2247,61 @@ fun HomeFeed(
             }
             }
         }
+    }
+}
+
+private fun adCtaLabel(type: String): String = when (type.lowercase()) {
+    "call" -> "Call now"
+    "whatsapp" -> "WhatsApp"
+    "visit" -> "Visit"
+    else -> "Learn more"
+}
+
+private fun openSponsoredAd(context: Context, ad: SocialAd) {
+    val target = ad.destinationUrl?.trim().orEmpty()
+    if (target.isBlank()) return
+    val uri = when (ad.ctaType.lowercase()) {
+        "call" -> android.net.Uri.parse("tel:$target")
+        "whatsapp" -> android.net.Uri.parse("https://wa.me/${target.filter(Char::isDigit)}")
+        else -> android.net.Uri.parse(target)
+    }
+    runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, uri)) }
+}
+
+@Composable
+private fun SponsoredAdCard(ad: SocialAd, repository: SocialRepository, placement: String) {
+    val context = LocalContext.current
+    val scope = rememberTiwiCoroutineScope()
+    var liked by remember(ad.id) { mutableStateOf(false) }
+    val media = ad.media.firstOrNull()
+    LaunchedEffect(ad.id, placement) { runCatching { repository.trackSocialAdEvent(ad.id, placement, "impression") } }
+    Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.background)) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 11.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            AsyncImage(model = ad.advertiserAvatarUrl ?: R.drawable.img_tiwi_avatar_1, contentDescription = null, modifier = Modifier.size(42.dp).clip(CircleShape), contentScale = ContentScale.Crop)
+            Column(Modifier.weight(1f).padding(start = 8.dp)) {
+                Text(ad.advertiserName, fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("Sponsored", color = Color(0xFF65676B), fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+            }
+            Icon(Icons.Outlined.MoreHoriz, "Ad options", tint = Color(0xFF65676B), modifier = Modifier.size(21.dp))
+        }
+        if (!ad.body.isNullOrBlank()) Text(ad.body!!, modifier = Modifier.padding(horizontal = 11.dp, vertical = 2.dp), fontSize = 14.sp, lineHeight = 19.sp, maxLines = 4, overflow = TextOverflow.Ellipsis)
+        media?.let { item ->
+            if (item.type == "video") TiwiVideo(item.hlsUrl?.takeIf { item.processingStatus == "ready" } ?: item.url, Modifier.fillMaxWidth().heightIn(min = 190.dp, max = 420.dp), autoplay = true, muted = true, fallbackUrl = item.url, posterUrl = item.thumbnailUrl)
+            else AsyncImage(model = item.url, contentDescription = ad.headline, modifier = Modifier.fillMaxWidth().heightIn(min = 150.dp, max = 430.dp).clickable { scope.launch { runCatching { repository.trackSocialAdEvent(ad.id, placement, "click") }; openSponsoredAd(context, ad) } }, contentScale = ContentScale.Crop)
+        }
+        if (!ad.headline.isNullOrBlank() || ad.destinationUrl != null) Row(Modifier.fillMaxWidth().background(Color(0xFFF5F6F7)).padding(horizontal = 11.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(ad.headline ?: ad.advertiserName, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(ad.destinationUrl?.replace(Regex("^https?://"), "") ?: ad.ctaType, color = Color(0xFF65676B), fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            Button(onClick = { scope.launch { runCatching { repository.trackSocialAdEvent(ad.id, placement, "click") }; openSponsoredAd(context, ad) } }, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp), modifier = Modifier.height(31.dp), shape = RoundedCornerShape(7.dp)) { Text(adCtaLabel(ad.ctaType), fontSize = 11.sp, fontWeight = FontWeight.Bold) }
+        }
+        Row(Modifier.fillMaxWidth().height(42.dp).padding(horizontal = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = { liked = !liked; scope.launch { runCatching { repository.trackSocialAdEvent(ad.id, placement, "engagement", mapOf("action" to "like", "liked" to liked)) } } }, modifier = Modifier.size(40.dp)) { Icon(if (liked) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder, "Like ad", tint = if (liked) Color(0xFFE91E63) else Color.Gray) }
+            IconButton(onClick = { scope.launch { runCatching { repository.trackSocialAdEvent(ad.id, placement, "engagement", mapOf("action" to "feedback")) }; Toast.makeText(context, "Feedback recorded", Toast.LENGTH_SHORT).show() } }, modifier = Modifier.size(40.dp)) { Icon(Icons.Outlined.ChatBubbleOutline, "Ad feedback", tint = Color.Gray) }
+            IconButton(onClick = { scope.launch { runCatching { repository.trackSocialAdEvent(ad.id, placement, "engagement", mapOf("action" to "share")) }; val share = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, ad.destinationUrl ?: ad.headline ?: ad.advertiserName); context.startActivity(Intent.createChooser(share, "Share ad")) } }, modifier = Modifier.size(40.dp)) { Icon(Icons.Outlined.Share, "Share ad", tint = Color.Gray) }
+        }
+        HorizontalDivider(thickness = .5.dp, color = MaterialTheme.colorScheme.onBackground.copy(alpha = .1f))
     }
 }
 
@@ -4792,11 +4858,47 @@ private fun ExplorePostTile(post: SocialPost, modifier: Modifier, onPostClick: (
 }
 
 @Composable
+private fun SponsoredReelAd(ad: SocialAd, repository: SocialRepository, onSkip: () -> Unit) {
+    val context = LocalContext.current
+    val scope = rememberTiwiCoroutineScope()
+    val media = ad.media.firstOrNull()
+    var secondsLeft by remember(ad.id) { mutableIntStateOf(ad.skipAfterSeconds.coerceIn(0, 30)) }
+    var liked by remember(ad.id) { mutableStateOf(false) }
+    LaunchedEffect(ad.id) {
+        runCatching { repository.trackSocialAdEvent(ad.id, "reels", "impression") }
+        while (secondsLeft > 0) { delay(1_000); secondsLeft -= 1 }
+    }
+    Box(Modifier.fillMaxSize().background(Color.Black)) {
+        when {
+            media?.type == "video" -> TiwiVideo(media.hlsUrl?.takeIf { media.processingStatus == "ready" } ?: media.url, Modifier.fillMaxSize(), autoplay = true, muted = true, fallbackUrl = media.url, posterUrl = media.thumbnailUrl, showScrubber = true, scrubberColor = Color(0xFFFF1744))
+            media != null -> AsyncImage(model = media.url, contentDescription = ad.headline, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+            else -> Box(Modifier.fillMaxSize().background(Brush.linearGradient(listOf(Color(0xFF172554), Color(0xFF101828)))))
+        }
+        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = .32f), Color.Transparent, Color.Black.copy(alpha = .83f)))))
+        Surface(Modifier.align(Alignment.TopStart).statusBarsPadding().padding(12.dp), color = Color.Black.copy(alpha = .62f), shape = RoundedCornerShape(12.dp), tonalElevation = 0.dp) { Text("Sponsored", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp)) }
+        if (secondsLeft > 0) Surface(Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(12.dp), color = Color.Black.copy(alpha = .62f), shape = RoundedCornerShape(12.dp), tonalElevation = 0.dp) { Text("Ad · $secondsLeft", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp)) }
+        else TextButton(onClick = { scope.launch { runCatching { repository.trackSocialAdEvent(ad.id, "reels", "skip") }; onSkip() } }, modifier = Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(7.dp), colors = ButtonDefaults.textButtonColors(contentColor = Color.White)) { Text("Skip ad", fontWeight = FontWeight.Bold, fontSize = 11.sp) }
+        Column(Modifier.align(Alignment.BottomStart).padding(start = 13.dp, end = 84.dp, bottom = 29.dp)) {
+            Text(ad.advertiserName, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (!ad.headline.isNullOrBlank()) Text(ad.headline!!, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 3.dp))
+            if (!ad.body.isNullOrBlank()) Text(ad.body!!, color = Color.White.copy(alpha = .88f), fontSize = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 3.dp))
+            Button(onClick = { scope.launch { runCatching { repository.trackSocialAdEvent(ad.id, "reels", "click") }; openSponsoredAd(context, ad) } }, modifier = Modifier.padding(top = 9.dp).height(33.dp), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp), shape = RoundedCornerShape(8.dp)) { Text(adCtaLabel(ad.ctaType), fontSize = 11.sp, fontWeight = FontWeight.Bold) }
+        }
+        Column(Modifier.align(Alignment.BottomEnd).padding(end = 9.dp, bottom = 28.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            ReelRailAction(if (liked) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder, "Like sponsored ad", "", tint = if (liked) Color(0xFFFF3040) else Color.White) { liked = !liked; scope.launch { runCatching { repository.trackSocialAdEvent(ad.id, "reels", "engagement", mapOf("action" to "like", "liked" to liked)) } } }
+            ReelRailAction(Icons.Outlined.ChatBubbleOutline, "Ad feedback", "") { scope.launch { runCatching { repository.trackSocialAdEvent(ad.id, "reels", "engagement", mapOf("action" to "feedback")) }; Toast.makeText(context, "Feedback recorded", Toast.LENGTH_SHORT).show() } }
+            ReelRailAction(Icons.Default.Share, "Share sponsored ad", "Share") { scope.launch { runCatching { repository.trackSocialAdEvent(ad.id, "reels", "engagement", mapOf("action" to "share")) }; val share = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, ad.destinationUrl ?: ad.headline ?: ad.advertiserName); context.startActivity(Intent.createChooser(share, "Share ad")) } }
+        }
+    }
+}
+
+@Composable
 fun ReelsScreen(reels: List<Reel>, repository: SocialRepository, initialReelId: String? = null, onOpen: (String) -> Unit = {}, onShare: (Reel) -> Unit = {}, onAuthor: (String) -> Unit = {}, onLive: (SocialLiveStream) -> Unit = {}, onUseAudio: (Reel) -> Unit = {}) {
     val feed by repository.feed.collectAsState()
     val liveStreams by repository.liveStreams.collectAsState()
     val context = LocalContext.current
     var feedFilter by remember { mutableStateOf("all") }
+    var sponsoredReelAds by remember { mutableStateOf<List<SocialAd>>(emptyList()) }
     var actionPost by remember { mutableStateOf<Post?>(null) }
     var editPost by remember { mutableStateOf<Post?>(null) }
     var editText by remember { mutableStateOf("") }
@@ -4811,6 +4913,9 @@ fun ReelsScreen(reels: List<Reel>, repository: SocialRepository, initialReelId: 
     }
     val activeLives = remember(liveStreams) { liveStreams.filter { it.status == "live" } }
     LaunchedEffect(Unit) { runCatching { repository.refreshLiveStreams() } }
+    LaunchedEffect(feedFilter) {
+        if (feedFilter == "all") runCatching { repository.socialAdPlacements("reels", 2) }.onSuccess { sponsoredReelAds = it }
+    }
     audioReel?.let { selected ->
         ReelAudioPage(selected, orderedReels, repository, onBack = { audioReel = null }, onReel = onOpen, onAuthor = onAuthor, onUseAudio = { reel -> audioReel = null; onUseAudio(reel) })
         return
@@ -4839,6 +4944,15 @@ fun ReelsScreen(reels: List<Reel>, repository: SocialRepository, initialReelId: 
         currentReelId?.let { id -> runCatching { repository.viewPost(id) } }
     }
     VerticalPager(state = pagerState, beyondViewportPageCount = 0, modifier = Modifier.fillMaxSize().background(Color.Black)) { page ->
+        // Do not put ads first or consecutively. Two server-selected campaigns
+        // can appear during a longer reel session, always after organic reels.
+        val sponsoredAd = if (feedFilter == "all" && page in 1 until visibleReels.lastIndex && (page + 1) % 5 == 0 && sponsoredReelAds.isNotEmpty()) sponsoredReelAds[((page + 1) / 5 - 1) % sponsoredReelAds.size] else null
+        if (sponsoredAd != null) {
+            SponsoredReelAd(sponsoredAd, repository, onSkip = {
+                scope.launch { pagerState.animateScrollToPage((page + 1).coerceAtMost(visibleReels.lastIndex)) }
+            })
+            return@VerticalPager
+        }
         val sourcePost = feed.firstOrNull { it.id == visibleReels[page].id }
         val reel = sourcePost?.let(::toUiReel) ?: visibleReels[page]
         val liked = sourcePost?.viewerReaction == "like" || (sourcePost == null && reel.liked)

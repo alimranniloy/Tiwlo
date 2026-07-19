@@ -197,6 +197,30 @@ class SocialRepository(context: Context) {
         }
     }
 
+    /** Fetches at most one Feed or two Reels campaigns.  Ads are deliberately
+     * not merged into the organic Feed StateFlow, preserving stable post keys
+     * and avoiding full-list rebinding while a sponsored placement arrives. */
+    suspend fun socialAdPlacements(placement: String, limit: Int = 1): List<SocialAd> {
+        val data = client.execute(
+            """query TiwiAdPlacements(${D}placement: String!, ${D}limit: Int) {
+                socialAdPlacements(placement: ${D}placement, limit: ${D}limit) { $SOCIAL_AD_FIELDS }
+            }""".trimIndent(),
+            mapOf("placement" to placement, "limit" to limit.coerceIn(1, 2))
+        )
+        return withContext(Dispatchers.Default) {
+            data.list("socialAdPlacements").mapNotNull { it.objectMap()?.let(::mapAd) }
+        }
+    }
+
+    suspend fun trackSocialAdEvent(id: String, placement: String, eventType: String, metadata: Map<String, Any?> = emptyMap()) {
+        client.execute(
+            """mutation TiwiTrackAd(${D}input: SocialAdEventInput!) {
+                trackSocialAdEvent(input: ${D}input) { id impressionCount clickCount }
+            }""".trimIndent(),
+            mapOf("input" to mapOf("id" to id, "placement" to placement, "eventType" to eventType, "metadata" to metadata))
+        )
+    }
+
     suspend fun refreshStoryTray(limit: Int = 100): List<SocialStoryGroup> {
         val data = client.execute(
             """query TiwiStoryTray(${D}limit: Int) { socialStoryTray(limit: ${D}limit) { $STORY_GROUP_FIELDS } }""",
@@ -1602,6 +1626,16 @@ class SocialRepository(context: Context) {
         posts = value.list("posts").mapNotNull { it.objectMap()?.let(::mapPost) }
     )
 
+    private fun mapAd(value: Map<String, Any?>) = SocialAd(
+        id = value.string("id").orEmpty(), advertiserName = value.string("advertiserName").orEmpty(),
+        advertiserAvatarUrl = absoluteUrl(value.string("advertiserAvatarUrl")), headline = value.string("headline"), body = value.string("body"),
+        media = value.list("media").mapNotNull { it.objectMap()?.let(::mapMedia) }, ctaType = value.string("ctaType") ?: "website",
+        destinationUrl = value.string("destinationUrl"), placements = value.list("placements").mapNotNull { it as? String },
+        status = value.string("status") ?: "active", startAt = value.string("startAt"), endAt = value.string("endAt"),
+        skipAfterSeconds = value.number("skipAfterSeconds")?.toInt() ?: 5, frequencyCap = value.number("frequencyCap")?.toInt() ?: 2,
+        impressionCount = value.number("impressionCount")?.toInt() ?: 0, clickCount = value.number("clickCount")?.toInt() ?: 0
+    )
+
     private fun mapMessage(value: Map<String, Any?>) = SocialMessage(
         id = value.string("id").orEmpty(), conversationId = value.string("conversationId").orEmpty(), senderId = value.string("senderId").orEmpty(),
         sender = mapUser(value.objectValue("sender") ?: emptyMap()), senderProfile = value.objectValue("senderProfile")?.let { mapProfile(it) }, type = value.string("type") ?: "text", body = value.string("body").orEmpty(),
@@ -1898,6 +1932,7 @@ class SocialRepository(context: Context) {
         const val STORY_REPLY_FIELDS = "id storyId itemId senderId body conversationId messageId createdAt sender { $PUBLIC_USER_FIELDS } senderProfile { $STORY_PROFILE_FIELDS }"
         const val STORY_MUSIC_FIELDS = "id title artist artworkUrl streamUrl durationSeconds"
         const val FEED_MODULE_FIELDS = "id kind insertAfter title profiles { $PROFILE_FIELDS } posts { $POST_FIELDS }"
+        const val SOCIAL_AD_FIELDS = "id advertiserName advertiserAvatarUrl headline body media ctaType destinationUrl placements status startAt endAt skipAfterSeconds frequencyCap impressionCount clickCount"
         const val COMMENT_FIELDS = "id postId authorId replyToId body status reactionCount viewerLiked createdAt author { $PUBLIC_USER_FIELDS } authorProfile { id userId username verified badgeType avatarDecoration { $DECORATION_FIELDS } }"
         const val MESSAGE_FIELDS = "id conversationId senderId type body media replyToId deliveryStatus sentAt deliveredAt readAt editedAt unsentAt reactions { id userId emoji } sender { $PUBLIC_USER_FIELDS } senderProfile { id userId username avatarDecoration { $DECORATION_FIELDS } }"
         const val CONVERSATION_FIELDS = "id type title avatarUrl requestStatus requestedById unreadCount updatedAt members { id userId role muted archived typingAt lastReadAt blocked user { $PUBLIC_USER_FIELDS } profile { id userId username verified badgeType avatarDecoration { $DECORATION_FIELDS } } } lastMessage { $MESSAGE_FIELDS }"
