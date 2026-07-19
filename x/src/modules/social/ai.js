@@ -379,6 +379,7 @@ export const policySignals = (text) => {
     ['harassment', [
       /\b(?:you\s+are\s+worthless|go\s+die|fuck\s+you|motherfucker|bitch|asshole|bastard)\b/i,
       /\b(?:tui|toke|tore|tomake)\s+(?:mere\s+felbo|mara\s+uchit|mor|morte\s+bolchi)\b/i,
+      /\b(?:bal|bokachoda|balchal|choda|magi|haramjada|kuttar\s+baccha|shuarer\s+baccha)\b/i,
       /(?:তুই\s*মরে\s*যা|তোকে\s*মারব|তোমাকে\s*মারব|হারামজাদা|খানকির)/u
     ], .93, 'medium', 'warning']
   ];
@@ -505,8 +506,21 @@ const policyDecision = (value) => {
   const normalized = asText(value, 30).toLowerCase();
   if (['allow', 'review', 'violation'].includes(normalized)) return normalized;
   if (['yes', 'safe', 'approved', 'no action'].includes(normalized)) return 'allow';
-  if (['unsafe', 'blocked', 'block', 'deny'].includes(normalized)) return 'violation';
+  // Small local models sometimes put a policy label in `decision` (for
+  // example "harm" or "kill") instead of the requested enum. Keep that
+  // result actionable as a violation rather than losing it to manual review.
+  if (['unsafe', 'blocked', 'block', 'deny', 'harm', 'threat', 'harassment', 'hate', 'violence', 'kill', 'abuse'].includes(normalized)) return 'violation';
   return 'review';
+};
+
+const policyCategory = (value) => {
+  const normalized = asText(value || 'unclassified', 120).toLowerCase().replace(/[\s-]+/g, '_');
+  const aliases = {
+    harm: 'threat', violent_threat: 'threat', death_threat: 'threat', kill: 'threat',
+    abuse: 'harassment', bullying: 'harassment', hateful_content: 'hate_speech',
+    drugs: 'drug_sale', weapon: 'weapon_sale', weapons: 'weapon_sale'
+  };
+  return aliases[normalized] || normalized || 'unclassified';
 };
 
 const policyConfidence = (value) => {
@@ -592,7 +606,7 @@ const askPolicyModel = async (settings, task, taskContext, supplemental = {}) =>
   const severity = ['low', 'medium', 'high', 'critical'].includes(asText(parsed.severity, 30).toLowerCase()) ? asText(parsed.severity, 30).toLowerCase() : 'medium';
   return {
     decision,
-    category: asText(parsed.category || 'unclassified', 120),
+    category: policyCategory(parsed.category),
     confidence: policyConfidence(parsed.confidence),
     severity,
     reason: asText(parsed.reason || 'Social AI completed a policy review.', 1_000),
