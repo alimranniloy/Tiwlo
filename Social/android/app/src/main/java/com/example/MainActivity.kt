@@ -2132,13 +2132,14 @@ fun HomeFeed(
         }
     }
     LaunchedEffect(Unit) {
-        // This request is intentionally separate from refreshAll/feed paging:
-        // sponsored content may arrive later without replacing organic rows.
-        runCatching { repository.socialAdPlacements("feed", 1) }.onSuccess { sponsoredFeedAds = it }
         while (true) {
+            // This stays independent from refreshAll/feed paging: a campaign
+            // can begin, pause or reach its daily cap while this screen is
+            // already open, without rebinding the organic feed rows.
+            runCatching { repository.socialAdPlacements("feed", 1) }.onSuccess { sponsoredFeedAds = it }
             runCatching { repository.refreshLiveStreams() }
-            // Avoid invalidating the entire Feed while the user is scrolling.
-            // Live cards still refresh often enough to show an active stream.
+            // Keep the placement current without causing an organic feed
+            // refresh or scroll-position jump.
             delay(45_000)
         }
     }
@@ -2232,10 +2233,12 @@ fun HomeFeed(
                             else -> SuggestedFriendsSection(module.title, module.profiles, repository, onAuthorClick) { }
                         }
                     }
-                    // One disclosed ad after a small organic context.  Later
-                    // pages stay organic in this session; the server applies a
-                    // daily frequency cap before returning this campaign.
-                    if (index == 1) sponsoredFeedAds.firstOrNull()?.let { ad ->
+                    // One disclosed ad after the first organic post. This
+                    // still gives the member content context, but it also
+                    // works on a new account whose feed currently has one
+                    // post. Later pages stay organic in this session; the
+                    // server enforces the daily campaign frequency cap.
+                    if (index == 0) sponsoredFeedAds.firstOrNull()?.let { ad ->
                         SponsoredAdCard(ad, repository, placement = "feed")
                     }
                 }
