@@ -206,6 +206,7 @@ export const registerSocialRoutes = (app, { prisma, userFromRequest, rootDir }) 
     const sourceUrl = `${publicRoot}/${userId}/${filename}`;
     const inspectedMimeType = await sniffMediaMime(filePath, mimeType, filename, kind);
     const isVideo = inspectedMimeType.startsWith('video/');
+    const isImage = inspectedMimeType.startsWith('image/');
     const settings = await getSettings({ prisma });
     const processingId = filename.replace(/[^a-zA-Z0-9._-]/g, '');
     const outputName = `${processingId}-hls`;
@@ -251,6 +252,25 @@ export const registerSocialRoutes = (app, { prisma, userFromRequest, rootDir }) 
         ? 'MEDIA_REVIEW: The audio matches a protected reference and requires rights review. It was not published.'
         : 'MEDIA_REVIEW: This upload may contain nudity or sexually suggestive content. It was not published and was removed for safety.');
     }
+    // Feed rows never need the original 4K photo.  Produce a compact server
+    // thumbnail once at upload time so Coil can decode a screen-sized asset
+    // from disk/network cache instead of repeatedly decoding the source file.
+    let imageThumbnailUrl = null;
+    if (isImage) {
+      const imageThumbnailName = `${processingId}-feed.jpg`;
+      const imageThumbnailPath = join(uploadRoot, userId, imageThumbnailName);
+      try {
+        await runProcess(resolveSocialFfmpegPath(), [
+          '-hide_banner', '-loglevel', 'error', '-y', '-i', filePath,
+          '-frames:v', '1', '-vf', 'scale=1080:-2:force_original_aspect_ratio=decrease',
+          '-q:v', '4', imageThumbnailPath
+        ]);
+        imageThumbnailUrl = `${publicRoot}/${userId}/${imageThumbnailName}`;
+      } catch {
+        // The original image remains a safe fallback for unusual formats.
+        imageThumbnailUrl = null;
+      }
+    }
     if (isVideo && settings.autoTranscode) {
       await mkdir(outputDir, { recursive: true });
       await writeStatus(statusFile, { status: 'queued', progress: 0, sourceUrl, hlsUrl, thumbnailUrl: null });
@@ -271,7 +291,7 @@ export const registerSocialRoutes = (app, { prisma, userFromRequest, rootDir }) 
       size,
       sourceUrl,
       hlsUrl: isVideo && settings.autoTranscode ? hlsUrl : null,
-      thumbnailUrl: null,
+      thumbnailUrl: isVideo ? null : imageThumbnailUrl,
       processingStatus: isVideo && settings.autoTranscode ? 'queued' : 'ready'
     };
   };

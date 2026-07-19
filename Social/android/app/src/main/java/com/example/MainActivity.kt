@@ -111,6 +111,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.Dp
 import coil.compose.AsyncImage
+import coil.request.CachePolicy
 import coil.request.ImageRequest
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.foundation.border
@@ -189,6 +190,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.distinctUntilChanged
 import com.github.penfeizhou.animation.apng.APNGDrawable
 import org.webrtc.EglBase
 import org.webrtc.RendererCommon
@@ -199,6 +201,7 @@ import java.net.URL
 import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.util.Date
+import java.util.ArrayDeque
 import java.util.Locale
 import java.util.TimeZone
 
@@ -1050,9 +1053,30 @@ private fun ExploreImage(url: String?, modifier: Modifier) {
     else Box(modifier.background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)))
 }
 
+/** A bounded, cache-first request for media used while the main feed scrolls. */
+@Composable
+private fun rememberFeedThumbnailRequest(url: String?): ImageRequest? {
+    val context = LocalContext.current
+    return remember(url, context) {
+        url?.takeIf { it.isNotBlank() }?.let { source ->
+            ImageRequest.Builder(context)
+                .data(source)
+                .size(1080, 1080)
+                .memoryCachePolicy(CachePolicy.ENABLED)
+                .diskCachePolicy(CachePolicy.ENABLED)
+                .networkCachePolicy(CachePolicy.ENABLED)
+                .crossfade(false)
+                .build()
+        }
+    }
+}
+
 @OptIn(UnstableApi::class)
 private object TiwiPlaybackCache {
     @Volatile private var cache: SimpleCache? = null
+    private const val MAX_FEED_PLAYERS = 2
+    private val idlePlayers = ArrayDeque<ExoPlayer>(MAX_FEED_PLAYERS)
+    private val leasedPlayers = mutableMapOf<String, ExoPlayer>()
 
     @Synchronized
     private fun cache(context: Context): SimpleCache = cache ?: SimpleCache(
@@ -1061,8 +1085,10 @@ private object TiwiPlaybackCache {
         StandaloneDatabaseProvider(context.applicationContext)
     ).also { cache = it }
 
-    fun player(context: Context): ExoPlayer {
-        // Avoid leaving a stalled reel on its poster indefinitely on weak mobile data.
+    private fun createPlayer(context: Context): ExoPlayer {
+        // Keep the feed responsive on weak mobile data.  A short initial
+        // buffer starts playback quickly while the shared cache protects the
+        // next visible clip from downloading again.
         val upstream = DefaultHttpDataSource.Factory().setAllowCrossProtocolRedirects(true).setConnectTimeoutMs(8_000).setReadTimeoutMs(15_000)
         val dataSource = CacheDataSource.Factory().setCache(cache(context)).setUpstreamDataSourceFactory(upstream).setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
         val capabilities = context.getSystemService(ConnectivityManager::class.java)
@@ -1084,7 +1110,7 @@ private object TiwiPlaybackCache {
                 .build()
         }
         val loadControl = DefaultLoadControl.Builder()
-            .setBufferDurationsMs(2_500, 20_000, 500, 1_200)
+            .setBufferDurationsMs(1_500, 8_000, 450, 900)
             .setPrioritizeTimeOverSizeThresholds(true)
             .build()
         return ExoPlayer.Builder(context)
@@ -1094,32 +1120,63 @@ private object TiwiPlaybackCache {
             .setLoadControl(loadControl)
             .build()
     }
+
+    /**
+     * Feed videos share at most two Media3 players: the visible video and one
+     * nearby preloaded candidate.  Reusing players prevents codec churn and
+     * avoids allocating a player for every recycled feed row.
+     */
+    @Synchronized
+    fun acquire(context: Context, ownerId: String): ExoPlayer {
+        leasedPlayers[ownerId]?.let { return it }
+        val player = if (idlePlayers.isEmpty()) createPlayer(context) else idlePlayers.removeFirst()
+        leasedPlayers[ownerId] = player
+        return player
+    }
+
+    @Synchronized
+    fun recycle(ownerId: String) {
+        val player = leasedPlayers.remove(ownerId) ?: return
+        player.playWhenReady = false
+        player.pause()
+        player.stop()
+        player.clearMediaItems()
+        if (idlePlayers.size < MAX_FEED_PLAYERS) idlePlayers.addLast(player) else player.release()
+    }
 }
 
 private object TiwiPlaybackCoordinator {
     private val scores = mutableMapOf<String, Float>()
     var activeId by mutableStateOf<String?>(null)
         private set
+    var preloadId by mutableStateOf<String?>(null)
+        private set
+
+    private fun choosePlayers() {
+        val candidates = scores.entries.sortedByDescending { it.value }
+        activeId = candidates.firstOrNull()?.key
+        preloadId = candidates.drop(1).firstOrNull()?.key
+    }
 
     @Synchronized
     fun update(id: String, score: Float, eligible: Boolean) {
-        // Start preparing the nearest visible item before it reaches the exact
-        // centre.  The old .55 threshold left videos at their thumbnail until a
-        // manual tap on some screen sizes.
-        if (eligible && score >= .28f) scores[id] = score else scores.remove(id)
-        activeId = scores.maxByOrNull { it.value }?.key
+        // Keep only the two nearest visible videos: one plays and the next is
+        // prepared quietly.  This is intentionally tighter than a broad
+        // preload window so scrolling cannot create decoder or bandwidth load.
+        if (eligible && score >= .18f) scores[id] = score else scores.remove(id)
+        choosePlayers()
     }
 
     @Synchronized
     fun activate(id: String) {
         scores[id] = 2f
-        activeId = id
+        choosePlayers()
     }
 
     @Synchronized
     fun remove(id: String) {
         scores.remove(id)
-        if (activeId == id) activeId = scores.maxByOrNull { it.value }?.key
+        choosePlayers()
     }
 }
 
@@ -1162,13 +1219,16 @@ private fun TiwiVideo(
     var scrubberVisible by remember(activeUrl) { mutableStateOf(false) }
     var scrubberToken by remember(activeUrl) { mutableLongStateOf(0L) }
     var retryCount by remember(activeUrl) { mutableIntStateOf(0) }
+    var lastVisibilityScore by remember(activeUrl) { mutableFloatStateOf(-1f) }
     val retryScope = rememberTiwiCoroutineScope()
     val playerId = remember(activeUrl) { "$activeUrl#${System.nanoTime()}" }
     val isActivePlayer = TiwiPlaybackCoordinator.activeId == playerId
-    val shouldCreatePlayer = shouldOwnVideoPlayer(visibleEnough, autoplay, startRequested, coordinated, isActivePlayer)
-    val player = remember(activeUrl, shouldCreatePlayer) {
-        if (shouldCreatePlayer) {
-            TiwiPlaybackCache.player(context).apply {
+    val isPreloadPlayer = TiwiPlaybackCoordinator.preloadId == playerId
+    val shouldPreparePlayer = shouldOwnVideoPlayer(visibleEnough, autoplay, startRequested, coordinated, isActivePlayer || isPreloadPlayer)
+    val shouldRenderPlayer = !coordinated || isActivePlayer
+    val player = remember(playerId, shouldPreparePlayer) {
+        if (shouldPreparePlayer) {
+            TiwiPlaybackCache.acquire(context, playerId).apply {
                 setMediaItem(MediaItem.fromUri(activeUrl))
                 prepare()
                 volume = if (muted) 0f else 1f
@@ -1207,8 +1267,8 @@ private fun TiwiVideo(
     LaunchedEffect(playerId, autoplay, startRequested, coordinated) {
         if ((!autoplay && !startRequested) || !coordinated) TiwiPlaybackCoordinator.remove(playerId)
     }
-    LaunchedEffect(shouldCreatePlayer) {
-        if (!shouldCreatePlayer) {
+    LaunchedEffect(shouldPreparePlayer) {
+        if (!shouldPreparePlayer) {
             playing = false
             buffering = true
             renderedFirstFrame = false
@@ -1277,7 +1337,7 @@ private fun TiwiVideo(
             player.removeListener(listener)
             lifecycleOwner.lifecycle.removeObserver(observer)
             if (coordinated) TiwiPlaybackCoordinator.remove(playerId)
-            player.release()
+            TiwiPlaybackCache.recycle(playerId)
         }
     }
     Box(
@@ -1293,16 +1353,25 @@ private fun TiwiVideo(
             val itemCenter = (bounds.top + bounds.bottom) / 2f
             val centerDistance = kotlin.math.abs(itemCenter - screenHeight / 2f) / screenHeight
             visibleEnough = ratio >= .28f
-            if (coordinated) TiwiPlaybackCoordinator.update(playerId, ratio - centerDistance * .15f, autoplay || startRequested)
+            val score = ratio - centerDistance * .15f
+            // Layout callbacks are frequent while a LazyColumn moves.  The
+            // coordinator only needs meaningful score changes, not every pixel.
+            if (coordinated && !visibleEnough) {
+                if (lastVisibilityScore >= .18f) TiwiPlaybackCoordinator.remove(playerId)
+                lastVisibilityScore = -1f
+            } else if (coordinated && kotlin.math.abs(score - lastVisibilityScore) >= .02f) {
+                lastVisibilityScore = score
+                TiwiPlaybackCoordinator.update(playerId, score, autoplay || startRequested)
+            }
         }
     ) {
-        if (player != null) AndroidView(
+        if (player != null && shouldRenderPlayer) AndroidView(
             factory = { PlayerView(it).apply { this.player = player; useController = false } },
             update = { it.player = player },
             modifier = Modifier.fillMaxSize()
         )
-        if ((player == null || !renderedFirstFrame) && !posterUrl.isNullOrBlank()) {
-            AsyncImage(model = posterUrl, contentDescription = "Video thumbnail", modifier = Modifier.fillMaxSize(), contentScale = posterContentScale)
+        if ((!shouldRenderPlayer || player == null || !renderedFirstFrame) && !posterUrl.isNullOrBlank()) {
+            AsyncImage(model = rememberFeedThumbnailRequest(posterUrl), contentDescription = "Video thumbnail", modifier = Modifier.fillMaxSize(), contentScale = posterContentScale)
         }
         if (interactive) Box(Modifier.fillMaxSize().clickable {
             if (playing) {
@@ -1317,7 +1386,7 @@ private fun TiwiVideo(
             showPauseOverlay = true
             if (showScrubber) scrubberToken = System.nanoTime()
         })
-        if (interactive && buffering && shouldCreatePlayer) CircularProgressIndicator(Modifier.align(Alignment.Center).size(30.dp), color = Color.White, strokeWidth = 2.5.dp)
+        if (interactive && buffering && shouldPreparePlayer && shouldRenderPlayer) CircularProgressIndicator(Modifier.align(Alignment.Center).size(30.dp), color = Color.White, strokeWidth = 2.5.dp)
         if (interactive && ((!playing && !buffering && visibleEnough) || (player == null && visibleEnough) || showPauseOverlay)) {
             Box(Modifier.align(Alignment.Center).size(58.dp).background(Color.Black.copy(alpha = .48f), CircleShape), contentAlignment = Alignment.Center) {
                 Icon(if (playing) Icons.Default.Pause else Icons.Default.PlayArrow, if (playing) "Pause" else "Play", tint = Color.White, modifier = Modifier.size(34.dp))
@@ -1991,11 +2060,16 @@ fun HomeFeed(
     val scope = rememberTiwiCoroutineScope()
     val syncing by repository.syncing.collectAsState()
     val feedModules by repository.feedModules.collectAsState()
+    val feedLoadingMore by repository.feedLoadingMore.collectAsState()
     val liveStreams by repository.liveStreams.collectAsState()
     val currentUser by repository.currentUser.collectAsState()
     val currentProfile by repository.profile.collectAsState()
     val online by rememberNetworkAvailable()
     val pendingUpload by rememberPendingUploadSnapshot()
+    val feedListState = rememberLazyListState()
+    // Avoid filtering every module for every post during a scroll.  The map is
+    // recreated only when the small server-driven module list changes.
+    val feedModulesByPosition = remember(feedModules) { feedModules.groupBy { it.insertAfter } }
     var observedUpload by remember { mutableStateOf(false) }
     LaunchedEffect(pendingUpload.active) {
         if (pendingUpload.active) observedUpload = true
@@ -2012,6 +2086,20 @@ fun HomeFeed(
             delay(45_000)
         }
     }
+    LaunchedEffect(feedListState) {
+        snapshotFlow {
+            val layout = feedListState.layoutInfo
+            val lastVisible = layout.visibleItemsInfo.lastOrNull()?.index ?: -1
+            lastVisible to layout.totalItemsCount
+        }.distinctUntilChanged().collect { (lastVisible, total) ->
+            // Headers and injected recommendation modules are also rows, so a
+            // six-row look-ahead loads the next small page before the user hits
+            // the end without preloading the entire feed.
+            if (total > 0 && lastVisible >= total - 6) {
+                runCatching { repository.loadNextFeedPage() }
+            }
+        }
+    }
     PullToRefreshBox(
         isRefreshing = syncing,
         onRefresh = { scope.launch { repository.refreshAll(force = true) } },
@@ -2019,7 +2107,6 @@ fun HomeFeed(
     ) {
         if (posts.isEmpty() && syncing) FeedSkeleton()
         else {
-            val feedListState = rememberLazyListState()
             LazyColumn(modifier = Modifier.fillMaxSize(), state = feedListState) {
             if (!online) item {
                 Row(Modifier.fillMaxWidth().background(Color(0xFFF4F6F8)).padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -2083,12 +2170,17 @@ fun HomeFeed(
                         onOpenLinkedPost = onPostClick,
                         onCommentProfile = onAuthorClick
                     )
-                    feedModules.filter { it.insertAfter == index + 1 }.forEach { module ->
+                    feedModulesByPosition[index + 1].orEmpty().forEach { module ->
                         when (module.kind) {
                             "reels" -> SuggestedReelsSection(module, onReelClick)
                             else -> SuggestedFriendsSection(module.title, module.profiles, repository, onAuthorClick) { }
                         }
                     }
+                }
+            }
+            if (feedLoadingMore) item(key = "feed-page-loading") {
+                Box(Modifier.fillMaxWidth().height(44.dp), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = TiwiBlue)
                 }
             }
             }
@@ -2785,7 +2877,7 @@ private fun PostMediaGrid(
                 posterUrl = item.thumbnailUrl,
                 interactive = false
             )
-            else AsyncImage(model = item.url, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+            else AsyncImage(model = rememberFeedThumbnailRequest(item.thumbnailUrl ?: item.url), contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
             if (index == 3 && media.size > 4) Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = .55f)), contentAlignment = Alignment.Center) {
                 Text("+${media.size - 4}", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold)
             }

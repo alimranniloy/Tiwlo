@@ -1512,7 +1512,10 @@ export const listFeed = async (ctx, args = {}) => {
 };
 
 export const feedModulePositions = (actorId, feedSize, day = new Date().toISOString().slice(0, 10)) => {
-  const size = boundedLimit(feedSize, 60, 100);
+  // The Android feed now asks for a small first page. Respect that size so a
+  // 12-post response does not also carry recommendation modules intended for
+  // 60 posts further down the list.
+  const size = boundedLimit(feedSize, 12, 100);
   const seed = stableTextSeed(`${actorId}:${day}:feed-modules`);
   const positions = [];
   if (size >= 2) positions.push(2);

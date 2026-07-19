@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
+import compression from 'compression';
 import helmet from 'helmet';
 import hpp from 'hpp';
 import rateLimit from 'express-rate-limit';
@@ -62,6 +63,12 @@ app.use(helmet({
   crossOriginEmbedderPolicy: false
 }));
 app.use(hpp());
+// GraphQL feed pages are small and cacheable on the device, but compression
+// still matters on slow mobile data.  Do not buffer live/SSE responses.
+app.use(compression({
+  threshold: 1024,
+  filter: (req, res) => !String(req.headers.accept || '').includes('text/event-stream') && compression.filter(req, res)
+}));
 app.use(['/graphql', '/api', '/ai', '/automation', '/payments'], rateLimit({
   windowMs: 60 * 1000,
   limit: 240,

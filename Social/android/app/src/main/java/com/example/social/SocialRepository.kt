@@ -4,7 +4,12 @@ import android.content.ContentResolver
 import android.content.Context
 import android.net.Uri
 import kotlinx.coroutines.async
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -14,6 +19,7 @@ class SocialRepository(context: Context) {
     private val appContext = context.applicationContext
     private val session = appContext.getSharedPreferences("tiwi_social_session_v3", Context.MODE_PRIVATE)
     private val cache = SocialCacheStore(appContext)
+    private val cacheScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     @Volatile private var token: String? = session.getString("token", null)
     private val client = GraphQlClient(appContext) { token }
     private val security = TSecurityClient(appContext, client)
@@ -22,8 +28,15 @@ class SocialRepository(context: Context) {
     val currentUser: StateFlow<SocialUser?> = _currentUser.asStateFlow()
     private val _profile = MutableStateFlow(cache.profile())
     val profile: StateFlow<SocialProfile?> = _profile.asStateFlow()
-    private val _feed = MutableStateFlow(cache.feed())
+    // Keep cached feed parsing and JSON serialization off the UI thread.  A
+    // feed page is deliberately small; the in-memory list can grow through
+    // paging while disk cache stays bounded for a fast cold start.
+    private val _feed = MutableStateFlow<List<SocialPost>>(emptyList())
     val feed: StateFlow<List<SocialPost>> = _feed.asStateFlow()
+    private val _feedLoadingMore = MutableStateFlow(false)
+    val feedLoadingMore: StateFlow<Boolean> = _feedLoadingMore.asStateFlow()
+    private val _feedEndReached = MutableStateFlow(false)
+    val feedEndReached: StateFlow<Boolean> = _feedEndReached.asStateFlow()
     private val _feedModules = MutableStateFlow<List<SocialFeedModule>>(emptyList())
     val feedModules: StateFlow<List<SocialFeedModule>> = _feedModules.asStateFlow()
     private val _conversations = MutableStateFlow(cache.conversations())
@@ -44,6 +57,13 @@ class SocialRepository(context: Context) {
     val storyTray: StateFlow<List<SocialStoryGroup>> = _storyTray.asStateFlow()
     private val _storyMemories = MutableStateFlow<List<SocialStory>>(emptyList())
     val storyMemories: StateFlow<List<SocialStory>> = _storyMemories.asStateFlow()
+
+    init {
+        cacheScope.launch {
+            val cached = cache.feed().take(FEED_DISK_CACHE_LIMIT)
+            if (cached.isNotEmpty() && _feed.value.isEmpty()) _feed.value = cached
+        }
+    }
 
     fun hasSavedSession(): Boolean = !token.isNullOrBlank() && _currentUser.value != null
     fun currentUserId(): String? = _currentUser.value?.id
@@ -103,7 +123,7 @@ class SocialRepository(context: Context) {
             supervisorScope {
                 val profileJob = async { runCatching { refreshProfile() } }
                 val feedJob = async { runCatching { refreshFeed(force) } }
-                val feedModulesJob = async { runCatching { refreshFeedModules() } }
+                val feedModulesJob = async { runCatching { refreshFeedModules(FEED_INITIAL_PAGE_SIZE) } }
                 val chatJob = async { runCatching { refreshConversations(force) } }
                 val notificationJob = async { runCatching { refreshNotifications() } }
                 val liveJob = async { runCatching { refreshLiveStreams() } }
@@ -115,14 +135,60 @@ class SocialRepository(context: Context) {
 
     suspend fun refreshFeed(force: Boolean = false): List<SocialPost> {
         if (!force && _feed.value.isNotEmpty() && cache.isFresh("feed", FEED_TTL)) return _feed.value
-        val data = client.execute("query TiwiFeed { socialFeed(limit: 60) { $POST_FIELDS } }")
-        return data.list("socialFeed").mapNotNull { it.objectMap()?.let(::mapPost) }.also {
-            _feed.value = it
-            cache.saveFeed(it)
+        val page = requestFeedPage(before = null)
+        // Newer server rows are first while already-paged rows remain in the
+        // same order. This avoids a full LazyColumn replacement; stable keys
+        // ensure only content that actually differs is rebound on screen.
+        val merged = (page + _feed.value).distinctBy { it.id }
+        _feedEndReached.value = page.size < FEED_INITIAL_PAGE_SIZE
+        publishFeed(merged)
+        return _feed.value
+    }
+
+    /** Loads one incremental page without ever replacing the rendered feed. */
+    suspend fun loadNextFeedPage(): List<SocialPost> {
+        if (_feedLoadingMore.value || _feedEndReached.value || _feed.value.isEmpty()) return _feed.value
+        val cursor = _feed.value.lastOrNull { !it.publishedAt.isNullOrBlank() }?.publishedAt
+            ?: run {
+                _feedEndReached.value = true
+                return _feed.value
+            }
+        _feedLoadingMore.value = true
+        return try {
+            val page = requestFeedPage(before = cursor)
+            val existing = _feed.value.mapTo(linkedSetOf()) { it.id }
+            val additions = page.filter { existing.add(it.id) }
+            if (additions.isNotEmpty()) publishFeed(_feed.value + additions)
+            if (page.size < FEED_PAGE_SIZE || additions.isEmpty()) _feedEndReached.value = true
+            _feed.value
+        } finally {
+            _feedLoadingMore.value = false
         }
     }
 
-    suspend fun refreshFeedModules(feedSize: Int = 60): List<SocialFeedModule> {
+    private suspend fun requestFeedPage(before: String?): List<SocialPost> {
+        val data = client.execute(
+            """query TiwiFeed(${D}limit: Int!, ${D}before: String) {
+                socialFeed(limit: ${D}limit, before: ${D}before) { $POST_FIELDS }
+            }""".trimIndent(),
+            mapOf("limit" to if (before == null) FEED_INITIAL_PAGE_SIZE else FEED_PAGE_SIZE, "before" to before)
+        )
+        return withContext(Dispatchers.Default) {
+            data.list("socialFeed").mapNotNull { it.objectMap()?.let(::mapPost) }
+        }
+    }
+
+    private fun publishFeed(value: List<SocialPost>) {
+        val normalized = value.distinctBy { it.id }
+        _feed.value = normalized
+        persistFeed(normalized)
+    }
+
+    private fun persistFeed(value: List<SocialPost>) {
+        cacheScope.launch { cache.saveFeed(value.take(FEED_DISK_CACHE_LIMIT)) }
+    }
+
+    suspend fun refreshFeedModules(feedSize: Int = FEED_INITIAL_PAGE_SIZE): List<SocialFeedModule> {
         val data = client.execute(
             "query TiwiFeedModules { socialFeedModules(feedSize: ${feedSize.coerceIn(1, 100)}) { $FEED_MODULE_FIELDS } }"
         )
@@ -470,7 +536,7 @@ class SocialRepository(context: Context) {
             _feedModules.value = _feedModules.value.map { module ->
                 module.copy(profiles = module.profiles.map { if (it.userId == userId) updated else it })
             }
-            cache.saveFeed(_feed.value)
+            persistFeed(_feed.value)
         }
     }
 
@@ -492,7 +558,7 @@ class SocialRepository(context: Context) {
         if (type != "story") {
             val next = listOf(post) + _feed.value.filterNot { it.id == post.id }
             _feed.value = next
-            cache.saveFeed(next)
+            persistFeed(next)
         }
         return post
     }
@@ -508,7 +574,7 @@ class SocialRepository(context: Context) {
                 post.copy(viewerReaction = if (removing) null else "like", reactionCount = (post.reactionCount + if (removing) -1 else 1).coerceAtLeast(0))
             }
         }
-        cache.saveFeed(_feed.value)
+        persistFeed(_feed.value)
         return try {
             val data = client.execute(
                 """mutation LikeTiwiPost(${D}id: ID!) { reactToSocialPost(id: ${D}id, kind: "like") { $POST_FIELDS } }""",
@@ -516,11 +582,11 @@ class SocialRepository(context: Context) {
             )
             mapPost(data.objectValue("reactToSocialPost") ?: throw SocialApiException("Reaction failed")).also { updated ->
                 _feed.value = _feed.value.map { if (it.id == id) updated else it }
-                cache.saveFeed(_feed.value)
+                persistFeed(_feed.value)
             }
         } catch (error: Exception) {
             _feed.value = before
-            cache.saveFeed(before)
+            persistFeed(before)
             throw error
         }
     }
@@ -537,7 +603,7 @@ class SocialRepository(context: Context) {
             .map { post -> if (post.id == id) post.copy(shareCount = post.shareCount + 1) else post }
             .filterNot { it.id == repost.id }
         _feed.value = listOf(repost) + updated
-        cache.saveFeed(_feed.value)
+        persistFeed(_feed.value)
         return repost
     }
 
@@ -588,7 +654,7 @@ class SocialRepository(context: Context) {
             mapOf("id" to userId, "days" to days)
         )
         _feed.value = _feed.value.filterNot { it.authorId == userId }
-        cache.saveFeed(_feed.value)
+        persistFeed(_feed.value)
     }
 
     suspend fun blockUser(userId: String, block: Boolean = true, reason: String? = null): Boolean {
@@ -598,7 +664,7 @@ class SocialRepository(context: Context) {
         )
         if (block) {
             _feed.value = _feed.value.filterNot { it.authorId == userId }
-            cache.saveFeed(_feed.value)
+            persistFeed(_feed.value)
         }
         return data.boolean("blockSocialUser")
     }
@@ -675,7 +741,7 @@ class SocialRepository(context: Context) {
     suspend fun deletePost(id: String) {
         client.execute("""mutation DeleteTiwiPost(${D}id: ID!) { deleteSocialPost(id: ${D}id) }""", mapOf("id" to id))
         _feed.value = _feed.value.filterNot { it.id == id }
-        cache.saveFeed(_feed.value)
+        persistFeed(_feed.value)
     }
 
     suspend fun reportContent(targetType: String, targetId: String, reason: String, details: String? = null) {
@@ -703,7 +769,7 @@ class SocialRepository(context: Context) {
         return mapComment(data.objectValue("addSocialComment") ?: throw SocialApiException("Comment failed")).also { comment ->
             _comments.value = _comments.value + (postId to (listOf(comment) + _comments.value[postId].orEmpty()))
             _feed.value = _feed.value.map { if (it.id == postId) it.copy(commentCount = it.commentCount + 1) else it }
-            cache.saveFeed(_feed.value)
+            persistFeed(_feed.value)
         }
     }
 
@@ -1767,7 +1833,7 @@ class SocialRepository(context: Context) {
     private fun replacePost(updated: SocialPost) {
         _feed.value = if (_feed.value.any { it.id == updated.id }) _feed.value.map { if (it.id == updated.id) updated else it }
         else listOf(updated) + _feed.value
-        cache.saveFeed(_feed.value)
+        persistFeed(_feed.value)
     }
 
     private fun removeStoryInteractionFromCache(interactionId: String) {
@@ -1814,6 +1880,9 @@ class SocialRepository(context: Context) {
         const val D = "$"
         val RESTRICTED_STATUSES = setOf("disabled", "banned", "blocked", "suspended")
         const val FEED_TTL = 60_000L
+        const val FEED_INITIAL_PAGE_SIZE = 12
+        const val FEED_PAGE_SIZE = 12
+        const val FEED_DISK_CACHE_LIMIT = 36
         const val CHAT_TTL = 20_000L
         const val USER_FIELDS = "id email name avatar role status socialRestrictionCode socialRestrictionReason socialRestrictedAt socialModerationScore signupSource emailVerifiedAt phone mobileCountryCode primaryRegion country addressLine1 city state postalCode billingName socialLastActiveAt"
         const val PUBLIC_USER_FIELDS = "id name avatar status socialLastActiveAt"
