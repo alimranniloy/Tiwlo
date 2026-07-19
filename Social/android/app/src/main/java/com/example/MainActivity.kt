@@ -191,6 +191,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import com.github.penfeizhou.animation.apng.APNGDrawable
 import org.webrtc.EglBase
 import org.webrtc.RendererCommon
@@ -1110,7 +1113,10 @@ private object TiwiPlaybackCache {
                 .build()
         }
         val loadControl = DefaultLoadControl.Builder()
-            .setBufferDurationsMs(1_500, 8_000, 450, 900)
+            // A tiny playback buffer looked fast in ideal conditions but made
+            // short mobile-network stalls visible as repeated pauses. Keep a
+            // small, reliable startup buffer and cap the total memory use.
+            .setBufferDurationsMs(2_000, 12_000, 700, 1_200)
             .setPrioritizeTimeOverSizeThresholds(true)
             .build()
         return ExoPlayer.Builder(context)
@@ -1143,19 +1149,46 @@ private object TiwiPlaybackCache {
         player.clearMediaItems()
         if (idlePlayers.size < MAX_FEED_PLAYERS) idlePlayers.addLast(player) else player.release()
     }
+
+    fun mayPreload(context: Context): Boolean {
+        val capabilities = context.getSystemService(ConnectivityManager::class.java)
+            ?.let { manager -> manager.activeNetwork?.let(manager::getNetworkCapabilities) }
+            ?: return false
+        if (capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+            capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)) return true
+        // Do not make a hidden preview compete with the visible clip on a
+        // slow cellular connection.
+        return (capabilities.linkDownstreamBandwidthKbps ?: 0) >= 3_000
+    }
 }
+
+private enum class TiwiPlaybackSlot { None, Preload, Active }
 
 private object TiwiPlaybackCoordinator {
     private val scores = mutableMapOf<String, Float>()
-    var activeId by mutableStateOf<String?>(null)
-        private set
-    var preloadId by mutableStateOf<String?>(null)
-        private set
+    private val slots = mutableMapOf<String, MutableStateFlow<TiwiPlaybackSlot>>()
+    private var activeId: String? = null
+    private var preloadId: String? = null
+
+    fun slotFor(id: String): StateFlow<TiwiPlaybackSlot> = synchronized(this) {
+        slots.getOrPut(id) { MutableStateFlow(TiwiPlaybackSlot.None) }.asStateFlow()
+    }
 
     private fun choosePlayers() {
         val candidates = scores.entries.sortedByDescending { it.value }
-        activeId = candidates.firstOrNull()?.key
-        preloadId = candidates.drop(1).firstOrNull()?.key
+        val nextActive = candidates.firstOrNull()?.key
+        val nextPreload = candidates.drop(1).firstOrNull()?.key
+        if (activeId == nextActive && preloadId == nextPreload) return
+        val changed = setOfNotNull(activeId, preloadId, nextActive, nextPreload)
+        activeId = nextActive
+        preloadId = nextPreload
+        changed.forEach { id ->
+            slots[id]?.value = when (id) {
+                activeId -> TiwiPlaybackSlot.Active
+                preloadId -> TiwiPlaybackSlot.Preload
+                else -> TiwiPlaybackSlot.None
+            }
+        }
     }
 
     @Synchronized
@@ -1176,6 +1209,13 @@ private object TiwiPlaybackCoordinator {
     @Synchronized
     fun remove(id: String) {
         scores.remove(id)
+        choosePlayers()
+    }
+
+    @Synchronized
+    fun dispose(id: String) {
+        scores.remove(id)
+        slots.remove(id)?.value = TiwiPlaybackSlot.None
         choosePlayers()
     }
 }
@@ -1219,12 +1259,22 @@ private fun TiwiVideo(
     var scrubberVisible by remember(activeUrl) { mutableStateOf(false) }
     var scrubberToken by remember(activeUrl) { mutableLongStateOf(0L) }
     var retryCount by remember(activeUrl) { mutableIntStateOf(0) }
-    var lastVisibilityScore by remember(activeUrl) { mutableFloatStateOf(-1f) }
+    // This value is updated from layout callbacks while scrolling. It must
+    // not be Compose state, otherwise every moved video row schedules another
+    // recomposition and the feed visibly hitches.
+    val lastVisibilityScore = remember(activeUrl) { floatArrayOf(-1f) }
     val retryScope = rememberTiwiCoroutineScope()
     val playerId = remember(activeUrl) { "$activeUrl#${System.nanoTime()}" }
-    val isActivePlayer = TiwiPlaybackCoordinator.activeId == playerId
-    val isPreloadPlayer = TiwiPlaybackCoordinator.preloadId == playerId
-    val shouldPreparePlayer = shouldOwnVideoPlayer(visibleEnough, autoplay, startRequested, coordinated, isActivePlayer || isPreloadPlayer)
+    val slot by remember(playerId) { TiwiPlaybackCoordinator.slotFor(playerId) }.collectAsState()
+    val isActivePlayer = slot == TiwiPlaybackSlot.Active
+    val isPreloadPlayer = slot == TiwiPlaybackSlot.Preload
+    val shouldPreparePlayer = shouldOwnVideoPlayer(
+        visibleEnough,
+        autoplay,
+        startRequested,
+        coordinated,
+        isActivePlayer || (isPreloadPlayer && TiwiPlaybackCache.mayPreload(context))
+    )
     val shouldRenderPlayer = !coordinated || isActivePlayer
     val player = remember(playerId, shouldPreparePlayer) {
         if (shouldPreparePlayer) {
@@ -1327,7 +1377,7 @@ private fun TiwiVideo(
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_PAUSE, Lifecycle.Event.ON_STOP -> player.pause()
-                Lifecycle.Event.ON_RESUME -> if ((autoplay || startRequested) && visibleEnough && (!coordinated || TiwiPlaybackCoordinator.activeId == playerId) && !manuallyPaused) player.play()
+                Lifecycle.Event.ON_RESUME -> if ((autoplay || startRequested) && visibleEnough && (!coordinated || isActivePlayer) && !manuallyPaused) player.play()
                 else -> Unit
             }
         }
@@ -1336,7 +1386,7 @@ private fun TiwiVideo(
         onDispose {
             player.removeListener(listener)
             lifecycleOwner.lifecycle.removeObserver(observer)
-            if (coordinated) TiwiPlaybackCoordinator.remove(playerId)
+            if (coordinated) TiwiPlaybackCoordinator.dispose(playerId)
             TiwiPlaybackCache.recycle(playerId)
         }
     }
@@ -1352,15 +1402,16 @@ private fun TiwiVideo(
             val ratio = verticalRatio * horizontalRatio
             val itemCenter = (bounds.top + bounds.bottom) / 2f
             val centerDistance = kotlin.math.abs(itemCenter - screenHeight / 2f) / screenHeight
-            visibleEnough = ratio >= .28f
+            val nowVisibleEnough = ratio >= .28f
+            if (visibleEnough != nowVisibleEnough) visibleEnough = nowVisibleEnough
             val score = ratio - centerDistance * .15f
             // Layout callbacks are frequent while a LazyColumn moves.  The
             // coordinator only needs meaningful score changes, not every pixel.
             if (coordinated && !visibleEnough) {
-                if (lastVisibilityScore >= .18f) TiwiPlaybackCoordinator.remove(playerId)
-                lastVisibilityScore = -1f
-            } else if (coordinated && kotlin.math.abs(score - lastVisibilityScore) >= .02f) {
-                lastVisibilityScore = score
+                if (lastVisibilityScore[0] >= .18f) TiwiPlaybackCoordinator.remove(playerId)
+                lastVisibilityScore[0] = -1f
+            } else if (coordinated && kotlin.math.abs(score - lastVisibilityScore[0]) >= .06f) {
+                lastVisibilityScore[0] = score
                 TiwiPlaybackCoordinator.update(playerId, score, autoplay || startRequested)
             }
         }
@@ -2108,7 +2159,7 @@ fun HomeFeed(
         if (posts.isEmpty() && syncing) FeedSkeleton()
         else {
             LazyColumn(modifier = Modifier.fillMaxSize(), state = feedListState) {
-            if (!online) item {
+            if (!online) item(key = "feed-offline") {
                 Row(Modifier.fillMaxWidth().background(Color(0xFFF4F6F8)).padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.size(28.dp).background(Color.White, CircleShape), contentAlignment = Alignment.Center) {
                         Icon(Icons.Outlined.WifiOff, null, tint = Color(0xFF475467), modifier = Modifier.size(16.dp))
@@ -2119,7 +2170,7 @@ fun HomeFeed(
                     }
                 }
             }
-            if (pendingUpload.active) item {
+            if (pendingUpload.active) item(key = "feed-upload-progress") {
                 val animatedProgress by animateFloatAsState(
                     targetValue = pendingUpload.progress.coerceIn(0, 100) / 100f,
                     animationSpec = tween(280), label = "post-upload-progress"
@@ -2138,7 +2189,7 @@ fun HomeFeed(
                     LinearProgressIndicator(progress = { animatedProgress }, modifier = Modifier.fillMaxWidth().padding(top = 7.dp).height(3.dp).clip(CircleShape), color = TiwiBlue, trackColor = Color.White)
                 }
             }
-            item {
+            item(key = "feed-story-tray") {
                 TiwiStoryTray(
                     groups = storyGroups,
                     currentUser = currentUser,
@@ -2150,8 +2201,8 @@ fun HomeFeed(
                 )
                 HorizontalDivider(thickness = .5.dp, color = Color(0xFFE5E7EB))
             }
-            item { ReelsSection(reels, onReelClick) }
-            if (liveStreams.isNotEmpty()) item { LiveNowSection(liveStreams, onLive) }
+            item(key = "feed-reels") { ReelsSection(reels, onReelClick) }
+            if (liveStreams.isNotEmpty()) item(key = "feed-live-now") { LiveNowSection(liveStreams, onLive) }
             itemsIndexed(posts, key = { _, post -> post.id }, contentType = { _, post -> if (post.media.any { it.type == "video" }) "video-post" else "post" }) { index, post ->
                 Column {
                     post.recommendationLabel?.takeIf { it.isNotBlank() }?.let { label ->
@@ -2562,24 +2613,26 @@ fun PostCard(
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(post.time, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f))
-                    if (post.visibility != "public") {
-                        Spacer(Modifier.width(3.dp))
-                        Icon(
-                            if (post.visibility == "private") Icons.Default.Lock else Icons.Default.Group,
-                            contentDescription = post.visibility,
-                            tint = Color.Gray,
-                            modifier = Modifier.size(11.dp)
-                        )
-                    }
-                }
-                post.copyrightReference?.let { source ->
-                    Row(
-                        modifier = Modifier.padding(top = 2.dp).clip(RoundedCornerShape(5.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Icon(
+                        when (post.visibility) {
+                            "private" -> Icons.Default.Lock
+                            "followers" -> Icons.Default.Group
+                            else -> Icons.Outlined.Public
+                        },
+                        contentDescription = post.visibility,
+                        tint = Color(0xFF344054),
+                        modifier = Modifier.size(11.dp)
+                    )
+                    post.copyrightReference?.let { source ->
+                        Spacer(Modifier.width(5.dp))
+                        Row(
+                            modifier = Modifier.weight(1f, fill = false).clip(RoundedCornerShape(5.dp))
                             .clickable { onOpenLinkedPost?.invoke(source.postId ?: post.id) }
-                            .padding(horizontal = 4.dp, vertical = 2.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(Icons.Outlined.Copyright, null, tint = TiwiBlue, modifier = Modifier.size(10.dp))
+                            .padding(vertical = 1.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Outlined.Copyright, null, tint = Color(0xFF475467), modifier = Modifier.size(10.dp))
                         Text(
                             "Original ${source.mediaType.lowercase()} · this account",
                             color = Color(0xFF475467),
@@ -2591,6 +2644,7 @@ fun PostCard(
                         )
                     }
                 }
+            }
             }
             IconButton(onClick = { showMenu = true }, modifier = Modifier.size(40.dp)) {
                 PostOptionsGlyph()
@@ -5671,7 +5725,8 @@ private fun SocialCallScreen(repository: SocialRepository, request: TiwiCallRequ
                 manager.eglContext,
                 Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(top = 88.dp, end = 16.dp)
                     .size(width = 112.dp, height = 168.dp).clip(RoundedCornerShape(16.dp)),
-                mirror = true
+                mirror = true,
+                overlay = true
             )
         }
 
@@ -5731,21 +5786,28 @@ private fun CallControl(icon: ImageVector, color: Color, description: String, on
 }
 
 @Composable
-private fun WebRtcVideoSurface(track: VideoTrack?, eglContext: EglBase.Context, modifier: Modifier, mirror: Boolean) {
+private fun WebRtcVideoSurface(
+    track: VideoTrack?,
+    eglContext: EglBase.Context,
+    modifier: Modifier,
+    mirror: Boolean,
+    overlay: Boolean = false
+) {
     val context = LocalContext.current
     // A stable renderer prevents a valid WebRTC track from being connected to
     // a released SurfaceView during Compose recomposition on slower phones.
     val renderer = remember { SurfaceViewRenderer(context) }
     DisposableEffect(renderer, eglContext) {
         renderer.init(eglContext, null)
-        renderer.setEnableHardwareScaler(false)
+        renderer.setEnableHardwareScaler(true)
         renderer.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FILL)
         renderer.setMirror(mirror)
+        renderer.setZOrderMediaOverlay(overlay)
         onDispose { renderer.release() }
     }
     AndroidView(
         factory = { renderer },
-        update = { it.setMirror(mirror) },
+        update = { it.setMirror(mirror); it.setZOrderMediaOverlay(overlay) },
         modifier = modifier.background(Color.Black)
     )
     DisposableEffect(renderer, track) {

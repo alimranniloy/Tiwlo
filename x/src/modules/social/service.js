@@ -3,6 +3,7 @@ import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 import { existsSync } from 'node:fs';
 import { resolve, sep } from 'node:path';
+import { createHmac } from 'node:crypto';
 import { isAdmin, requireAdmin, requireAuth } from '../../core/auth.js';
 import { AppError, forbidden, notFound } from '../../core/errors.js';
 import { removeUndefined } from '../../core/format.js';
@@ -13,6 +14,33 @@ import { fingerprintAudioFile } from './audioFingerprint.js';
 import { enqueueSocialAiIfEnabled } from './ai.js';
 
 export const SOCIAL_SETTING_KEY = 'social';
+
+// TURN credentials are generated just-in-time for authenticated Social app
+// clients. A public STUN server can discover a route but cannot relay media
+// when either caller is behind carrier NAT; coturn's shared-secret mode gives
+// both calls and live co-hosts a reliable fallback without committing a secret
+// to the repository or database.
+const splitTurnUrls = (raw = process.env.SOCIAL_TURN_URLS || '') => String(raw)
+  .split(/[\s,]+/)
+  .map((value) => value.trim())
+  .filter((value) => /^turns?:/i.test(value));
+
+const generatedTurnServers = () => {
+  const urls = splitTurnUrls();
+  const secret = String(process.env.SOCIAL_TURN_SECRET || '').trim();
+  if (!urls.length || !secret) return [];
+  const expiresAt = Math.floor(Date.now() / 1000) + 60 * 60 * 12;
+  const username = `${expiresAt}:tiwi`;
+  const credential = createHmac('sha1', secret).update(username).digest('base64');
+  return [{ urls, username, credential }];
+};
+
+const currentIceServers = (stored) => {
+  const configured = Array.isArray(stored) ? stored.filter((entry) => entry && typeof entry === 'object') : [];
+  const defaults = configured.length ? configured : [{ urls: 'stun:stun.l.google.com:19302' }];
+  const turns = generatedTurnServers();
+  return [...defaults, ...turns];
+};
 
 const SOCIAL_DEFAULTS = Object.freeze({
   enabled: true,
@@ -507,7 +535,9 @@ export const getSettings = async (ctx) => {
     moderation: { ...SOCIAL_DEFAULTS.moderation, ...(stored.moderation || {}) },
     profileEffects: { ...SOCIAL_DEFAULTS.profileEffects, ...(stored.profileEffects || {}) },
     verificationPackages: Array.isArray(stored.verificationPackages) ? stored.verificationPackages : SOCIAL_DEFAULTS.verificationPackages,
-    stunServers: Array.isArray(stored.stunServers) ? stored.stunServers : SOCIAL_DEFAULTS.stunServers
+    // Return a short-lived TURN credential with the configured STUN servers.
+    // `socialSettings` itself is authenticated in the resolver.
+    stunServers: currentIceServers(stored.stunServers)
   };
 };
 

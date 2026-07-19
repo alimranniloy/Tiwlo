@@ -3,6 +3,7 @@ package com.example.social
 import android.content.Context
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
+import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
@@ -75,6 +76,7 @@ class WebRtcLiveManager(context: Context, private val repository: SocialReposito
     private var cohostMode = false
     private var disposed = false
     private var offlineSince: Long? = null
+    private var communicationDeviceSelected = false
     private var iceServers: List<PeerConnection.IceServer> = listOf(
         PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer()
     )
@@ -228,16 +230,16 @@ class WebRtcLiveManager(context: Context, private val repository: SocialReposito
     private suspend fun startCapture() {
         val source = factory.createVideoSource(false)
         videoSource = source
-        // Start with Camera1's byte-buffer route. Some devices advertise
-        // Camera2 yet deliver a black external texture to WebRTC.
+        // Prefer the current Camera2 pipeline. The legacy Camera1 capturer is
+        // retained as a fallback for hardware where Camera2 cannot deliver
+        // frames, so a granted camera permission never leaves a black live
+        // preview indefinitely.
         val camera2Available = Camera2Enumerator.isSupported(appContext)
         try {
-            openCameraCapture(source, preferCamera2 = false)
+            openCameraCapture(source, preferCamera2 = camera2Available)
         } catch (firstError: Exception) {
-            // Camera2 remains a fallback only when the compatibility capturer
-            // itself cannot be opened.
             if (!camera2Available) throw firstError
-            openCameraCapture(source, preferCamera2 = true)
+            openCameraCapture(source, preferCamera2 = false)
         }
         localVideoTrack = factory.createVideoTrack("tiwi-live-video", videoSource).also { _localVideo.value = it }
         audioSource = factory.createAudioSource(MediaConstraints())
@@ -550,6 +552,10 @@ class WebRtcLiveManager(context: Context, private val repository: SocialReposito
         videoSource?.dispose(); videoSource = null
         localAudio?.dispose(); localAudio = null
         audioSource?.dispose(); audioSource = null
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S && communicationDeviceSelected) {
+            audioManager.clearCommunicationDevice()
+            communicationDeviceSelected = false
+        }
         @Suppress("DEPRECATION")
         run {
             audioManager.isSpeakerphoneOn = previousSpeakerState
@@ -557,10 +563,18 @@ class WebRtcLiveManager(context: Context, private val repository: SocialReposito
         }
     }
 
-    @Suppress("DEPRECATION")
     private fun prepareLiveAudio() {
-        audioManager.mode = AudioManager.MODE_NORMAL
-        audioManager.isSpeakerphoneOn = true
+        audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            val speaker = audioManager.availableCommunicationDevices.firstOrNull {
+                it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER
+            }
+            communicationDeviceSelected = speaker != null && audioManager.setCommunicationDevice(speaker)
+        }
+        if (!communicationDeviceSelected) {
+            @Suppress("DEPRECATION")
+            runCatching { audioManager.isSpeakerphoneOn = true }
+        }
     }
 
     private fun setFlash(enabled: Boolean): Boolean {

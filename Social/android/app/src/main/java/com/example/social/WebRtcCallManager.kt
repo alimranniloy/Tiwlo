@@ -3,6 +3,7 @@ package com.example.social
 import android.content.Context
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
+import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
@@ -52,6 +53,7 @@ class WebRtcCallManager(
     private val endSignalScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val audioManager = appContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     private val previousAudioMode = audioManager.mode
+    private val previousSpeakerState = audioManager.isSpeakerphoneOn
     private val eglBase = EglBase.create()
     val eglContext: EglBase.Context get() = eglBase.eglBaseContext
 
@@ -91,6 +93,7 @@ class WebRtcCallManager(
     private val _speakerEnabled = MutableStateFlow(false)
     val speakerEnabled: StateFlow<Boolean> = _speakerEnabled.asStateFlow()
     private var audioFocusRequest: AudioFocusRequest? = null
+    private var communicationDeviceSelected = false
 
     init {
         PeerConnectionFactory.initialize(
@@ -246,11 +249,14 @@ class WebRtcCallManager(
         // textures can give a black local preview on some devices.
         val camera2Available = Camera2Enumerator.isSupported(appContext)
         try {
-            openCameraCapture(source, preferCamera2 = false)
+            // Modern phones expose their reliable camera pipeline through
+            // Camera2. Camera1 remains the fallback for legacy devices.
+            openCameraCapture(source, preferCamera2 = camera2Available)
         } catch (firstError: Exception) {
-            // Use Camera2 only if the compatibility path cannot open.
+            // Keep a compatibility fallback for devices with a broken Camera2
+            // implementation instead of leaving the local preview black.
             if (!camera2Available) throw firstError
-            openCameraCapture(source, preferCamera2 = true)
+            openCameraCapture(source, preferCamera2 = false)
         }
         _localVideo.value = factory.createVideoTrack("tiwi-video", videoSource).also {
             it.setEnabled(true)
@@ -519,7 +525,13 @@ class WebRtcCallManager(
         peerConnection?.dispose()
         peerConnection = null
         abandonAudioFocus()
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S && communicationDeviceSelected) {
+            audioManager.clearCommunicationDevice()
+            communicationDeviceSelected = false
+        }
         _speakerEnabled.value = false
+        @Suppress("DEPRECATION")
+        runCatching { audioManager.isSpeakerphoneOn = previousSpeakerState }
         audioManager.mode = previousAudioMode
     }
 
@@ -533,10 +545,30 @@ class WebRtcCallManager(
         }.getOrDefault(false)
     }
 
-    @Suppress("DEPRECATION")
     private fun setSpeaker(enabled: Boolean) {
         _speakerEnabled.value = enabled
-        audioManager.isSpeakerphoneOn = enabled
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            val preferredTypes = if (enabled) {
+                listOf(AudioDeviceInfo.TYPE_BUILTIN_SPEAKER)
+            } else {
+                listOf(
+                    AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
+                    AudioDeviceInfo.TYPE_BLE_HEADSET,
+                    AudioDeviceInfo.TYPE_WIRED_HEADSET,
+                    AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
+                    AudioDeviceInfo.TYPE_BUILTIN_EARPIECE
+                )
+            }
+            val device = preferredTypes.asSequence()
+                .mapNotNull { wanted -> audioManager.availableCommunicationDevices.firstOrNull { it.type == wanted } }
+                .firstOrNull()
+            if (device != null && audioManager.setCommunicationDevice(device)) {
+                communicationDeviceSelected = true
+                return
+            }
+        }
+        @Suppress("DEPRECATION")
+        runCatching { audioManager.isSpeakerphoneOn = enabled }
     }
 
     private fun requestAudioFocus() {
