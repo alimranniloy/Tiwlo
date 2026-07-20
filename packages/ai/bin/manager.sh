@@ -25,6 +25,13 @@ load_environment() {
       [[ "$line" =~ ^[[:space:]]*(#|$) ]] && continue
       line="${line#export }"
       key="${line%%=*}"; value="${line#*=}"
+      value="${value%$'\r'}"
+      # Match dotenv's normal quoted-value behavior without sourcing an env
+      # file (which could execute shell syntax). This keeps model ids and
+      # optional base URLs valid in manager health/tests.
+      if [[ "$value" =~ ^\".*\"$ ]] || [[ "$value" =~ ^\'.*\'$ ]]; then
+        value="${value:1:${#value}-2}"
+      fi
       [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
       case "$key" in SOCIAL_GEMINI_API_KEY|GEMINI_API_KEY|SOCIAL_GEMINI_MODEL|SOCIAL_GEMINI_API_BASE_URL|SOCIAL_GEMINI_TIMEOUT_MS) export "$key=$value" ;; esac
     done <"$file"
