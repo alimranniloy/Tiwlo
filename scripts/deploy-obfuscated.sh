@@ -167,17 +167,19 @@ cleanup_legacy_artifacts() {
 
 fetch_latest_deploy_script() {
   local script
-  local url
+  local checkout
   script="$(mktemp "$TMP_BASE/tiwlo-secure-deploy.XXXXXX.sh")"
-  url="https://raw.githubusercontent.com/alimranniloy/Tiwlo/${BRANCH}/scripts/deploy-obfuscated.sh?fresh=$(date +%s)"
-  if command -v curl >/dev/null 2>&1; then
-    curl -fsSL -H 'Cache-Control: no-cache' "$url" -o "$script"
-  elif command -v wget >/dev/null 2>&1; then
-    wget --no-cache -qO "$script" "$url"
-  else
-    echo "curl or wget is required to fetch the secure deploy script." >&2
+  checkout="$(mktemp -d "$TMP_BASE/tiwlo-secure-script.XXXXXX")"
+  # Do not use raw.githubusercontent.com here. Some server-side caches can
+  # serve an older script even with a cache-buster, which is unsafe after the
+  # production root is wiped. Git is the authoritative release transport.
+  if ! git clone --depth 1 --branch "$BRANCH" "$REPO_URL" "$checkout/repo" >/dev/null 2>&1; then
+    rm -rf -- "$checkout" "$script"
+    echo "Could not fetch the latest deploy script from the configured Git repository." >&2
     exit 1
   fi
+  cp "$checkout/repo/scripts/deploy-obfuscated.sh" "$script"
+  rm -rf -- "$checkout"
   chmod 700 "$script"
   printf '%s\n' "$script"
 }
