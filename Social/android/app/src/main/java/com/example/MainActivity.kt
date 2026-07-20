@@ -2,6 +2,7 @@ package com.example
 
 import android.Manifest
 import android.app.Activity
+import android.app.DatePickerDialog
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.ClipData
@@ -207,6 +208,7 @@ import java.net.URL
 import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.util.Date
+import java.util.Calendar
 import java.util.ArrayDeque
 import java.util.Locale
 import java.util.TimeZone
@@ -1616,6 +1618,7 @@ private fun rememberPendingUploadSnapshot(): State<PendingUploadSnapshot> {
 @Composable
 fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink: String? = null, onDeepLinkConsumed: () -> Unit = {}) {
     var selectedTab by remember { mutableIntStateOf(0) }
+    var menuFullscreen by remember { mutableStateOf(false) }
     var showProfile by remember { mutableStateOf(false) }
     var showCreatePost by remember { mutableStateOf(false) }
     var sharedPost by remember { mutableStateOf<Post?>(null) }
@@ -1908,7 +1911,7 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
 
     Scaffold(
         topBar = { 
-            if (selectedTab != 2 && selectedTab != 4 && !showProfile && !showCreatePost && !showStoryCreate && selectedStoryAuthorId == null && !showMessages && !showConnect && selectedProfileUserId == null && selectedChat == null && selectedPostId == null && selectedEditPostId == null) {
+            if (!menuFullscreen && selectedTab != 2 && selectedTab != 4 && !showProfile && !showCreatePost && !showStoryCreate && selectedStoryAuthorId == null && !showMessages && !showConnect && selectedProfileUserId == null && selectedChat == null && selectedPostId == null && selectedEditPostId == null) {
                 TiwiTopBar(
                     unreadActivity = unreadActivity,
                     onCreateClick = { showCreatePost = true },
@@ -1918,7 +1921,7 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
             }
         },
         bottomBar = { 
-            if (!showProfile && !showCreatePost && !showStoryCreate && selectedStoryAuthorId == null && !showMessages && !showConnect && selectedProfileUserId == null && selectedChat == null && selectedPostId == null && selectedEditPostId == null) {
+            if (!menuFullscreen && !showProfile && !showCreatePost && !showStoryCreate && selectedStoryAuthorId == null && !showMessages && !showConnect && selectedProfileUserId == null && selectedChat == null && selectedPostId == null && selectedEditPostId == null) {
                 TiwiBottomBar(
                     selectedTab = selectedTab,
                     dark = selectedTab == 2,
@@ -2040,6 +2043,7 @@ fun TiwiApp(repository: SocialRepository, onLogout: () -> Unit, initialDeepLink:
                             onInitialCopyrightClaimConsumed = { pendingCopyrightClaimId = null },
                             onProfileClick = { showProfile = true },
                             onUserProfileClick = { selectedProfileUserId = it },
+                            onFullscreenChange = { menuFullscreen = it },
                             onLogout = { repository.logout(); onLogout() }
                         )
                     }
@@ -3130,7 +3134,7 @@ private fun VerifiedInfoSheet(name: String, avatar: String?, badgeType: String =
             DecoratedAvatar(avatar, R.drawable.img_tiwi_avatar_1, decoration, Modifier.size(82.dp))
             Spacer(Modifier.height(8.dp))
             Row(verticalAlignment = Alignment.CenterVertically) { Text(name, fontWeight = FontWeight.Bold, fontSize = 18.sp); Spacer(Modifier.width(3.dp)); VerifiedBadge(badgeType, 24.dp) }
-            Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(24.dp))
             Text("This profile is verified", fontWeight = FontWeight.Bold)
             Text(if (badgeType == "gold") "Tiwi confirmed this is an authentic notable person or organization." else "Tiwi confirmed that this is the authentic presence for this account.", textAlign = TextAlign.Center, color = Color.Gray, modifier = Modifier.padding(vertical = 8.dp))
             Button(onClick = onDismiss, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(8.dp)) { Text("Got it") }
@@ -6077,6 +6081,7 @@ fun MenuScreen(
     onInitialCopyrightClaimConsumed: () -> Unit = {},
     onProfileClick: () -> Unit,
     onUserProfileClick: (String) -> Unit = {},
+    onFullscreenChange: (Boolean) -> Unit = {},
     onLogout: () -> Unit
 ) {
     var selectedSetting by remember { mutableStateOf<String?>(initialSetting) }
@@ -6090,6 +6095,10 @@ fun MenuScreen(
             onInitialSettingConsumed()
         }
     }
+    LaunchedEffect(selectedShortcut, selectedSetting, showEditProfile) {
+        onFullscreenChange(selectedShortcut != null || selectedSetting != null || showEditProfile)
+    }
+    DisposableEffect(Unit) { onDispose { onFullscreenChange(false) } }
     selectedSetting?.let { setting ->
         if (setting == "Support Center") SupportCenterPage(repository, onBack = { selectedSetting = null })
         else if (setting == "Copyright Studio") CopyrightStudioPage(
@@ -6106,9 +6115,10 @@ fun MenuScreen(
         return
     }
     selectedShortcut?.let { shortcut ->
-        BackHandler { selectedShortcut = null }
-        if (shortcut == "Ads") AdsManagerScreen(repository, onBack = { selectedShortcut = null })
-        else ShortcutScreen(repository, shortcut, onBack = { selectedShortcut = null })
+        onFullscreenChange(true)
+        BackHandler { onFullscreenChange(false); selectedShortcut = null }
+        if (shortcut == "Ads") AdsManagerScreen(repository, onBack = { onFullscreenChange(false); selectedShortcut = null })
+        else ShortcutScreen(repository, shortcut, onBack = { onFullscreenChange(false); selectedShortcut = null })
         return
     }
     if (showEditProfile) {
@@ -6144,15 +6154,20 @@ fun MenuScreen(
                                 Spacer(Modifier.width(5.dp))
                                 VerifiedBadge(profile?.badgeType ?: "blue", 16.dp)
                                 Spacer(Modifier.width(4.dp))
-                                Text(
-                                    if (profile?.badgeType == "gold") "Gold verified" else "Verified",
-                                    color = Color(0xFF667085),
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.SemiBold
-                                )
+                                Surface(color = Color(0xFFF3F4F6), shape = RoundedCornerShape(8.dp), tonalElevation = 0.dp) {
+                                    Text(
+                                        if (profile?.badgeType == "gold") "Gold verified" else "Verified",
+                                        color = Color(0xFF475467),
+                                        fontSize = 9.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
+                                    )
+                                }
                             } else {
                                 Spacer(Modifier.width(6.dp))
-                                Text("Get verified", color = TiwiBlue, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                                Surface(color = Color(0xFFF2F7FF), shape = RoundedCornerShape(8.dp), tonalElevation = 0.dp) {
+                                    Text("Get verified", color = TiwiBlue, fontSize = 9.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp))
+                                }
                             }
                         }
                         Text("@${profile?.username.orEmpty()}  ·  View your profile", style = MaterialTheme.typography.labelMedium, color = Color(0xFF667085))
@@ -6263,6 +6278,10 @@ private fun AdsManagerScreen(repository: SocialRepository, onBack: () -> Unit) {
     var showComposer by remember { mutableStateOf(false) }
     var showTopUp by remember { mutableStateOf(false) }
     var expandedCampaignId by remember { mutableStateOf<String?>(null) }
+    var showBalance by remember { mutableStateOf(true) }
+    var showAllCampaigns by remember { mutableStateOf(false) }
+    var headerMenuExpanded by remember { mutableStateOf(false) }
+    var showTransactions by remember { mutableStateOf(false) }
     fun refresh() {
         scope.launch {
             loading = true
@@ -6281,61 +6300,102 @@ private fun AdsManagerScreen(repository: SocialRepository, onBack: () -> Unit) {
         AdsCreditTopUpPage(repository, onBack = { showTopUp = false }, onCompleted = { showTopUp = false; refresh() })
         return
     }
+    if (showTransactions) {
+        AdsTransactionsPage(summary?.campaigns.orEmpty(), onBack = { showTransactions = false })
+        return
+    }
     BackHandler(onBack = onBack)
     val data = summary ?: SocialAdsSummary(walletBalance = user?.credits ?: 0.0)
     Column(Modifier.fillMaxSize().background(Color.White).statusBarsPadding().navigationBarsPadding()) {
-        Row(Modifier.fillMaxWidth().height(54.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
-            Text("Payments & Ads", modifier = Modifier.weight(1f), fontSize = 19.sp, fontWeight = FontWeight.Black, textAlign = TextAlign.Center)
-            IconButton(onClick = { /* Notification activity is available from the app header. */ }) { Icon(Icons.Outlined.NotificationsNone, "Notifications", tint = Color(0xFF111827), modifier = Modifier.size(21.dp)) }
-            IconButton(onClick = { showComposer = true }) { Icon(Icons.Default.MoreVert, "More ad options", tint = Color(0xFF111827), modifier = Modifier.size(22.dp)) }
+        Box(Modifier.fillMaxWidth().height(60.dp).padding(horizontal = 10.dp)) {
+            IconButton(onClick = onBack, modifier = Modifier.align(Alignment.CenterStart).size(42.dp)) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color(0xFF111111), modifier = Modifier.size(25.dp))
+            }
+            Text("Payments & Ads", modifier = Modifier.align(Alignment.Center), fontSize = 20.sp, fontWeight = FontWeight.Black, textAlign = TextAlign.Center)
+            Row(modifier = Modifier.align(Alignment.CenterEnd), verticalAlignment = Alignment.CenterVertically) {
+                Box(contentAlignment = Alignment.TopEnd) {
+                    IconButton(onClick = { /* Notification activity lives in the main app header. */ }, modifier = Modifier.size(42.dp)) {
+                        Icon(Icons.Outlined.NotificationsNone, "Notifications", tint = Color(0xFF111111), modifier = Modifier.size(24.dp))
+                    }
+                    Box(Modifier.padding(top = 8.dp, end = 8.dp).size(7.dp).background(TiwiBlue, CircleShape))
+                }
+                Box {
+                    IconButton(onClick = { headerMenuExpanded = true }, modifier = Modifier.size(42.dp)) {
+                        Icon(Icons.Default.Menu, "Ads menu", tint = Color(0xFF111111), modifier = Modifier.size(25.dp))
+                    }
+                    DropdownMenu(expanded = headerMenuExpanded, onDismissRequest = { headerMenuExpanded = false }) {
+                        DropdownMenuItem(
+                            text = { Text("Create new ad") },
+                            leadingIcon = { Icon(Icons.Default.Add, null) },
+                            onClick = { headerMenuExpanded = false; showComposer = true }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Add balance") },
+                            leadingIcon = { Icon(Icons.Outlined.AccountBalanceWallet, null) },
+                            onClick = { headerMenuExpanded = false; showTopUp = true }
+                        )
+                    }
+                }
+            }
         }
-        HorizontalDivider(color = Color(0xFFE9ECF1))
+        HorizontalDivider(color = Color(0xFFEDEFF3))
         if (loading && summary == null) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 2.dp) }
             return@Column
         }
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 14.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            message?.let { Text(it, color = Color(0xFFB42318), fontSize = 11.sp) }
-            Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(0.dp)) {
+            message?.let { Text(it, color = Color(0xFFB42318), fontSize = 11.sp, modifier = Modifier.padding(top = 10.dp)) }
+            Spacer(Modifier.height(35.dp))
+            Row(Modifier.clickable { showTopUp = true }, verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Ad balance", color = Color(0xFF667085), fontSize = 12.sp)
-                        Spacer(Modifier.width(5.dp)); Icon(Icons.Outlined.Visibility, null, tint = Color(0xFF667085), modifier = Modifier.size(15.dp))
+                        Text("Wallet balance", color = Color(0xFF30343B), fontSize = 14.sp)
+                        IconButton(onClick = { showBalance = !showBalance }, modifier = Modifier.size(29.dp).padding(start = 5.dp)) {
+                            Icon(if (showBalance) Icons.Outlined.Visibility else Icons.Outlined.VisibilityOff, if (showBalance) "Hide balance" else "Show balance", tint = Color(0xFF4B5563), modifier = Modifier.size(18.dp))
+                        }
                     }
-                    Text(adMoney(data.walletBalance, "USD"), fontSize = 34.sp, fontWeight = FontWeight.Black, modifier = Modifier.padding(top = 3.dp))
-                    Text("Available Tiwi credit", color = Color(0xFF667085), fontSize = 11.sp)
+                    /* Legacy masked-balance text kept out of the render tree.
+                    Text(if (showBalance) "$${String.format(Locale.US, "%.2f", data.walletBalance)}" else "$••••••", fontSize = 42.sp, fontWeight = FontWeight.Black, letterSpacing = (-1.3).sp, modifier = Modifier.padding(top = 4.dp))
+                    */
+                    Text(if (showBalance) "$${String.format(Locale.US, "%.2f", data.walletBalance)}" else "${'$'}------", fontSize = 42.sp, fontWeight = FontWeight.Black, letterSpacing = (-1.3).sp, modifier = Modifier.padding(top = 4.dp))
+                    Surface(color = Color(0xFFF6F7F9), shape = RoundedCornerShape(10.dp), modifier = Modifier.padding(top = 9.dp)) { Row(Modifier.padding(horizontal = 11.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) { Box(Modifier.size(7.dp).background(TiwiBlue, CircleShape)); Spacer(Modifier.width(6.dp)); Text("USD", fontSize = 11.sp, fontWeight = FontWeight.SemiBold); Icon(Icons.Default.KeyboardArrowDown, null, modifier = Modifier.padding(start = 3.dp).size(15.dp)) } }
                 }
-                Box(Modifier.size(76.dp).border(1.dp, Color(0xFFE6EAF0), RoundedCornerShape(13.dp)), contentAlignment = Alignment.Center) { Icon(Icons.Outlined.AccountBalanceWallet, null, tint = TiwiBlue, modifier = Modifier.size(33.dp)) }
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 10.dp)) { Box(Modifier.size(78.dp).border(1.dp, Color(0xFFE7EAF0), RoundedCornerShape(11.dp)), contentAlignment = Alignment.Center) { Icon(Icons.Outlined.AccountBalanceWallet, null, tint = Color(0xFF111111), modifier = Modifier.size(35.dp)) }; Icon(Icons.Default.ChevronRight, null, tint = Color(0xFF111111), modifier = Modifier.padding(start = 10.dp).size(24.dp)) }
             }
-            HorizontalDivider(color = Color(0xFFEAECEF))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                AdsMetric("Total budget", adMoney(data.totalBudget, "USD"), Icons.Outlined.Payments, Modifier.weight(1f))
-                VerticalDivider(Modifier.height(42.dp), color = Color(0xFFE7EAF0))
-                AdsMetric("Active ads", data.activeCount.toString(), Icons.Outlined.Campaign, Modifier.weight(1f))
-                VerticalDivider(Modifier.height(42.dp), color = Color(0xFFE7EAF0))
-                AdsMetric("Pending", data.pendingCount.toString(), Icons.Outlined.Schedule, Modifier.weight(1f))
+            Spacer(Modifier.height(34.dp))
+            HorizontalDivider(color = Color(0xFFE7E9ED))
+            Row(Modifier.fillMaxWidth().height(82.dp), verticalAlignment = Alignment.CenterVertically) {
+                AdsMetric("Total spent", adMoney(data.totalSpent, "USD"), Icons.Outlined.Payments, Modifier.weight(1f))
+                VerticalDivider(Modifier.height(42.dp), color = Color(0xFFE8EAF0))
+                AdsMetric("Add balance", "", Icons.Default.AddCircleOutline, Modifier.weight(1f), onClick = { showTopUp = true })
+                VerticalDivider(Modifier.height(42.dp), color = Color(0xFFE8EAF0))
+                AdsMetric("Transactions", "", Icons.Outlined.ReceiptLong, Modifier.weight(1f), onClick = { showTransactions = true })
             }
-            HorizontalDivider(color = Color(0xFFEAECEF))
-            Row(Modifier.fillMaxWidth()) {
-                AdsActionCell(Modifier.weight(1f), Icons.Outlined.Bolt, "Add balance", "Top up your credit") { showTopUp = true }
-                VerticalDivider(Modifier.height(61.dp), color = Color(0xFFE7EAF0))
-                AdsActionCell(Modifier.weight(1f), Icons.Default.Add, "Create New Ad", "Start a campaign") { showComposer = true }
+            HorizontalDivider(color = Color(0xFFE7E9ED))
+            Row(Modifier.fillMaxWidth().height(106.dp), verticalAlignment = Alignment.CenterVertically) {
+                AdsActionCell(Modifier.weight(1f), Icons.Outlined.Bolt, "Pay Now", "Add funds &\npromote instantly") { showTopUp = true }
+                VerticalDivider(Modifier.height(62.dp), color = Color(0xFFE7E9ED))
+                AdsActionCell(Modifier.weight(1f), Icons.Default.Add, "Create New Ad", "Start a new\ncampaign") { showComposer = true }
             }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Current Ads", fontWeight = FontWeight.Black, fontSize = 18.sp, modifier = Modifier.weight(1f))
-                Text("See all", color = TiwiBlue, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                Icon(Icons.Default.ChevronRight, null, tint = TiwiBlue, modifier = Modifier.size(16.dp))
+            HorizontalDivider(color = Color(0xFFE7E9ED))
+            Spacer(Modifier.height(31.dp))
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Text("Current Ads", fontWeight = FontWeight.Black, fontSize = 21.sp, modifier = Modifier.weight(1f))
+                Text(if (showAllCampaigns) "Show less" else "See all", color = TiwiBlue, fontWeight = FontWeight.Bold, fontSize = 13.sp, modifier = Modifier.clickable { showAllCampaigns = !showAllCampaigns })
+                Icon(Icons.Default.ChevronRight, null, tint = TiwiBlue, modifier = Modifier.size(18.dp))
             }
+            Spacer(Modifier.height(14.dp))
             if (data.campaigns.isEmpty()) {
-                Surface(color = Color(0xFFF8FAFC), shape = RoundedCornerShape(13.dp), border = BorderStroke(.7.dp, Color(0xFFE6EAF0)), tonalElevation = 0.dp, modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(Icons.Outlined.Campaign, null, tint = TiwiBlue, modifier = Modifier.size(26.dp))
-                        Text("No ads yet", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 7.dp))
-                        Text("Create an ad from a new upload or one of your posts.", color = Color(0xFF667085), fontSize = 11.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 3.dp))
+                Column(Modifier.fillMaxWidth().padding(vertical = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Box(Modifier.size(48.dp).background(TiwiBlue.copy(alpha = .08f), RoundedCornerShape(14.dp)), contentAlignment = Alignment.Center) {
+                        Icon(Icons.Outlined.Campaign, null, tint = TiwiBlue, modifier = Modifier.size(25.dp))
                     }
+                    Text("No ads yet", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 10.dp))
+                    Text("Create a campaign to start reaching people.", color = Color(0xFF667085), fontSize = 11.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 4.dp))
                 }
-            } else data.campaigns.forEach { campaign ->
+            } else data.campaigns.let { campaigns ->
+                if (showAllCampaigns) campaigns else campaigns.take(3)
+            }.forEach { campaign ->
                 AdsCampaignRow(campaign, expandedCampaignId == campaign.id, onToggleMenu = { expandedCampaignId = if (expandedCampaignId == campaign.id) null else campaign.id }, onPause = {
                     expandedCampaignId = null
                     scope.launch { runCatching { repository.pauseSocialAdCampaign(campaign.id, campaign.status == "active") }.onSuccess { refresh() }.onFailure { message = it.message ?: "Campaign update failed" } }
@@ -6350,23 +6410,32 @@ private fun AdsManagerScreen(repository: SocialRepository, onBack: () -> Unit) {
 }
 
 @Composable
-private fun AdsMetric(label: String, value: String, icon: ImageVector, modifier: Modifier = Modifier) {
-    Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
-        Icon(icon, null, tint = TiwiBlue, modifier = Modifier.size(18.dp))
-        Text(value, fontWeight = FontWeight.Black, fontSize = 13.sp, modifier = Modifier.padding(top = 3.dp), maxLines = 1)
-        Text(label, color = Color(0xFF667085), fontSize = 9.sp, maxLines = 1)
+private fun AdsMetric(label: String, value: String, icon: ImageVector, modifier: Modifier = Modifier, onClick: (() -> Unit)? = null) {
+    Row(
+        modifier.then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier).padding(horizontal = 7.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center
+    ) {
+        Icon(icon, null, tint = TiwiBlue, modifier = Modifier.size(27.dp))
+        Column(Modifier.padding(start = 8.dp), verticalArrangement = Arrangement.Center) {
+            Text(label, color = Color(0xFF24272C), fontSize = 10.sp, maxLines = 1)
+            if (value.isNotBlank()) Text(value, fontWeight = FontWeight.Black, fontSize = 14.sp, maxLines = 1, modifier = Modifier.padding(top = 2.dp))
+        }
+        if (value.isBlank()) Icon(Icons.Default.ChevronRight, null, tint = Color(0xFF111111), modifier = Modifier.padding(start = 2.dp).size(16.dp))
     }
 }
 
 @Composable
 private fun AdsActionCell(modifier: Modifier, icon: ImageVector, title: String, subtitle: String, onClick: () -> Unit) {
-    Row(modifier.clickable(onClick = onClick).padding(horizontal = 5.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(35.dp).background(TiwiBlue.copy(alpha = .08f), RoundedCornerShape(10.dp)), contentAlignment = Alignment.Center) { Icon(icon, null, tint = TiwiBlue, modifier = Modifier.size(20.dp)) }
-        Column(Modifier.padding(start = 8.dp).weight(1f)) {
-            Text(title, fontWeight = FontWeight.Bold, fontSize = 12.sp, maxLines = 1)
-            Text(subtitle, color = Color(0xFF667085), fontSize = 9.sp, maxLines = 2, lineHeight = 12.sp)
+    Row(modifier.clickable(onClick = onClick).padding(horizontal = 8.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(54.dp).background(Color(0xFFF6F7FC), RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
+            Icon(icon, null, tint = TiwiBlue, modifier = Modifier.size(29.dp))
         }
-        Icon(Icons.Default.ChevronRight, null, tint = Color(0xFF667085), modifier = Modifier.size(16.dp))
+        Column(Modifier.padding(start = 12.dp).weight(1f)) {
+            Text(title, fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 1)
+            Text(subtitle, color = Color(0xFF667085), fontSize = 10.sp, maxLines = 2, lineHeight = 14.sp)
+        }
+        Icon(Icons.Default.ChevronRight, null, tint = Color(0xFF111111), modifier = Modifier.size(18.dp))
     }
 }
 
@@ -6374,38 +6443,93 @@ private fun AdsActionCell(modifier: Modifier, icon: ImageVector, title: String, 
 private fun AdsCampaignRow(campaign: SocialAd, expanded: Boolean, onToggleMenu: () -> Unit, onPause: () -> Unit, onDelete: () -> Unit) {
     val active = campaign.status == "active"
     val statusColor = when (campaign.status) { "active" -> Color(0xFF12B76A); "paused" -> Color(0xFF667085); "draft" -> Color(0xFFF79009); else -> Color(0xFF667085) }
-    Surface(color = Color.White, shape = RoundedCornerShape(13.dp), border = BorderStroke(.7.dp, Color(0xFFE6EAF0)), tonalElevation = 0.dp, modifier = Modifier.fillMaxWidth()) {
-        Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+    Column(Modifier.fillMaxWidth()) {
+        Row(Modifier.padding(horizontal = 2.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
             val media = campaign.media.firstOrNull()
-            if (media != null) AsyncImage(model = media.thumbnailUrl ?: media.url, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.size(62.dp).clip(RoundedCornerShape(9.dp)))
-            else Box(Modifier.size(62.dp).background(Color(0xFFF3F5F8), RoundedCornerShape(9.dp)), contentAlignment = Alignment.Center) { Icon(Icons.Outlined.Campaign, null, tint = Color(0xFF98A2B3)) }
-            Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
-                Text(campaign.campaignName ?: campaign.headline ?: "Tiwi campaign", fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 3.dp)) {
-                    Box(Modifier.size(7.dp).background(statusColor, CircleShape)); Spacer(Modifier.width(4.dp))
-                    Text(campaign.status.replaceFirstChar { it.uppercase() }, color = statusColor, fontWeight = FontWeight.Bold, fontSize = 10.sp)
+            if (media != null) AsyncImage(model = media.thumbnailUrl ?: media.url, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.size(76.dp).clip(RoundedCornerShape(8.dp)))
+            else Box(Modifier.size(76.dp).background(Color(0xFFF5F6F8), RoundedCornerShape(8.dp)), contentAlignment = Alignment.Center) { Icon(Icons.Outlined.Campaign, null, tint = Color(0xFF98A2B3), modifier = Modifier.size(34.dp)) }
+            Column(Modifier.weight(1f).padding(start = 15.dp, end = 4.dp)) {
+                Text(campaign.campaignName ?: campaign.headline ?: "Tiwi campaign", fontWeight = FontWeight.Black, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 5.dp)) {
+                    Box(Modifier.size(8.dp).background(statusColor, CircleShape)); Spacer(Modifier.width(5.dp))
+                    Text(campaign.status.replaceFirstChar { it.uppercase() }, color = statusColor, fontWeight = FontWeight.Medium, fontSize = 11.sp)
+                    /* Legacy metadata text kept out of the render tree.
                     Text("  Â·  ${campaign.objective.replace('_', ' ')}", color = Color(0xFF667085), fontSize = 10.sp, maxLines = 1)
+                    }
                 }
-                Row(Modifier.padding(top = 6.dp)) {
+                Text(" •  ID: ${campaign.id.takeLast(4)}  •  ${campaign.objective.replace('_', ' ').replaceFirstChar { it.uppercase() }}", color = Color(0xFF667085), fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 2.dp))
+                */
+                Text(" \u2022  ID: ${campaign.id.takeLast(4)}  \u2022  ${campaign.objective.replace('_', ' ').replaceFirstChar { it.uppercase() }}", color = Color(0xFF667085), fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 2.dp))
+                Row(Modifier.padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                     AdsCampaignMetric(adMoney(campaign.spentAmount, campaign.currency), "Spent", Modifier.weight(1f))
-                    AdsCampaignMetric(formatCount(campaign.impressionCount), "Reach", Modifier.weight(1f))
-                    AdsCampaignMetric(formatCount(campaign.clickCount), "Clicks", Modifier.weight(1f))
+                    VerticalDivider(Modifier.height(30.dp), color = Color(0xFFE4E7EC))
+                    AdsCampaignMetric(formatCount(campaign.impressionCount), "Reach", Modifier.weight(1f).padding(start = 12.dp))
+                    VerticalDivider(Modifier.height(30.dp), color = Color(0xFFE4E7EC))
+                    AdsCampaignMetric(formatCount(campaign.clickCount), "Clicks", Modifier.weight(1f).padding(start = 12.dp))
                 }
             }
             Box {
-                IconButton(onClick = onToggleMenu, modifier = Modifier.size(30.dp)) { Icon(Icons.Default.MoreVert, "Campaign actions", tint = Color(0xFF475467), modifier = Modifier.size(19.dp)) }
+                IconButton(onClick = onToggleMenu, modifier = Modifier.size(34.dp)) { Icon(Icons.Default.MoreVert, "Campaign actions", tint = Color(0xFF111111), modifier = Modifier.size(21.dp)) }
                 DropdownMenu(expanded = expanded, onDismissRequest = onToggleMenu) {
                     DropdownMenuItem(text = { Text(if (active) "Pause ad" else "Resume ad") }, leadingIcon = { Icon(if (active) Icons.Default.Pause else Icons.Default.PlayArrow, null) }, onClick = onPause)
                     DropdownMenuItem(text = { Text("Delete", color = Color(0xFFB42318)) }, leadingIcon = { Icon(Icons.Default.Delete, null, tint = Color(0xFFB42318)) }, onClick = onDelete)
                 }
             }
         }
+        HorizontalDivider(color = Color(0xFFE9ECF0))
     }
+}
 }
 
 @Composable
 private fun AdsCampaignMetric(value: String, label: String, modifier: Modifier) {
-    Column(modifier) { Text(value, fontWeight = FontWeight.Bold, fontSize = 11.sp, maxLines = 1); Text(label, color = Color(0xFF667085), fontSize = 9.sp) }
+    Column(modifier) {
+        Text(value, fontWeight = FontWeight.Black, fontSize = 13.sp, maxLines = 1)
+        Text(label, color = Color(0xFF667085), fontSize = 10.sp, modifier = Modifier.padding(top = 2.dp))
+    }
+}
+
+@Composable
+private fun AdsTransactionsPage(campaigns: List<SocialAd>, onBack: () -> Unit) {
+    BackHandler(onBack = onBack)
+    Column(Modifier.fillMaxSize().background(Color.White).statusBarsPadding().navigationBarsPadding()) {
+        Box(Modifier.fillMaxWidth().height(60.dp).padding(horizontal = 10.dp)) {
+            IconButton(onClick = onBack, modifier = Modifier.align(Alignment.CenterStart).size(42.dp)) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color(0xFF111111), modifier = Modifier.size(25.dp))
+            }
+            Text("Transactions", modifier = Modifier.align(Alignment.Center), fontSize = 20.sp, fontWeight = FontWeight.Black)
+        }
+        HorizontalDivider(color = Color(0xFFEDEFF3))
+        if (campaigns.isEmpty()) {
+            Column(Modifier.fillMaxSize().padding(28.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                Box(Modifier.size(56.dp).background(TiwiBlue.copy(alpha = .08f), RoundedCornerShape(16.dp)), contentAlignment = Alignment.Center) {
+                    Icon(Icons.Outlined.ReceiptLong, null, tint = TiwiBlue, modifier = Modifier.size(29.dp))
+                }
+                Text("No transactions yet", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 13.dp))
+                Text("Published ads and added balance will appear here.", color = Color(0xFF667085), fontSize = 12.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 5.dp))
+            }
+        } else {
+            LazyColumn(Modifier.fillMaxSize().padding(horizontal = 20.dp), contentPadding = PaddingValues(vertical = 12.dp)) {
+                item { Text("Ad activity", color = Color(0xFF667085), fontWeight = FontWeight.SemiBold, fontSize = 12.sp, modifier = Modifier.padding(bottom = 7.dp)) }
+                items(campaigns, key = { it.id }) { campaign ->
+                    Row(Modifier.fillMaxWidth().padding(vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.size(44.dp).background(TiwiBlue.copy(alpha = .08f), RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
+                            Icon(Icons.Outlined.Campaign, null, tint = TiwiBlue, modifier = Modifier.size(23.dp))
+                        }
+                        Column(Modifier.weight(1f).padding(start = 12.dp, end = 10.dp)) {
+                            Text(campaign.campaignName ?: campaign.headline ?: "Tiwi campaign", fontWeight = FontWeight.SemiBold, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text("${campaign.status.replaceFirstChar { it.uppercase() }} ad campaign", color = Color(0xFF667085), fontSize = 11.sp, modifier = Modifier.padding(top = 3.dp))
+                        }
+                        Column(horizontalAlignment = Alignment.End) {
+                            Text("-${adMoney(campaign.spentAmount, campaign.currency)}", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            Text("Ad spend", color = Color(0xFF667085), fontSize = 10.sp, modifier = Modifier.padding(top = 2.dp))
+                        }
+                    }
+                    HorizontalDivider(color = Color(0xFFE9ECF0))
+                }
+            }
+        }
+    }
 }
 
 @Composable
@@ -6475,22 +6599,27 @@ private fun AdComposerPage(repository: SocialRepository, onBack: () -> Unit, onS
     var campaignName by remember { mutableStateOf("") }
     var objective by remember { mutableStateOf("traffic") }
     var category by remember { mutableStateOf("") }
+    var adFormat by remember { mutableStateOf("image") }
     var ctaType by remember { mutableStateOf("website") }
     var destination by remember { mutableStateOf("") }
     var headline by remember { mutableStateOf("") }
     var body by remember { mutableStateOf("") }
-    var location by remember { mutableStateOf("Worldwide") }
+    var location by remember { mutableStateOf("worldwide") }
     var minAge by remember { mutableStateOf("18") }
     var maxAge by remember { mutableStateOf("65") }
+    var ageRangeId by remember { mutableStateOf("18_65") }
     var gender by remember { mutableStateOf("all") }
     var interests by remember { mutableStateOf("") }
     var budgetType by remember { mutableStateOf("daily") }
     var budgetAmount by remember { mutableStateOf("20") }
     var startAt by remember { mutableStateOf(SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())) }
     var endAt by remember { mutableStateOf("") }
+    var endDateEnabled by remember { mutableStateOf(false) }
+    var optimizationGoal by remember { mutableStateOf("reach") }
     var selectedPost by remember { mutableStateOf<SocialPost?>(null) }
     val uploadedMedia = remember { mutableStateListOf<SocialMedia>() }
     var choosePost by remember { mutableStateOf(false) }
+    var pickerPage by remember { mutableStateOf<String?>(null) }
     var uploading by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
@@ -6511,13 +6640,74 @@ private fun AdComposerPage(repository: SocialRepository, onBack: () -> Unit, onS
         })
         return
     }
+    pickerPage?.let { page ->
+        val title = when (page) {
+            "objective" -> "Choose objective"
+            "category" -> "Select category"
+            "location" -> "Locations"
+            "age" -> "Age range"
+            "interest" -> "Detailed targeting"
+            else -> "Optimization goal"
+        }
+        val subtitle = when (page) {
+            "category" -> "Choose the category that best describes your ad."
+            "location" -> "Choose where people should see your ad."
+            "interest" -> "Select a saved audience interest."
+            "age" -> "Choose the age range for this audience."
+            "optimization" -> "Tell Tiwi what result matters most."
+            else -> "Choose the result you want from this ad."
+        }
+        val values = when (page) {
+            "objective" -> TiwiAdCampaignCatalog.objectives
+            "category" -> TiwiAdCampaignCatalog.categories
+            "location" -> TiwiAdCampaignCatalog.locations
+            "age" -> TiwiAdCampaignCatalog.ageRanges.map { range ->
+                AdCatalogOption(range.id, range.title.replace("â€“", "–"), "Audience age range", AdCatalogIcon.CALENDAR)
+            }
+            "interest" -> TiwiAdCampaignCatalog.interests
+            else -> listOf(
+                AdCatalogOption("reach", "Maximize reach", "Show your ad to as many people as possible", AdCatalogIcon.GROUPS),
+                AdCatalogOption("traffic", "Maximize visits", "Prioritize people likely to visit", AdCatalogIcon.TARGET),
+                AdCatalogOption("engagement", "Maximize engagement", "Prioritize reactions and comments", AdCatalogIcon.HEART),
+                AdCatalogOption("video_views", "Maximize video views", "Prioritize people likely to watch", AdCatalogIcon.PLAY)
+            )
+        }
+        val selected = when (page) {
+            "objective" -> objective
+            "category" -> category
+            "location" -> location
+            "age" -> ageRangeId
+            "interest" -> interests
+            else -> optimizationGoal
+        }
+        AdOptionPickerPage(title, subtitle, values, selected, onBack = { pickerPage = null }, onSelected = { value ->
+            when (page) {
+                "objective" -> objective = value
+                "category" -> category = value
+                "location" -> location = value
+                "age" -> TiwiAdCampaignCatalog.ageRange(value)?.let { range ->
+                    ageRangeId = range.id
+                    minAge = range.minAge.toString()
+                    maxAge = range.maxAge.toString()
+                }
+                "interest" -> interests = value
+                else -> optimizationGoal = value
+            }
+            pickerPage = null
+        })
+        return
+    }
     BackHandler { if (step > 1) step-- else onBack() }
     val media = selectedPost?.media ?: uploadedMedia.toList()
     fun next() {
         when (step) {
             1 -> when {
                 campaignName.trim().length < 2 -> message = "Enter a campaign name"
+                category.isBlank() -> message = "Choose an ad category"
                 media.isEmpty() -> message = "Choose an existing post or upload image/video media"
+                adFormat == "image" && media.none { it.type != "video" } -> message = "Choose an image for an image ad"
+                adFormat == "video" && media.none { it.type == "video" } -> message = "Choose a video for a video ad"
+                adFormat == "carousel" && media.size < 2 -> message = "Choose at least two images or videos for a carousel"
                 destination.isBlank() && ctaType != "visit" -> message = "Enter a destination for this action"
                 else -> { message = null; step++ }
             }
@@ -6531,125 +6721,369 @@ private fun AdComposerPage(repository: SocialRepository, onBack: () -> Unit, onS
             Text("Create New Ad", modifier = Modifier.weight(1f), textAlign = TextAlign.Center, fontWeight = FontWeight.Black, fontSize = 18.sp)
             IconButton(onClick = onBack) { Icon(Icons.Default.Close, "Close") }
         }
-        HorizontalDivider(color = Color(0xFFE9ECF1))
         AdStepIndicator(step)
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 18.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(
+            Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(13.dp)
+        ) {
             when (step) {
-                1 -> AdSetupStep(campaignName, { campaignName = it }, headline, { headline = it }, body, { body = it }, objective, { objective = it }, category, { category = it }, ctaType, { ctaType = it }, destination, { destination = it }, selectedPost, media, uploading, onChoosePost = { choosePost = true }, onUpload = { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) })
-                2 -> AdAudienceStep(location, { location = it }, minAge, { minAge = it }, maxAge, { maxAge = it }, gender, { gender = it }, interests, { interests = it })
-                3 -> AdBudgetStep(budgetType, { budgetType = it }, budgetAmount, { budgetAmount = it }, startAt, { startAt = it }, endAt, { endAt = it })
-                else -> AdReviewStep(campaignName, headline, body, media, objective, location, minAge, maxAge, gender, interests, budgetType, budgetAmount, startAt, endAt, ctaType)
+                1 -> AdSetupStep(campaignName, { campaignName = it }, headline, { headline = it }, body, { body = it }, objective, { pickerPage = "objective" }, category, { pickerPage = "category" }, adFormat, { adFormat = it }, ctaType, { ctaType = it }, destination, { destination = it }, selectedPost, media, uploading, onChoosePost = { choosePost = true }, onUpload = { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) })
+                2 -> AdAudienceStep(location, { pickerPage = "location" }, minAge, maxAge, { pickerPage = "age" }, gender, { gender = it }, interests, { pickerPage = "interest" })
+                3 -> AdBudgetStep(
+                    budgetType = budgetType,
+                    onBudgetType = { budgetType = it },
+                    budgetAmount = budgetAmount,
+                    onBudgetAmount = { budgetAmount = it },
+                    startAt = startAt,
+                    onStartAt = { startAt = it },
+                    endAt = endAt,
+                    onEndAt = { endAt = it },
+                    endDateEnabled = endDateEnabled,
+                    onEndDateEnabled = { enabled ->
+                        endDateEnabled = enabled
+                        if (enabled && endAt.isBlank()) endAt = startAt
+                    },
+                    optimizationGoal = optimizationGoal,
+                    onChooseOptimization = { pickerPage = "optimization" }
+                )
+                else -> AdReviewStep(
+                    campaignName = campaignName,
+                    headline = headline,
+                    body = body,
+                    media = media,
+                    objective = objective,
+                    category = category,
+                    adFormat = adFormat,
+                    location = location,
+                    minAge = minAge,
+                    maxAge = maxAge,
+                    gender = gender,
+                    interests = interests,
+                    budgetType = budgetType,
+                    budgetAmount = budgetAmount,
+                    startAt = startAt,
+                    endAt = endAt,
+                    endDateEnabled = endDateEnabled,
+                    optimizationGoal = optimizationGoal,
+                    ctaType = ctaType,
+                    onEditSetup = { step = 1 },
+                    onEditAudience = { step = 2 },
+                    onEditBudget = { step = 3 }
+                )
             }
             message?.let { Text(it, color = Color(0xFFB42318), fontSize = 11.sp) }
-            Spacer(Modifier.height(3.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                if (step > 1) OutlinedButton(onClick = { step-- }, modifier = Modifier.weight(.42f).height(46.dp), shape = RoundedCornerShape(9.dp)) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Previous") }
-                Button(onClick = {
-                    if (step < 4) next() else {
-                        busy = true; message = null
-                        scope.launch {
-                            val targeting = mapOf("locations" to location.split(',').map { it.trim() }.filter { it.isNotBlank() }, "minAge" to (minAge.toIntOrNull() ?: 18), "maxAge" to (maxAge.toIntOrNull() ?: 65), "gender" to gender, "interests" to interests.split(',').map { it.trim() }.filter { it.isNotBlank() })
-                            val draft = SocialAdDraft(campaignName = campaignName, objective = objective, category = category, sourcePostId = selectedPost?.id, headline = headline, body = body, media = media, ctaType = ctaType, destinationUrl = destination, placements = listOf("feed", "reels"), budgetType = budgetType, budgetAmount = budgetAmount.toDoubleOrNull() ?: 0.0, currency = "USD", targeting = targeting, startAt = startAt, endAt = endAt.ifBlank { null }, publish = true)
-                            runCatching { repository.createSocialAdCampaign(draft) }
-                                .onSuccess { Toast.makeText(context, "Ad is active", Toast.LENGTH_LONG).show(); onSaved() }
-                                .onFailure { message = it.message ?: "Ad could not be published" }
-                            busy = false
-                        }
+        }
+        HorizontalDivider(color = Color(0xFFE9ECF1))
+        AdWizardFooter(
+            step = step,
+            busy = busy,
+            onPrevious = { if (step > 1) step-- },
+            onContinue = {
+                if (step < 4) next() else {
+                    val finalErrors = TiwiAdCampaignCatalog.validate(
+                        campaignName = campaignName,
+                        objectiveId = objective,
+                        categoryId = category,
+                        locationId = location,
+                        ageRangeId = ageRangeId,
+                        genderId = gender,
+                        interestIds = interests.split(',').filter { it.isNotBlank() },
+                        budgetTypeId = budgetType,
+                        budgetAmount = budgetAmount.toDoubleOrNull() ?: 0.0,
+                        ctaType = ctaType,
+                        destination = destination,
+                        hasMedia = media.isNotEmpty()
+                    )
+                    if (finalErrors.isNotEmpty()) {
+                        message = finalErrors.first()
+                        return@AdWizardFooter
                     }
-                }, enabled = !busy, modifier = Modifier.weight(if (step > 1) .58f else 1f).height(46.dp), shape = RoundedCornerShape(9.dp)) {
-                    if (busy) CircularProgressIndicator(Modifier.size(17.dp), color = Color.White, strokeWidth = 2.dp)
-                    else { Text(if (step == 4) "Publish Ad" else "Next", fontWeight = FontWeight.Bold); Spacer(Modifier.width(7.dp)); Icon(if (step == 4) Icons.Default.Check else Icons.Default.ArrowForward, null, modifier = Modifier.size(18.dp)) }
+                    busy = true
+                    message = null
+                    scope.launch {
+                        val targeting = mapOf(
+                            "locations" to listOf(location),
+                            "minAge" to (minAge.toIntOrNull() ?: 18),
+                            "maxAge" to (maxAge.toIntOrNull() ?: 65),
+                            "gender" to gender,
+                            "interests" to TiwiAdCampaignCatalog.canonicalInterestIds(interests.split(',')),
+                            "optimizationGoal" to optimizationGoal
+                        )
+                        val draft = SocialAdDraft(
+                            campaignName = campaignName,
+                            objective = objective,
+                            category = category,
+                            sourcePostId = selectedPost?.id,
+                            headline = headline,
+                            body = body,
+                            media = media,
+                            ctaType = ctaType,
+                            destinationUrl = destination,
+                            placements = listOf("feed", "reels"),
+                            budgetType = budgetType,
+                            budgetAmount = budgetAmount.toDoubleOrNull() ?: 0.0,
+                            currency = "USD",
+                            targeting = targeting,
+                            startAt = startAt,
+                            endAt = if (endDateEnabled) endAt.ifBlank { null } else null,
+                            publish = true
+                        )
+                        runCatching { repository.createSocialAdCampaign(draft) }
+                            .onSuccess { Toast.makeText(context, "Ad is active", Toast.LENGTH_LONG).show(); onSaved() }
+                            .onFailure { message = it.message ?: "Ad could not be published" }
+                        busy = false
+                    }
                 }
             }
-        }
+        )
     }
 }
 
 @Composable
 private fun AdStepIndicator(step: Int) {
     val labels = listOf("Ad Setup", "Audience", "Budget", "Review")
-    Row(Modifier.fillMaxWidth().padding(horizontal = 23.dp, vertical = 15.dp), verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.SpaceBetween) {
-        labels.forEachIndexed { index, label ->
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.size(25.dp).background(if (index + 1 <= step) TiwiBlue else Color(0xFFF2F4F7), CircleShape).border(.7.dp, if (index + 1 <= step) TiwiBlue else Color(0xFFD0D5DD), CircleShape), contentAlignment = Alignment.Center) {
-                        if (index + 1 < step) Icon(Icons.Default.Check, null, tint = Color.White, modifier = Modifier.size(15.dp)) else Text((index + 1).toString(), color = if (index + 1 == step) Color.White else Color(0xFF667085), fontWeight = FontWeight.Bold, fontSize = 11.sp)
-                    }
-                    if (index < labels.lastIndex) Box(Modifier.width(38.dp).height(1.dp).background(if (index + 1 < step) TiwiBlue else Color(0xFFD0D5DD)))
+    Column(Modifier.fillMaxWidth().padding(horizontal = 31.dp, vertical = 15.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            labels.forEachIndexed { index, _ ->
+                val isCurrent = index + 1 == step
+                val isComplete = index + 1 < step
+                Box(
+                    Modifier.size(29.dp).background(if (isCurrent) TiwiBlue else Color.White, CircleShape)
+                        .border(1.dp, if (isCurrent || isComplete) TiwiBlue else Color(0xFFD0D5DD), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (isComplete) Icon(Icons.Default.Check, null, tint = TiwiBlue, modifier = Modifier.size(16.dp))
+                    else Text((index + 1).toString(), color = if (isCurrent) Color.White else Color(0xFF667085), fontWeight = FontWeight.Bold, fontSize = 11.sp)
                 }
-                Text(label, color = if (index + 1 == step) TiwiBlue else Color(0xFF667085), fontSize = 9.sp, fontWeight = if (index + 1 == step) FontWeight.Bold else FontWeight.Normal, modifier = Modifier.padding(top = 4.dp))
+                if (index < labels.lastIndex) Box(Modifier.weight(1f).padding(horizontal = 8.dp).height(1.dp).background(if (isComplete) TiwiBlue else Color(0xFFD0D5DD)))
+            }
+        }
+        Row(Modifier.fillMaxWidth().padding(top = 5.dp)) {
+            labels.forEachIndexed { index, label ->
+                Text(
+                    label,
+                    color = if (index + 1 == step) TiwiBlue else Color(0xFF667085),
+                    fontSize = 10.sp,
+                    fontWeight = if (index + 1 == step) FontWeight.Bold else FontWeight.Normal,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.weight(1f)
+                )
             }
         }
     }
 }
 
 @Composable
-private fun AdSetupStep(campaignName: String, onCampaignName: (String) -> Unit, headline: String, onHeadline: (String) -> Unit, body: String, onBody: (String) -> Unit, objective: String, onObjective: (String) -> Unit, category: String, onCategory: (String) -> Unit, ctaType: String, onCtaType: (String) -> Unit, destination: String, onDestination: (String) -> Unit, selectedPost: SocialPost?, media: List<SocialMedia>, uploading: Boolean, onChoosePost: () -> Unit, onUpload: () -> Unit) {
-    Text("Ad Setup", fontSize = 22.sp, fontWeight = FontWeight.Black)
-    Text("Set up the basic details for your ad campaign.", color = Color(0xFF667085), fontSize = 12.sp)
-    OutlinedTextField(campaignName, onCampaignName, label = { Text("Campaign name") }, singleLine = true, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(9.dp))
-    Text("Ad objective", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-    AdChoiceRow(listOf("traffic" to "Traffic", "messages" to "Messages", "calls" to "Calls", "video_views" to "Video views"), objective, onObjective)
-    OutlinedTextField(category, onCategory, label = { Text("Ad category") }, placeholder = { Text("Shopping, Services, Education...") }, singleLine = true, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(9.dp))
-    Text("Creative", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-        OutlinedButton(onClick = onChoosePost, modifier = Modifier.weight(1f).height(44.dp), shape = RoundedCornerShape(9.dp)) { Icon(Icons.Outlined.GridView, null, modifier = Modifier.size(17.dp)); Spacer(Modifier.width(6.dp)); Text("Choose post", fontSize = 11.sp) }
-        Button(onClick = onUpload, enabled = !uploading, modifier = Modifier.weight(1f).height(44.dp), shape = RoundedCornerShape(9.dp)) { if (uploading) CircularProgressIndicator(Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp) else { Icon(Icons.Outlined.Upload, null, modifier = Modifier.size(17.dp)); Spacer(Modifier.width(6.dp)); Text("Upload new", fontSize = 11.sp) } }
+private fun AdWizardFooter(step: Int, busy: Boolean, onPrevious: () -> Unit, onContinue: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        if (step > 1) {
+            OutlinedButton(
+                onClick = onPrevious,
+                enabled = !busy,
+                modifier = Modifier.weight(.42f).height(48.dp),
+                shape = RoundedCornerShape(5.dp),
+                border = BorderStroke(.8.dp, Color(0xFFD9DEE7))
+            ) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, null, modifier = Modifier.size(19.dp), tint = Color(0xFF101828))
+                Spacer(Modifier.width(8.dp))
+                Text("Previous", color = Color(0xFF101828), fontWeight = FontWeight.SemiBold)
+            }
+        }
+        Button(
+            onClick = onContinue,
+            enabled = !busy,
+            modifier = Modifier.weight(if (step > 1) .58f else 1f).height(48.dp),
+            shape = RoundedCornerShape(5.dp)
+        ) {
+            if (busy) CircularProgressIndicator(Modifier.size(18.dp), color = Color.White, strokeWidth = 2.dp)
+            else {
+                Text(if (step == 4) "Publish Ad" else "Next", fontWeight = FontWeight.Bold)
+                Spacer(Modifier.width(8.dp))
+                Icon(if (step == 4) Icons.Default.ArrowForward else Icons.Default.ArrowForward, null, modifier = Modifier.size(20.dp))
+            }
+        }
     }
-    if (selectedPost != null) Text("Using your post", color = TiwiBlue, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-    if (media.isNotEmpty()) AdCreativePreview(media, headline.ifBlank { selectedPost?.body.orEmpty() })
-    OutlinedTextField(headline, onHeadline, label = { Text("Headline") }, placeholder = { Text("What should people notice?") }, singleLine = true, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(9.dp))
-    OutlinedTextField(body, onBody, label = { Text("Description") }, minLines = 2, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(9.dp))
+}
+
+private fun adCatalogIcon(icon: AdCatalogIcon): ImageVector = when (icon) {
+    AdCatalogIcon.TARGET, AdCatalogIcon.CROSSHAIR -> Icons.Outlined.TrackChanges
+    AdCatalogIcon.MESSAGE -> Icons.Outlined.ChatBubbleOutline
+    AdCatalogIcon.PHONE -> Icons.Outlined.Phone
+    AdCatalogIcon.HEART, AdCatalogIcon.HEALTH -> Icons.Outlined.FavoriteBorder
+    AdCatalogIcon.PLAY -> Icons.Outlined.PlayCircleOutline
+    AdCatalogIcon.PERSON -> Icons.Outlined.Person
+    AdCatalogIcon.GRID, AdCatalogIcon.SHOPPING_BAG -> Icons.Outlined.GridView
+    AdCatalogIcon.PIN -> Icons.Outlined.LocationOn
+    AdCatalogIcon.CALENDAR -> Icons.Outlined.CalendarToday
+    AdCatalogIcon.GROUPS -> Icons.Outlined.Groups
+    AdCatalogIcon.FOOD, AdCatalogIcon.BEAUTY, AdCatalogIcon.MORE -> Icons.Outlined.Interests
+    AdCatalogIcon.SCHOOL -> Icons.Outlined.School
+    AdCatalogIcon.BUSINESS, AdCatalogIcon.BUILDING -> Icons.Outlined.WorkOutline
+    AdCatalogIcon.DEVICE -> Icons.Outlined.SmartDisplay
+    AdCatalogIcon.PLANE, AdCatalogIcon.CAR -> Icons.Outlined.Explore
+    AdCatalogIcon.HOME -> Icons.Outlined.Home
+    AdCatalogIcon.FILM -> Icons.Outlined.Movie
+}
+
+private fun adCatalogTitle(options: List<AdCatalogOption>, id: String, fallback: String): String =
+    options.firstOrNull { it.id == id }?.title ?: fallback
+
+@Composable
+private fun AdSetupStep(campaignName: String, onCampaignName: (String) -> Unit, headline: String, onHeadline: (String) -> Unit, body: String, onBody: (String) -> Unit, objective: String, onChooseObjective: () -> Unit, category: String, onChooseCategory: () -> Unit, adFormat: String, onFormat: (String) -> Unit, ctaType: String, onCtaType: (String) -> Unit, destination: String, onDestination: (String) -> Unit, selectedPost: SocialPost?, media: List<SocialMedia>, uploading: Boolean, onChoosePost: () -> Unit, onUpload: () -> Unit) {
+    Text("Ad Setup", fontSize = 24.sp, fontWeight = FontWeight.Black)
+    Text("Set up the basic details for your ad campaign.", color = Color(0xFF667085), fontSize = 13.sp)
+    Text("Campaign Name", fontWeight = FontWeight.Bold, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp))
+    AdTextInputRow(campaignName, onCampaignName, "Enter campaign name", Icons.Outlined.Description)
+    Text("Ad Objective", fontWeight = FontWeight.Bold, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp))
+    AdPickerRow(
+        Icons.Outlined.TrackChanges,
+        adCatalogTitle(TiwiAdCampaignCatalog.objectives, objective, "Choose objective"),
+        TiwiAdCampaignCatalog.objective(objective)?.subtitle ?: "Choose objective",
+        onChooseObjective
+    )
+    Text("Ad Category", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+    AdPickerRow(
+        Icons.Outlined.GridView,
+        TiwiAdCampaignCatalog.category(category)?.title ?: "Select category",
+        TiwiAdCampaignCatalog.category(category)?.subtitle ?: "Choose a category",
+        onChooseCategory
+    )
+    Text("Ad Format", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+    AdFormatTiles(adFormat, onFormat)
+    Text("Ad Preview", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+    AdCreativePreview(media, headline.ifBlank { selectedPost?.body.orEmpty() })
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+        OutlinedButton(
+            onClick = onChoosePost,
+            modifier = Modifier.weight(1f).height(42.dp),
+            shape = RoundedCornerShape(6.dp),
+            border = BorderStroke(.8.dp, Color(0xFFD8DEE8))
+        ) {
+            Icon(Icons.Outlined.GridView, null, modifier = Modifier.size(17.dp), tint = Color(0xFF101828))
+            Spacer(Modifier.width(6.dp))
+            Text("Choose existing post", fontSize = 10.sp, color = Color(0xFF101828), maxLines = 1)
+        }
+        Button(onClick = onUpload, enabled = !uploading, modifier = Modifier.weight(.78f).height(42.dp), shape = RoundedCornerShape(6.dp)) {
+            if (uploading) CircularProgressIndicator(Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
+            else {
+                Icon(Icons.Outlined.Upload, null, modifier = Modifier.size(17.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Upload new", fontSize = 10.sp, maxLines = 1)
+            }
+        }
+    }
+    Text("Creative details", fontWeight = FontWeight.Bold, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp))
+    AdTextInputRow(headline, onHeadline, "Headline (optional)", Icons.Outlined.TextFields)
+    AdTextInputRow(body, onBody, "Description (optional)", Icons.Outlined.Description, singleLine = false)
     Text("Call to action", fontWeight = FontWeight.Bold, fontSize = 13.sp)
     AdChoiceRow(listOf("website" to "Website", "call" to "Call", "whatsapp" to "WhatsApp", "visit" to "Visit"), ctaType, onCtaType)
-    OutlinedTextField(destination, onDestination, label = { Text(if (ctaType == "call" || ctaType == "whatsapp") "Phone number" else "Destination link") }, placeholder = { Text(if (ctaType == "visit") "Optional website link" else "Required") }, singleLine = true, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(9.dp))
+    if (ctaType != "visit") AdTextInputRow(
+        destination,
+        onDestination,
+        if (ctaType == "call" || ctaType == "whatsapp") "Phone number" else "Destination link",
+        if (ctaType == "call" || ctaType == "whatsapp") Icons.Outlined.Phone else Icons.Outlined.Link
+    )
 }
 
 @Composable
-private fun AdAudienceStep(location: String, onLocation: (String) -> Unit, minAge: String, onMinAge: (String) -> Unit, maxAge: String, onMaxAge: (String) -> Unit, gender: String, onGender: (String) -> Unit, interests: String, onInterests: (String) -> Unit) {
-    Text("Audience", fontSize = 22.sp, fontWeight = FontWeight.Black)
-    Text("Define who should see your ad.", color = Color(0xFF667085), fontSize = 12.sp)
-    Text("Locations", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-    OutlinedTextField(location, onLocation, leadingIcon = { Icon(Icons.Outlined.LocationOn, null, modifier = Modifier.size(20.dp)) }, placeholder = { Text("Worldwide or Bangladesh, Dhaka") }, singleLine = true, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(9.dp))
-    Text("Age range", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-    Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-        OutlinedTextField(minAge, { onMinAge(it.filter(Char::isDigit).take(2)) }, label = { Text("From") }, singleLine = true, modifier = Modifier.weight(1f), shape = RoundedCornerShape(9.dp))
-        OutlinedTextField(maxAge, { onMaxAge(it.filter(Char::isDigit).take(2)) }, label = { Text("To") }, singleLine = true, modifier = Modifier.weight(1f), shape = RoundedCornerShape(9.dp))
-    }
-    Text("Gender", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-    AdAudienceGenderTiles(gender, onGender)
-    Text("Detailed targeting", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-    OutlinedTextField(interests, onInterests, leadingIcon = { Icon(Icons.Outlined.Adjust, null, modifier = Modifier.size(19.dp)) }, placeholder = { Text("Interests and behaviors (comma separated)") }, minLines = 2, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(9.dp))
-    Surface(color = Color(0xFFF4F7FF), shape = RoundedCornerShape(11.dp), border = BorderStroke(.7.dp, Color(0xFFDCE7FF)), modifier = Modifier.fillMaxWidth()) {
-        Row(Modifier.padding(13.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(36.dp).background(TiwiBlue.copy(alpha = .1f), CircleShape), contentAlignment = Alignment.Center) { Icon(Icons.Outlined.Groups, null, tint = TiwiBlue, modifier = Modifier.size(20.dp)) }
-            Column(Modifier.padding(start = 10.dp).weight(1f)) { Text("Estimated reach", fontWeight = FontWeight.Bold, fontSize = 11.sp); Text("8K - 14K people", fontWeight = FontWeight.Black, fontSize = 20.sp) }
-            Column(horizontalAlignment = Alignment.CenterHorizontally) { Icon(Icons.Default.SignalCellularAlt, null, tint = TiwiBlue, modifier = Modifier.size(28.dp)); Text("Good", color = Color(0xFF475467), fontSize = 10.sp) }
+private fun AdTextInputRow(value: String, onValueChange: (String) -> Unit, placeholder: String, icon: ImageVector, singleLine: Boolean = true) {
+    Surface(
+        color = Color.White,
+        shape = RoundedCornerShape(6.dp),
+        border = BorderStroke(.8.dp, Color(0xFFE1E5EB)),
+        modifier = Modifier.fillMaxWidth().heightIn(min = if (singleLine) 62.dp else 78.dp)
+    ) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = if (singleLine) 0.dp else 12.dp), verticalAlignment = if (singleLine) Alignment.CenterVertically else Alignment.Top) {
+            Icon(icon, null, tint = Color(0xFF475467), modifier = Modifier.size(22.dp))
+            Box(Modifier.weight(1f).padding(start = 15.dp)) {
+                BasicTextField(
+                    value = value,
+                    onValueChange = onValueChange,
+                    singleLine = singleLine,
+                    maxLines = if (singleLine) 1 else 4,
+                    textStyle = LocalTextStyle.current.copy(color = Color(0xFF101828), fontSize = 15.sp),
+                    modifier = Modifier.fillMaxWidth(),
+                    decorationBox = { innerTextField ->
+                        if (value.isBlank()) Text(placeholder, color = Color(0xFF98A2B3), fontSize = 15.sp)
+                        innerTextField()
+                    }
+                )
+            }
         }
     }
+}
+
+@Composable
+private fun AdFormatTiles(selected: String, onSelect: (String) -> Unit) {
+    val formats = listOf(
+        Triple("image", "Image", Icons.Outlined.Image),
+        Triple("video", "Video", Icons.Outlined.PlayCircleOutline),
+        Triple("carousel", "Carousel", Icons.Outlined.ViewCarousel),
+        Triple("collection", "Collection", Icons.Outlined.Description)
+    )
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+        formats.forEach { (id, label, icon) ->
+            val active = selected == id
+            Surface(
+                color = Color.White,
+                shape = RoundedCornerShape(7.dp),
+                border = BorderStroke(if (active) 1.2.dp else .8.dp, if (active) TiwiBlue else Color(0xFFE1E5EB)),
+                modifier = Modifier.weight(1f).height(117.dp).clickable { onSelect(id) }
+            ) {
+                Column(Modifier.fillMaxSize().padding(vertical = 11.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.SpaceBetween) {
+                    Box(Modifier.fillMaxWidth().padding(end = 9.dp), contentAlignment = Alignment.TopEnd) {
+                        Box(Modifier.size(19.dp).border(1.dp, if (active) TiwiBlue else Color(0xFFD0D5DD), CircleShape), contentAlignment = Alignment.Center) {
+                            if (active) Box(Modifier.size(10.dp).background(TiwiBlue, CircleShape))
+                        }
+                    }
+                    Icon(icon, null, tint = if (active) TiwiBlue else Color(0xFF475467), modifier = Modifier.size(25.dp))
+                    Text(label, fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = if (active) TiwiBlue else Color(0xFF475467))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AdAudienceStep(location: String, onChooseLocation: () -> Unit, minAge: String, maxAge: String, onChooseAge: () -> Unit, gender: String, onGender: (String) -> Unit, interests: String, onChooseInterests: () -> Unit) {
+    Text("Audience", fontSize = 24.sp, fontWeight = FontWeight.Black)
+    Text("Define who should see your ad.", color = Color(0xFF667085), fontSize = 13.sp)
+    Text("Locations", fontWeight = FontWeight.Bold, fontSize = 14.sp, modifier = Modifier.padding(top = 8.dp))
+    val locationOption = TiwiAdCampaignCatalog.location(location)
+    AdPickerRow(Icons.Outlined.LocationOn, locationOption?.title ?: "All locations", locationOption?.subtitle ?: "Worldwide", onChooseLocation)
+    HorizontalDivider(color = Color(0xFFE9ECF1), modifier = Modifier.padding(vertical = 9.dp))
+    Text("Age Range", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+    AdPickerRow(Icons.Outlined.CalendarToday, "$minAge – ${maxAge}+", "All ages", onChooseAge)
+    Text("Gender", fontWeight = FontWeight.Bold, fontSize = 14.sp, modifier = Modifier.padding(top = 8.dp))
+    AdAudienceGenderTiles(gender, onGender)
+    Text("Detailed Targeting", fontWeight = FontWeight.Bold, fontSize = 14.sp, modifier = Modifier.padding(top = 8.dp))
+    val interestOption = TiwiAdCampaignCatalog.interest(interests)
+    AdPickerRow(Icons.Outlined.TrackChanges, interestOption?.title ?: "All interests and behaviors", interestOption?.subtitle ?: "Expand your reach", onChooseInterests)
+    AdEstimatedResultCard("Estimated Reach", "8.4K – 12.7K", "People", "Your audience selection is fairly broad.")
 }
 
 @Composable
 private fun AdAudienceGenderTiles(selected: String, onSelected: (String) -> Unit) {
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-        listOf(
-            Triple("all", "All", Icons.Outlined.Groups),
-            Triple("male", "Male", Icons.Outlined.Person),
-            Triple("female", "Female", Icons.Outlined.Person)
-        ).forEach { (id, label, icon) ->
-            val active = selected == id
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        TiwiAdCampaignCatalog.genders.forEach { option ->
+            val active = selected == option.id
             Surface(
                 color = Color.White,
-                shape = RoundedCornerShape(9.dp),
-                border = BorderStroke(if (active) 1.2.dp else .7.dp, if (active) TiwiBlue else Color(0xFFE1E5EB)),
-                modifier = Modifier.weight(1f).height(96.dp).clickable { onSelected(id) }
+                shape = RoundedCornerShape(7.dp),
+                border = BorderStroke(if (active) 1.2.dp else .8.dp, if (active) TiwiBlue else Color(0xFFE1E5EB)),
+                modifier = Modifier.weight(1f).height(142.dp).clickable { onSelected(option.id) }
             ) {
                 Column(Modifier.fillMaxSize().padding(vertical = 14.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.SpaceBetween) {
-                    Box(Modifier.size(18.dp).border(1.dp, if (active) TiwiBlue else Color(0xFFD0D5DD), CircleShape), contentAlignment = Alignment.Center) {
-                        if (active) Box(Modifier.size(10.dp).background(TiwiBlue, CircleShape))
+                    Box(Modifier.fillMaxWidth().padding(end = 11.dp), contentAlignment = Alignment.TopEnd) {
+                        Box(Modifier.size(20.dp).border(1.dp, if (active) TiwiBlue else Color(0xFFD0D5DD), CircleShape), contentAlignment = Alignment.Center) {
+                            if (active) Icon(Icons.Default.Check, null, tint = TiwiBlue, modifier = Modifier.size(15.dp))
+                        }
                     }
-                    Icon(icon, null, tint = if (active) TiwiBlue else Color(0xFF111827), modifier = Modifier.size(25.dp))
-                    Text(label, color = if (active) TiwiBlue else Color(0xFF344054), fontWeight = FontWeight.SemiBold, fontSize = 11.sp)
+                    Icon(adCatalogIcon(option.icon), null, tint = if (active) TiwiBlue else Color(0xFF101828), modifier = Modifier.size(31.dp))
+                    Text(option.title, color = if (active) TiwiBlue else Color(0xFF344054), fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
                 }
             }
         }
@@ -6657,39 +7091,327 @@ private fun AdAudienceGenderTiles(selected: String, onSelected: (String) -> Unit
 }
 
 @Composable
-private fun AdBudgetStep(budgetType: String, onBudgetType: (String) -> Unit, budgetAmount: String, onBudgetAmount: (String) -> Unit, startAt: String, onStartAt: (String) -> Unit, endAt: String, onEndAt: (String) -> Unit) {
-    Text("Budget & Schedule", fontSize = 22.sp, fontWeight = FontWeight.Black)
-    Text("Set how much you want to spend and when your ad should run.", color = Color(0xFF667085), fontSize = 12.sp)
-    Text("Budget", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-    AdChoiceRow(listOf("daily" to "Daily budget", "lifetime" to "Lifetime budget"), budgetType, onBudgetType)
-    OutlinedTextField(budgetAmount, { onBudgetAmount(it.filter { char -> char.isDigit() || char == '.' }.take(8)) }, label = { Text("Budget") }, prefix = { Text("USD") }, singleLine = true, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(9.dp))
-    Text("Schedule", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-    OutlinedTextField(startAt, onStartAt, leadingIcon = { Icon(Icons.Outlined.CalendarToday, null, modifier = Modifier.size(18.dp)) }, label = { Text("Start date") }, placeholder = { Text("YYYY-MM-DD") }, singleLine = true, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(9.dp))
-    OutlinedTextField(endAt, onEndAt, leadingIcon = { Icon(Icons.Outlined.Event, null, modifier = Modifier.size(18.dp)) }, label = { Text("End date (optional)") }, placeholder = { Text("YYYY-MM-DD") }, singleLine = true, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(9.dp))
-    Surface(color = Color(0xFFF4F7FF), shape = RoundedCornerShape(11.dp), border = BorderStroke(.7.dp, Color(0xFFDCE7FF)), modifier = Modifier.fillMaxWidth()) {
-        Row(Modifier.padding(13.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Outlined.QueryStats, null, tint = TiwiBlue, modifier = Modifier.size(27.dp))
-            Column(Modifier.padding(start = 10.dp)) { Text("Estimated results", fontWeight = FontWeight.Bold, fontSize = 11.sp); Text("10K - 14K people reached", fontWeight = FontWeight.Black, fontSize = 18.sp); Text("Budget is deducted from your Tiwi credit when published.", color = Color(0xFF667085), fontSize = 10.sp) }
+private fun AdPickerRow(icon: ImageVector, title: String, subtitle: String, onClick: () -> Unit, fallback: String? = null) {
+    Surface(color = Color.White, shape = RoundedCornerShape(6.dp), border = BorderStroke(.8.dp, Color(0xFFE1E5EB)), modifier = Modifier.fillMaxWidth().height(88.dp).clickable(onClick = onClick)) {
+        Row(Modifier.fillMaxSize().padding(horizontal = 18.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(icon, null, tint = Color(0xFF101828), modifier = Modifier.size(27.dp))
+            Column(Modifier.padding(start = 18.dp).weight(1f)) {
+                Text(title, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+                Text(if (subtitle.isBlank()) fallback ?: "Select an option" else subtitle, color = Color(0xFF667085), fontSize = 13.sp, modifier = Modifier.padding(top = 2.dp))
+            }
+            Icon(Icons.Default.ChevronRight, null, tint = Color(0xFF101828), modifier = Modifier.size(23.dp))
         }
     }
 }
 
 @Composable
-private fun AdReviewStep(campaignName: String, headline: String, body: String, media: List<SocialMedia>, objective: String, location: String, minAge: String, maxAge: String, gender: String, interests: String, budgetType: String, budgetAmount: String, startAt: String, endAt: String, ctaType: String) {
-    Text("Review Your Ad", fontSize = 22.sp, fontWeight = FontWeight.Black)
-    Text("Review all details before publishing your ad.", color = Color(0xFF667085), fontSize = 12.sp)
-    AdCreativePreview(media, headline.ifBlank { body })
-    AdReviewCard(Icons.Outlined.Description, "Ad Setup", listOf("Campaign name" to campaignName, "Objective" to objective.replace('_', ' '), "Action" to ctaType.replaceFirstChar { it.uppercase() }))
-    AdReviewCard(Icons.Outlined.Groups, "Audience", listOf("Locations" to location, "Age range" to "$minAge - $maxAge", "Gender" to gender.replaceFirstChar { it.uppercase() }, "Targeting" to interests.ifBlank { "All interests and behaviors" }))
-    AdReviewCard(Icons.Outlined.Payments, "Budget & Schedule", listOf("Budget" to "USD $budgetAmount / ${if (budgetType == "daily") "day" else "total"}", "Start" to startAt, "End" to endAt.ifBlank { "No end date" }))
+private fun AdOptionPickerPage(title: String, subtitle: String, options: List<AdCatalogOption>, selected: String, onBack: () -> Unit, onSelected: (String) -> Unit) {
+    BackHandler(onBack = onBack)
+    Column(Modifier.fillMaxSize().background(Color.White).statusBarsPadding().navigationBarsPadding()) {
+        Row(Modifier.fillMaxWidth().height(58.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color(0xFF101828)) }
+            Text(title, modifier = Modifier.weight(1f), textAlign = TextAlign.Center, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.width(48.dp))
+        }
+        LazyColumn(
+            Modifier.fillMaxSize().padding(horizontal = 24.dp),
+            contentPadding = PaddingValues(top = 14.dp, bottom = 22.dp),
+            verticalArrangement = Arrangement.spacedBy(9.dp)
+        ) {
+            item {
+                Text(title, color = Color(0xFF101828), fontSize = 24.sp, fontWeight = FontWeight.Black)
+                Text(subtitle, color = Color(0xFF667085), fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp, bottom = 9.dp))
+            }
+            items(options, key = { it.id }) { option ->
+                val active = option.id == selected
+                Surface(
+                    color = Color.White,
+                    shape = RoundedCornerShape(7.dp),
+                    border = BorderStroke(if (active) 1.2.dp else .8.dp, if (active) TiwiBlue else Color(0xFFE1E5EB)),
+                    modifier = Modifier.fillMaxWidth().clickable { onSelected(option.id) }
+                ) {
+                    Row(Modifier.padding(horizontal = 17.dp, vertical = 15.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.size(36.dp).background(if (active) TiwiBlue.copy(alpha = .1f) else Color(0xFFF5F7FA), CircleShape), contentAlignment = Alignment.Center) {
+                            Icon(adCatalogIcon(option.icon), null, tint = if (active) TiwiBlue else Color(0xFF475467), modifier = Modifier.size(20.dp))
+                        }
+                        Column(Modifier.padding(start = 13.dp).weight(1f)) {
+                            Text(option.title, fontWeight = if (active) FontWeight.Bold else FontWeight.SemiBold, color = if (active) TiwiBlue else Color(0xFF101828), fontSize = 14.sp)
+                            if (option.subtitle.isNotBlank()) Text(option.subtitle, color = Color(0xFF667085), fontSize = 11.sp, modifier = Modifier.padding(top = 2.dp))
+                        }
+                        if (active) Icon(Icons.Outlined.CheckCircle, null, tint = TiwiBlue, modifier = Modifier.size(22.dp))
+                    }
+                }
+            }
+        }
+    }
 }
 
 @Composable
-private fun AdReviewCard(icon: ImageVector, title: String, rows: List<Pair<String, String>>) {
-    Surface(color = Color.White, shape = RoundedCornerShape(11.dp), border = BorderStroke(.7.dp, Color(0xFFE6EAF0)), modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(12.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) { Icon(icon, null, tint = TiwiBlue, modifier = Modifier.size(19.dp)); Text(title, fontWeight = FontWeight.Bold, fontSize = 13.sp, modifier = Modifier.padding(start = 8.dp)) }
-            rows.forEach { (label, value) -> Row(Modifier.fillMaxWidth().padding(top = 7.dp)) { Text(label, color = Color(0xFF667085), fontSize = 11.sp, modifier = Modifier.weight(1f)); Text(value, fontWeight = FontWeight.Medium, fontSize = 11.sp, textAlign = TextAlign.End, modifier = Modifier.weight(1.25f), maxLines = 2, overflow = TextOverflow.Ellipsis) } }
+private fun AdBudgetStep(
+    budgetType: String,
+    onBudgetType: (String) -> Unit,
+    budgetAmount: String,
+    onBudgetAmount: (String) -> Unit,
+    startAt: String,
+    onStartAt: (String) -> Unit,
+    endAt: String,
+    onEndAt: (String) -> Unit,
+    endDateEnabled: Boolean,
+    onEndDateEnabled: (Boolean) -> Unit,
+    optimizationGoal: String,
+    onChooseOptimization: () -> Unit
+) {
+    Text("Budget & Schedule", fontSize = 24.sp, fontWeight = FontWeight.Black)
+    Text("Set how much you want to spend and when your ad should run.", color = Color(0xFF667085), fontSize = 13.sp)
+    Text("Budget", fontWeight = FontWeight.Bold, fontSize = 14.sp, modifier = Modifier.padding(top = 8.dp))
+    AdBudgetTypeToggle(budgetType, onBudgetType)
+    AdCurrencyAmountRow(budgetAmount, onBudgetAmount)
+    Text("Actual amount spent daily may vary.", color = Color(0xFF667085), fontSize = 11.sp)
+    Text("Schedule", fontWeight = FontWeight.Bold, fontSize = 14.sp, modifier = Modifier.padding(top = 8.dp))
+    AdDatePickerRow("Start Date", startAt, onStartAt)
+    AdEndDatePickerRow(endAt, onEndAt, endDateEnabled, onEndDateEnabled, startAt)
+    Text("Optimization Goal", fontWeight = FontWeight.Bold, fontSize = 14.sp, modifier = Modifier.padding(top = 8.dp))
+    val goal = when (optimizationGoal) {
+        "traffic" -> "Maximize visits"
+        "engagement" -> "Maximize engagement"
+        "video_views" -> "Maximize video views"
+        else -> "Maximize reach"
+    }
+    AdPickerRow(Icons.Outlined.TrendingUp, goal, "Show your ad to as many people as possible", onChooseOptimization)
+    AdEstimatedResultCard("Estimated Results", "10K – 14K", "People Reached", "Based on your budget and schedule.")
+}
+
+@Composable
+private fun AdBudgetTypeToggle(selected: String, onSelected: (String) -> Unit) {
+    Surface(color = Color.White, shape = RoundedCornerShape(6.dp), border = BorderStroke(.8.dp, Color(0xFFE1E5EB)), modifier = Modifier.fillMaxWidth()) {
+        Row(Modifier.height(78.dp)) {
+            TiwiAdCampaignCatalog.budgetTypes.forEach { option ->
+                val active = option.id == selected
+                Column(
+                    Modifier.weight(1f).fillMaxHeight().background(if (active) Color(0xFFF4F7FF) else Color.White).clickable { onSelected(option.id) }.padding(horizontal = 8.dp, vertical = 13.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Text(option.title, color = if (active) TiwiBlue else Color(0xFF101828), fontWeight = FontWeight.Bold, fontSize = 12.sp, textAlign = TextAlign.Center)
+                    Text(option.subtitle, color = Color(0xFF98A2B3), fontSize = 10.sp, textAlign = TextAlign.Center, lineHeight = 12.sp, modifier = Modifier.padding(top = 3.dp))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AdCurrencyAmountRow(value: String, onValueChange: (String) -> Unit) {
+    Surface(color = Color.White, shape = RoundedCornerShape(6.dp), border = BorderStroke(.8.dp, Color(0xFFE1E5EB)), modifier = Modifier.fillMaxWidth().height(62.dp)) {
+        Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.width(102.dp).fillMaxHeight().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("USD", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                Icon(Icons.Default.KeyboardArrowDown, null, modifier = Modifier.size(18.dp))
+            }
+            VerticalDivider(color = Color(0xFFE9ECF1))
+            BasicTextField(
+                value = value,
+                onValueChange = { onValueChange(it.filter { char -> char.isDigit() || char == '.' }.take(8)) },
+                singleLine = true,
+                textStyle = LocalTextStyle.current.copy(color = Color(0xFF101828), fontSize = 22.sp, fontWeight = FontWeight.Bold),
+                modifier = Modifier.weight(1f).padding(horizontal = 16.dp),
+                decorationBox = { innerTextField ->
+                    if (value.isBlank()) Text("20.00", color = Color(0xFF98A2B3), fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                    innerTextField()
+                }
+            )
+            Icon(Icons.Outlined.Edit, null, tint = Color(0xFF344054), modifier = Modifier.padding(end = 16.dp).size(21.dp))
+        }
+    }
+}
+
+@Composable
+private fun AdDatePickerRow(label: String, date: String, onDateChange: (String) -> Unit) {
+    val context = LocalContext.current
+    Surface(
+        color = Color.White,
+        shape = RoundedCornerShape(6.dp),
+        border = BorderStroke(.8.dp, Color(0xFFE1E5EB)),
+        modifier = Modifier.fillMaxWidth().height(80.dp).clickable {
+            val calendar = Calendar.getInstance()
+            runCatching { SimpleDateFormat("yyyy-MM-dd", Locale.US).parse(date) }.getOrNull()?.let { calendar.time = it }
+            DatePickerDialog(context, { _, year, month, day -> onDateChange(String.format(Locale.US, "%04d-%02d-%02d", year, month + 1, day)) }, calendar.get(Calendar.YEAR), calendar.get(Calendar.MONTH), calendar.get(Calendar.DAY_OF_MONTH)).show()
+        }
+    ) {
+        Row(Modifier.fillMaxSize().padding(horizontal = 17.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(38.dp).background(Color(0xFFF5F7FA), CircleShape), contentAlignment = Alignment.Center) { Icon(Icons.Outlined.CalendarToday, null, modifier = Modifier.size(20.dp), tint = Color(0xFF101828)) }
+            Column(Modifier.padding(start = 13.dp).weight(1f)) {
+                Text(label, color = Color(0xFF667085), fontSize = 11.sp)
+                Text(date, fontWeight = FontWeight.Bold, fontSize = 15.sp, modifier = Modifier.padding(top = 3.dp))
+            }
+            Icon(Icons.Default.ChevronRight, null, tint = Color(0xFF101828))
+        }
+    }
+}
+
+@Composable
+private fun AdEndDatePickerRow(date: String, onDateChange: (String) -> Unit, enabled: Boolean, onEnabledChange: (Boolean) -> Unit, startAt: String) {
+    val context = LocalContext.current
+    Surface(color = Color.White, shape = RoundedCornerShape(6.dp), border = BorderStroke(.8.dp, Color(0xFFE1E5EB)), modifier = Modifier.fillMaxWidth()) {
+        Column {
+            Row(Modifier.fillMaxWidth().height(79.dp).padding(horizontal = 17.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(38.dp).background(Color(0xFFF5F7FA), CircleShape), contentAlignment = Alignment.Center) { Icon(Icons.Outlined.Event, null, modifier = Modifier.size(20.dp), tint = Color(0xFF101828)) }
+                Column(Modifier.padding(start = 13.dp).weight(1f)) {
+                    Text("End Date", color = Color(0xFF667085), fontSize = 11.sp)
+                    Text(if (enabled) date.ifBlank { startAt } else "No end date", fontWeight = FontWeight.Bold, fontSize = 15.sp, modifier = Modifier.padding(top = 3.dp))
+                }
+                Switch(checked = enabled, onCheckedChange = onEnabledChange)
+            }
+            if (enabled) {
+                HorizontalDivider(color = Color(0xFFE9ECF1))
+                Row(
+                    Modifier.fillMaxWidth().height(60.dp).padding(horizontal = 17.dp).clickable {
+                        val calendar = Calendar.getInstance()
+                        runCatching { SimpleDateFormat("yyyy-MM-dd", Locale.US).parse(date.ifBlank { startAt }) }.getOrNull()?.let { calendar.time = it }
+                        DatePickerDialog(context, { _, year, month, day -> onDateChange(String.format(Locale.US, "%04d-%02d-%02d", year, month + 1, day)) }, calendar.get(Calendar.YEAR), calendar.get(Calendar.MONTH), calendar.get(Calendar.DAY_OF_MONTH)).show()
+                    },
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Duration", color = Color(0xFF667085), fontSize = 11.sp)
+                        Text(adScheduleDuration(startAt, date.ifBlank { startAt }), fontWeight = FontWeight.Bold, fontSize = 14.sp, modifier = Modifier.padding(top = 2.dp))
+                    }
+                    Icon(Icons.Default.ChevronRight, null, tint = Color(0xFF101828))
+                }
+            }
+        }
+    }
+}
+
+private fun adScheduleDuration(startAt: String, endAt: String): String {
+    val formatter = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+    val start = runCatching { formatter.parse(startAt)?.time }.getOrNull() ?: return "Choose dates"
+    val end = runCatching { formatter.parse(endAt)?.time }.getOrNull() ?: return "Choose dates"
+    val days = ((end - start) / 86_400_000L + 1L).coerceAtLeast(1L)
+    return "$days ${if (days == 1L) "Day" else "Days"}"
+}
+
+@Composable
+private fun AdEstimatedResultCard(title: String, result: String, resultLabel: String, description: String) {
+    Surface(color = Color(0xFFF4F7FF), shape = RoundedCornerShape(7.dp), modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(17.dp)) {
+            Text(title, color = Color(0xFF344054), fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+            Row(Modifier.fillMaxWidth().padding(top = 13.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(42.dp).background(TiwiBlue.copy(alpha = .09f), CircleShape), contentAlignment = Alignment.Center) { Icon(Icons.Outlined.Groups, null, tint = TiwiBlue, modifier = Modifier.size(23.dp)) }
+                Column(Modifier.padding(start = 12.dp).weight(1f)) {
+                    Text(result, fontWeight = FontWeight.Black, fontSize = 23.sp)
+                    Text(resultLabel, color = Color(0xFF667085), fontSize = 12.sp)
+                }
+                VerticalDivider(Modifier.height(46.dp), color = Color(0xFFDCE7FF))
+                Column(Modifier.padding(start = 20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(Icons.Default.SignalCellularAlt, null, tint = TiwiBlue, modifier = Modifier.size(34.dp))
+                    Text("Good", color = Color(0xFF344054), fontWeight = FontWeight.SemiBold, fontSize = 11.sp)
+                }
+            }
+            Text(description, color = Color(0xFF98A2B3), fontSize = 11.sp, modifier = Modifier.padding(top = 12.dp))
+        }
+    }
+}
+
+@Composable
+private fun AdReviewStep(
+    campaignName: String,
+    headline: String,
+    body: String,
+    media: List<SocialMedia>,
+    objective: String,
+    category: String,
+    adFormat: String,
+    location: String,
+    minAge: String,
+    maxAge: String,
+    gender: String,
+    interests: String,
+    budgetType: String,
+    budgetAmount: String,
+    startAt: String,
+    endAt: String,
+    endDateEnabled: Boolean,
+    optimizationGoal: String,
+    ctaType: String,
+    onEditSetup: () -> Unit,
+    onEditAudience: () -> Unit,
+    onEditBudget: () -> Unit
+) {
+    Text("Review Your Ad", fontSize = 24.sp, fontWeight = FontWeight.Black)
+    Text("Review all details before publishing your ad.", color = Color(0xFF667085), fontSize = 13.sp)
+    AdReviewCreativeSummary(media, campaignName, headline.ifBlank { body }, adFormat)
+    AdReviewCard(
+        Icons.Outlined.Description,
+        "Ad Setup",
+        listOf(
+            "Campaign Name" to campaignName,
+            "Objective" to adCatalogTitle(TiwiAdCampaignCatalog.objectives, objective, objective),
+            "Ad Format" to adFormat.replaceFirstChar { it.uppercase() },
+            "Ad Category" to adCatalogTitle(TiwiAdCampaignCatalog.categories, category, category),
+            "Action" to ctaType.replaceFirstChar { it.uppercase() }
+        ),
+        onEditSetup
+    )
+    AdReviewCard(
+        Icons.Outlined.Groups,
+        "Audience",
+        listOf(
+            "Locations" to adCatalogTitle(TiwiAdCampaignCatalog.locations, location, location),
+            "Age Range" to "$minAge – ${maxAge}+",
+            "Gender" to gender.replaceFirstChar { it.uppercase() },
+            "Detailed Targeting" to adCatalogTitle(TiwiAdCampaignCatalog.interests, interests, "All interests and behaviors")
+        ),
+        onEditAudience
+    )
+    AdReviewCard(
+        Icons.Outlined.Payments,
+        "Budget & Schedule",
+        listOf(
+            "Budget" to "USD $budgetAmount / ${if (budgetType == "daily") "Day" else "Total"}",
+            "Duration" to if (endDateEnabled) "$startAt – $endAt" else "No end date",
+            "Optimization Goal" to when (optimizationGoal) { "traffic" -> "Maximize visits"; "engagement" -> "Maximize engagement"; "video_views" -> "Maximize video views"; else -> "Maximize reach" }
+        ),
+        onEditBudget
+    )
+    AdEstimatedResultCard("Estimated Results", "10K – 14K", "People Reached", "Your ad is ready to publish.")
+}
+
+@Composable
+private fun AdReviewCreativeSummary(media: List<SocialMedia>, campaignName: String, description: String, format: String) {
+    Surface(color = Color.White, shape = RoundedCornerShape(7.dp), border = BorderStroke(.8.dp, Color(0xFFE4E8EF)), modifier = Modifier.fillMaxWidth()) {
+        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+            val first = media.firstOrNull()
+            if (first != null) AsyncImage(model = first.thumbnailUrl ?: first.url, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.size(76.dp).clip(RoundedCornerShape(5.dp)))
+            else Box(Modifier.size(76.dp).background(Color(0xFFF1F3F6), RoundedCornerShape(5.dp)), contentAlignment = Alignment.Center) { Icon(Icons.Outlined.Image, null, tint = Color(0xFFD0D5DD), modifier = Modifier.size(34.dp)) }
+            Column(Modifier.padding(start = 14.dp).weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(campaignName.ifBlank { "New campaign" }, fontWeight = FontWeight.Bold, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Spacer(Modifier.width(6.dp))
+                    Text(format.replaceFirstChar { it.uppercase() }, color = TiwiBlue, fontSize = 9.sp, fontWeight = FontWeight.Bold, modifier = Modifier.background(TiwiBlue.copy(alpha = .08f), RoundedCornerShape(4.dp)).padding(horizontal = 5.dp, vertical = 2.dp))
+                }
+                Text(description.ifBlank { "Your ad creative will appear here." }, color = Color(0xFF667085), fontSize = 12.sp, lineHeight = 16.sp, maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun AdReviewCard(icon: ImageVector, title: String, rows: List<Pair<String, String>>, onEdit: () -> Unit) {
+    Surface(color = Color.White, shape = RoundedCornerShape(7.dp), border = BorderStroke(.8.dp, Color(0xFFE4E8EF)), modifier = Modifier.fillMaxWidth()) {
+        Column {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 15.dp, vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(34.dp).background(TiwiBlue.copy(alpha = .08f), CircleShape), contentAlignment = Alignment.Center) { Icon(icon, null, tint = TiwiBlue, modifier = Modifier.size(19.dp)) }
+                Text(title, fontWeight = FontWeight.Bold, fontSize = 14.sp, modifier = Modifier.padding(start = 10.dp).weight(1f))
+                TextButton(onClick = onEdit, contentPadding = PaddingValues(0.dp)) { Text("Edit", color = TiwiBlue, fontSize = 12.sp, fontWeight = FontWeight.Bold); Spacer(Modifier.width(4.dp)); Icon(Icons.Outlined.Edit, null, tint = TiwiBlue, modifier = Modifier.size(15.dp)) }
+            }
+            rows.forEachIndexed { index, (label, value) ->
+                HorizontalDivider(color = Color(0xFFF0F2F5))
+                Row(Modifier.fillMaxWidth().padding(horizontal = 15.dp, vertical = 9.dp), verticalAlignment = Alignment.Top) {
+                    Text(label, color = Color(0xFF667085), fontSize = 11.sp, modifier = Modifier.weight(1f))
+                    Text(value, fontWeight = FontWeight.Medium, fontSize = 11.sp, textAlign = TextAlign.End, modifier = Modifier.weight(1.22f), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                }
+            }
         }
     }
 }
@@ -6699,7 +7421,7 @@ private fun AdChoiceRow(options: List<Pair<String, String>>, selected: String, o
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
         options.forEach { (id, label) ->
             val active = selected == id
-            Surface(color = if (active) TiwiBlue.copy(alpha = .07f) else Color.White, shape = RoundedCornerShape(9.dp), border = BorderStroke(if (active) 1.dp else .7.dp, if (active) TiwiBlue else Color(0xFFE2E6EC)), modifier = Modifier.weight(1f).height(41.dp).clickable { onSelected(id) }) {
+            Surface(color = if (active) TiwiBlue.copy(alpha = .07f) else Color.White, shape = RoundedCornerShape(6.dp), border = BorderStroke(if (active) 1.dp else .7.dp, if (active) TiwiBlue else Color(0xFFE2E6EC)), modifier = Modifier.weight(1f).height(45.dp).clickable { onSelected(id) }) {
                 Box(contentAlignment = Alignment.Center) { Text(label, color = if (active) TiwiBlue else Color(0xFF344054), fontWeight = if (active) FontWeight.Bold else FontWeight.Medium, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
             }
         }

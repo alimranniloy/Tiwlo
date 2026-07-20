@@ -94,9 +94,39 @@ const AD_CTA_TYPES = new Set(['website', 'call', 'whatsapp', 'visit']);
 const AD_PLACEMENTS = new Set(['feed', 'reels']);
 const AD_EVENT_TYPES = new Set(['impression', 'click', 'skip', 'engagement', 'complete']);
 const AD_CAMPAIGN_STATUSES = new Set(['draft', 'pending', 'active', 'paused', 'archived', 'completed', 'rejected']);
-const AD_OBJECTIVES = new Set(['traffic', 'website_visits', 'messages', 'calls', 'engagement', 'video_views', 'profile_visits']);
+const AD_OBJECTIVES = new Set(['sales', 'traffic', 'website_visits', 'messages', 'calls', 'engagement', 'video_views', 'profile_visits']);
 const AD_BUDGET_TYPES = new Set(['daily', 'lifetime']);
 const AD_GENDERS = new Set(['all', 'male', 'female']);
+const AD_OPTIMIZATION_GOALS = new Set(['reach', 'traffic', 'engagement', 'video_views', 'messages', 'calls', 'sales', 'profile_visits']);
+// Creator campaigns use a closed, product-defined catalogue. Admin-created
+// campaigns remain flexible, but a mobile client cannot inject arbitrary
+// targeting/category strings into the distribution system.
+const CREATOR_AD_CATEGORIES = new Set([
+  'clothing_apparel', 'shopping_retail', 'food_beverage', 'beauty_personal_care',
+  'health_wellness', 'education_training', 'business_services', 'technology',
+  'travel_hospitality', 'home_living', 'automotive', 'entertainment_media',
+  'real_estate', 'other'
+]);
+const CREATOR_AD_CATEGORY_ALIASES = Object.freeze({
+  clothing_and_apparel: 'clothing_apparel',
+  shopping_and_retail: 'shopping_retail',
+  food_and_beverage: 'food_beverage',
+  beauty_and_personal_care: 'beauty_personal_care',
+  health_and_wellness: 'health_wellness',
+  education_and_training: 'education_training',
+  business_and_services: 'business_services',
+  travel_and_hospitality: 'travel_hospitality',
+  home_and_living: 'home_living',
+  entertainment_and_media: 'entertainment_media'
+});
+const CREATOR_AD_LOCATIONS = new Set([
+  'worldwide', 'bangladesh', 'dhaka', 'chattogram', 'rajshahi', 'khulna',
+  'sylhet', 'barishal', 'rangpur', 'mymensingh'
+]);
+const CREATOR_AD_INTERESTS = new Set([
+  'all', 'shopping', 'business', 'technology', 'education', 'travel', 'food',
+  'beauty', 'fitness', 'entertainment'
+]);
 const VISIBILITIES = new Set(['public', 'followers', 'private']);
 const STORY_VISIBILITIES = new Set(['public', 'followers', 'custom', 'only_me']);
 const STORY_ITEM_TYPES = new Set(['image', 'video', 'text', 'music', 'collage']);
@@ -584,13 +614,42 @@ const normalizeAdTargeting = (value) => {
   const minAge = Math.max(18, Math.min(Number(input.minAge) || 18, 65));
   const maxAge = Math.max(minAge, Math.min(Number(input.maxAge) || 65, 65));
   const gender = bounded(input.gender || 'all', 12).toLowerCase();
+  const optimizationGoal = bounded(input.optimizationGoal || 'reach', 32).toLowerCase();
   return {
     locations: locations.length ? locations : ['worldwide'],
     minAge,
     maxAge,
     gender: AD_GENDERS.has(gender) ? gender : 'all',
-    interests
+    interests,
+    optimizationGoal: AD_OPTIMIZATION_GOALS.has(optimizationGoal) ? optimizationGoal : 'reach'
   };
+};
+
+const creatorAdCatalogKey = (value) => String(value || '')
+  .trim()
+  .toLowerCase()
+  .replace(/&/g, ' and ')
+  .replace(/[^a-z0-9]+/g, '_')
+  .replace(/^_+|_+$/g, '');
+
+const normalizeCreatorAdCategory = (value) => {
+  const raw = creatorAdCatalogKey(value);
+  const category = CREATOR_AD_CATEGORY_ALIASES[raw] || raw;
+  if (!CREATOR_AD_CATEGORIES.has(category)) {
+    throw new AppError('Choose an ad category from the Tiwi catalogue', 'BAD_USER_INPUT');
+  }
+  return category;
+};
+
+const validateCreatorAdCatalogue = (input = {}) => {
+  const category = normalizeCreatorAdCategory(input.category);
+  const targeting = normalizeAdTargeting(input.targeting);
+  const locations = targeting.locations.length ? targeting.locations : ['worldwide'];
+  const invalidLocation = locations.find((location) => !CREATOR_AD_LOCATIONS.has(location));
+  if (invalidLocation) throw new AppError('Choose locations from the Tiwi audience list', 'BAD_USER_INPUT');
+  const invalidInterest = targeting.interests.find((interest) => !CREATOR_AD_INTERESTS.has(interest));
+  if (invalidInterest) throw new AppError('Choose interests from the Tiwi audience list', 'BAD_USER_INPUT');
+  return { category, targeting: { ...targeting, locations } };
 };
 
 const normalizeAdInput = (input = {}) => {
@@ -1896,6 +1955,7 @@ export const listAdEligiblePosts = async (ctx, limit = 40) => {
 const saveCreatorAdCampaign = async (ctx, input = {}, updating = false) => {
   const actor = await requireAuth(ctx);
   await requireSocialFeature(ctx);
+  const creatorCatalogue = validateCreatorAdCatalogue(input);
   const campaignId = bounded(input.id, 120);
   let existing = null;
   if (campaignId) {
@@ -1907,6 +1967,8 @@ const saveCreatorAdCampaign = async (ctx, input = {}, updating = false) => {
   const source = await creatorAdMedia(ctx, actor, input);
   const values = normalizeAdInput({
     ...input,
+    category: creatorCatalogue.category,
+    targeting: creatorCatalogue.targeting,
     media: Array.isArray(source) ? source : source.media,
     advertiserName: actor.name,
     advertiserAvatarUrl: actor.avatar,
