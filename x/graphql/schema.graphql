@@ -2920,6 +2920,10 @@ type SocialFeedModule {
 
 type SocialAd {
   id: ID!
+  campaignName: String
+  objective: String!
+  category: String
+  sourcePostId: ID
   advertiserName: String!
   advertiserAvatarUrl: String
   headline: String
@@ -2933,10 +2937,24 @@ type SocialAd {
   endAt: String
   skipAfterSeconds: Int!
   frequencyCap: Int!
+  budgetType: String!
+  budgetAmount: Float!
+  currency: String!
+  targeting: JSON!
+  spentAmount: Float!
   impressionCount: Int!
   clickCount: Int!
   createdAt: String!
   updatedAt: String!
+}
+
+type SocialAdsSummary {
+  walletBalance: Float!
+  totalBudget: Float!
+  totalSpent: Float!
+  activeCount: Int!
+  pendingCount: Int!
+  campaigns: [SocialAd!]!
 }
 
 type SocialLinkPreview {
@@ -3443,6 +3461,10 @@ input SocialAdminSettingsInput {
 
 input SocialAdAdminInput {
   id: ID
+  campaignName: String
+  objective: String
+  category: String
+  sourcePostId: ID
   advertiserName: String!
   advertiserAvatarUrl: String
   headline: String
@@ -3456,6 +3478,34 @@ input SocialAdAdminInput {
   endAt: String
   skipAfterSeconds: Int
   frequencyCap: Int
+  budgetType: String
+  budgetAmount: Float
+  currency: String
+  targeting: JSON
+  spentAmount: Float
+}
+
+input SocialAdCreatorInput {
+  id: ID
+  campaignName: String!
+  objective: String!
+  category: String
+  sourcePostId: ID
+  headline: String
+  body: String
+  media: JSON
+  ctaType: String!
+  destinationUrl: String
+  placements: JSON
+  budgetType: String
+  budgetAmount: Float!
+  currency: String
+  targeting: JSON
+  startAt: String
+  endAt: String
+  skipAfterSeconds: Int
+  frequencyCap: Int
+  publish: Boolean
 }
 
 input SocialAdEventInput {
@@ -3565,6 +3615,9 @@ type Query {
   socialFeed(type: String, authorId: ID, groupId: ID, before: String, limit: Int): [SocialPost!]!
   socialFeedModules(feedSize: Int): [SocialFeedModule!]!
   socialAdPlacements(placement: String!, limit: Int): [SocialAd!]!
+  socialMyAds(status: String): [SocialAd!]!
+  socialAdsSummary: SocialAdsSummary!
+  socialAdEligiblePosts(limit: Int): [SocialPost!]!
   socialLinkPreview(url: String!): SocialLinkPreview!
   socialStories(limit: Int): [SocialPost!]!
   socialStoryTray(limit: Int): [SocialStoryGroup!]!
@@ -3858,6 +3911,10 @@ type Mutation {
   adminResolveSocialReport(id: ID!, status: String!, resolution: String): SocialReport!
   adminUpdateSocialSettings(input: SocialAdminSettingsInput!): JSON!
   trackSocialAdEvent(input: SocialAdEventInput!): SocialAd!
+  createSocialAdCampaign(input: SocialAdCreatorInput!): SocialAd!
+  updateSocialAdCampaign(input: SocialAdCreatorInput!): SocialAd!
+  pauseSocialAdCampaign(id: ID!, paused: Boolean!): SocialAd!
+  deleteSocialAdCampaign(id: ID!): Boolean!
   adminUpsertSocialAd(input: SocialAdAdminInput!): SocialAd!
   adminDeleteSocialAd(id: ID!): Boolean!
   adminUpsertSocialProfileDecoration(input: SocialProfileDecorationAdminInput!): SocialProfileDecoration!

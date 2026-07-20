@@ -93,6 +93,10 @@ const POST_TYPES = new Set(['post', 'news', 'reel', 'video', 'live', 'story']);
 const AD_CTA_TYPES = new Set(['website', 'call', 'whatsapp', 'visit']);
 const AD_PLACEMENTS = new Set(['feed', 'reels']);
 const AD_EVENT_TYPES = new Set(['impression', 'click', 'skip', 'engagement', 'complete']);
+const AD_CAMPAIGN_STATUSES = new Set(['draft', 'pending', 'active', 'paused', 'archived', 'completed', 'rejected']);
+const AD_OBJECTIVES = new Set(['traffic', 'website_visits', 'messages', 'calls', 'engagement', 'video_views', 'profile_visits']);
+const AD_BUDGET_TYPES = new Set(['daily', 'lifetime']);
+const AD_GENDERS = new Set(['all', 'male', 'female']);
 const VISIBILITIES = new Set(['public', 'followers', 'private']);
 const STORY_VISIBILITIES = new Set(['public', 'followers', 'custom', 'only_me']);
 const STORY_ITEM_TYPES = new Set(['image', 'video', 'text', 'music', 'collage']);
@@ -570,19 +574,49 @@ const normalizeAdDestination = (ctaType, value) => {
   return phone;
 };
 
+const normalizeAdTargeting = (value) => {
+  const input = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  const asList = (items, max, length) => [...new Set((Array.isArray(items) ? items : String(items || '').split(','))
+    .map((item) => bounded(item, length).toLowerCase())
+    .filter(Boolean))].slice(0, max);
+  const locations = asList(input.locations, 20, 80);
+  const interests = asList(input.interests, 20, 80);
+  const minAge = Math.max(18, Math.min(Number(input.minAge) || 18, 65));
+  const maxAge = Math.max(minAge, Math.min(Number(input.maxAge) || 65, 65));
+  const gender = bounded(input.gender || 'all', 12).toLowerCase();
+  return {
+    locations: locations.length ? locations : ['worldwide'],
+    minAge,
+    maxAge,
+    gender: AD_GENDERS.has(gender) ? gender : 'all',
+    interests
+  };
+};
+
 const normalizeAdInput = (input = {}) => {
   const advertiserName = bounded(input.advertiserName, 120);
   if (!advertiserName || advertiserName.length < 2) throw new AppError('Advertiser name is required', 'BAD_USER_INPUT');
   const ctaType = bounded(input.ctaType, 24).toLowerCase();
   if (!AD_CTA_TYPES.has(ctaType)) throw new AppError('Unsupported ad action', 'BAD_USER_INPUT');
   const status = bounded(input.status || 'draft', 24).toLowerCase();
-  if (!['draft', 'active', 'paused', 'archived'].includes(status)) throw new AppError('Unsupported campaign status', 'BAD_USER_INPUT');
+  if (!AD_CAMPAIGN_STATUSES.has(status)) throw new AppError('Unsupported campaign status', 'BAD_USER_INPUT');
   const startAt = input.startAt === null || input.startAt === '' ? null : safeDate(input.startAt);
   const endAt = input.endAt === null || input.endAt === '' ? null : safeDate(input.endAt);
   if (startAt && endAt && endAt <= startAt) throw new AppError('Campaign end time must be after its start time', 'BAD_USER_INPUT');
   const media = sanitizeAdMedia(input.media);
   if (status === 'active' && !media.length) throw new AppError('An active campaign needs at least one image or video', 'BAD_USER_INPUT');
+  const objective = bounded(input.objective || 'traffic', 32).toLowerCase();
+  if (!AD_OBJECTIVES.has(objective)) throw new AppError('Unsupported campaign objective', 'BAD_USER_INPUT');
+  const budgetType = bounded(input.budgetType || 'daily', 16).toLowerCase();
+  if (!AD_BUDGET_TYPES.has(budgetType)) throw new AppError('Unsupported budget type', 'BAD_USER_INPUT');
+  const budgetAmount = Math.round(Math.max(0, Math.min(Number(input.budgetAmount) || 0, 100000)) * 100) / 100;
+  const currency = bounded(input.currency || 'USD', 3).toUpperCase();
+  if (!/^[A-Z]{3}$/.test(currency)) throw new AppError('Campaign currency is invalid', 'BAD_USER_INPUT');
   return {
+    campaignName: bounded(input.campaignName, 160) || null,
+    objective,
+    category: bounded(input.category, 80) || null,
+    sourcePostId: bounded(input.sourcePostId, 120) || null,
     advertiserName,
     advertiserAvatarUrl: bounded(input.advertiserAvatarUrl, 2000) || null,
     headline: bounded(input.headline, 180) || null,
@@ -595,14 +629,22 @@ const normalizeAdInput = (input = {}) => {
     startAt,
     endAt,
     skipAfterSeconds: Math.max(0, Math.min(Number(input.skipAfterSeconds) || 5, 30)),
-    frequencyCap: Math.max(1, Math.min(Number(input.frequencyCap) || 2, 20))
+    frequencyCap: Math.max(1, Math.min(Number(input.frequencyCap) || 2, 20)),
+    budgetType,
+    budgetAmount,
+    currency,
+    targeting: normalizeAdTargeting(input.targeting),
+    spentAmount: Math.round(Math.max(0, Math.min(Number(input.spentAmount) || 0, 100000)) * 100) / 100
   };
 };
 
 const mapAd = (campaign) => ({
   ...campaign,
   media: Array.isArray(campaign?.media) ? campaign.media : [],
-  placements: adPlacementsFrom(campaign?.placements)
+  placements: adPlacementsFrom(campaign?.placements),
+  targeting: campaign?.targeting && typeof campaign.targeting === 'object' && !Array.isArray(campaign.targeting)
+    ? campaign.targeting
+    : normalizeAdTargeting({})
 });
 
 const usernameFrom = (value) => String(value || '')
@@ -1720,7 +1762,9 @@ export const listAdPlacements = async (ctx, placement, limit) => {
     orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }],
     take: 80
   });
-  const placementCandidates = candidates.filter((campaign) => adPlacementsFrom(campaign.placements).includes(normalizedPlacement));
+  const placementCandidates = candidates.filter((campaign) => (
+    adPlacementsFrom(campaign.placements).includes(normalizedPlacement) && adAudienceMatches(campaign, actor)
+  ));
   if (!placementCandidates.length) return [];
   const recentEvents = await ctx.prisma.socialAdEvent.findMany({
     where: {
@@ -1769,6 +1813,177 @@ export const trackAdEvent = async (ctx, input = {}) => {
     });
   });
   return mapAd(updated);
+};
+
+const creatorAdMedia = async (ctx, actor, input, viewerId = actor.id) => {
+  const sourcePostId = bounded(input.sourcePostId, 120);
+  if (!sourcePostId) return sanitizeAdMedia(input.media);
+  const post = await ctx.prisma.socialPost.findFirst({
+    where: { id: sourcePostId, authorId: actor.id, status: 'published', deletedAt: null },
+    include: postInclude(viewerId)
+  });
+  if (!post) throw new AppError('Choose a post from your active profile', 'FORBIDDEN');
+  const media = sanitizeAdMedia(post.media);
+  if (!media.length) throw new AppError('The selected post needs an image or video to be promoted', 'BAD_USER_INPUT');
+  return { media, post };
+};
+
+const adAudienceMatches = (campaign, actor) => {
+  const targeting = normalizeAdTargeting(campaign?.targeting);
+  const locations = targeting.locations || [];
+  if (!locations.length || locations.includes('worldwide') || locations.includes('all locations')) return true;
+  const places = [actor?.country, actor?.city, actor?.state, actor?.primaryRegion]
+    .map((value) => String(value || '').trim().toLowerCase())
+    .filter(Boolean);
+  // We do not infer sensitive attributes. A member with no optional location
+  // still receives broadly targeted ads; explicit location filters only match
+  // stored account details.
+  return !places.length || locations.some((location) => places.some((place) => place.includes(location) || location.includes(place)));
+};
+
+const adCampaignWhereForActor = (actorId, status) => {
+  const normalized = bounded(status, 24)?.toLowerCase();
+  return {
+    createdById: actorId,
+    ...(normalized && normalized !== 'all' ? { status: normalized } : {})
+  };
+};
+
+export const listMyAds = async (ctx, status) => {
+  const actor = await requireAuth(ctx);
+  await requireSocialFeature(ctx);
+  const campaigns = await ctx.prisma.socialAdCampaign.findMany({
+    where: adCampaignWhereForActor(actor.id, status),
+    orderBy: [{ updatedAt: 'desc' }, { createdAt: 'desc' }],
+    take: 200
+  });
+  return campaigns.map(mapAd);
+};
+
+export const adsSummary = async (ctx) => {
+  const actor = await requireAuth(ctx);
+  await requireSocialFeature(ctx);
+  const [owner, campaigns] = await Promise.all([
+    ctx.prisma.user.findUnique({ where: { id: actor.id }, select: { credits: true } }),
+    ctx.prisma.socialAdCampaign.findMany({
+      where: { createdById: actor.id },
+      orderBy: [{ updatedAt: 'desc' }, { createdAt: 'desc' }],
+      take: 200
+    })
+  ]);
+  return {
+    walletBalance: Number(owner?.credits || 0),
+    totalBudget: campaigns.reduce((total, campaign) => total + Number(campaign.budgetAmount || 0), 0),
+    totalSpent: campaigns.reduce((total, campaign) => total + Number(campaign.spentAmount || 0), 0),
+    activeCount: campaigns.filter((campaign) => campaign.status === 'active').length,
+    pendingCount: campaigns.filter((campaign) => ['draft', 'pending'].includes(campaign.status)).length,
+    campaigns: campaigns.map(mapAd)
+  };
+};
+
+export const listAdEligiblePosts = async (ctx, limit = 40) => {
+  const actor = await requireAuth(ctx);
+  await requireSocialFeature(ctx);
+  const rows = await ctx.prisma.socialPost.findMany({
+    where: { authorId: actor.id, status: 'published', deletedAt: null },
+    include: postInclude(actor.id),
+    orderBy: [{ publishedAt: 'desc' }, { createdAt: 'desc' }],
+    take: boundedLimit(limit, 40, 80)
+  });
+  return rows.filter((post) => sanitizeAdMedia(post.media).length).map(mapPost);
+};
+
+const saveCreatorAdCampaign = async (ctx, input = {}, updating = false) => {
+  const actor = await requireAuth(ctx);
+  await requireSocialFeature(ctx);
+  const campaignId = bounded(input.id, 120);
+  let existing = null;
+  if (campaignId) {
+    existing = await ctx.prisma.socialAdCampaign.findFirst({ where: { id: campaignId, createdById: actor.id } });
+    if (!existing) notFound('Ad campaign');
+  } else if (updating) {
+    throw new AppError('Ad campaign is required', 'BAD_USER_INPUT');
+  }
+  const source = await creatorAdMedia(ctx, actor, input);
+  const values = normalizeAdInput({
+    ...input,
+    media: Array.isArray(source) ? source : source.media,
+    advertiserName: actor.name,
+    advertiserAvatarUrl: actor.avatar,
+    // Advertisers cannot choose their own public moderation status. The
+    // published path below is the only path that activates a campaign.
+    status: 'draft',
+    sourcePostId: source?.post?.id || input.sourcePostId || null,
+    headline: input.headline || source?.post?.body || input.campaignName,
+    body: input.body || source?.post?.body || null
+  });
+  if (!values.campaignName || values.campaignName.length < 2) throw new AppError('Campaign name is required', 'BAD_USER_INPUT');
+  if (values.budgetAmount <= 0) throw new AppError('Set a campaign budget greater than zero', 'BAD_USER_INPUT');
+  if (!values.media.length) throw new AppError('Choose an image, video, or an existing post for this ad', 'BAD_USER_INPUT');
+  validateOwnedMedia(actor.id, values.media);
+  const publish = input.publish === true;
+  let campaign;
+  if (publish) {
+    campaign = await ctx.prisma.$transaction(async (tx) => {
+      const paid = await tx.user.updateMany({
+        where: { id: actor.id, credits: { gte: values.budgetAmount } },
+        data: { credits: { decrement: values.budgetAmount } }
+      });
+      if (!paid.count) throw new AppError('Add Tiwi credit before publishing this campaign', 'PAYMENT_REQUIRED');
+      const publishValues = { ...values, status: 'active', spentAmount: values.budgetAmount };
+      return existing
+        ? tx.socialAdCampaign.update({ where: { id: existing.id }, data: publishValues })
+        : tx.socialAdCampaign.create({ data: { ...publishValues, createdById: actor.id } });
+    });
+  } else {
+    campaign = existing
+      ? await ctx.prisma.socialAdCampaign.update({ where: { id: existing.id }, data: { ...values, status: existing.status === 'active' ? 'paused' : 'draft' } })
+      : await ctx.prisma.socialAdCampaign.create({ data: { ...values, status: 'draft', createdById: actor.id } });
+  }
+  await writeAudit(ctx, existing ? 'update_creator_social_ad_campaign' : 'create_creator_social_ad_campaign', 'social_ad_campaign', campaign.id, {
+    status: campaign.status,
+    objective: campaign.objective,
+    budgetAmount: campaign.budgetAmount,
+    placements: campaign.placements
+  });
+  await createSocialNotification(ctx, {
+    ownerId: actor.id,
+    scopeId: campaign.id,
+    type: publish ? 'social_ad_active' : 'social_ad_saved',
+    title: publish ? 'Your Tiwi ad is active' : 'Ad draft saved',
+    message: publish
+      ? `${campaign.campaignName || campaign.advertiserName} is now eligible for its selected placements.`
+      : `${campaign.campaignName || campaign.advertiserName} is saved in Payments & Ads.`,
+    metadata: { noReply: true, campaignId: campaign.id, path: '/social/ads' }
+  });
+  return mapAd(campaign);
+};
+
+export const createCreatorAdCampaign = (ctx, input) => saveCreatorAdCampaign(ctx, input, false);
+export const updateCreatorAdCampaign = (ctx, input) => saveCreatorAdCampaign(ctx, input, true);
+
+export const pauseCreatorAdCampaign = async (ctx, id, paused) => {
+  const actor = await requireAuth(ctx);
+  await requireSocialFeature(ctx);
+  const campaignId = bounded(id, 120);
+  if (!campaignId) throw new AppError('Ad campaign is required', 'BAD_USER_INPUT');
+  const existing = await ctx.prisma.socialAdCampaign.findFirst({ where: { id: campaignId, createdById: actor.id } });
+  if (!existing) notFound('Ad campaign');
+  if (!paused && !['paused', 'draft'].includes(existing.status)) throw new AppError('This campaign cannot be resumed', 'BAD_USER_INPUT');
+  const campaign = await ctx.prisma.socialAdCampaign.update({ where: { id: campaignId }, data: { status: paused ? 'paused' : 'active' } });
+  await writeAudit(ctx, paused ? 'pause_creator_social_ad_campaign' : 'resume_creator_social_ad_campaign', 'social_ad_campaign', campaignId, {});
+  return mapAd(campaign);
+};
+
+export const deleteCreatorAdCampaign = async (ctx, id) => {
+  const actor = await requireAuth(ctx);
+  await requireSocialFeature(ctx);
+  const campaignId = bounded(id, 120);
+  const existing = await ctx.prisma.socialAdCampaign.findFirst({ where: { id: campaignId, createdById: actor.id } });
+  if (!existing) notFound('Ad campaign');
+  await ctx.prisma.socialAdCampaign.delete({ where: { id: campaignId } });
+  await writeAudit(ctx, 'delete_creator_social_ad_campaign', 'social_ad_campaign', campaignId, {});
+  return true;
 };
 
 export const listStories = async (ctx, args = {}) => listFeed(ctx, { ...args, type: 'story', limit: boundedLimit(args.limit, 50, 100) });

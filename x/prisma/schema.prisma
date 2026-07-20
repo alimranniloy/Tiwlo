@@ -1554,6 +1554,10 @@ model SocialPost {
 model SocialAdCampaign {
   id                String          @id @default(cuid())
   createdById       String?
+  campaignName      String?
+  objective         String          @default("traffic")
+  category          String?
+  sourcePostId      String?
   advertiserName    String
   advertiserAvatarUrl String?
   headline          String?
@@ -1567,6 +1571,11 @@ model SocialAdCampaign {
   endAt             DateTime?
   skipAfterSeconds  Int             @default(5)
   frequencyCap      Int             @default(2)
+  budgetType        String          @default("daily")
+  budgetAmount      Float           @default(0)
+  currency          String          @default("USD")
+  targeting         Json            @default("{}")
+  spentAmount       Float           @default(0)
   impressionCount   Int             @default(0)
   clickCount        Int             @default(0)
   createdAt         DateTime        @default(now())
@@ -1575,6 +1584,7 @@ model SocialAdCampaign {
 
   @@index([status, startAt, endAt])
   @@index([createdById, createdAt])
+  @@index([createdById, status, updatedAt])
 }
 
 model SocialAdEvent {

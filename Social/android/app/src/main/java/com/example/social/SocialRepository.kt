@@ -212,6 +212,84 @@ class SocialRepository(context: Context) {
         }
     }
 
+    suspend fun socialAdsSummary(): SocialAdsSummary {
+        val data = client.execute("query TiwiAdsSummary { socialAdsSummary { walletBalance totalBudget totalSpent activeCount pendingCount campaigns { $SOCIAL_AD_FIELDS } } }")
+        val summary = data.objectValue("socialAdsSummary") ?: throw SocialApiException("Ads summary could not be loaded")
+        return SocialAdsSummary(
+            walletBalance = summary.number("walletBalance")?.toDouble() ?: 0.0,
+            totalBudget = summary.number("totalBudget")?.toDouble() ?: 0.0,
+            totalSpent = summary.number("totalSpent")?.toDouble() ?: 0.0,
+            activeCount = summary.number("activeCount")?.toInt() ?: 0,
+            pendingCount = summary.number("pendingCount")?.toInt() ?: 0,
+            campaigns = summary.list("campaigns").mapNotNull { it.objectMap()?.let(::mapAd) }
+        )
+    }
+
+    suspend fun mySocialAds(status: String? = null): List<SocialAd> {
+        val data = client.execute(
+            """query TiwiMyAds(${D}status: String) { socialMyAds(status: ${D}status) { $SOCIAL_AD_FIELDS } }""",
+            mapOf("status" to status)
+        )
+        return data.list("socialMyAds").mapNotNull { it.objectMap()?.let(::mapAd) }
+    }
+
+    suspend fun socialAdEligiblePosts(limit: Int = 40): List<SocialPost> {
+        val data = client.execute(
+            """query TiwiAdEligiblePosts(${D}limit: Int) { socialAdEligiblePosts(limit: ${D}limit) { $POST_FIELDS } }""",
+            mapOf("limit" to limit.coerceIn(1, 80))
+        )
+        return data.list("socialAdEligiblePosts").mapNotNull { it.objectMap()?.let(::mapPost) }
+    }
+
+    suspend fun createSocialAdCampaign(draft: SocialAdDraft): SocialAd = saveSocialAdCampaign("createSocialAdCampaign", draft)
+
+    suspend fun updateSocialAdCampaign(draft: SocialAdDraft): SocialAd = saveSocialAdCampaign("updateSocialAdCampaign", draft)
+
+    suspend fun pauseSocialAdCampaign(id: String, paused: Boolean): SocialAd {
+        val data = client.execute(
+            """mutation TiwiPauseAd(${D}id: ID!, ${D}paused: Boolean!) { pauseSocialAdCampaign(id: ${D}id, paused: ${D}paused) { $SOCIAL_AD_FIELDS } }""",
+            mapOf("id" to id, "paused" to paused)
+        )
+        return mapAd(data.objectValue("pauseSocialAdCampaign") ?: throw SocialApiException("Campaign status could not be changed"))
+    }
+
+    suspend fun deleteSocialAdCampaign(id: String) {
+        client.execute(
+            """mutation TiwiDeleteAd(${D}id: ID!) { deleteSocialAdCampaign(id: ${D}id) }""",
+            mapOf("id" to id)
+        )
+    }
+
+    private suspend fun saveSocialAdCampaign(operation: String, draft: SocialAdDraft): SocialAd {
+        val input = mapOf(
+            "id" to draft.id,
+            "campaignName" to draft.campaignName.trim(),
+            "objective" to draft.objective,
+            "category" to draft.category?.trim()?.takeIf { it.isNotBlank() },
+            "sourcePostId" to draft.sourcePostId,
+            "headline" to draft.headline?.trim()?.takeIf { it.isNotBlank() },
+            "body" to draft.body?.trim()?.takeIf { it.isNotBlank() },
+            "media" to draft.media.map(::mediaInput),
+            "ctaType" to draft.ctaType,
+            "destinationUrl" to draft.destinationUrl?.trim()?.takeIf { it.isNotBlank() },
+            "placements" to draft.placements,
+            "budgetType" to draft.budgetType,
+            "budgetAmount" to draft.budgetAmount,
+            "currency" to draft.currency,
+            "targeting" to draft.targeting,
+            "startAt" to draft.startAt?.trim()?.takeIf { it.isNotBlank() },
+            "endAt" to draft.endAt?.trim()?.takeIf { it.isNotBlank() },
+            "skipAfterSeconds" to draft.skipAfterSeconds,
+            "frequencyCap" to draft.frequencyCap,
+            "publish" to draft.publish
+        )
+        val data = client.execute(
+            """mutation TiwiSaveAd(${D}input: SocialAdCreatorInput!) { $operation(input: ${D}input) { $SOCIAL_AD_FIELDS } }""",
+            mapOf("input" to input)
+        )
+        return mapAd(data.objectValue(operation) ?: throw SocialApiException("Campaign could not be saved"))
+    }
+
     suspend fun trackSocialAdEvent(id: String, placement: String, eventType: String, metadata: Map<String, Any?> = emptyMap()) {
         client.execute(
             """mutation TiwiTrackAd(${D}input: SocialAdEventInput!) {
@@ -1245,6 +1323,17 @@ class SocialRepository(context: Context) {
         return SocialCheckout(checkout.string("status") ?: "pending", checkout.string("provider") ?: provider, checkout.string("paymentUrl"), checkout.string("message"))
     }
 
+    suspend fun startCreditTopUp(amount: Double, provider: String, currency: String): SocialCheckout {
+        val data = client.execute(
+            """mutation TiwiAdCreditTopUp(${D}input: StartCreditTopUpInput!) {
+                startCreditTopUp(input: ${D}input) { status provider paymentUrl message }
+            }""".trimIndent(),
+            mapOf("input" to mapOf("amount" to amount, "provider" to provider, "currency" to currency))
+        )
+        val checkout = data.objectValue("startCreditTopUp") ?: throw SocialApiException("Credit checkout did not start")
+        return SocialCheckout(checkout.string("status") ?: "pending", checkout.string("provider") ?: provider, checkout.string("paymentUrl"), checkout.string("message"))
+    }
+
     suspend fun profileDecorations(): List<SocialProfileDecoration> {
         val data = client.execute("query TiwiProfileDecorations { socialProfileDecorations { $DECORATION_FIELDS } }")
         return data.list("socialProfileDecorations").mapNotNull { it.objectMap()?.let(::mapDecoration) }
@@ -1400,6 +1489,7 @@ class SocialRepository(context: Context) {
     private fun mapUser(value: Map<String, Any?>) = SocialUser(
         id = value.string("id").orEmpty(), email = value.string("email").orEmpty(), name = value.string("name").orEmpty(),
         avatar = absoluteUrl(value.string("avatar")), role = value.string("role") ?: "user", status = value.string("status") ?: "active",
+        credits = value.number("credits")?.toDouble() ?: 0.0,
         socialRestrictionCode = value.string("socialRestrictionCode"), socialRestrictionReason = value.string("socialRestrictionReason"),
         socialRestrictedAt = value.string("socialRestrictedAt"), socialModerationScore = value.number("socialModerationScore")?.toDouble(),
         signupSource = value.string("signupSource") ?: "web", emailVerifiedAt = value.string("emailVerifiedAt"),
@@ -1627,12 +1717,16 @@ class SocialRepository(context: Context) {
     )
 
     private fun mapAd(value: Map<String, Any?>) = SocialAd(
-        id = value.string("id").orEmpty(), advertiserName = value.string("advertiserName").orEmpty(),
+        id = value.string("id").orEmpty(), campaignName = value.string("campaignName"), objective = value.string("objective") ?: "traffic",
+        category = value.string("category"), sourcePostId = value.string("sourcePostId"), advertiserName = value.string("advertiserName").orEmpty(),
         advertiserAvatarUrl = absoluteUrl(value.string("advertiserAvatarUrl")), headline = value.string("headline"), body = value.string("body"),
         media = value.list("media").mapNotNull { it.objectMap()?.let(::mapMedia) }, ctaType = value.string("ctaType") ?: "website",
         destinationUrl = value.string("destinationUrl"), placements = value.list("placements").mapNotNull { it as? String },
         status = value.string("status") ?: "active", startAt = value.string("startAt"), endAt = value.string("endAt"),
         skipAfterSeconds = value.number("skipAfterSeconds")?.toInt() ?: 5, frequencyCap = value.number("frequencyCap")?.toInt() ?: 2,
+        budgetType = value.string("budgetType") ?: "daily", budgetAmount = value.number("budgetAmount")?.toDouble() ?: 0.0,
+        currency = value.string("currency") ?: "USD", targeting = value.objectValue("targeting") ?: emptyMap(),
+        spentAmount = value.number("spentAmount")?.toDouble() ?: 0.0,
         impressionCount = value.number("impressionCount")?.toInt() ?: 0, clickCount = value.number("clickCount")?.toInt() ?: 0
     )
 
@@ -1918,7 +2012,7 @@ class SocialRepository(context: Context) {
         const val FEED_PAGE_SIZE = 12
         const val FEED_DISK_CACHE_LIMIT = 36
         const val CHAT_TTL = 20_000L
-        const val USER_FIELDS = "id email name avatar role status socialRestrictionCode socialRestrictionReason socialRestrictedAt socialModerationScore signupSource emailVerifiedAt phone mobileCountryCode primaryRegion country addressLine1 city state postalCode billingName socialLastActiveAt"
+        const val USER_FIELDS = "id email name avatar role status credits socialRestrictionCode socialRestrictionReason socialRestrictedAt socialModerationScore signupSource emailVerifiedAt phone mobileCountryCode primaryRegion country addressLine1 city state postalCode billingName socialLastActiveAt"
         const val PUBLIC_USER_FIELDS = "id name avatar status socialLastActiveAt"
         const val DECORATION_FIELDS = "id slug kind name assetUrl fileName mimeType animated width height priceUsd status sortOrder owned applied ownershipSource"
         const val PROFILE_FIELDS = "id userId username bio about category website location coverUrl verified badgeType badgePlan badgeExpiresAt avatarDecoration { $DECORATION_FIELDS } profileEffect { $DECORATION_FIELDS } privacy preferences followerCount followingCount postCount isFollowing createdAt user { $PUBLIC_USER_FIELDS }"
@@ -1932,7 +2026,7 @@ class SocialRepository(context: Context) {
         const val STORY_REPLY_FIELDS = "id storyId itemId senderId body conversationId messageId createdAt sender { $PUBLIC_USER_FIELDS } senderProfile { $STORY_PROFILE_FIELDS }"
         const val STORY_MUSIC_FIELDS = "id title artist artworkUrl streamUrl durationSeconds"
         const val FEED_MODULE_FIELDS = "id kind insertAfter title profiles { $PROFILE_FIELDS } posts { $POST_FIELDS }"
-        const val SOCIAL_AD_FIELDS = "id advertiserName advertiserAvatarUrl headline body media ctaType destinationUrl placements status startAt endAt skipAfterSeconds frequencyCap impressionCount clickCount"
+        const val SOCIAL_AD_FIELDS = "id campaignName objective category sourcePostId advertiserName advertiserAvatarUrl headline body media ctaType destinationUrl placements status startAt endAt skipAfterSeconds frequencyCap budgetType budgetAmount currency targeting spentAmount impressionCount clickCount createdAt updatedAt"
         const val COMMENT_FIELDS = "id postId authorId replyToId body status reactionCount viewerLiked createdAt author { $PUBLIC_USER_FIELDS } authorProfile { id userId username verified badgeType avatarDecoration { $DECORATION_FIELDS } }"
         const val MESSAGE_FIELDS = "id conversationId senderId type body media replyToId deliveryStatus sentAt deliveredAt readAt editedAt unsentAt reactions { id userId emoji } sender { $PUBLIC_USER_FIELDS } senderProfile { id userId username avatarDecoration { $DECORATION_FIELDS } }"
         const val CONVERSATION_FIELDS = "id type title avatarUrl requestStatus requestedById unreadCount updatedAt members { id userId role muted archived typingAt lastReadAt blocked user { $PUBLIC_USER_FIELDS } profile { id userId username verified badgeType avatarDecoration { $DECORATION_FIELDS } } } lastMessage { $MESSAGE_FIELDS }"

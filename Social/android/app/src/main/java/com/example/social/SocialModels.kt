@@ -10,6 +10,7 @@ data class SocialUser(
     val avatar: String? = null,
     val role: String = "user",
     val status: String = "active",
+    val credits: Double = 0.0,
     val socialRestrictionCode: String? = null,
     val socialRestrictionReason: String? = null,
     val socialRestrictedAt: String? = null,
@@ -125,6 +126,10 @@ data class SocialMedia(
 @JsonClass(generateAdapter = true)
 data class SocialAd(
     val id: String = "",
+    val campaignName: String? = null,
+    val objective: String = "traffic",
+    val category: String? = null,
+    val sourcePostId: String? = null,
     val advertiserName: String = "",
     val advertiserAvatarUrl: String? = null,
     val headline: String? = null,
@@ -138,8 +143,46 @@ data class SocialAd(
     val endAt: String? = null,
     val skipAfterSeconds: Int = 5,
     val frequencyCap: Int = 2,
+    val budgetType: String = "daily",
+    val budgetAmount: Double = 0.0,
+    val currency: String = "USD",
+    val targeting: Map<String, Any?> = emptyMap(),
+    val spentAmount: Double = 0.0,
     val impressionCount: Int = 0,
     val clickCount: Int = 0
+)
+
+@JsonClass(generateAdapter = true)
+data class SocialAdsSummary(
+    val walletBalance: Double = 0.0,
+    val totalBudget: Double = 0.0,
+    val totalSpent: Double = 0.0,
+    val activeCount: Int = 0,
+    val pendingCount: Int = 0,
+    val campaigns: List<SocialAd> = emptyList()
+)
+
+data class SocialAdDraft(
+    val id: String? = null,
+    val campaignName: String,
+    val objective: String = "traffic",
+    val category: String? = null,
+    val sourcePostId: String? = null,
+    val headline: String? = null,
+    val body: String? = null,
+    val media: List<SocialMedia> = emptyList(),
+    val ctaType: String = "website",
+    val destinationUrl: String? = null,
+    val placements: List<String> = listOf("feed"),
+    val budgetType: String = "daily",
+    val budgetAmount: Double = 0.0,
+    val currency: String = "USD",
+    val targeting: Map<String, Any?> = emptyMap(),
+    val startAt: String? = null,
+    val endAt: String? = null,
+    val skipAfterSeconds: Int = 5,
+    val frequencyCap: Int = 2,
+    val publish: Boolean = false
 )
 
 @JsonClass(generateAdapter = true)
