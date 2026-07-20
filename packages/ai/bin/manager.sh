@@ -187,7 +187,7 @@ health_json() {
   local gemini=false searx=false crawl=false worker=false monitor=false
   service_healthy gemini-api && gemini=true || true; service_healthy searxng && searx=true || true; service_healthy crawl4ai && crawl=true || true
   service_healthy queue-worker && worker=true || true; service_healthy health-monitor && monitor=true || true
-  printf '{"ok":true,"status":"ready","health":{"packages":{"gemini-api":{"healthy":%s,"model":%s},"searxng":{"healthy":%s},"crawl4ai":{"healthy":%s},"queue-worker":{"healthy":%s},"health-monitor":{"healthy":%s}},"models":{"gemini-flash":{"healthy":%s,"status":%s}},"services":{"searxng":%s,"crawl4ai":%s}}}\n' "$gemini" "$(json_escape "$(gemini_model)")" "$searx" "$crawl" "$worker" "$monitor" "$gemini" "$(json_escape "$([ "$gemini" = true ] && echo configured || echo not_configured)")" "$searx" "$crawl"
+  printf '{"ok":true,"status":"ready","health":{"packages":{"gemini-api":{"healthy":%s,"status":%s,"model":%s},"searxng":{"healthy":%s},"crawl4ai":{"healthy":%s},"queue-worker":{"healthy":%s},"health-monitor":{"healthy":%s}},"models":{"gemini-flash":{"healthy":%s,"status":%s}},"services":{"searxng":%s,"crawl4ai":%s}}}\n' "$gemini" "$(json_escape "$([ "$gemini" = true ] && echo configured || echo not_configured)")" "$(json_escape "$(gemini_model)")" "$searx" "$crawl" "$worker" "$monitor" "$gemini" "$(json_escape "$([ "$gemini" = true ] && echo configured || echo not_configured)")" "$searx" "$crawl"
 }
 
 ensure_feature() {

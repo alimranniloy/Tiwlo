@@ -554,7 +554,9 @@ ensure_runtime_env_files() {
   local social_ai_key
   for social_ai_key in SOCIAL_GEMINI_API_KEY SOCIAL_GEMINI_MODEL SOCIAL_GEMINI_API_BASE_URL SOCIAL_GEMINI_TIMEOUT_MS; do
     local social_ai_value
-    social_ai_value="$(read_env_value "$root_env" "$social_ai_key")"
+    # `read_env_value` exits non-zero when an optional setting is absent;
+    # keep `set -e` deployments running in that normal case.
+    social_ai_value="$(read_env_value "$root_env" "$social_ai_key" || true)"
     [ -n "$social_ai_value" ] && set_env_value "$backend_env" "$social_ai_key" "$social_ai_value"
   done
 }
