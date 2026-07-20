@@ -6617,7 +6617,7 @@ private fun AdAudienceStep(location: String, onLocation: (String) -> Unit, minAg
         OutlinedTextField(maxAge, { onMaxAge(it.filter(Char::isDigit).take(2)) }, label = { Text("To") }, singleLine = true, modifier = Modifier.weight(1f), shape = RoundedCornerShape(9.dp))
     }
     Text("Gender", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-    AdChoiceRow(listOf("all" to "All", "male" to "Male", "female" to "Female"), gender, onGender)
+    AdAudienceGenderTiles(gender, onGender)
     Text("Detailed targeting", fontWeight = FontWeight.Bold, fontSize = 13.sp)
     OutlinedTextField(interests, onInterests, leadingIcon = { Icon(Icons.Outlined.Adjust, null, modifier = Modifier.size(19.dp)) }, placeholder = { Text("Interests and behaviors (comma separated)") }, minLines = 2, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(9.dp))
     Surface(color = Color(0xFFF4F7FF), shape = RoundedCornerShape(11.dp), border = BorderStroke(.7.dp, Color(0xFFDCE7FF)), modifier = Modifier.fillMaxWidth()) {
@@ -6625,6 +6625,33 @@ private fun AdAudienceStep(location: String, onLocation: (String) -> Unit, minAg
             Box(Modifier.size(36.dp).background(TiwiBlue.copy(alpha = .1f), CircleShape), contentAlignment = Alignment.Center) { Icon(Icons.Outlined.Groups, null, tint = TiwiBlue, modifier = Modifier.size(20.dp)) }
             Column(Modifier.padding(start = 10.dp).weight(1f)) { Text("Estimated reach", fontWeight = FontWeight.Bold, fontSize = 11.sp); Text("8K - 14K people", fontWeight = FontWeight.Black, fontSize = 20.sp) }
             Column(horizontalAlignment = Alignment.CenterHorizontally) { Icon(Icons.Default.SignalCellularAlt, null, tint = TiwiBlue, modifier = Modifier.size(28.dp)); Text("Good", color = Color(0xFF475467), fontSize = 10.sp) }
+        }
+    }
+}
+
+@Composable
+private fun AdAudienceGenderTiles(selected: String, onSelected: (String) -> Unit) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+        listOf(
+            Triple("all", "All", Icons.Outlined.Groups),
+            Triple("male", "Male", Icons.Outlined.Person),
+            Triple("female", "Female", Icons.Outlined.Person)
+        ).forEach { (id, label, icon) ->
+            val active = selected == id
+            Surface(
+                color = Color.White,
+                shape = RoundedCornerShape(9.dp),
+                border = BorderStroke(if (active) 1.2.dp else .7.dp, if (active) TiwiBlue else Color(0xFFE1E5EB)),
+                modifier = Modifier.weight(1f).height(96.dp).clickable { onSelected(id) }
+            ) {
+                Column(Modifier.fillMaxSize().padding(vertical = 14.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.SpaceBetween) {
+                    Box(Modifier.size(18.dp).border(1.dp, if (active) TiwiBlue else Color(0xFFD0D5DD), CircleShape), contentAlignment = Alignment.Center) {
+                        if (active) Box(Modifier.size(10.dp).background(TiwiBlue, CircleShape))
+                    }
+                    Icon(icon, null, tint = if (active) TiwiBlue else Color(0xFF111827), modifier = Modifier.size(25.dp))
+                    Text(label, color = if (active) TiwiBlue else Color(0xFF344054), fontWeight = FontWeight.SemiBold, fontSize = 11.sp)
+                }
+            }
         }
     }
 }
