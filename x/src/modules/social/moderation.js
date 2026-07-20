@@ -1,13 +1,12 @@
-import { createHash, randomBytes } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { access, mkdir, readFile, rm } from 'node:fs/promises';
 import { basename, dirname, join, resolve, sep } from 'node:path';
 import sharp from 'sharp';
-import * as tf from '@tensorflow/tfjs';
-import * as nsfw from 'nsfwjs';
 import { AppError } from '../../core/errors.js';
 import { writeAudit } from '../../core/audit.js';
 import { resolveSocialFfmpegPath } from './ffmpeg.js';
+import { requestSocialGeminiJson } from './gemini.js';
 
 const explicitTextRules = [
   { category: 'sexual/explicit', score: .99, pattern: /\b(?:porn|porno|pornographic|hardcore|xxx|nudes?|naked|boobs?|tits?|pussy|blowjob|sex\s*video|rape\s*porn)\b/i },
@@ -19,10 +18,6 @@ const explicitTextRules = [
 ];
 
 const severity = Object.freeze({ allow: 0, review: 1, block: 2 });
-let localNsfwModelPromise;
-let localNsfwQueue = Promise.resolve();
-const localPredictionCache = new Map();
-const LOCAL_CACHE_LIMIT = 256;
 
 const normalizeDecision = (value = {}) => {
   const decision = ['allow', 'review', 'block'].includes(String(value.decision || '').toLowerCase())
@@ -58,22 +53,8 @@ const imagePayload = async (filePath) => {
   return { content: content.toString('base64'), metadata: { width: metadata.width, height: metadata.height, format: metadata.format, pages: metadata.pages || 1 } };
 };
 
-const localNsfwModel = () => {
-  if (!localNsfwModelPromise) {
-    localNsfwModelPromise = tf.ready().then(() => nsfw.load('MobileNetV2Mid')).catch((error) => {
-      localNsfwModelPromise = undefined;
-      throw error;
-    });
-  }
-  return localNsfwModelPromise;
-};
-
-const runLocalNsfw = (task) => {
-  const result = localNsfwQueue.then(task, task);
-  localNsfwQueue = result.then(() => undefined, () => undefined);
-  return result;
-};
-
+// Kept only as a deterministic compatibility helper for historic moderation
+// records/tests. It no longer loads TensorFlow or an on-server NSFW model.
 export const decisionFromNsfwPredictions = (predictions = [], thresholds = {}) => {
   const scores = Object.fromEntries(predictions.map((item) => [String(item.className || '').toLowerCase(), Number(item.probability) || 0]));
   const porn = scores.porn || 0;
@@ -85,43 +66,36 @@ export const decisionFromNsfwPredictions = (predictions = [], thresholds = {}) =
   const sexyBlockAt = Math.min(Math.max(Number(thresholds.sexyBlock) || .88, .72), .98);
   const evidence = { porn, hentai, sexy, neutral: scores.neutral || 0, drawing: scores.drawing || 0 };
   if (porn >= blockAt || hentai >= blockAt || explicit >= blockAt || sexy >= sexyBlockAt) {
-    return normalizeDecision({ decision: 'block', category: 'sexual/explicit', score: Math.max(porn, hentai, explicit, sexy), reason: 'Pornographic, nude, or explicitly sexual media was detected by Tiwi automated safety', provider: 'nsfwjs-mobilenet-v2-mid', evidence });
+    return normalizeDecision({ decision: 'block', category: 'sexual/explicit', score: Math.max(porn, hentai, explicit, sexy), reason: 'Pornographic, nude, or explicitly sexual media was detected by Tiwi automated safety', provider: 'legacy-score-compat', evidence });
   }
   if (explicit >= reviewAt || sexy >= .45) {
-    return normalizeDecision({ decision: 'review', category: 'sexual/possible', score: Math.max(explicit, sexy), reason: 'Possible nude or sexually suggestive media requires administrator review before publication', provider: 'nsfwjs-mobilenet-v2-mid', evidence });
+    return normalizeDecision({ decision: 'review', category: 'sexual/possible', score: Math.max(explicit, sexy), reason: 'Possible nude or sexually suggestive media requires administrator review before publication', provider: 'legacy-score-compat', evidence });
   }
-  return normalizeDecision({ decision: 'allow', category: 'safe', score: Math.max(explicit, sexy * .25), reason: 'Local NSFW classifier found no prohibited explicit content', provider: 'nsfwjs-mobilenet-v2-mid', evidence });
+  return normalizeDecision({ decision: 'allow', category: 'safe', score: Math.max(explicit, sexy * .25), reason: 'Historic classifier score contains no prohibited explicit content', provider: 'legacy-score-compat', evidence });
 };
 
-const classifyLocalBuffer = async (model, source, position = 'centre') => {
-  const cacheKey = createHash('sha256').update(source).update(position).digest('hex');
-  const cached = localPredictionCache.get(cacheKey);
-  if (cached) return cached;
-  const { data, info } = await sharp(source)
-    .resize(224, 224, { fit: 'cover', position })
-    .removeAlpha()
-    .raw()
-    .toBuffer({ resolveWithObject: true });
-  const tensor = tf.tensor3d(new Uint8Array(data), [info.height, info.width, info.channels], 'int32');
-  try {
-    const predictions = await model.classify(tensor, 5);
-    localPredictionCache.set(cacheKey, predictions);
-    if (localPredictionCache.size > LOCAL_CACHE_LIMIT) localPredictionCache.delete(localPredictionCache.keys().next().value);
-    return predictions;
-  } finally {
-    tensor.dispose();
-  }
+const geminiVisualClassification = async (payload, targetType, thresholds) => {
+  const { json, model } = await requestSocialGeminiJson({
+    systemInstruction: [
+      'You are Tiwi Social Safety Vision. Classify only the supplied media.',
+      'Return exactly one JSON object: decision (allow, review, block), category, score (0..1), reason, evidenceSummary.',
+      'Block explicit nudity, pornography, sexual content involving minors, graphic violence, weapon/drug sale, or credible self-harm imagery.',
+      'Use review for uncertain or context-dependent material. Never invent facts outside the image.'
+    ].join(' '),
+    prompt: `Review this ${targetType}. The configured explicit threshold is ${thresholds.explicit}.`,
+    inlineParts: [{ inline_data: { mime_type: 'image/jpeg', data: payload.content } }],
+    maxOutputTokens: 260
+  });
+  const decision = String(json.decision || '').toLowerCase() === 'violation' ? 'block' : String(json.decision || '').toLowerCase();
+  return normalizeDecision({
+    decision: ['allow', 'review', 'block'].includes(decision) ? decision : 'review',
+    category: json.category || 'visual-review',
+    score: json.score ?? json.confidence,
+    reason: json.reason || 'Gemini completed a visual safety review.',
+    provider: `gemini-${model}`,
+    evidence: { frame: payload.metadata?.frame || null, summary: String(json.evidenceSummary || '').slice(0, 700) }
+  });
 };
-
-const localNsfwClassification = async (payload, thresholds) => runLocalNsfw(async () => {
-  const model = await localNsfwModel();
-  const source = Buffer.from(payload.content, 'base64');
-  const primary = decisionFromNsfwPredictions(await classifyLocalBuffer(model, source), thresholds);
-  const sexualSignal = Number(primary.evidence?.porn || 0) + Number(primary.evidence?.hentai || 0) + Number(primary.evidence?.sexy || 0);
-  if (primary.decision === 'block' || sexualSignal < .2) return primary;
-  const attention = decisionFromNsfwPredictions(await classifyLocalBuffer(model, source, 'attention'), thresholds);
-  return strongest([primary, attention]);
-});
 
 const videoPayloads = async (filePath) => {
   const tempDir = join(dirname(filePath), `.moderation-${randomBytes(8).toString('hex')}`);
@@ -176,10 +150,10 @@ export const moderateMediaFile = async ({ filePath, mimeType, targetType = 'medi
     sexyBlock: Math.max(.72, Math.min(Number(thresholds.sexyBlock) || .88, .98))
   };
   for (const payload of payloads) {
-    const providers = await Promise.allSettled([localNsfwClassification(payload, configuredThresholds), moderationWebhook({ payload, mimeType, targetType })]);
+    const providers = await Promise.allSettled([geminiVisualClassification(payload, targetType, configuredThresholds), moderationWebhook({ payload, mimeType, targetType })]);
     providers.forEach((result) => { if (result.status === 'fulfilled' && result.value) decisions.push(result.value); });
   }
-  if (!decisions.length) return normalizeDecision({ decision: 'review', category: 'classifier-unavailable', score: 0, reason: 'The local NSFW classifier was unavailable; publication requires administrator review', provider: 'moderation-fail-safe', evidence: { frames: payloads.length } });
+  if (!decisions.length) return normalizeDecision({ decision: 'review', category: 'classifier-unavailable', score: 0, reason: 'Gemini visual moderation was unavailable; publication requires administrator review', provider: 'moderation-fail-safe', evidence: { frames: payloads.length } });
   return strongest(decisions);
 };
 
@@ -295,8 +269,8 @@ export const startSocialModerationBackfill = async ({ prisma, rootDir, batchSize
             {
               moderationStatus: 'approved',
               moderationEvents: {
-                some: { provider: 'nsfwjs-mobilenet-v2' },
-                none: { provider: { in: ['nsfwjs-mobilenet-v2-mid', 'moderation-backfill-v2-mid'] } }
+                some: { provider: { startsWith: 'legacy-score-' } },
+                none: { provider: { in: ['gemini-gemini-flash-latest', 'moderation-backfill-v2-mid'] } }
               }
             }
           ]

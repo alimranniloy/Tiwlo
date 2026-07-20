@@ -2,17 +2,17 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { decisionFromNsfwPredictions, moderateText, recordModerationDecision } from '../src/modules/social/moderation.js';
 
-test('local NSFW predictions block high-confidence pornographic media', () => {
+test('historic classifier score mapping blocks high-confidence pornographic media', () => {
   const result = decisionFromNsfwPredictions([
     { className: 'Porn', probability: .91 },
     { className: 'Neutral', probability: .05 },
     { className: 'Hentai', probability: .02 }
   ]);
   assert.equal(result.decision, 'block');
-  assert.equal(result.provider, 'nsfwjs-mobilenet-v2-mid');
+  assert.equal(result.provider, 'legacy-score-compat');
 });
 
-test('local NSFW predictions hold uncertain sexual media for review', () => {
+test('historic classifier score mapping holds uncertain sexual media for review', () => {
   const result = decisionFromNsfwPredictions([
     { className: 'Sexy', probability: .78 },
     { className: 'Neutral', probability: .2 }
@@ -20,7 +20,7 @@ test('local NSFW predictions hold uncertain sexual media for review', () => {
   assert.equal(result.decision, 'review');
 });
 
-test('local NSFW predictions allow a strongly neutral image', () => {
+test('historic classifier score mapping allows a strongly neutral image', () => {
   const result = decisionFromNsfwPredictions([
     { className: 'Neutral', probability: .96 },
     { className: 'Porn', probability: .01 },

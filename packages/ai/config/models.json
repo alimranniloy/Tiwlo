@@ -1,26 +1,10 @@
 [
   {
-    "id": "text-policy",
-    "name": "Qwen 2.5 Policy (adaptive 0.5B / 3B)",
-    "kind": "text",
-    "file": "auto: qwen2.5-0.5b or qwen2.5-3b Q4_K_M.gguf",
-    "url": "Auto-selected by available server memory; official Qwen GGUF source",
-    "default": true
-  },
-  {
-    "id": "vision-review",
-    "name": "Moondream 2",
-    "kind": "vision",
-    "file": "moondream2-text-model-f16.gguf",
-    "url": "https://huggingface.co/moondream/moondream2-gguf/resolve/main/moondream2-text-model-f16.gguf?download=true",
-    "default": false
-  },
-  {
-    "id": "embedding",
-    "name": "Nomic Embed Text v1.5",
-    "kind": "embedding",
-    "file": "nomic-embed-text-v1.5.Q4_K_M.gguf",
-    "url": "https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.Q4_K_M.gguf?download=true",
+    "id": "gemini-flash",
+    "name": "Gemini Flash",
+    "kind": "hosted-multimodal",
+    "file": "Google Gemini API (no local model file)",
+    "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent",
     "default": true
   }
 ]

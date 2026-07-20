@@ -101,33 +101,12 @@ export async function fetchSocialSettingsWithApi() {
 
 const socialAiBundleModels = [
   {
-    id: 'text-policy',
-    name: 'Qwen2.5 Policy (adaptive 0.5B / 3B)',
-    kind: 'Text / policy',
-    file: 'Auto-selects Q4_K_M model for available server memory',
-    runtime: 'llama.cpp',
+    id: 'gemini-flash',
+    name: 'Gemini Flash',
+    kind: 'Hosted multimodal',
+    file: 'Google Gemini API · no model download on this server',
+    runtime: 'Google Gemini API',
     default: true
-  },
-  {
-    id: 'moderation-vision',
-    name: 'Moondream2 Vision (GGUF)',
-    kind: 'Vision / image moderation',
-    file: 'moondream2-text-model-f16.gguf + mmproj',
-    runtime: 'llama.cpp'
-  },
-  {
-    id: 'embedding',
-    name: 'Nomic Embed Text v1.5 (Q4_K_M)',
-    kind: 'Embedding / duplicate matching',
-    file: 'nomic-embed-text-v1.5.Q4_K_M.gguf',
-    runtime: 'llama.cpp'
-  },
-  {
-    id: 'nsfwjs',
-    name: 'NSFWJS local classifier',
-    kind: 'Image safety',
-    file: 'local Node.js package model',
-    runtime: 'Node.js'
   }
 ];
 

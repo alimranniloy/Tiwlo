@@ -6,6 +6,7 @@ import { isAdmin, requireAdmin } from '../../core/auth.js';
 import { AppError, notFound } from '../../core/errors.js';
 import { removeUndefined } from '../../core/format.js';
 import { writeAudit } from '../../core/audit.js';
+import { requestSocialGeminiJson } from './gemini.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -18,16 +19,15 @@ const WORKER_DELAY_MS = Math.max(1_000, Math.min(Number(process.env.SOCIAL_AI_WO
 const MANAGER_TIMEOUT_MS = Math.max(10_000, Math.min(Number(process.env.SOCIAL_AI_MANAGER_TIMEOUT_MS) || 30 * 60_000, 90 * 60_000));
 
 export const SOCIAL_AI_PACKAGE_CATALOG = Object.freeze([
+  { id: 'gemini-api', name: 'Google Gemini API', role: 'Hosted text and vision policy analysis', requiredFor: ['all'], port: null },
   { id: 'searxng', name: 'SearXNG', role: 'Public notability search', requiredFor: ['verification', 'impersonation'], port: 8081 },
   { id: 'crawl4ai', name: 'Crawl4AI', role: 'Evidence collection', requiredFor: ['verification', 'reportReview'], port: 11235 },
-  { id: 'llama-cpp', name: 'llama.cpp', role: 'Local text policy analysis', requiredFor: ['verification', 'reportReview', 'postReview', 'commentReview'], port: 8082 },
   { id: 'queue-worker', name: 'Social AI Queue Worker', role: 'Persistent Social background processing', requiredFor: ['all'], port: null },
   { id: 'health-monitor', name: 'Social AI Health Monitor', role: 'Automatic service repair', requiredFor: ['all'], port: null }
 ]);
 
 export const SOCIAL_AI_MODEL_CATALOG = Object.freeze([
-  { id: 'text-policy', name: 'Qwen 2.5 Policy (adaptive)', kind: 'text', file: 'Auto-selects 0.5B or 3B Q4_K_M by server memory', default: true, requiredFor: ['verification', 'reportReview', 'postReview', 'commentReview', 'appeal'] },
-  { id: 'embedding', name: 'Nomic Embed Text v1.5', kind: 'embedding', file: 'nomic-embed-text-v1.5.Q4_K_M.gguf', default: true, requiredFor: ['spam', 'scam', 'duplicateContent', 'fakeAccount'] }
+  { id: 'gemini-flash', name: 'Gemini Flash', kind: 'hosted multimodal', file: 'Google Gemini API · no server model download', default: true, requiredFor: ['verification', 'reportReview', 'postReview', 'commentReview', 'appeal', 'mediaModeration'] }
 ]);
 
 const FEATURE_KEYS = Object.freeze([
@@ -37,23 +37,23 @@ const FEATURE_KEYS = Object.freeze([
 ]);
 
 const FEATURE_REQUIREMENTS = Object.freeze({
-  verification: { packages: ['searxng', 'crawl4ai', 'llama-cpp'], models: ['text-policy', 'embedding'] },
-  reportReview: { packages: ['crawl4ai', 'llama-cpp'], models: ['text-policy'] },
-  postReview: { packages: ['llama-cpp'], models: ['text-policy'] },
-  commentReview: { packages: ['llama-cpp'], models: ['text-policy'] },
-  spam: { packages: ['llama-cpp'], models: ['text-policy', 'embedding'] },
-  scam: { packages: ['llama-cpp'], models: ['text-policy', 'embedding'] },
-  fakeAccount: { packages: ['llama-cpp'], models: ['embedding'] },
-  fakeProfile: { packages: ['llama-cpp'], models: ['text-policy', 'embedding'] },
-  impersonation: { packages: ['searxng', 'llama-cpp'], models: ['text-policy', 'embedding'] },
-  harassment: { packages: ['llama-cpp'], models: ['text-policy'] },
-  hateSpeech: { packages: ['llama-cpp'], models: ['text-policy'] },
-  threat: { packages: ['llama-cpp'], models: ['text-policy'] },
-  weaponSale: { packages: ['llama-cpp'], models: ['text-policy'] },
-  drugSale: { packages: ['llama-cpp'], models: ['text-policy'] },
-  violence: { packages: ['llama-cpp'], models: ['text-policy'] },
-  selfHarm: { packages: ['llama-cpp'], models: ['text-policy'] },
-  appeal: { packages: ['llama-cpp'], models: ['text-policy'] }
+  verification: { packages: ['gemini-api', 'searxng', 'crawl4ai'], models: ['gemini-flash'] },
+  reportReview: { packages: ['gemini-api', 'crawl4ai'], models: ['gemini-flash'] },
+  postReview: { packages: ['gemini-api'], models: ['gemini-flash'] },
+  commentReview: { packages: ['gemini-api'], models: ['gemini-flash'] },
+  spam: { packages: ['gemini-api'], models: ['gemini-flash'] },
+  scam: { packages: ['gemini-api'], models: ['gemini-flash'] },
+  fakeAccount: { packages: ['gemini-api'], models: ['gemini-flash'] },
+  fakeProfile: { packages: ['gemini-api'], models: ['gemini-flash'] },
+  impersonation: { packages: ['gemini-api', 'searxng'], models: ['gemini-flash'] },
+  harassment: { packages: ['gemini-api'], models: ['gemini-flash'] },
+  hateSpeech: { packages: ['gemini-api'], models: ['gemini-flash'] },
+  threat: { packages: ['gemini-api'], models: ['gemini-flash'] },
+  weaponSale: { packages: ['gemini-api'], models: ['gemini-flash'] },
+  drugSale: { packages: ['gemini-api'], models: ['gemini-flash'] },
+  violence: { packages: ['gemini-api'], models: ['gemini-flash'] },
+  selfHarm: { packages: ['gemini-api'], models: ['gemini-flash'] },
+  appeal: { packages: ['gemini-api'], models: ['gemini-flash'] }
 });
 
 // A primary review pipeline may discover several policy categories. Individual
@@ -92,13 +92,9 @@ const DEFAULT_SETTINGS = Object.freeze({
   runtime: {
     searxngUrl: 'http://127.0.0.1:8081',
     crawl4aiUrl: 'http://127.0.0.1:11235',
-    // The OpenAI-compatible chat endpoint follows JSON instructions much more
-    // reliably than the legacy completion endpoint on compact local models.
-    llamaUrl: 'http://127.0.0.1:8082/v1/chat/completions',
-    // The compact CPU-only model can need longer for Bengali/emoji-heavy
-    // safety reviews. A short request timeout cancels a healthy generation
-    // and creates needless retry jobs, so retain a bounded 90-second budget.
-    requestTimeoutMs: 90_000
+    // Gemini credentials and selected model are server environment values,
+    // never database settings or browser-visible configuration.
+    requestTimeoutMs: 60_000
   },
   features: defaultFeatures(),
   automaticActions: {
@@ -127,15 +123,6 @@ const clamp = (value, min, max, fallback) => {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? Math.min(max, Math.max(min, numeric)) : fallback;
 };
-const normalizeLlamaUrl = (value) => {
-  const url = asText(value || DEFAULT_SETTINGS.runtime.llamaUrl, 500);
-  // Preserve a deliberately configured remote runtime, while transparently
-  // migrating the former local /completion default to the supported chat API.
-  return /^https?:\/\/(?:127\.0\.0\.1|localhost):8082\/completion\/?$/i.test(url)
-    ? DEFAULT_SETTINGS.runtime.llamaUrl
-    : url;
-};
-
 const normalizeSettings = (value = {}) => {
   const source = asObject(value);
   const runtime = asObject(source.runtime);
@@ -162,7 +149,6 @@ const normalizeSettings = (value = {}) => {
       ...runtime,
       searxngUrl: asText(runtime.searxngUrl || DEFAULT_SETTINGS.runtime.searxngUrl, 500).replace(/\/$/, ''),
       crawl4aiUrl: asText(runtime.crawl4aiUrl || DEFAULT_SETTINGS.runtime.crawl4aiUrl, 500).replace(/\/$/, ''),
-      llamaUrl: normalizeLlamaUrl(runtime.llamaUrl),
       requestTimeoutMs: Math.floor(clamp(runtime.requestTimeoutMs, 60_000, 120_000, DEFAULT_SETTINGS.runtime.requestTimeoutMs))
     },
     features: asBooleanMap(normalizedFeatures),
@@ -303,8 +289,8 @@ const taskFeature = (type, payload = {}) => {
   // handled through report_review with the narrow reported-message context.
   if (type === 'message_review') return 'privateMessageNotQueued';
   if (type === 'appeal_review') return 'appeal';
-  // Copyright/audio and NSFW image/video checks stay in their existing local
-  // Node pipelines, outside this text-policy AI control surface.
+  // Copyright/audio fingerprinting stays in its dedicated media pipeline;
+  // visual safety moderation uses Gemini when the media pipeline invokes it.
   if (type === 'content_review') return 'localMediaPipeline';
   return null;
 };
@@ -341,15 +327,6 @@ const queueMaintenance = async (ctx, job) => {
   });
   if (!result.ok) throw new AppError(result.error || 'Social AI manager operation failed', 'SOCIAL_AI_MANAGER_ERROR');
   return { manager: result.payload || {}, logs: result.logs.slice(-80) };
-};
-
-const jsonFromModel = (value) => {
-  const text = asText(value, 16_000);
-  const direct = safeJson(text);
-  if (direct && typeof direct === 'object') return direct;
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
-  return start >= 0 && end > start ? safeJson(text.slice(start, end + 1)) : null;
 };
 
 export const policySignals = (text) => {
@@ -500,13 +477,11 @@ const crawlEvidence = async (settings, url) => {
   return item ? { url, title: asText(item?.metadata?.title || item?.title, 240), markdown: asText(item?.markdown || item?.markdown_v2?.raw_markdown || item?.fit_markdown, 5_000) } : null;
 };
 
-const modelWarmingError = (message) => new AppError(message, 'SOCIAL_AI_MODEL_WARMING');
-
 const policyDecision = (value) => {
   const normalized = asText(value, 30).toLowerCase();
   if (['allow', 'review', 'violation'].includes(normalized)) return normalized;
   if (['yes', 'safe', 'approved', 'no action'].includes(normalized)) return 'allow';
-  // Small local models sometimes put a policy label in `decision` (for
+  // Hosted models can sometimes put a policy label in `decision` (for
   // example "harm" or "kill") instead of the requested enum. Keep that
   // result actionable as a violation rather than losing it to manual review.
   if (['unsafe', 'blocked', 'block', 'deny', 'harm', 'threat', 'harassment', 'hate', 'violence', 'kill', 'abuse'].includes(normalized)) return 'violation';
@@ -538,9 +513,8 @@ const policyAction = (value, decision) => {
 };
 
 const askPolicyModel = async (settings, task, taskContext, supplemental = {}) => {
-  // Compact VPS instances use a 2k-token local context.  Avoid sending raw
-  // media metadata or crawled pages wholesale: oversized prompts were the
-  // source of llama.cpp 400 responses and served no moderation purpose.
+  // Avoid sending raw media metadata or crawled pages wholesale. Gemini gets
+  // only the narrow policy context necessary for the requested review.
   const context = {
     // Bengali and emoji-heavy content can consume close to one token per
     // visible character. Keep the entire request comfortably below the 2k
@@ -560,48 +534,11 @@ const askPolicyModel = async (settings, task, taskContext, supplemental = {}) =>
     'Use short values and do not explain the JSON format.'
   ].join(' ');
   const user = `Task: ${task}\nContext: ${JSON.stringify(context)}`;
-  const request = (body) => fetch(settings.runtime.llamaUrl, {
-    method: 'POST', signal: AbortSignal.timeout(settings.runtime.requestTimeoutMs), headers: { 'content-type': 'application/json', accept: 'application/json' }, body: JSON.stringify(body)
+  const { json: parsed, model } = await requestSocialGeminiJson({
+    systemInstruction: system,
+    prompt: user,
+    maxOutputTokens: 320
   });
-  const requestMessages = (messages, maxTokens = 128) => request({ messages, temperature: 0, max_tokens: maxTokens, stream: false });
-  let response;
-  try {
-    // Some llama.cpp versions reject response_format with HTTP 400. The plain
-    // OpenAI-chat request works with old and current server images.
-    response = await requestMessages([{ role: 'system', content: system }, { role: 'user', content: user }]);
-  } catch (error) {
-    throw modelWarmingError(`llama.cpp is not reachable: ${asText(error?.message, 300)}`);
-  }
-  if (!response.ok) {
-    const detail = asText(await response.text().catch(() => ''), 400);
-    if ([408, 429, 500, 502, 503, 504].includes(response.status)) throw modelWarmingError(`llama.cpp is warming or unavailable (${response.status})${detail ? `: ${detail}` : ''}`);
-    throw new Error(`llama.cpp returned ${response.status}${detail ? `: ${detail}` : ''}`);
-  }
-  const payload = await response.json();
-  const content = payload?.choices?.[0]?.message?.content || payload?.content || payload?.response || '';
-  let parsed = jsonFromModel(content);
-  // Retry once with a tiny prompt if the compact local model ended halfway
-  // through the first JSON response. A failed retry stays a private manual
-  // review and never becomes a user-facing model error.
-  if (!parsed) {
-    try {
-      const retry = await requestMessages([{ role: 'user', content: `Return only valid minified JSON with decision,category,confidence,severity,recommendedAction,reason,evidenceSummary. Content: ${asText(taskContext.text, 420)}` }], 112);
-      if (retry.ok) {
-        const retryPayload = await retry.json();
-        parsed = jsonFromModel(retryPayload?.choices?.[0]?.message?.content || retryPayload?.content || retryPayload?.response || '');
-      }
-    } catch { /* Safe manual review below. */ }
-  }
-  // A compact local model can occasionally stop before its JSON is complete.
-  // Treat that as a conservative manual review rather than losing the review
-  // job: no automated action is taken and the admin still gets a real case.
-  if (!parsed) {
-    return {
-      decision: 'review', category: 'unclassified', confidence: 0, severity: 'low',
-      reason: 'This content is waiting for a Tiwi manual review.',
-      recommendation: 'manual_review', evidenceSummary: 'The automated review could not safely reach a final classification.', provider: 'social-llama-cpp-fallback'
-    };
-  }
   const decision = policyDecision(parsed.decision);
   const severity = ['low', 'medium', 'high', 'critical'].includes(asText(parsed.severity, 30).toLowerCase()) ? asText(parsed.severity, 30).toLowerCase() : 'medium';
   return {
@@ -612,7 +549,7 @@ const askPolicyModel = async (settings, task, taskContext, supplemental = {}) =>
     reason: asText(parsed.reason || 'Social AI completed a policy review.', 1_000),
     recommendation: policyAction(parsed.recommendedAction, decision),
     evidenceSummary: asText(parsed.evidenceSummary, 1_500),
-    provider: 'social-llama-cpp'
+    provider: `social-gemini-${model}`
   };
 };
 
@@ -730,7 +667,7 @@ const runAnalysisJob = async (ctx, job, settings) => {
   if (!analysis || signal.confidence < 0.95) {
     try { analysis = await askPolicyModel(settings, job.type, task, supplemental); }
     catch (error) {
-      if (signal) analysis = { ...signal, provider: 'policy-pattern-fallback', evidenceSummary: 'Local policy signal was recorded while the language model was unavailable.' };
+      if (signal) analysis = { ...signal, provider: 'policy-pattern-fallback', evidenceSummary: 'A deterministic policy signal was recorded while Gemini was unavailable.' };
       else if (error?.extensions?.code === 'SOCIAL_AI_MODEL_WARMING') throw error;
       else throw new AppError(`Social AI model is unavailable: ${asText(error?.message, 800)}`, 'SOCIAL_AI_DEPENDENCY_ERROR');
     }
@@ -767,9 +704,8 @@ const recoverStaleSocialAiJobs = async (prisma) => {
   return result.count;
 };
 
-// Jobs that exhausted their retry count only while the previous legacy model
-// endpoint or an early model load was broken are safe to retry after this
-// runtime repair.  Do not reset policy/content failures in general.
+// Jobs that exhausted their retry count only while the retired local runtime
+// was unavailable are safe to retry through Gemini after this release.
 const recoverTransientModelFailures = async (prisma) => {
   if (transientFailureRecoveryDone) return 0;
   transientFailureRecoveryDone = true;
@@ -777,9 +713,9 @@ const recoverTransientModelFailures = async (prisma) => {
     where: {
       status: 'failed',
       OR: [
-        { error: { contains: 'llama.cpp returned 400' } },
-        { error: { contains: 'llama.cpp did not return a policy JSON result' } },
-        { error: { contains: 'Loading model' } }
+        { error: { contains: 'llama.cpp' } },
+        { error: { contains: 'Loading model' } },
+        { error: { contains: 'local model' } }
       ]
     },
     data: {
@@ -816,7 +752,7 @@ const processJob = async (ctx, job) => {
     const waitingForModel = error?.extensions?.code === 'SOCIAL_AI_MODEL_WARMING';
     const retry = current && current.attempts < current.maxAttempts;
     await ctx.prisma.socialAiJob.update({ where: { id: job.id }, data: waitingForModel
-      ? { status: 'queued', attempts: { decrement: 1 }, phase: 'waiting for local model', error: message, runAfter: new Date(Date.now() + 30_000), lockedAt: null }
+      ? { status: 'queued', attempts: { decrement: 1 }, phase: 'waiting for Gemini API', error: message, runAfter: new Date(Date.now() + 30_000), lockedAt: null }
       : retry
         ? { status: 'queued', phase: 'retry scheduled', error: message, runAfter: new Date(Date.now() + delayForAttempt(current.attempts)), lockedAt: null }
         : { status: 'failed', phase: 'failed', error: message, finishedAt: new Date(), lockedAt: null }
@@ -846,9 +782,8 @@ export const startSocialAiInfrastructure = async (ctx) => {
     if (!existing) await enqueueSocialAiTask(ctx, { type: 'bootstrap', priority: 100, maxAttempts: 2, payload: { source: 'server_start' } });
   }
   // Production installs run the PostgreSQL queue through the dedicated
-  // systemd worker.  Keeping a second in-process worker in the HTTP server
-  // can submit two requests at once to the compact one-slot llama.cpp server,
-  // causing one request to be cancelled while the other is generating.
+  // systemd worker. Keeping a second in-process worker in the HTTP server
+  // would make duplicate remote provider requests after a deployment.
   // Local/dev environments can explicitly opt in when no worker service is
   // present with SOCIAL_AI_EMBEDDED_WORKER=1.
   if (process.env.SOCIAL_AI_EMBEDDED_WORKER !== '1') return;
@@ -919,7 +854,7 @@ const validOperation = (input) => {
   const id = asText(source.id, 100);
   if (scope === 'system' && ['install_all', 'bootstrap', 'health_check', 'repair_all', 'clear_cache'].includes(action)) return { scope, action, id: action === 'health_check' ? 'health' : action === 'clear_cache' ? 'cache' : 'all' };
   if (scope === 'package' && SOCIAL_AI_PACKAGE_CATALOG.some((item) => item.id === id) && ['install', 'update', 'repair', 'enable', 'disable', 'start', 'stop', 'restart', 'autostart', 'health', 'test', 'logs'].includes(action)) return { scope, action, id };
-  if (scope === 'model' && SOCIAL_AI_MODEL_CATALOG.some((item) => item.id === id) && ['download', 'resume', 'install', 'load', 'run', 'restart', 'update', 'repair', 'delete', 'default', 'autoload', 'health'].includes(action)) return { scope, action, id };
+  if (scope === 'model' && SOCIAL_AI_MODEL_CATALOG.some((item) => item.id === id) && ['health', 'test'].includes(action)) return { scope, action, id };
   throw new AppError('Unsupported Social AI operation', 'BAD_USER_INPUT');
 };
 

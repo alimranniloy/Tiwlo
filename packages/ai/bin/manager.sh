@@ -1,90 +1,45 @@
 #!/usr/bin/env bash
-# Tiwlo Social AI package manager. Every supported action is explicitly
-# whitelisted below; it never evaluates an admin-supplied shell command.
+# Tiwi Social AI infrastructure manager. Gemini is a hosted provider: this
+# manager never downloads or runs a local LLM, GGUF file, TensorFlow model, or
+# llama.cpp container.
 set -euo pipefail
 
 ROOT="${TIWLO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
 STATE_DIR="${TIWLO_SOCIAL_AI_DATA_DIR:-$ROOT/.data/social-ai}"
 LOG_DIR="${TIWLO_SOCIAL_AI_LOG_DIR:-$ROOT/.logs/social-ai}"
-MODELS_DIR="$STATE_DIR/models"
 SECRETS_DIR="$STATE_DIR/secrets"
 COMPOSE_FILE="$STATE_DIR/docker-compose.yml"
 LOG_FILE="$LOG_DIR/manager.log"
-JSON="0"
-
-mkdir -p "$STATE_DIR" "$MODELS_DIR" "$LOG_DIR"
+JSON=0
+mkdir -p "$STATE_DIR" "$SECRETS_DIR" "$LOG_DIR"
 touch "$LOG_FILE"
+
+# The backend and package manager receive the same private Gemini settings.
+# Values stay in the preserved production .env; they are never written to logs
+# or returned by an admin/API response.
+load_environment() {
+  local file line key value
+  for file in "$ROOT/.env" "$ROOT/x/.env"; do
+    [ -r "$file" ] || continue
+    while IFS= read -r line || [ -n "$line" ]; do
+      [[ "$line" =~ ^[[:space:]]*(#|$) ]] && continue
+      line="${line#export }"
+      key="${line%%=*}"; value="${line#*=}"
+      [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+      case "$key" in SOCIAL_GEMINI_API_KEY|GEMINI_API_KEY|SOCIAL_GEMINI_MODEL|SOCIAL_GEMINI_TIMEOUT_MS) export "$key=$value" ;; esac
+    done <"$file"
+  done
+}
+load_environment
 
 log() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$*" | tee -a "$LOG_FILE" >&2; }
 progress() { printf 'PROGRESS %s %s\n' "$1" "$2"; }
 die() { log "ERROR $*"; exit 1; }
 have() { command -v "$1" >/dev/null 2>&1; }
-
-root_available_bytes() {
-  df -PB1 "$ROOT" 2>/dev/null | awk 'NR == 2 { print $4; exit }'
-}
-
-cleanup_runtime_cache() {
-  # This deliberately excludes Docker volumes, PostgreSQL, uploads, releases
-  # currently in use, models and every Tiwlo .data directory. It only removes
-  # safely recreatable operating-system logs, package caches and unused images.
-  [ "$(id -u)" -eq 0 ] || die "Safe cache cleanup must run from the privileged Tiwlo backend service"
-
-  local before="0" after="0" recovered="0" temp_parent=""
-  before="$(root_available_bytes || echo 0)"
-  progress 5 "Measuring safe server caches"
-
-  if have journalctl; then
-    progress 20 "Trimming archived system logs"
-    journalctl --vacuum-size="${TIWLO_SOCIAL_AI_JOURNAL_MAX_SIZE:-256M}" >>"$LOG_FILE" 2>&1 || log "System journal cleanup was skipped"
-  fi
-
-  if have docker; then
-    progress 45 "Removing unused container images and build cache"
-    docker image prune -af >>"$LOG_FILE" 2>&1 || log "Unused Docker image cleanup was skipped"
-    docker builder prune -af >>"$LOG_FILE" 2>&1 || true
-  fi
-
-  if have apt-get; then
-    progress 65 "Clearing package-manager cache"
-    apt-get clean >>"$LOG_FILE" 2>&1 || log "APT cache cleanup was skipped"
-  fi
-
-  # Never touch a current deployment workspace. Only stale workspaces older
-  # than six hours can be leftovers from an interrupted release.
-  temp_parent="$(dirname "$ROOT")/.tiwlo-tmp"
-  if [ -d "$temp_parent" ]; then
-    progress 80 "Removing stale deployment workspaces"
-    find "$temp_parent" -mindepth 1 -maxdepth 1 -type d \
-      \( -name 'tiwlo-release.*' -o -name 'tiwlo-src.*' -o -name 'tiwlo-npm-cache.*' \) \
-      -mmin +360 -exec rm -rf -- {} + 2>>"$LOG_FILE" || log "Stale deployment workspace cleanup was skipped"
-  fi
-  find "$MODELS_DIR" -type f -name '*.part' -mtime +1 -delete 2>>"$LOG_FILE" || true
-  find "$LOG_DIR" -type f -name '*.log.*' -mtime +14 -delete 2>>"$LOG_FILE" || true
-
-  after="$(root_available_bytes || echo 0)"
-  if [[ "$before" =~ ^[0-9]+$ && "$after" =~ ^[0-9]+$ && "$after" -ge "$before" ]]; then
-    recovered=$((after - before))
-  fi
-  progress 100 "Safe cache cleanup completed; recovered $((recovered / 1024 / 1024)) MB"
-  finish_ok "cache cleared"
-}
-
-json_escape() {
-  node -e 'console.log(JSON.stringify(process.argv[1] || ""))' "$1"
-}
-
-emit() {
-  local ok="$1" status="$2" error="${3:-}"
-  if [ "$JSON" = "1" ]; then
-    printf '{"ok":%s,"status":%s,"error":%s}\n' "$ok" "$(json_escape "$status")" "$(json_escape "$error")"
-  else
-    printf '%s\n' "$status"
-  fi
-}
-
+json_escape() { node -e 'console.log(JSON.stringify(process.argv[1] || ""))' "$1"; }
+emit() { [ "$JSON" = 1 ] && printf '{"ok":%s,"status":%s,"error":%s}\n' "$1" "$(json_escape "$2")" "$(json_escape "${3:-}")" || printf '%s\n' "$2"; }
 finish_ok() { emit true "$1"; }
-finish_error() { emit false "error" "$1"; exit 1; }
+finish_error() { emit false error "$1"; exit 1; }
 
 compose() {
   local env_file="$SECRETS_DIR/crawl4ai.env"
@@ -95,22 +50,13 @@ compose() {
 
 write_secret() {
   local file="$1"
-  if [ ! -s "$file" ] || ! grep -Eq '^[a-f0-9]{64}$' "$file"; then
-    umask 077
-    od -An -N32 -tx1 /dev/urandom | tr -d ' \n' >"$file"
-  fi
+  if [ ! -s "$file" ] || ! grep -Eq '^[a-f0-9]{64}$' "$file"; then umask 077; od -An -N32 -tx1 /dev/urandom | tr -d ' \n' >"$file"; fi
   chmod 600 "$file"
 }
 
 ensure_crawl4ai_credentials() {
-  # Crawl4AI 0.9+ deliberately binds only inside its own container when no
-  # credential is configured. Persist private credentials outside the release
-  # directory so upgrades do not invalidate API access or expose the port.
-  mkdir -p "$SECRETS_DIR"
-  chmod 700 "$SECRETS_DIR"
-  write_secret "$SECRETS_DIR/crawl4ai-api-token"
-  write_secret "$SECRETS_DIR/crawl4ai-secret-key"
-  write_secret "$SECRETS_DIR/crawl4ai-redis-password"
+  mkdir -p "$SECRETS_DIR"; chmod 700 "$SECRETS_DIR"
+  write_secret "$SECRETS_DIR/crawl4ai-api-token"; write_secret "$SECRETS_DIR/crawl4ai-secret-key"; write_secret "$SECRETS_DIR/crawl4ai-redis-password"
   umask 077
   cat >"$SECRETS_DIR/crawl4ai.env" <<EOF
 CRAWL4AI_API_TOKEN=$(tr -d '\r\n' <"$SECRETS_DIR/crawl4ai-api-token")
@@ -122,460 +68,177 @@ EOF
 
 ensure_docker() {
   if have docker && { docker compose version >/dev/null 2>&1 || have docker-compose; }; then return; fi
-  [ "$(id -u)" -eq 0 ] || die "Docker is missing and Social AI bootstrap requires a privileged deployment run."
-  have apt-get || die "Docker is missing and this server is not an apt-based Linux host."
-  progress 8 "Installing Docker dependencies"
+  [ "$(id -u)" -eq 0 ] || die 'Docker is missing and the Social AI bootstrap requires a privileged deployment run.'
+  have apt-get || die 'Docker is missing and this server is not an apt-based Linux host.'
+  progress 8 'Installing Docker dependencies'
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -y >>"$LOG_FILE" 2>&1
-  # Ubuntu releases commonly provide docker-compose-plugin while Debian and
-  # older VPS images package the compatible CLI as docker-compose. Support
-  # both without making a missing plugin package abort the whole deployment.
   if ! apt-get install -y ca-certificates curl docker.io docker-compose-plugin >>"$LOG_FILE" 2>&1; then
-    log "docker-compose-plugin is unavailable; retrying with docker-compose compatibility package"
+    log 'docker-compose-plugin is unavailable; retrying with docker-compose compatibility package'
     apt-get install -y ca-certificates curl docker.io docker-compose >>"$LOG_FILE" 2>&1
   fi
   systemctl enable --now docker >>"$LOG_FILE" 2>&1 || true
-  have docker || die "Docker installation did not complete"
-  { docker compose version >/dev/null 2>&1 || have docker-compose; } || die "Docker Compose installation did not complete"
-}
-
-policy_variant() {
-  # Select once per persistent Social AI data directory.  The 3B policy model
-  # needs several GB free *in addition to* the crawler and backend.  Small VPS
-  # plans must stay functional, so use the official 0.5B Q4 model when fewer
-  # than 5 GiB are currently available.  An operator can explicitly override
-  # this with TIWLO_SOCIAL_AI_POLICY_MODEL=standard|compact.
-  local requested="${TIWLO_SOCIAL_AI_POLICY_MODEL:-}" persisted="" available="0" selected="compact"
-  case "$requested" in
-    standard|compact) printf '%s\n' "$requested"; return ;;
-  esac
-  if [ -s "$STATE_DIR/text-policy-variant" ]; then
-    persisted="$(tr -d '\r\n' <"$STATE_DIR/text-policy-variant")"
-    case "$persisted" in standard|compact) printf '%s\n' "$persisted"; return ;; esac
-  fi
-  if [ -r /proc/meminfo ]; then available="$(awk '/^MemAvailable:/ { print $2; exit }' /proc/meminfo 2>/dev/null || echo 0)"; fi
-  if [[ "$available" =~ ^[0-9]+$ ]] && [ "$available" -ge 5242880 ]; then selected="standard"; fi
-  printf '%s\n' "$selected" >"$STATE_DIR/text-policy-variant"
-  printf '%s\n' "$selected"
-}
-
-policy_model_file() {
-  case "$(policy_variant)" in
-    standard) echo "qwen2.5-3b-instruct-q4_k_m.gguf" ;;
-    *) echo "qwen2.5-0.5b-instruct-q4_k_m.gguf" ;;
-  esac
-}
-
-policy_model_url() {
-  case "$(policy_variant)" in
-    standard) echo "https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q4_k_m.gguf?download=true" ;;
-    *) echo "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf?download=true" ;;
-  esac
+  have docker || die 'Docker installation did not complete'
 }
 
 write_compose() {
-  local active_model="text-policy" model_file_name="" mmproj_line="" context_size="4096" parallelism="2"
   ensure_crawl4ai_credentials
-  [ -f "$STATE_DIR/active-model" ] && active_model="$(cat "$STATE_DIR/active-model" 2>/dev/null || echo text-policy)"
-  model_file_name="$(model_file "$active_model")"
-  if [ "$active_model" = "text-policy" ] && [ "$(policy_variant)" = "compact" ]; then
-    # The compact model is chosen specifically for low-memory VPS plans.
-    context_size="2048"
-    parallelism="1"
-  fi
-  if [ "$active_model" = "vision-review" ]; then
-    mmproj_line=', "--mmproj", "/models/moondream2-mmproj-f16.gguf"'
-  fi
-  cat >"$COMPOSE_FILE" <<'YAML'
+  cat >"$COMPOSE_FILE" <<EOF
 services:
   searxng:
     image: searxng/searxng:latest
     restart: unless-stopped
     ports: ["127.0.0.1:8081:8080"]
-    volumes:
-      - ./searxng:/etc/searxng
-    environment:
-      - SEARXNG_BASE_URL=http://127.0.0.1:8081/
-      - SEARXNG_SECRET=${SEARXNG_SECRET:-tiwlo-social-ai-local}
+    volumes: ["$STATE_DIR/searxng:/etc/searxng"]
   crawl4ai:
-    # Use the maintained server image rather than the legacy `basic` image.
-    # The upstream project documents `latest` for self-hosted deployments and
-    # ships the HTTP health endpoint in that image.
     image: unclecode/crawl4ai:latest
     restart: unless-stopped
     ports: ["127.0.0.1:11235:11235"]
-    shm_size: 1gb
     environment:
-      CRAWL4AI_API_TOKEN: ${CRAWL4AI_API_TOKEN}
-      # A credential is required by Crawl4AI 0.9+ before it exposes the
-      # container socket. Keep the host mapping loopback-only above.
-      GUNICORN_BIND: 0.0.0.0:11235
-      SECRET_KEY: ${CRAWL4AI_SECRET_KEY}
-      REDIS_PASSWORD: ${CRAWL4AI_REDIS_PASSWORD}
-  llama-cpp:
-    # `ggerganov/llama.cpp` is an old publish mirror. The maintained upstream
-    # image is owned by ggml-org and is the only image line we support here.
-    image: ghcr.io/ggml-org/llama.cpp:server
-    restart: unless-stopped
-    ports: ["127.0.0.1:8082:8080"]
-    volumes:
-      - ./models:/models:ro
-YAML
-  printf '    command: ["-m", "/models/%s", "--host", "0.0.0.0", "--port", "8080", "--ctx-size", "%s", "--parallel", "%s"%s]\n' "$model_file_name" "$context_size" "$parallelism" "$mmproj_line" >>"$COMPOSE_FILE"
+      CRAWL4AI_API_TOKEN: \${CRAWL4AI_API_TOKEN}
+      CRAWL4AI_SECRET_KEY: \${CRAWL4AI_SECRET_KEY}
+      CRAWL4AI_REDIS_PASSWORD: \${CRAWL4AI_REDIS_PASSWORD}
+EOF
 }
 
 ensure_searxng_config() {
   mkdir -p "$STATE_DIR/searxng"
-  # This is an internal-only service. Keeping the limiter off avoids an
-  # unnecessary Redis dependency and makes the image boot on small VPS hosts.
-  cat >"$STATE_DIR/searxng/settings.yml" <<'YAML'
+  [ -f "$STATE_DIR/searxng/settings.yml" ] || cat >"$STATE_DIR/searxng/settings.yml" <<'EOF'
 use_default_settings: true
-general:
-  instance_name: "Tiwlo Social AI Search"
 server:
   bind_address: "0.0.0.0"
   port: 8080
-  secret_key: "tiwlo-social-ai-local"
-  limiter: false
-  public_instance: false
+  secret_key: "tiwi-social-ai"
 search:
-  safe_search: 1
-  formats:
-    - html
-    - json
-YAML
+  formats: [html, json]
+EOF
 }
 
-model_file() {
-  case "$1" in
-    text-policy) policy_model_file ;;
-    vision-review) echo "moondream2-text-model-f16.gguf" ;;
-    embedding) echo "nomic-embed-text-v1.5.Q4_K_M.gguf" ;;
-    moderation-vision) echo "nsfwjs-mobilenet-v2-mid" ;;
-    *) return 1 ;;
-  esac
-}
-
-model_url() {
-  case "$1" in
-    text-policy) policy_model_url ;;
-    vision-review) echo "https://huggingface.co/moondream/moondream2-gguf/resolve/main/moondream2-text-model-f16.gguf?download=true" ;;
-    embedding) echo "https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.Q4_K_M.gguf?download=true" ;;
-    *) return 1 ;;
-  esac
-}
-
-vision_projection_url() { echo "https://huggingface.co/moondream/moondream2-gguf/resolve/main/moondream2-mmproj-f16.gguf?download=true"; }
-
-verify_gguf() {
-  [ -s "$1" ] || return 1
-  [ "$(head -c 4 "$1" 2>/dev/null || true)" = "GGUF" ]
-}
-
-download_model() {
-  local id="$1" file url target part
-  if [ "$id" = "moderation-vision" ]; then
-    [ -d "$ROOT/x/node_modules/nsfwjs" ] || die "The Social backend dependency nsfwjs is missing. Run the normal backend deployment first."
-    progress 100 "Verified local NSFW moderation model"
-    return
-  fi
-  file="$(model_file "$id")" || die "Unknown model $id"
-  url="$(model_url "$id")"
-  target="$MODELS_DIR/$file"
-  part="$target.part"
-  if verify_gguf "$target"; then progress 100 "Verified $id"; return; fi
-  # A completed download can be left as .part if the process was interrupted
-  # between validation and rename. Do not issue a byte-range request against
-  # an already complete Hugging Face object: that returns HTTP 416 and used to
-  # make a healthy model look like a failed download.
-  if verify_gguf "$part"; then
-    mv "$part" "$target"
-    progress 100 "Verified $id"
-    return
-  fi
-  have curl || { [ "$(id -u)" -eq 0 ] && apt-get install -y curl >>"$LOG_FILE" 2>&1 || die "curl is required to download models"; }
-  progress 25 "Downloading $id"
-  rm -f "$target" 2>/dev/null || true
-  if [ -s "$part" ]; then
-    curl --fail --location --retry 5 --retry-delay 2 --continue-at - --output "$part" "$url" >>"$LOG_FILE" 2>&1 || die "Download failed for $id"
-  else
-    curl --fail --location --retry 5 --retry-delay 2 --output "$part" "$url" >>"$LOG_FILE" 2>&1 || die "Download failed for $id"
-  fi
-  progress 85 "Verifying $id"
-  if ! verify_gguf "$part"; then
-    rm -f "$part"
-    die "Model verification failed for $id"
-  fi
-  mv "$part" "$target"
-  if [ "$id" = "vision-review" ]; then
-    local projection="$MODELS_DIR/moondream2-mmproj-f16.gguf" projection_part="$MODELS_DIR/moondream2-mmproj-f16.gguf.part"
-    if ! verify_gguf "$projection"; then
-    progress 92 "Downloading vision projection"
-      if verify_gguf "$projection_part"; then
-        :
-      elif [ -s "$projection_part" ]; then
-        curl --fail --location --retry 5 --retry-delay 2 --continue-at - --output "$projection_part" "$(vision_projection_url)" >>"$LOG_FILE" 2>&1 || die "Download failed for vision projection"
-      else
-        curl --fail --location --retry 5 --retry-delay 2 --output "$projection_part" "$(vision_projection_url)" >>"$LOG_FILE" 2>&1 || die "Download failed for vision projection"
-      fi
-      if ! verify_gguf "$projection_part"; then
-        rm -f "$projection_part"
-        die "Vision projection verification failed"
-      fi
-      mv "$projection_part" "$projection"
-    fi
-  fi
-  progress 100 "Installed and verified $id"
+gemini_configured() { [ -n "${SOCIAL_GEMINI_API_KEY:-${GEMINI_API_KEY:-}}" ]; }
+gemini_model() { printf '%s' "${SOCIAL_GEMINI_MODEL:-gemini-flash-latest}"; }
+gemini_test() {
+  gemini_configured || return 1
+  local key="${SOCIAL_GEMINI_API_KEY:-${GEMINI_API_KEY:-}}" model response
+  model="$(gemini_model)"
+  response="$(curl -fsS --max-time 30 "https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent" \
+    -H 'Content-Type: application/json' -H "X-goog-api-key: $key" \
+    -d '{"contents":[{"parts":[{"text":"Return exactly {\\"ok\\":true}."}]}],"generationConfig":{"temperature":0,"maxOutputTokens":32,"responseMimeType":"application/json"}}' 2>>"$LOG_FILE" || true)"
+  node -e 'const body=JSON.parse(process.argv[1]||"{}"); const text=(body.candidates||[]).flatMap(x=>(x.content||{}).parts||[]).map(x=>x.text||"").join("\n"); process.exit(JSON.parse(text).ok===true?0:1);' "$response" 2>/dev/null
 }
 
 service_healthy() {
   case "$1" in
-    # The homepage is a stable local readiness endpoint. A search request can
-    # legitimately be rate-limited by an upstream engine even while SearXNG is
-    # healthy, so it must not make package startup fail.
-    searxng) curl -fsS --max-time 5 "http://127.0.0.1:8081/" >/dev/null 2>&1 ;;
-    # Recent Crawl4AI images expose /health.  Older images used by existing
-    # deployments may expose the FastAPI docs or playground first, while the
-    # browser pool warms in the background.  Treat any local successful HTTP
-    # response as a readiness signal; the worker's actual crawl request still
-    # performs the functional check before using this service.
-    crawl4ai)
-      curl -fsS --max-time 5 "http://127.0.0.1:11235/health" >/dev/null 2>&1 ||
-      curl -fsS --max-time 5 "http://127.0.0.1:11235/docs" >/dev/null 2>&1 ||
-      curl -fsS --max-time 5 "http://127.0.0.1:11235/playground" >/dev/null 2>&1
-      ;;
-    llama-cpp) curl -fsS --max-time 5 "http://127.0.0.1:8082/health" >/dev/null 2>&1 ;;
+    gemini-api) gemini_configured ;;
+    searxng) curl -fsS --max-time 5 http://127.0.0.1:8081/ >/dev/null 2>&1 ;;
+    crawl4ai) curl -fsS --max-time 5 http://127.0.0.1:11235/health >/dev/null 2>&1 || curl -fsS --max-time 5 http://127.0.0.1:11235/docs >/dev/null 2>&1 || curl -fsS --max-time 5 http://127.0.0.1:11235/playground >/dev/null 2>&1 ;;
     queue-worker) systemctl is-active --quiet tiwlo-social-ai-worker.service 2>/dev/null ;;
     health-monitor) systemctl is-active --quiet tiwlo-social-ai-health.timer 2>/dev/null ;;
     *) return 1 ;;
   esac
 }
 
-append_service_diagnostics() {
-  local id="$1"
-  {
-    printf '\n===== %s diagnostic %s =====\n' "$id" "$(date -u +%FT%TZ)"
-    compose ps "$id" || true
-    compose logs --tail 120 "$id" || true
-    printf '\n===== %s localhost probes =====\n' "$id"
-    case "$id" in
-      crawl4ai)
-        curl -i --max-time 8 "http://127.0.0.1:11235/health" || true
-        curl -i --max-time 8 "http://127.0.0.1:11235/docs" || true
-        ;;
-      searxng) curl -i --max-time 8 "http://127.0.0.1:8081/" || true ;;
-      llama-cpp) curl -i --max-time 8 "http://127.0.0.1:8082/health" || true ;;
-    esac
-  } 2>&1 | tee -a "$LOG_FILE" >&2
+cleanup_local_models() {
+  progress 12 'Removing retired local AI models and llama.cpp runtime'
+  if have docker; then
+    docker ps -aq --filter 'name=social-ai-llama-cpp' | xargs -r docker rm -f >>"$LOG_FILE" 2>&1 || true
+    docker image rm ghcr.io/ggml-org/llama.cpp:server >>"$LOG_FILE" 2>&1 || true
+  fi
+  rm -rf "$STATE_DIR/models" "$STATE_DIR/llama" "$STATE_DIR/active-model" "$STATE_DIR/default-model" "$STATE_DIR/text-policy-variant" "$STATE_DIR"/autoload-* 2>>"$LOG_FILE" || true
 }
 
 start_service() {
-  local id="$1"
+  local id="$1" attempts=45
   case "$id" in
+    gemini-api)
+      gemini_configured || die 'Social Gemini API key is not configured in the protected server environment.'
+      progress 70 "Verifying $(gemini_model) API configuration"; service_healthy gemini-api; progress 100 'Gemini API is configured'; return ;;
     searxng|crawl4ai)
-      ensure_docker; write_compose; ensure_searxng_config
-      progress 45 "Starting $id"
-      if ! compose up -d "$id" >>"$LOG_FILE" 2>&1; then
-        append_service_diagnostics "$id"
-        die "$id could not be started; inspect $LOG_FILE"
-      fi
-      ;;
-    llama-cpp)
-      ensure_docker; write_compose
-      local active_model="text-policy"
-      [ -f "$STATE_DIR/active-model" ] && active_model="$(cat "$STATE_DIR/active-model" 2>/dev/null || echo text-policy)"
-      download_model "$active_model"
-      progress 65 "Starting llama.cpp"
-      # Recreate explicitly: deployments can otherwise retain an obsolete
-      # ggerganov mirror container after the compose image is upgraded.
-      if ! compose up -d --force-recreate llama-cpp >>"$LOG_FILE" 2>&1; then
-        append_service_diagnostics "$id"
-        die "llama.cpp could not be started; inspect $LOG_FILE"
-      fi
-      ;;
+      ensure_docker; write_compose; ensure_searxng_config; progress 45 "Starting $id"
+      compose up -d "$id" >>"$LOG_FILE" 2>&1 || die "$id could not be started; inspect $LOG_FILE"
+      [ "$id" = crawl4ai ] && attempts=120 ;;
     queue-worker|health-monitor)
       [ "$(id -u)" -eq 0 ] || die "$id requires the deployment bootstrap to install its systemd unit"
-      if [ "$id" = "queue-worker" ]; then
-        systemctl enable --now tiwlo-social-ai-worker.service >>"$LOG_FILE" 2>&1
-      else
-        systemctl enable --now tiwlo-social-ai-health.timer >>"$LOG_FILE" 2>&1
-      fi
-      ;;
+      if [ "$id" = queue-worker ]; then systemctl enable --now tiwlo-social-ai-worker.service >>"$LOG_FILE" 2>&1; else systemctl enable --now tiwlo-social-ai-health.timer >>"$LOG_FILE" 2>&1; fi ;;
     *) die "Unknown package $id" ;;
   esac
-  # Chromium/browser-pool startup is substantially slower than the lightweight
-  # SearXNG service, especially after a VPS reboot or a first image pull.
-  # Give Crawl4AI four minutes before reporting a real failure.
-  local attempts=45
-  [ "$id" = "crawl4ai" ] && attempts=120
-  # A 3B GGUF can take several minutes to memory-map and initialise on a
-  # CPU-only VPS. Do not classify a live model load as a package failure.
-  [ "$id" = "llama-cpp" ] && attempts=180
   for _ in $(seq 1 "$attempts"); do service_healthy "$id" && { progress 100 "$id is healthy"; return; }; sleep 2; done
-  append_service_diagnostics "$id"
   die "$id did not become healthy; inspect $LOG_FILE"
 }
 
 stop_service() {
   case "$1" in
-    searxng|crawl4ai|llama-cpp) compose stop "$1" >>"$LOG_FILE" 2>&1 ;;
+    searxng|crawl4ai) compose stop "$1" >>"$LOG_FILE" 2>&1 ;;
     queue-worker) systemctl disable --now tiwlo-social-ai-worker.service >>"$LOG_FILE" 2>&1 ;;
     health-monitor) systemctl disable --now tiwlo-social-ai-health.timer >>"$LOG_FILE" 2>&1 ;;
+    gemini-api) die 'Gemini is a hosted provider. Remove its protected server key to disable it.' ;;
     *) die "Unknown package $1" ;;
   esac
   progress 100 "$1 stopped"
 }
 
 restart_service() {
-  local id="$1"
-  case "$id" in
-    searxng|crawl4ai|llama-cpp)
-      ensure_docker; write_compose
-      if [ "$id" = "llama-cpp" ]; then
-        local active_model="text-policy"
-        [ -f "$STATE_DIR/active-model" ] && active_model="$(cat "$STATE_DIR/active-model" 2>/dev/null || echo text-policy)"
-        download_model "$active_model"
-      fi
-      if [ "$id" = "llama-cpp" ]; then
-        compose up -d --force-recreate "$id" >>"$LOG_FILE" 2>&1
-      else
-        compose restart "$id" >>"$LOG_FILE" 2>&1
-      fi
-      ;;
-    queue-worker) systemctl enable --now tiwlo-social-ai-worker.service >>"$LOG_FILE" 2>&1; systemctl restart tiwlo-social-ai-worker.service >>"$LOG_FILE" 2>&1 ;;
-    health-monitor) systemctl enable --now tiwlo-social-ai-health.timer >>"$LOG_FILE" 2>&1; systemctl start tiwlo-social-ai-health.service >>"$LOG_FILE" 2>&1 || true ;;
-    *) die "Unknown package $id" ;;
-  esac
-  local attempts=18
-  [ "$id" = "llama-cpp" ] && attempts=180
-  for _ in $(seq 1 "$attempts"); do service_healthy "$id" && { progress 100 "$id restarted and healthy"; return; }; sleep 2; done
-  append_service_diagnostics "$id"
-  die "$id did not become healthy after restart"
+  [ "$1" = gemini-api ] || stop_service "$1"
+  start_service "$1"
+  progress 100 "$1 restarted and healthy"
 }
 
 health_json() {
-  local searx="false" crawl="false" llama="false" text="false" vision="false" embed="false" nsfw="false"
-  service_healthy searxng && searx="true" || true
-  service_healthy crawl4ai && crawl="true" || true
-  service_healthy llama-cpp && llama="true" || true
-  verify_gguf "$MODELS_DIR/qwen2.5-3b-instruct-q4_k_m.gguf" && text="true" || true
-  verify_gguf "$MODELS_DIR/moondream2-text-model-f16.gguf" && vision="true" || true
-  verify_gguf "$MODELS_DIR/nomic-embed-text-v1.5.Q4_K_M.gguf" && embed="true" || true
-  [ -d "$ROOT/x/node_modules/nsfwjs" ] && nsfw="true" || true
-  printf '{"ok":true,"status":"ready","health":{"packages":{"searxng":{"healthy":%s},"crawl4ai":{"healthy":%s},"llama-cpp":{"healthy":%s},"queue-worker":{"healthy":%s},"health-monitor":{"healthy":%s}},"models":{"text-policy":{"healthy":%s},"vision-review":{"healthy":%s},"embedding":{"healthy":%s},"moderation-vision":{"healthy":%s}},"services":{"searxng":%s,"crawl4ai":%s,"llama-cpp":%s}}}\n' "$searx" "$crawl" "$llama" "$(service_healthy queue-worker && echo true || echo false)" "$(service_healthy health-monitor && echo true || echo false)" "$text" "$vision" "$embed" "$nsfw" "$searx" "$crawl" "$llama"
+  local gemini=false searx=false crawl=false worker=false monitor=false
+  service_healthy gemini-api && gemini=true || true; service_healthy searxng && searx=true || true; service_healthy crawl4ai && crawl=true || true
+  service_healthy queue-worker && worker=true || true; service_healthy health-monitor && monitor=true || true
+  printf '{"ok":true,"status":"ready","health":{"packages":{"gemini-api":{"healthy":%s,"model":%s},"searxng":{"healthy":%s},"crawl4ai":{"healthy":%s},"queue-worker":{"healthy":%s},"health-monitor":{"healthy":%s}},"models":{"gemini-flash":{"healthy":%s,"status":%s}},"services":{"searxng":%s,"crawl4ai":%s}}}\n' "$gemini" "$(json_escape "$(gemini_model)")" "$searx" "$crawl" "$worker" "$monitor" "$gemini" "$(json_escape "$([ "$gemini" = true ] && echo configured || echo not_configured)")" "$searx" "$crawl"
 }
 
 ensure_feature() {
+  start_service gemini-api
   case "$1" in
-    verification) start_service searxng; start_service crawl4ai; download_model text-policy; download_model embedding; start_service llama-cpp ;;
-    reportReview|postReview|commentReview|messageModeration|appeal|harassment|hateSpeech|threat|drugSale|selfHarm) download_model text-policy; start_service llama-cpp ;;
-    imageModeration|videoCaptionModeration|adultContent|violence|weaponSale) download_model moderation-vision; download_model vision-review; start_service llama-cpp ;;
-    spam|scam|fakeAccount|fakeProfile|impersonation|copyright) download_model embedding; download_model text-policy; start_service llama-cpp ;;
-    warning|strike|notificationAutomation) progress 100 "$1 uses the persistent Social API and needs no external model" ;;
-    *) die "Unknown Social AI feature $1" ;;
+    verification) start_service searxng; start_service crawl4ai ;;
+    reportReview) start_service crawl4ai ;;
+    *) : ;;
   esac
+  progress 100 "$1 is ready through Gemini"
 }
 
-for arg in "$@"; do [ "$arg" = "--json" ] && JSON="1"; done
-command="${1:-}"; action="${2:-}"; id="${3:-}"
+cleanup_runtime_cache() {
+  [ "$(id -u)" -eq 0 ] || die 'Safe cache cleanup requires a privileged backend service'
+  progress 5 'Cleaning retired Social AI local runtime'
+  cleanup_local_models
+  find "$LOG_DIR" -type f -name '*.log.*' -mtime +14 -delete 2>>"$LOG_FILE" || true
+  progress 100 'Social AI local model cache removed'
+  finish_ok 'cache cleared'
+}
 
-# Bootstrap, repairs and model reloads all rewrite the same Compose project.
-# The backend worker, systemd worker and health timer can legitimately request
-# those actions close together after a deployment.  Serialize only mutating
-# manager calls so Docker never races two `--force-recreate` operations or
-# leaves a half-created llama container behind. Health reads remain immediate.
-if [ "$command" != "health" ] && ! { [ "$command" = "package" ] && [ "$action" = "logs" ]; }; then
-  if have flock; then
-    exec 9>"$STATE_DIR/manager.lock"
-    flock -w "${TIWLO_SOCIAL_AI_LOCK_TIMEOUT_SECONDS:-1800}" 9 || die "Another Social AI maintenance operation is still running"
-  fi
+for arg in "$@"; do [ "$arg" = --json ] && JSON=1; done
+command="${1:-}"; action="${2:-}"; id="${3:-}"
+if [ "$command" != health ] && ! { [ "$command" = package ] && [ "$action" = logs ]; }; then
+  if have flock; then exec 9>"$STATE_DIR/manager.lock"; flock -w "${TIWLO_SOCIAL_AI_LOCK_TIMEOUT_SECONDS:-1800}" 9 || die 'Another Social AI maintenance operation is running'; fi
 fi
 
 case "$command" in
   health) health_json ;;
   cleanup) cleanup_runtime_cache ;;
   bootstrap)
-    progress 3 "Preparing Social AI infrastructure"
-    ensure_docker; [ -f "$STATE_DIR/active-model" ] || printf '%s\n' "text-policy" >"$STATE_DIR/active-model"; write_compose; ensure_searxng_config
-    compose pull searxng crawl4ai llama-cpp >>"$LOG_FILE" 2>&1 || true
-    # Keep the independent Social AI services progressing even when one
-    # optional dependency (usually the browser crawler) is still warming or
-    # needs repair. The persisted health timer retries the failed component.
-    # A non-zero final status still accurately reports that repair is pending.
-    bootstrap_pending=0
-    progress 15 "Installing SearXNG"; if ! (start_service searxng); then bootstrap_pending=1; log "SearXNG is pending repair; continuing Social AI bootstrap"; fi
-    progress 35 "Installing Crawl4AI"; if ! (start_service crawl4ai); then bootstrap_pending=1; log "Crawl4AI is pending repair; continuing Social AI bootstrap"; fi
-    progress 55 "Installing default Social AI models"; if ! (download_model text-policy; download_model embedding; download_model moderation-vision); then bootstrap_pending=1; log "One or more Social AI models are pending repair"; fi
-    progress 78 "Starting llama.cpp"; if ! (start_service llama-cpp); then bootstrap_pending=1; log "llama.cpp is pending repair; continuing Social AI bootstrap"; fi
-    progress 90 "Verifying Social AI health"; health_json
-    # If the final health snapshot is fully ready, an earlier transient model
-    # CDN retry must not leave deployment marked as pending repair.
-    if service_healthy searxng && service_healthy crawl4ai && service_healthy llama-cpp && verify_gguf "$MODELS_DIR/$(model_file text-policy)" && verify_gguf "$MODELS_DIR/$(model_file embedding)" && [ -d "$ROOT/x/node_modules/nsfwjs" ]; then
-      bootstrap_pending=0
-    fi
-    [ "$bootstrap_pending" -eq 0 ] || exit 1
+    progress 3 'Preparing Social AI infrastructure'; cleanup_local_models
+    progress 18 'Verifying Gemini API'; start_service gemini-api
+    progress 38 'Installing SearXNG'; start_service searxng
+    progress 58 'Installing Crawl4AI'; start_service crawl4ai
+    progress 78 'Starting persistent Social AI workers'; start_service queue-worker; start_service health-monitor
+    progress 92 'Verifying Social AI health'; health_json
     ;;
   package)
     case "$action" in
-      install|enable|start|autostart|test) start_service "$id"; finish_ok "ready" ;;
-      restart) restart_service "$id"; finish_ok "restarted" ;;
-      repair)
-        if [[ "$id" =~ ^(searxng|crawl4ai|llama-cpp)$ ]]; then ensure_docker; write_compose; compose pull "$id" >>"$LOG_FILE" 2>&1 || true; fi
-        restart_service "$id"; finish_ok "repaired"
-        ;;
-      update)
-        if [[ "$id" =~ ^(searxng|crawl4ai|llama-cpp)$ ]]; then
-          ensure_docker; write_compose; compose pull "$id" >>"$LOG_FILE" 2>&1
-        fi
-        start_service "$id"; finish_ok "updated"
-        ;;
-      disable|stop) stop_service "$id"; finish_ok "stopped" ;;
-      health) service_healthy "$id" && finish_ok "healthy" || finish_error "$id is unhealthy" ;;
-      logs) tail -n 160 "$LOG_FILE"; finish_ok "logs" ;;
-      *) finish_error "Unsupported package action" ;;
-    esac
-    ;;
+      install|enable|start|autostart) start_service "$id"; finish_ok ready ;;
+      restart) restart_service "$id"; finish_ok restarted ;;
+      repair|update) [ "$id" = gemini-api ] || { ensure_docker; write_compose; compose pull "$id" >>"$LOG_FILE" 2>&1 || true; }; start_service "$id"; finish_ok repaired ;;
+      disable|stop) stop_service "$id"; finish_ok stopped ;;
+      health) service_healthy "$id" && finish_ok healthy || finish_error "$id is unhealthy" ;;
+      test) [ "$id" = gemini-api ] && gemini_test && finish_ok connected || { [ "$id" = gemini-api ] && finish_error 'Gemini API connection test failed'; service_healthy "$id" && finish_ok healthy || finish_error "$id is unhealthy"; } ;;
+      logs) tail -n 160 "$LOG_FILE"; finish_ok logs ;;
+      *) finish_error 'Unsupported package action' ;;
+    esac ;;
   model)
-    case "$action" in
-      download|resume|install|repair) download_model "$id"; finish_ok "installed" ;;
-      update)
-        [ "$id" = "moderation-vision" ] || rm -f "$MODELS_DIR/$(model_file "$id")"
-        download_model "$id"; finish_ok "updated"
-        ;;
-      load|run|restart)
-        [ "$id" = "moderation-vision" ] && die "The local NSFW vision model is loaded by the Social media worker, not llama.cpp"
-        printf '%s\n' "$id" >"$STATE_DIR/active-model"
-        download_model "$id"
-        if [ "$action" = "restart" ]; then restart_service llama-cpp; else start_service llama-cpp; fi
-        finish_ok "running"
-        ;;
-      default)
-        [ "$id" = "text-policy" ] || die "Only the policy text model can be the default llama.cpp server model"
-        printf '%s\n' "$id" >"$STATE_DIR/default-model"
-        printf '%s\n' "$id" >"$STATE_DIR/active-model"
-        download_model text-policy; start_service llama-cpp; finish_ok "default"
-        ;;
-      autoload)
-        printf '%s\n' "$id" >"$STATE_DIR/autoload-${id}"
-        download_model "$id"
-        if [ "$id" = "text-policy" ]; then start_service llama-cpp; fi
-        finish_ok "autoload enabled"
-        ;;
-      delete) [ "$id" != "text-policy" ] || die "The default policy model cannot be deleted while Social AI is enabled"; rm -f "$MODELS_DIR/$(model_file "$id")"; [ "$id" != "vision-review" ] || rm -f "$MODELS_DIR/moondream2-mmproj-f16.gguf"; progress 100 "$id removed"; finish_ok "deleted" ;;
-      health)
-        if [ "$id" = "moderation-vision" ]; then
-          [ -d "$ROOT/x/node_modules/nsfwjs" ] || die "Local NSFW moderation dependency is unavailable"
-        else
-          verify_gguf "$MODELS_DIR/$(model_file "$id")" || die "$id failed model verification"
-        fi
-        finish_ok "healthy"
-        ;;
-      *) finish_error "Unsupported model action" ;;
-    esac
-    ;;
-  feature)
-    [ "$action" = "ensure" ] || finish_error "Unsupported feature action"
-    ensure_feature "$id"; finish_ok "ready"
-    ;;
-  *) finish_error "Usage: manager.sh health|cleanup|bootstrap|package|model|feature" ;;
+    [ "$id" = gemini-flash ] || finish_error 'Unknown hosted model'
+    case "$action" in health) service_healthy gemini-api && finish_ok healthy || finish_error 'Gemini API is not configured' ;; test) gemini_test && finish_ok connected || finish_error 'Gemini API connection test failed' ;; *) finish_error 'Gemini is hosted; model files are not downloaded to this server.' ;; esac ;;
+  feature) [ "$action" = ensure ] || finish_error 'Unsupported feature action'; ensure_feature "$id"; finish_ok ready ;;
+  *) finish_error 'Usage: manager.sh health|cleanup|bootstrap|package|model|feature' ;;
 esac

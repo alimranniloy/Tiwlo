@@ -67,7 +67,7 @@ const SOCIAL_DEFAULTS = Object.freeze({
     reviewThreshold: 0.38,
     sexyBlockThreshold: 0.88,
     blockedWords: [],
-    provider: 'local-nsfwjs-mobilenet-v2-mid'
+    provider: 'gemini-flash-latest'
   },
   stunServers: [{ urls: 'stun:stun.l.google.com:19302' }]
 });
