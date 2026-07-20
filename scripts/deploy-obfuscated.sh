@@ -548,6 +548,15 @@ ensure_runtime_env_files() {
   set_env_value_if_missing "$backend_env" PORT "$BACKEND_PORT"
   set_env_value_if_missing "$backend_env" FRONTEND_ORIGIN "$frontend_origin"
   set_env_value_if_missing "$backend_env" API_BASE_URL "$api_base_url"
+  # Social AI is a hosted Gemini integration. Keep its protected runtime
+  # configuration outside Git and copy any root-level update into the backend
+  # environment used by systemd after each clean deployment.
+  local social_ai_key
+  for social_ai_key in SOCIAL_GEMINI_API_KEY SOCIAL_GEMINI_MODEL SOCIAL_GEMINI_API_BASE_URL SOCIAL_GEMINI_TIMEOUT_MS; do
+    local social_ai_value
+    social_ai_value="$(read_env_value "$root_env" "$social_ai_key")"
+    [ -n "$social_ai_value" ] && set_env_value "$backend_env" "$social_ai_key" "$social_ai_value"
+  done
 }
 
 merge_backend_env_from_preserve() {

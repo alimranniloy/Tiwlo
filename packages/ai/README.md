@@ -14,6 +14,8 @@ provider later:
 ```text
 SOCIAL_GEMINI_API_KEY=...
 SOCIAL_GEMINI_MODEL=gemini-flash-latest
+# Optional only when your infrastructure routes Gemini through an approved gateway.
+SOCIAL_GEMINI_API_BASE_URL=https://generativelanguage.googleapis.com
 ```
 
 Runtime data stays outside source code in:

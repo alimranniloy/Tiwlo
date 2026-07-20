@@ -8,6 +8,7 @@ const text = (value, limit = 20_000) => String(value ?? '').trim().slice(0, limi
 export const socialGeminiConfig = () => ({
   apiKey: text(process.env.SOCIAL_GEMINI_API_KEY || process.env.GEMINI_API_KEY, 1_024),
   model: text(process.env.SOCIAL_GEMINI_MODEL, 120) || DEFAULT_MODEL,
+  apiBaseUrl: (text(process.env.SOCIAL_GEMINI_API_BASE_URL, 500) || 'https://generativelanguage.googleapis.com').replace(/\/$/, ''),
   timeoutMs: Math.max(10_000, Math.min(Number(process.env.SOCIAL_GEMINI_TIMEOUT_MS) || DEFAULT_TIMEOUT_MS, 120_000))
 });
 
@@ -19,7 +20,7 @@ export class SocialGeminiUnavailableError extends AppError {
   }
 }
 
-const endpointFor = (model) => `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
+const endpointFor = (baseUrl, model) => `${baseUrl}/v1beta/models/${encodeURIComponent(model)}:generateContent`;
 
 const modelText = (payload) => (payload?.candidates || [])
   .flatMap((candidate) => candidate?.content?.parts || [])
@@ -45,7 +46,7 @@ export const requestSocialGeminiJson = async ({ systemInstruction, prompt, inlin
   if (!config.apiKey) throw new SocialGeminiUnavailableError('Social Gemini API is not configured on this server.');
   let response;
   try {
-    response = await fetch(endpointFor(config.model), {
+    response = await fetch(endpointFor(config.apiBaseUrl, config.model), {
       method: 'POST',
       signal: AbortSignal.timeout(config.timeoutMs),
       headers: { 'content-type': 'application/json', 'x-goog-api-key': config.apiKey },

@@ -26,7 +26,7 @@ load_environment() {
       line="${line#export }"
       key="${line%%=*}"; value="${line#*=}"
       [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
-      case "$key" in SOCIAL_GEMINI_API_KEY|GEMINI_API_KEY|SOCIAL_GEMINI_MODEL|SOCIAL_GEMINI_TIMEOUT_MS) export "$key=$value" ;; esac
+      case "$key" in SOCIAL_GEMINI_API_KEY|GEMINI_API_KEY|SOCIAL_GEMINI_MODEL|SOCIAL_GEMINI_API_BASE_URL|SOCIAL_GEMINI_TIMEOUT_MS) export "$key=$value" ;; esac
     done <"$file"
   done
 }
@@ -116,11 +116,12 @@ EOF
 
 gemini_configured() { [ -n "${SOCIAL_GEMINI_API_KEY:-${GEMINI_API_KEY:-}}" ]; }
 gemini_model() { printf '%s' "${SOCIAL_GEMINI_MODEL:-gemini-flash-latest}"; }
+gemini_base_url() { printf '%s' "${SOCIAL_GEMINI_API_BASE_URL:-https://generativelanguage.googleapis.com}" | sed 's:/*$::'; }
 gemini_test() {
   gemini_configured || return 1
   local key="${SOCIAL_GEMINI_API_KEY:-${GEMINI_API_KEY:-}}" model response
   model="$(gemini_model)"
-  response="$(curl -fsS --max-time 30 "https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent" \
+  response="$(curl -fsS --max-time 30 "$(gemini_base_url)/v1beta/models/${model}:generateContent" \
     -H 'Content-Type: application/json' -H "X-goog-api-key: $key" \
     -d '{"contents":[{"parts":[{"text":"Return exactly {\\"ok\\":true}."}]}],"generationConfig":{"temperature":0,"maxOutputTokens":32,"responseMimeType":"application/json"}}' 2>>"$LOG_FILE" || true)"
   node -e 'const body=JSON.parse(process.argv[1]||"{}"); const text=(body.candidates||[]).flatMap(x=>(x.content||{}).parts||[]).map(x=>x.text||"").join("\n"); process.exit(JSON.parse(text).ok===true?0:1);' "$response" 2>/dev/null
