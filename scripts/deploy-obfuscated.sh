@@ -479,7 +479,10 @@ read_env_value() {
   if [ ! -f "$file" ]; then
     return 0
   fi
-  grep -E "^[[:space:]]*${key}=" "$file" | tail -n 1 | sed -E "s/^[^=]+=//; s/^\"//; s/\"$//; s/^'//; s/'$//"
+  # A missing setting is a normal state for optional runtime configuration.
+  # Always return success so `set -e` deployments do not abort after the
+  # production root has been safely wiped just because a key is not present.
+  grep -E "^[[:space:]]*${key}=" "$file" | tail -n 1 | sed -E "s/^[^=]+=//; s/^\"//; s/\"$//; s/^'//; s/'$//" || true
 }
 
 env_has_value() {
