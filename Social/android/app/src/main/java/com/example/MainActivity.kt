@@ -6143,6 +6143,16 @@ fun MenuScreen(
                             if (profile?.verified == true) {
                                 Spacer(Modifier.width(5.dp))
                                 VerifiedBadge(profile?.badgeType ?: "blue", 16.dp)
+                                Spacer(Modifier.width(4.dp))
+                                Text(
+                                    if (profile?.badgeType == "gold") "Gold verified" else "Verified",
+                                    color = Color(0xFF667085),
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            } else {
+                                Spacer(Modifier.width(6.dp))
+                                Text("Get verified", color = TiwiBlue, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
                             }
                         }
                         Text("@${profile?.username.orEmpty()}  ·  View your profile", style = MaterialTheme.typography.labelMedium, color = Color(0xFF667085))
@@ -6277,8 +6287,8 @@ private fun AdsManagerScreen(repository: SocialRepository, onBack: () -> Unit) {
         Row(Modifier.fillMaxWidth().height(54.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
             Text("Payments & Ads", modifier = Modifier.weight(1f), fontSize = 19.sp, fontWeight = FontWeight.Black, textAlign = TextAlign.Center)
-            IconButton(onClick = ::refresh) { Icon(Icons.Default.Refresh, "Refresh", tint = TiwiBlue, modifier = Modifier.size(20.dp)) }
-            IconButton(onClick = { showComposer = true }) { Icon(Icons.Default.Add, "Create ad", tint = TiwiBlue, modifier = Modifier.size(23.dp)) }
+            IconButton(onClick = { /* Notification activity is available from the app header. */ }) { Icon(Icons.Outlined.NotificationsNone, "Notifications", tint = Color(0xFF111827), modifier = Modifier.size(21.dp)) }
+            IconButton(onClick = { showComposer = true }) { Icon(Icons.Default.MoreVert, "More ad options", tint = Color(0xFF111827), modifier = Modifier.size(22.dp)) }
         }
         HorizontalDivider(color = Color(0xFFE9ECF1))
         if (loading && summary == null) {
