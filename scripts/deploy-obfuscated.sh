@@ -564,6 +564,9 @@ ensure_runtime_env_files() {
     social_ai_value="$(read_env_value "$root_env" "$social_ai_key" || true)"
     [ -n "$social_ai_value" ] && set_env_value "$backend_env" "$social_ai_key" "$social_ai_value"
   done
+  # The final optional key is commonly absent. Do not let that no-op become
+  # the function's return status under `set -e`.
+  return 0
 }
 
 merge_backend_env_from_preserve() {
